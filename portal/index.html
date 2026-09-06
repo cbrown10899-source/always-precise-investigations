@@ -422,6 +422,22 @@
   .rs-big .rs-v{white-space:nowrap;font-size:1.55rem;font-weight:800;color:var(--navy);line-height:1.1;}
   .rs-badge{display:inline-block;margin-left:8px;padding:2px 9px;border:1px solid var(--gold-2);color:#8a6d33;
     border-radius:10px;font-size:.66rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;vertical-align:2px;}
+  /* THE ENGAGEMENT TERMS (owner brief 2026-09-05): three statements and a
+     sentence — no percentage and no formula, which is the owner's own display
+     rule. The WORDS come from the Worker so the card, the email's text part
+     and its HTML part cannot say different things; this decides colour only.
+
+     THE GROUND IS `--paper`, AND IT WAS MEASURED RATHER THAN PICKED. Red
+     `--bad` on it is 4.73:1 and gold `--gold-ink` 5.84:1, both clear of AA for
+     normal text. On `--neutral-bg` — the obvious first choice — the red is
+     4.30:1 and would have shipped a prominent statement that fails the line.
+     Do not restyle this onto a darker ground without re-measuring both. */
+  .rs-eng{margin:0 0 16px;padding:13px 15px;background:var(--paper);
+    border:1px solid var(--line);border-left:4px solid var(--bad);border-radius:0 8px 8px 0;}
+  .rs-eng .eng-l{margin-bottom:6px;font-weight:700;color:var(--navy);}
+  .rs-eng .eng-alert{color:var(--bad);font-weight:800;font-size:1.05rem;}
+  .rs-eng .eng-emph{color:var(--gold-ink);font-weight:800;letter-spacing:.04em;}
+  .rs-eng p{margin:9px 0 0;font-size:.84rem;color:var(--muted);line-height:1.5;}
   .rs-close{margin:14px 0 4px;padding:13px 15px;background:var(--gold-soft);border-left:3px solid var(--gold-2);border-radius:0 8px 8px 0;}
   .rs-close b{display:block;margin-bottom:3px;}
   .rs-close p{margin:0;font-size:.88rem;color:#44505c;}
@@ -2625,6 +2641,13 @@ function retainerEnter(caseNo){
 let PAY_MSG = "";
 let PAY_ERR = false;
 let SUMMARY = null, SHEETS = [], SHEET_MAIL = "", OPEN_SHEET = null, SHEET_MSG = "";
+/* WHAT A BLANK NON-REFUNDABLE BOX MEANS, as the Worker reports it. Held beside
+   SHEETS because the wizard's placeholder needs it the moment it opens, and
+   `wizSheetLoad` returns early on a send with no case and no chosen retainer —
+   which is the commonest way the wizard is opened. Null until /sheets has
+   answered; the placeholder is simply empty until then rather than guessing,
+   and no figure is written into this file. */
+let SHEETS_NR_DEFAULT = null;
 /* Three states, not two: an empty SHEETS is both "never loaded" and "failed",
    and the view drew both as a spinner that never resolves. */
 let SHEETS_OK = false, SHEETS_ERR = "";
@@ -3401,8 +3424,9 @@ async function asstSend(text){
     if(r.kind === "prepare_sheet" && r.form){
       ASST.prep = { mode: "sheet", context: r.form.context || "", to: r.form.to || "",
                     case_no: r.form.case_no || "", legal_service: "", flat_fee: "", retainer: "",
+                    non_refundable: "",
                     include_intake: false, include_payment: false,
-                    preview: null, err: "", busy: false };
+                    preview: null, previewBody: null, err: "", busy: false };
       legalSvcsLoad();
     }
     ASST.busy = false; paint();
@@ -3821,7 +3845,9 @@ function asstPrepCollect(){
   const read = id => { const el = $(id); return el ? el.value : null; };
   if(p.mode === "sheet"){
     const c = read("asst_sctx"), to = read("asst_sto"), cs = read("asst_scase"),
-          sv = read("asst_ssvc"), fe = read("asst_sfee"), rt = read("asst_sret");
+          sv = read("asst_ssvc"), fe = read("asst_sfee"), rt = read("asst_sret"),
+          nr = read("asst_snr");
+    if(nr !== null) p.non_refundable = nr;
     if(c !== null) p.context = c;
     if(to !== null) p.to = to;
     if(cs !== null) p.case_no = cs;
@@ -3865,6 +3891,13 @@ function asstPrepBody(){
     if(p.context === "legal" && p.legal_service) body.legal_service = p.legal_service;
     if(p.flat_fee) body.flat_fee = p.flat_fee;
     if(p.retainer) body.retainer_amount = p.retainer;
+    /* PRIVATE ONLY, and blank sends nothing — the Worker's one function turns
+       an absent value into the standard non-refundable amount. Sent on a legal
+       or insurance context it would be refused BY NAME, which is why the
+       control is not drawn there either. */
+    if(p.context === "private" && (p.non_refundable || "") !== "") {
+      body.non_refundable = p.non_refundable;
+    }
     if(p.include_payment && p.context && p.context !== "private") body.methods = ["mail_check"];
     return body;
   }
@@ -4028,6 +4061,16 @@ function asstPrepHtml(){
           value="${esc(p.retainer)}" inputmode="decimal" autocomplete="off" placeholder="1,500"></span>
         <span class="asst-hint">Blank uses the standard retainer. A case that has already agreed a
           figure keeps it &mdash; this cannot overwrite what the office recorded.</span></label>` : ""}
+      ${/* THE NON-REFUNDABLE PORTION (owner brief 2026-09-05) — private only,
+            keyed off the CONTEXT rather than the sheet, because a legal send
+            takes the private sheet and must not gain this. Blank is not
+            missing: the Worker resolves it to the standard amount, which is
+            the owner's own rule, and no figure is written into this file. */""}
+      ${p.context === "private" ? `<label class="cap">Custom non-refundable amount ($)
+        <span class="asst-hint">Blank keeps the standard non-refundable amount &mdash; it is
+          never dropped for being empty, and it can never exceed the retainer.</span>
+        <input id="asst_snr" data-act-input="asstPrep" value="${esc(p.non_refundable || "")}"
+          inputmode="decimal" autocomplete="off"></label>` : ""}
       <label class="cap">Recipient email
         <input id="asst_sto" data-act-input="asstPrep" value="${esc(p.to)}" autocomplete="off"></label>
       <label class="cap">Case (optional)
@@ -6943,7 +6986,23 @@ async function wizFeeSave(){
    No figure is written in this file, here or anywhere else — a guard test fails
    on a dollar amount in the portal HTML, and these presets are numbers the
    `money()` helper decorates at render time. */
+/* THE OWNER'S FOUR CHOICES, STANDARD FIRST — an approved list, and it did NOT
+   change for the non-refundable brief. That brief calls a thousand a "normal
+   Private retainer option", and I added it here; the suite refused, correctly,
+   because "the owner's four choices, standard first" is a decision this list
+   already carries. The rule works on any figure — a thousand typed into Custom
+   resolves exactly as a preset would, and the tests prove that case — so
+   changing an approved selector on an inference was scope this brief did not
+   ask for. It is a question for the owner, not a keystroke.
+
+   STANDARD IS ITS OWN NAME NOW, AND THAT PART STAYS. It used to be
+   `RETAINER_PRESETS[0]`, which decided both the *Standard* label and the
+   selector's opening choice — so reordering the list for any reason would have
+   silently moved which figure the office is told is standard. A list's ORDER
+   is a display decision; which figure is standard is a pricing fact, and the
+   two must not be the same expression. */
 const RETAINER_PRESETS = [1500, 2000, 3000];
+const RETAINER_STANDARD = 1500;
 
 /* Null means "not a usable amount", which is how the caller distinguishes an
    empty Custom box from a real choice. Currency decoration is stripped because
@@ -6962,21 +7021,60 @@ function wizRetainerInit(w){
   else { w.retainerPick = "custom"; w.retainerCustom = String(v); }
 }
 
+/* THE ONE PAGE-SIDE RENDERER of the engagement block. The Worker composes the
+   words; this maps `tone` to the two colours the owner asked for and nothing
+   else. Absent on the legal and insurance cards, so it draws nothing there —
+   the private-only rule needs no check here because the block is simply not on
+   those objects. */
+function engBlockHtml(eng){
+  if(!eng || !Array.isArray(eng.lines)) return "";
+  const cls = t => t === "alert" ? "eng-l eng-alert" : t === "emphasis" ? "eng-l eng-emph" : "eng-l";
+  return `<div class="rs-eng">
+    ${eng.lines.map(l => `<div class="${cls(l.tone)}">${esc(l.text)}</div>`).join("")}
+    ${eng.note ? `<p>${esc(eng.note)}</p>` : ""}
+  </div>`;
+}
+
+/* THE CUSTOM NON-REFUNDABLE AMOUNT (owner brief 2026-09-05).
+
+   PRIVATE ONLY, and gated on the CONTEXT rather than the sheet id — a legal
+   send takes the private SHEET by design, so `w.sheet === "private_retainer"`
+   is true on one and would have drawn this control on a law firm's send.
+   That is the same trap `wizContext` exists for.
+
+   NO FIGURE IS WRITTEN HERE. The standard amount comes from the Worker
+   (`non_refundable_default` on /sheets) and is only ever shown as the
+   placeholder, because a page that hard-codes it is a second place to change
+   it — and a test fails on a dollar figure in this file at all. */
+function wizNonRefHtml(w){
+  if(w.sheet !== "private_retainer" || wizContext(w) !== "private") return "";
+  return `<label class="f" style="margin:8px 0 0"><span>Custom non-refundable amount ($)
+      <span class="opt">(optional)</span></span>
+    <input id="wiz_nr" inputmode="decimal" data-act-input="wizNrDirty"
+      placeholder="${esc(w.nrDefault != null ? String(w.nrDefault)
+        : SHEETS_NR_DEFAULT != null ? String(SHEETS_NR_DEFAULT) : "")}"
+      value="${esc(w.nonRef || "")}">
+    <span class="hint">Leave it blank and the sheet carries the standard non-refundable
+      amount &mdash; it is never dropped for being empty. It can never be more than the
+      retainer above.</span></label>`;
+}
+
 function wizRetainerHtml(w){
   if(w.sheet !== "private_retainer") return "";
   const money = n => "$" + Number(n).toLocaleString("en-US");
-  const pick = w.retainerPick || String(RETAINER_PRESETS[0]);
+  const pick = w.retainerPick || String(RETAINER_STANDARD);
   return `<div class="feebox" style="margin:10px 0">
     <label class="f" style="margin:0"><span>Agreed retainer
       <span class="opt">what this client is being asked for</span></span>
       <select id="wiz_ret" data-act="wizRetPick">
         ${RETAINER_PRESETS.map(v => `<option value="${v}"${pick === String(v) ? " selected" : ""}
-          >${money(v)}${v === RETAINER_PRESETS[0] ? " Standard" : ""}</option>`).join("")}
+          >${money(v)}${v === RETAINER_STANDARD ? " Standard" : ""}</option>`).join("")}
         <option value="custom"${pick === "custom" ? " selected" : ""}>Custom amount&hellip;</option>
       </select></label>
     ${pick === "custom" ? `<label class="f" style="margin:8px 0 0"><span>Custom retainer</span>
       <input id="wiz_retc" inputmode="decimal" placeholder="e.g. 2500"
         data-act-input="wizRetDirty" value="${esc(w.retainerCustom || "")}"></label>` : ""}
+    ${wizNonRefHtml(w)}
     <p class="hint">${w.retainerUnrecorded
       /* Said plainly, because the difference is invisible otherwise: the client
          is quoted this figure and the office cannot look it up afterwards. */
@@ -7075,14 +7173,36 @@ async function wizSheetLoad(){
   const w = SHEET_WIZ;
   /* A carried figure has to be re-read too, or a pre-case send previews the
      standard sheet while the email carries the agreed one — the same screen /
-     client split, arriving through the new door. */
-  if(!w || (!w.caseNo && w.retainerOffered == null)) return;
+     client split, arriving through the new door.
+
+     A TYPED NON-REFUNDABLE AMOUNT IS ONE OF THOSE FIGURES. This guard existed
+     to skip a pointless fetch, and it bailed on the commonest opening of all —
+     no case, no chosen retainer — so a custom amount previewed as the standard
+     one while the email would have carried what was typed. Exactly the split
+     the comment above describes, arriving through a third door. */
+  if(!w || (!w.caseNo && w.retainerOffered == null && (w.nonRef || "") === "")) return;
   try{
     const q = `case=${encodeURIComponent(w.caseNo || "")}`
-      + (w.retainerOffered != null ? `&retainer=${encodeURIComponent(w.retainerOffered)}` : "");
+      + (w.retainerOffered != null ? `&retainer=${encodeURIComponent(w.retainerOffered)}` : "")
+      /* The typed non-refundable amount rides the read, so the PREVIEW is
+         built by the Worker from the same figure the send will carry. The page
+         never computes it — that is the whole point of the one function. */
+      + ((w.nonRef || "") !== "" ? `&nr=${encodeURIComponent(w.nonRef)}` : "");
     const r = await api(`/sheets?${q}`);
     if(SHEET_WIZ === w){
-      w.sheetData = (r.sheets || []).find(s => s.id === w.sheet) || null;
+      /* MATCHED ON ID **AND** CONTEXT. Three cards share `private_retainer`,
+         so `find` on the id alone returned the PRIVATE card for a legal send.
+         That was harmless while the only thing read off it was `name`, which
+         is identical on both — and stopped being harmless the moment the
+         private card gained an engagement block a law firm must never see.
+         `sheetWizardHtml` already picks this way; the two agree now. */
+      const wantKey = w.legal ? "legal"
+        : w.sheet === "insurance_assignment" ? "insurance" : "private";
+      w.sheetData = (r.sheets || []).find(s => s.id === w.sheet && s.key === wantKey)
+                 || (r.sheets || []).find(s => s.id === w.sheet) || null;
+      /* What a blank box means, straight from the Worker — the placeholder
+         shows it, and no figure is written into this file. */
+      if(r.non_refundable_default != null) w.nrDefault = r.non_refundable_default;
       if(!LEGAL_SVCS.length && (r.legal_services || []).length) LEGAL_SVCS = r.legal_services;
       /* The case's own service marker preselects the selector — but never on
          top of a choice the admin has made, the retainerTouched rule. The
@@ -7195,6 +7315,13 @@ function sheetWizardHtml(){
                 .map(m => esc(m.display_name || m.label)).join(" + ")
             : "Not included"}</dd>` : ""}
       </dl>
+      ${/* THE PREVIEW SHOWS THE CLIENT-FACING BLOCK ITSELF, not a second
+           rendering of the same figures beside it. It comes off the card the
+           Worker built for THIS send, so "preview and email show the same
+           amount" is one object rendered twice rather than two numbers kept in
+           step. A fixed legal service sends its own concise document and has
+           no engagement block, so nothing draws. */""}
+      ${wizLegalFixed(w) ? "" : engBlockHtml(sheet.engagement)}
       <p class="hint">${wizLegalFixed(w)
         ? `The email is the concise flat-fee sheet for this service — the full retainer
            sheet shown on the Rate sheets screen does not go`
@@ -7549,6 +7676,7 @@ function sheetsView(){
       <span class="count">${esc(open.audience)}</span></div>
     <p class="lead">${esc(open.summary)}</p>
     <div class="feebox">
+      ${engBlockHtml(open.engagement)}
       ${open.lines.map(l => `<div class="rs-row${l.big ? " rs-big" : ""}">
         <span class="rs-l"><b>${esc(l.label)}</b>${l.sub ? `<span class="rs-sub">${esc(l.sub)}</span>` : ""}${
           l.badge ? `<span class="rs-badge">${esc(l.badge)}</span>` : ""}
@@ -12760,6 +12888,7 @@ async function render(){
     })());
     jobs.push((async () => {
       try{ const d = await api("/sheets"); SHEETS = d.sheets; SHEETS_OK = true; SHEETS_ERR = "";
+           if(d.non_refundable_default != null) SHEETS_NR_DEFAULT = d.non_refundable_default;
         BILLCOM_READY = !!d.billcom_ready;
            LEGAL_SVCS = d.legal_services || []; }
       catch(e){ SHEETS = []; SHEETS_OK = false; SHEETS_ERR = e.message; }
@@ -20269,6 +20398,7 @@ function wizCollect(){
   if($("wiz_inc")) SHEET_WIZ.include = $("wiz_inc").checked;
   if($("wiz_ret")) SHEET_WIZ.retainerPick = $("wiz_ret").value;
   if($("wiz_retc")) SHEET_WIZ.retainerCustom = $("wiz_retc").value.trim();
+  if($("wiz_nr")) SHEET_WIZ.nonRef = $("wiz_nr").value.trim();
   if($("wiz_pay")) SHEET_WIZ.pay = $("wiz_pay").checked;
   if($("wiz_lsvc")) SHEET_WIZ.legalService = $("wiz_lsvc").value;
   const feeRadio = document.querySelector('input[name="wiz_fee"]:checked');
@@ -20319,6 +20449,13 @@ async function wizSend(){
            exactly what the untouched control displayed (D12/D13). */
         ...(wizFeeAdjustable(w) && (w.feeTouched || !w.caseNo) && wizFeeWanted(w) != null
           ? {flat_fee: wizFeeWanted(w)} : {}),
+        /* The custom non-refundable amount, sent only where it means something.
+           A blank box sends NOTHING, and the Worker's one function turns that
+           into the standard figure — the owner's rule that it must never
+           disappear for being left empty is kept server-side, so it holds for
+           every caller and not just this screen. */
+        ...(wizContext(w) === "private" && (w.nonRef || "") !== ""
+          ? {non_refundable: w.nonRef} : {}),
         /* Declared only where the screen actually chose a context — a send
            from a lead card leaves it out and the case decides, exactly as
            before. */
@@ -21150,7 +21287,7 @@ document.addEventListener("click", ev => {
                  step: 1, to: "", caseNo: "", note: "", include: true,
                  pay: ctx !== "legal", payMethods: [], err: "",
                  legalService: "", lsvcTouched: false,
-                 retainer: null, retainerPick: String(RETAINER_PRESETS[0]),
+                 retainer: null, retainerPick: String(RETAINER_STANDARD),
                  retainerCustom: "", retainerTouched: false};
     SHEET_MSG = ""; wizPaymentLoad(); paint();
   }
@@ -21171,7 +21308,7 @@ document.addEventListener("click", ev => {
                  /* Preselected from the case's own marker by wizSheetLoad, so
                     a fixed-service lead opens on its flat-fee sheet. */
                  legalService: "", lsvcTouched: false,
-                 retainer: null, retainerPick: String(RETAINER_PRESETS[0]),
+                 retainer: null, retainerPick: String(RETAINER_STANDARD),
                  retainerCustom: "", retainerTouched: false};
     /* wizSheetLoad also brings back the case's agreed retainer, so the selector
        opens on what this client already agreed rather than on the standard. */
@@ -21651,6 +21788,10 @@ document.addEventListener("input", ev => {
   /* Typing a custom retainer counts as choosing one. No repaint — the box the
      cursor is sitting in must not be rebuilt underneath it mid-number. */
   if(din === "wizRetDirty" && SHEET_WIZ){ SHEET_WIZ.retainerTouched = true; return; }
+  /* Collected on the way past so a repaint cannot discard it — the EDIT_DRAFT
+     rule. No `touched` flag: unlike the retainer this figure is never written
+     to the case, so there is nothing an untouched control could overwrite. */
+  if(din === "wizNrDirty" && SHEET_WIZ){ SHEET_WIZ.nonRef = (ev.target.value || "").trim(); return; }
   /* Typing a custom flat fee counts as choosing one — same no-repaint rule. */
   if(din === "wizFeeDirty" && SHEET_WIZ){ SHEET_WIZ.feeTouched = true; SHEET_WIZ.feeMode = "custom"; return; }
   /* What will actually be burned in, following the typing. Only this one line

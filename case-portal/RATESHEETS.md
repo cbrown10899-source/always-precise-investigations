@@ -220,3 +220,98 @@ from "no billable work"** — investigator time reviewing footage or preparing
 the report is charged against the retainer at the same $100/hr without being
 a separate fee. That protects against promising unlimited back-office work
 for free while keeping the simple pricing.
+
+---
+
+## The non-refundable portion (owner brief 2026-09-05)
+
+The private retainer sheet states an engagement block to the client:
+
+```
+Retainer: $1,500
+NON-REFUNDABLE PORTION: $500        (red)
+4-HOUR MINIMUM REQUIRED             (gold)
+
+A minimum portion of the retainer is non-refundable upon engagement and
+reservation of investigative services. Additional terms are governed by the
+client agreement.
+```
+
+**No percentage and no formula.** That is the owner's display rule, and a test
+asserts the absence rather than trusting it.
+
+### D1 — one function knows the rule
+
+`nonRefundableFor(retainer, offered)` is the only implementation. Every path —
+`emailSheet`, `assistantSheetPlan`, `GET /sheets` — resolves through it.
+
+| input | result |
+| --- | --- |
+| blank | `min($500, retainer)` |
+| a typed amount within the retainer | that amount, exactly |
+| a typed amount above the retainer | **refused**, `non_refundable_over_retainer` |
+| negative | **refused**, `bad_non_refundable` |
+| `0` | honoured — the owner's validation says `>= 0` |
+
+`NON_REFUNDABLE_DEFAULT` is the single place $500 is set. The page holds no
+copy: `/sheets` returns `non_refundable_default` and the wizard's placeholder
+prints it, which also keeps the no-dollar-figure guard on `portal/index.html`
+true.
+
+### D2 — the cap is part of the rule, not a separate check
+
+A portion larger than the whole it is a portion of is incoherent, so it is
+refused rather than clamped. Clamping would have shown the office one figure
+after they typed another, which is the class of silent substitution this
+project refuses everywhere else.
+
+### D3 — private only, by placement rather than by a check
+
+`sheetCards()` builds the legal card as `{...priv, lines:[...priv.lines, …]}`.
+A line added to the private **product** (`rateSheets()`) therefore reaches a law
+firm by inheritance. The engagement block is added to the private **card**,
+where it cannot. The existing "the legal card is the private pricing verbatim
+plus exactly one line" pin passed unchanged — that is the evidence the
+placement is right, not a comment claiming it.
+
+Asking for a non-refundable amount on a legal or insurance send is refused by
+name (`non_refundable_not_private`), the `flat_fee` precedent: a figure silently
+dropped because it was sent on the wrong context is a screen that accepted
+something it did not use.
+
+### D4 — the wizard's card lookup was resolving by id alone
+
+Three cards share `private_retainer`, so the LEGAL send wizard had always been
+reading the PRIVATE card into `w.sheetData`. Harmless while `name` was the only
+field read off it — identical on both — and a leak the moment the private card
+gained this block. Now matched on id **and** context, agreeing with
+`sheetWizardHtml`.
+
+### D5 — standard is a name, not an array position; the selector is unchanged
+
+The brief calls $1,000 a "normal Private retainer option". It is not one of the
+three presets, and adding it was **refused by an existing assertion** — "the
+owner's four choices, standard first". That list is an approved decision, the
+rule works on any figure, and a thousand typed into Custom resolves exactly as
+a preset would. **Left alone; raised with the owner instead.**
+
+The fix underneath it stays: `RETAINER_PRESETS[0]` decided both the *Standard*
+label and the selector's opening choice, so any reorder would silently move
+which figure is called standard. `RETAINER_STANDARD` is separate now.
+`PERSONAL.retainer` is unchanged and is still the standard figure.
+
+### D6 — the colours are measured
+
+On the block's `--paper` ground: red `--bad` **4.73:1**, gold `--gold-ink`
+**5.84:1**. On `--neutral-bg` the red is **4.30** and would fail AA. The suite
+computes both ratios in the browser. Do not move this onto a darker ground
+without re-measuring.
+
+### D7 — there is no rate-sheet PDF, and none was invented
+
+The brief listed "PDF/print". This portal has print regions for the invoice,
+package, report, timeline and manifest; a rate sheet is an **email**. The paths
+that exist are held together by the preview's body being byte-identical to what
+the send emails.
+
+**No schema change. No `portal-setup` dispatch.**

@@ -1005,6 +1005,57 @@ section('Rate sheets');
   ok('its confirmation line is its own', has(sheet, 'Your case. Your authorization.'));
   ok('the send wizard is the one door out', await page.locator('.btn', { hasText: 'Send this sheet' }).count() === 1);
 
+  /* ==== THE NON-REFUNDABLE PORTION (owner brief 2026-09-05) ================
+     The owner's display rule is exact — three statements, one red, one gold,
+     no percentage and no formula — so the COLOURS are measured rather than
+     assumed present, and the absence of a percentage is asserted as such. */
+  const eng = await page.evaluate(() => {
+    const box = document.querySelector('.rs-eng');
+    if (!box) return null;
+    const px = el => getComputedStyle(el);
+    const alert = box.querySelector('.eng-alert');
+    const emph = box.querySelector('.eng-emph');
+    const lum = c => {
+      const m = c.match(/\d+/g).slice(0, 3).map(Number)
+        .map(v => v / 255).map(v => v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+      return 0.2126 * m[0] + 0.7152 * m[1] + 0.0722 * m[2];
+    };
+    const ratio = (a, b) => {
+      const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+      return Math.round(((hi + 0.05) / (lo + 0.05)) * 100) / 100;
+    };
+    const ground = px(box).backgroundColor;
+    return {
+      text: box.innerText,
+      lines: [...box.querySelectorAll('.eng-l')].map(e => e.innerText),
+      alertColor: alert ? px(alert).color : null,
+      emphColor: emph ? px(emph).color : null,
+      alertRatio: alert ? ratio(px(alert).color, ground) : null,
+      emphRatio: emph ? ratio(px(emph).color, ground) : null,
+      alertWeight: alert ? px(alert).fontWeight : null,
+      overflow: document.documentElement.scrollWidth > window.innerWidth,
+    };
+  });
+  ok('the private sheet carries the engagement block', eng !== null);
+  ok('it states the three things the owner asked for, in that order',
+     eng.lines.length === 3 && /^Retainer: \$1,500$/.test(eng.lines[0])
+     && /^NON-REFUNDABLE PORTION: \$500$/.test(eng.lines[1])
+     && /^4-HOUR MINIMUM REQUIRED$/.test(eng.lines[2]), JSON.stringify(eng.lines));
+  ok('the non-refundable portion is red and bold',
+     eng.alertColor === 'rgb(193, 65, 51)' && Number(eng.alertWeight) >= 700,
+     `${eng.alertColor} / ${eng.alertWeight}`);
+  ok('the minimum is gold', eng.emphColor === 'rgb(122, 90, 18)', eng.emphColor);
+  /* MEASURED, NOT ASSUMED. A prominent statement that fails AA is worse than a
+     quiet one: it is loud and unreadable. On --neutral-bg the red is 4.30 and
+     would have shipped exactly that. */
+  ok(`both tones clear AA on the block's own ground (red ${eng.alertRatio}, gold ${eng.emphRatio})`,
+     eng.alertRatio >= 4.5 && eng.emphRatio >= 4.5,
+     `${eng.alertRatio} / ${eng.emphRatio}`);
+  ok('it carries the supporting sentence',
+     has(eng.text, 'non-refundable upon engagement and reservation of investigative services'));
+  ok('and shows NO percentage and no arithmetic — the owner\'s own rule',
+     !/%/.test(eng.text) && !/\bx\b|×|÷|=/.test(eng.text), eng.text);
+
   /* PAYMENTS.md §2 — the send area used to explain itself in a 0.78rem muted
      `.opt` footnote, which is the one presentation that section forbids by
      name. The wording is asserted here; the SIZE is asserted too, because
@@ -17236,6 +17287,126 @@ section('API ASSISTANT Unit 4 — the intake dry-run workbench, on the real page
    history moves when it goes, and that a failure says so instead of drawing a
    confirmation over a message nobody received.
    ========================================================================= */
+/* ============================================================================
+   THE NON-REFUNDABLE PORTION ON THE SEND WIZARD, and on a phone.
+
+   The worker suite proves the figure. What only the page can prove is that the
+   control exists where it should and NOWHERE ELSE, that the preview a person
+   reads shows the same amount the email will carry, and that none of it breaks
+   at 390px.
+   ========================================================================= */
+section('The send wizard offers the non-refundable amount, on Private only');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Rate Sheets' }).click();
+  await page.waitForTimeout(400);
+
+  const openWiz = async label => {
+    await page.locator('.sheet-card', { hasText: label }).click();
+    await page.waitForTimeout(250);
+    await page.locator('.btn', { hasText: 'Send this sheet' }).click();
+    await page.waitForSelector('.amsheet', { timeout: 4000 });
+  };
+  const closeWiz = async () => {
+    await page.locator('.amx').click();
+    await page.waitForTimeout(200);
+  };
+
+  await openWiz('Private Client — $1,500');
+  const nrCtl = await page.evaluate(() => {
+    const el = document.getElementById('wiz_nr');
+    if (!el) return null;
+    const r = el.getBoundingClientRect(); const cs = getComputedStyle(el);
+    return { present: true, placeholder: el.placeholder,
+             font: parseFloat(cs.fontSize), h: Math.round(r.height),
+             label: el.closest('label').innerText.replace(/\s+/g, ' ').trim() };
+  });
+  ok('the private wizard offers a Custom non-refundable amount', nrCtl && nrCtl.present === true);
+  ok('the placeholder is the standard amount, supplied by the WORKER',
+     nrCtl.placeholder === '500', nrCtl.placeholder);
+  ok('and the label says a blank box is not a dropped figure',
+     /never dropped for being empty/i.test(nrCtl.label), nrCtl.label);
+  ok('it is marked optional, the portal\'s own convention',
+     /\(optional\)/.test(nrCtl.label), nrCtl.label);
+
+  /* TYPED, PREVIEWED, AND THE PREVIEW IS THE WORKER'S OWN BLOCK — not a second
+     rendering of the same numbers, which is how two screens start disagreeing. */
+  await page.locator('#wiz_to').fill('nr-wizard@example.com');
+  await page.locator('#wiz_nr').fill('750');
+  await page.locator('.amsheet .btn', { hasText: 'Preview' }).click();
+  await page.waitForTimeout(700);
+  const prevTxt = await page.evaluate(() => {
+    const b = document.querySelector('.amsheet .rs-eng');
+    return b ? b.innerText.replace(/\s+/g, ' ') : 'NO-BLOCK';
+  });
+  ok('the wizard preview carries the typed figure, resolved by the Worker',
+     /NON-REFUNDABLE PORTION: \$750/.test(prevTxt) && !/\$500/.test(prevTxt), prevTxt);
+  ok('and it still states the retainer and the minimum beside it',
+     /Retainer: \$1,500/.test(prevTxt) && /4-HOUR MINIMUM REQUIRED/.test(prevTxt), prevTxt);
+  await closeWiz();
+
+  /* THE LEGAL WIZARD TAKES THE SAME SHEET AND MUST NOT OFFER THIS. It is also
+     where a stale lookup would have leaked the block: three cards share the
+     private sheet id, and the wizard used to resolve its card by id alone. */
+  await openWiz('Legal / Law Firm');
+  const legalWiz = await page.evaluate(() => ({
+    nr: !!document.getElementById('wiz_nr'),
+    ret: !!document.getElementById('wiz_ret'),
+  }));
+  ok('the legal wizard offers the retainer control', legalWiz.ret === true);
+  ok('and offers NO non-refundable amount', legalWiz.nr === false, JSON.stringify(legalWiz));
+  await page.locator('#wiz_to').fill('firm-nr@example.com');
+  await page.locator('.amsheet .btn', { hasText: 'Preview' }).click();
+  await page.waitForTimeout(700);
+  ok('and its preview carries no engagement block at all',
+     await page.evaluate(() => !document.querySelector('.amsheet .rs-eng')));
+  await closeWiz();
+
+  /* ---- 390px: the phone the owner actually uses ---- */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(300);
+  await page.locator('.sheet-card', { hasText: 'Private Client — $1,500' }).click();
+  await page.waitForTimeout(300);
+  const phone = await page.evaluate(() => {
+    const box = document.querySelector('.rs-eng');
+    if (!box) return null;
+    const r = box.getBoundingClientRect();
+    const panel = box.parentElement.getBoundingClientRect();
+    return { lines: [...box.querySelectorAll('.eng-l')].map(e => e.innerText),
+             insidePanel: r.left >= panel.left - 1 && r.right <= panel.right + 1,
+             overflow: document.documentElement.scrollWidth > window.innerWidth,
+             alertPx: parseFloat(getComputedStyle(box.querySelector('.eng-alert')).fontSize) };
+  });
+  ok('the block draws on a phone, with all three statements', phone && phone.lines.length === 3,
+     JSON.stringify(phone && phone.lines));
+  ok('it stays inside the card it belongs to', phone.insidePanel === true);
+  ok('and the page does not scroll sideways at 390px', phone.overflow === false);
+  ok('the red statement is not shrunk below body size on a phone',
+     phone.alertPx >= 15, String(phone.alertPx));
+
+  /* THE CARD IS ALREADY OPEN — `openSheet` TOGGLES, so calling openWiz here
+     would shut it and leave no Send button to press. The existing rate-sheet
+     section records the same trap. */
+  await page.locator('.btn', { hasText: 'Send this sheet' }).click();
+  await page.waitForSelector('.amsheet', { timeout: 4000 });
+  const phoneCtl = await page.evaluate(() => {
+    const el = document.getElementById('wiz_nr');
+    if (!el) return null;
+    const cs = getComputedStyle(el); const r = el.getBoundingClientRect();
+    return { font: parseFloat(cs.fontSize), h: Math.round(r.height),
+             overflow: document.documentElement.scrollWidth > window.innerWidth };
+  });
+  /* 16px or iOS zooms the page on focus; 44px is the tap floor this portal
+     already enforces on every form control. */
+  ok(`the phone control is at least 16px so iOS does not zoom (${phoneCtl.font}px)`,
+     phoneCtl.font >= 16, String(phoneCtl.font));
+  ok(`and clears the 44px tap floor (${phoneCtl.h}px)`, phoneCtl.h >= 44, String(phoneCtl.h));
+  ok('and the wizard does not scroll sideways at 390px', phoneCtl.overflow === false);
+
+  await page.close();
+}
+
 section('API ASSISTANT — sending is live, and only from under a preview');
 {
   const page = await newPage();
@@ -18777,6 +18948,10 @@ section('Assistant rate sheet: the custom retainer field, on the products that h
     return {
       retainer: !!document.getElementById('asst_sret'),
       fee: !!document.getElementById('asst_sfee'),
+      /* The non-refundable portion is PRIVATE-only, keyed off the context —
+         Legal takes the same retainer sheet, so the sheet id could not have
+         decided this. */
+      nonRef: !!document.getElementById('asst_snr'),
     };
   }, ctx);
 
@@ -18784,11 +18959,15 @@ section('Assistant rate sheet: the custom retainer field, on the products that h
      the retainer sheet; the carrier sheet is the package ladder and has none. */
   const priv = await openSheetForm('private');
   ok('Private Client offers the custom retainer', priv.retainer === true, JSON.stringify(priv));
+  ok('and the custom NON-REFUNDABLE amount beside it', priv.nonRef === true, JSON.stringify(priv));
   const legal = await openSheetForm('legal');
   ok('Legal offers it too — it takes the same retainer sheet', legal.retainer === true);
+  ok('but NOT the non-refundable amount — that is a private-client term',
+     legal.nonRef === false, JSON.stringify(legal));
   const ins = await openSheetForm('insurance');
   ok('Insurance does not — the carrier sheet is a package ladder, not a retainer',
      ins.retainer === false, JSON.stringify(ins));
+  ok('and it has no non-refundable amount either', ins.nonRef === false, JSON.stringify(ins));
 
   /* A FIXED LEGAL SERVICE IS A FLAT FEE AND HAS NO RETAINER. The two fields
      are never both in play, and the form must not imply they are. */

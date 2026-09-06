@@ -521,6 +521,86 @@ const AUTH_PRESETS = [8, 16, 24];
    a figure that is set elsewhere. */
 const PERSONAL = { retainer: 1500, hourly: 100, minHours: 4 };
 
+/* THE NON-REFUNDABLE PORTION OF A PRIVATE RETAINER (owner brief 2026-09-05).
+
+   $500 is the standing default and the ONLY place it is set. The owner's rule
+   in their own words: "The non-refundable amount must NEVER disappear just
+   because I forgot to enter a custom value." So a blank field is not an absent
+   figure — it resolves to this, and the sheet always carries a number.
+
+   `nonRefundableFor` IS THE ONE SOURCE OF TRUTH, and it is deliberately the
+   only thing in this codebase that knows the rule. The send, the rehearsal,
+   the Rate Sheets screen and the wizard all resolve through it rather than
+   each defaulting for themselves — the `agreedRetainer` principle, which
+   exists because four places that agree today disagree the first time one is
+   edited.
+
+   THE CAP IS PART OF THE RULE, NOT A SEPARATE CHECK: a non-refundable portion
+   larger than the retainer it is a portion OF is not a stricter quote, it is
+   an incoherent one. A blank field on a retainer under $500 resolves to the
+   retainer itself, and an explicit amount above it is REFUSED BY NAME rather
+   than quietly clamped — the office typed a figure and is owed the reason it
+   cannot be used.
+
+   Zero is allowed, because the owner's validation says ">= 0" and typing 0 is
+   a deliberate act in a way that leaving a box empty is not. */
+const NON_REFUNDABLE_DEFAULT = 500;
+
+function nonRefundableFor(retainer, offered) {
+  const ret = Number(retainer);
+  /* No usable retainer means no portion of one. Callers that reach here with a
+     blank retainer have already fallen back to PERSONAL.retainer, so this is
+     the belt-and-braces branch rather than an expected path. */
+  if (!(Number.isFinite(ret) && ret > 0)) return { amount: 0, source: 'no_retainer' };
+
+  const raw = offered === undefined || offered === null || String(offered).trim() === ''
+    ? null : String(offered).replace(/[$,\s]/g, '');
+  if (raw === null) {
+    return { amount: Math.min(NON_REFUNDABLE_DEFAULT, ret), source: 'default' };
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) {
+    return { error: 'Enter the non-refundable amount as a dollar figure of zero or more, or '
+                  + 'leave it blank to use the standard amount.',
+             code: 'bad_non_refundable' };
+  }
+  if (n > ret) {
+    return { error: `A non-refundable amount of ${nrMoney(n)} is larger than the `
+                  + `${nrMoney(ret)} retainer it is part of. It can be at most the retainer.`,
+             code: 'non_refundable_over_retainer' };
+  }
+  return { amount: Math.round(n * 100) / 100, source: 'custom' };
+}
+
+/* Whole dollars where the figure is whole, cents where it is not — the sheet's
+   own formatting, so $500 does not print as $500.00 beside a $1,500 retainer. */
+function nrMoney(n) {
+  const v = Number(n);
+  return '$' + v.toLocaleString('en-US', {
+    minimumFractionDigits: Number.isInteger(v) ? 0 : 2, maximumFractionDigits: 2 });
+}
+
+/* THE CLIENT-FACING ENGAGEMENT BLOCK, composed once and rendered by three
+   media (the email's text part, its HTML part, and the portal card).
+
+   The owner's display rule is exact: no percentages and no formulas — three
+   statements and a sentence. The WORDS live here so the three renderers cannot
+   drift into saying different things; `tone` is all a renderer decides, and it
+   decides colour only. `alert` is the red the owner asked for on the
+   non-refundable portion, `emphasis` the gold on the minimum. */
+function engagementBlock(retainer, nonRefundable) {
+  return {
+    lines: [
+      { text: `Retainer: ${nrMoney(retainer)}` },
+      { text: `NON-REFUNDABLE PORTION: ${nrMoney(nonRefundable)}`, tone: 'alert' },
+      { text: `${PERSONAL.minHours}-HOUR MINIMUM REQUIRED`, tone: 'emphasis' },
+    ],
+    note: 'A minimum portion of the retainer is non-refundable upon engagement and '
+        + 'reservation of investigative services. Additional terms are governed by the '
+        + 'client agreement.',
+  };
+}
+
 /* THE TWO FLAT-FEE LEGAL SERVICES (LEGAL-SERVICES.md D1, owner 2026-09-02) and
    THE ONLY PLACE THEIR FIGURES ARE SET. The catalogue, the fixed sheets, the
    workspace money block, the invoice block and the case list all read from
@@ -592,11 +672,18 @@ async function retainerForSend(env, caseNo, offered) {
   return Number.isFinite(n) && n > 0 && n <= 1000000 ? n : PERSONAL.retainer;
 }
 
+/* Anything absent, zero or unparseable falls back to the standard figure — a
+   sheet must never print $0 or NaN at a client. Named once because
+   `sheetCards` needs the same answer to size the non-refundable portion
+   against, and two copies of a fallback is two chances to fall back
+   differently. */
+function resolvedRetainer(retainer) {
+  return Number(retainer) > 0 ? Number(retainer) : PERSONAL.retainer;
+}
+
 function rateSheets(retainer) {
   const money = n => '$' + Number(n).toLocaleString('en-US');
-  /* Anything absent, zero or unparseable falls back to the standard figure —
-     a sheet must never print $0 or NaN at a client. */
-  const ret = Number(retainer) > 0 ? Number(retainer) : PERSONAL.retainer;
+  const ret = resolvedRetainer(retainer);
   return [
     {
       id: 'private_retainer',
@@ -702,20 +789,35 @@ function sheetById(id, retainer) { return rateSheets(retainer).find(s => s.id ==
 /* The card a send should be WRITTEN from: the one whose product and context
    both match. Falls back to the product itself, so an unknown context still
    produces the ordinary sheet rather than nothing. */
-function sheetForContext(sheetId, ctx, retainer) {
-  const cards = sheetCards(retainer);
+function sheetForContext(sheetId, ctx, retainer, nonRefundable) {
+  const cards = sheetCards(retainer, nonRefundable);
   return cards.find(c => c.id === sheetId && c.context === ctx)
       || cards.find(c => c.id === sheetId)
       || sheetById(sheetId, retainer);
 }
 
-function sheetCards(retainer) {
+function sheetCards(retainer, nonRefundable) {
   const sheets = rateSheets(retainer);
   const by = id => sheets.find(s => s.id === id);
   const priv = by('private_retainer');
   const ins = by('insurance_assignment');
   const cards = [];
-  if (priv) cards.push({ ...priv, key: 'private', context: SEND_CONTEXT.PRIVATE });
+  /* THE ENGAGEMENT BLOCK IS THE PRIVATE CARD'S ALONE (owner: "do not affect
+     Legal or Insurance rate sheets"), and putting it HERE rather than in
+     `rateSheets()` is what makes that structural. The legal card is built from
+     `priv` a few lines down — `{...priv, lines: [...priv.lines, …]}` — so a
+     line added to the private PRODUCT would arrive on a law firm's sheet by
+     inheritance. Added to the private CARD, it cannot.
+
+     The amount is resolved by the caller and passed in; an absent one resolves
+     here through the SAME one function, so the Rate Sheets screen shows the
+     standard figure without a second copy of the defaulting rule. */
+  const ret = resolvedRetainer(retainer);
+  const nr = Number.isFinite(Number(nonRefundable)) && Number(nonRefundable) >= 0
+    ? Number(nonRefundable)
+    : nonRefundableFor(ret, null).amount;
+  if (priv) cards.push({ ...priv, key: 'private', context: SEND_CONTEXT.PRIVATE,
+                         engagement: engagementBlock(ret, nr), non_refundable: nr });
   if (ins) cards.push({ ...ins, key: 'insurance', context: SEND_CONTEXT.INSURANCE });
   if (priv) {
     cards.push({
@@ -1826,6 +1928,21 @@ async function emailSheet(request, env, user, id) {
   // or, on a pre-case send where there is no case to read, the figure the
   // admin agreed on screen. A stored figure always wins; see retainerForSend.
   const retainer = await retainerForSend(env, caseNo, body.retainer_amount);
+  /* THE NON-REFUNDABLE PORTION (owner brief 2026-09-05). Resolved through the
+     ONE function that knows the rule, so the send, the rehearsal and the
+     screen cannot each default differently.
+
+     PRIVATE-ONLY, AND REFUSED BY NAME ELSEWHERE rather than ignored — the
+     `flat_fee` precedent. A figure silently dropped because it was sent on the
+     wrong context is a screen that accepted something it did not use. */
+  if (body.non_refundable !== undefined && body.non_refundable !== null
+      && String(body.non_refundable).trim() !== '' && sendCtx !== SEND_CONTEXT.PRIVATE) {
+    return json({ error: 'A non-refundable retainer portion describes a private-client '
+      + `engagement, and this send is ${sendCtx}. Leave it out, or send from the private card.`,
+      code: 'non_refundable_not_private' }, 400);
+  }
+  const nonRef = nonRefundableFor(retainer, body.non_refundable);
+  if (nonRef.error) return json({ error: nonRef.error, code: nonRef.code }, 400);
   /* THE DOCUMENT IS BUILT FOR THE CONTEXT, NOT JUST THE PRODUCT (Unit 28).
      `sheetById` returns the raw product, so a legal send emailed the PRIVATE
      card's audience and closing — "Private surveillance, domestic and family
@@ -1839,7 +1956,7 @@ async function emailSheet(request, env, user, id) {
      stay the legal card, which IS the existing legal pricing. */
   const sheet = legalSvc && legalSvc.model === 'fixed'
     ? legalFixedSheet(legalSvc, flatFee)
-    : sheetForContext(id, sendCtx, retainer);
+    : sheetForContext(id, sendCtx, retainer, nonRef.amount);
 
   /* The Options step (UIBUILD P18): include the intake, or not. Which intake
      is never the caller's choice.
@@ -1972,6 +2089,11 @@ async function emailSheet(request, env, user, id) {
      instructions says nothing whatever about the retainer being paid. */
   return json({ ok: true, sent_to: to, sheet: sheet.id,
     send_context: sendCtx,
+    /* The figure the document actually carried, so the screen, the record and
+       the client cannot quietly disagree — the `legal_service` / `flat_fee`
+       rule applied to the third per-send figure. Absent on a non-private send,
+       because there is no such portion on one. */
+    non_refundable: sendCtx === SEND_CONTEXT.PRIVATE ? nonRef.amount : undefined,
     /* Which legal service the document was generated from — observable and
        asserted, the send_context rule applied one level down. Absent when no
        service was named or on file, which is the pre-unit send exactly. */
@@ -3630,6 +3752,34 @@ function npPayBlockHtml(picked) {
   </div>`;
 }
 
+/* THE ENGAGEMENT BLOCK IN EACH MEDIUM. Two renderers, one set of words — the
+   block itself is built by `engagementBlock` and neither of these composes a
+   sentence or a figure of its own.
+
+   PLAIN TEXT CANNOT CARRY COLOUR, which is exactly why the owner wrote those
+   two statements in capitals: the emphasis survives the medium that has no
+   styling at all. The HTML adds the red and the gold on top of the same words,
+   never instead of them. The two colours are the portal's own `--bad`
+   (#c14133, 5.15:1 on white) and `--gold-ink` (#7a5a12, 6.37:1) — computed,
+   not picked, and an email cannot read a CSS variable so the values are
+   written out here as every other colour in this template already is. */
+function engagementText(block) {
+  if (!block) return '';
+  return `\n${block.lines.map(l => l.text).join('\n')}\n\n${block.note}\n`;
+}
+
+function engagementHtml(block) {
+  if (!block) return '';
+  const tone = t => t === 'alert' ? 'color:#c14133;font-weight:800;font-size:1.05rem'
+    : t === 'emphasis' ? 'color:#7a5a12;font-weight:800;letter-spacing:.04em'
+    : 'color:#12305a;font-weight:700';
+  return `<div style="margin:0 0 18px;padding:14px 16px;background:#f7f9fb;
+    border:1px solid #e4e9ed;border-left:4px solid #c14133;border-radius:6px">
+    ${block.lines.map(l => `<div style="margin:0 0 6px;${tone(l.tone)}">${escHtml(l.text)}</div>`).join('')}
+    <p style="margin:10px 0 0;font-size:.84rem;color:#5c6775;line-height:1.5">${escHtml(block.note)}</p>
+  </div>`;
+}
+
 function sheetEmail(sheet, note, intake, pay, retainer, npPicked) {
   /* Belt and braces on the boundary: even called wrongly, the carrier sheet
      cannot carry a consumer payment handle. */
@@ -3642,7 +3792,7 @@ Always Precise Investigations, LLC — Va DCJS #11-9159
 
 ${sheet.audience}
 ${sheet.summary}
-${note ? `\n${note}\n` : ''}
+${note ? `\n${note}\n` : ''}${engagementText(sheet.engagement)}
 ${rows}
 
 ${sheet.closing_title}
@@ -3659,6 +3809,7 @@ Always Precise Investigations, LLC`;
   <p style="margin:0 0 14px;font-size:.88rem;color:#5c6775">${escHtml(sheet.audience)}</p>
   <p style="margin:0 0 18px">${escHtml(sheet.summary)}</p>
   ${note ? `<p style="margin:0 0 18px;padding:12px 14px;background:#f4f8fa;border-left:3px solid #2f7d90">${escHtml(note)}</p>` : ''}
+  ${engagementHtml(sheet.engagement)}
   <table style="width:100%;border-collapse:collapse;margin:0 0 18px">
     ${sheet.lines.map(l => `<tr>
       <td style="padding:12px 0;border-bottom:1px solid #e4e9ed;vertical-align:top">
@@ -14199,9 +14350,20 @@ async function assistantSheetPlan(env, body) {
   }
   /* No rate-limit spend here: nothing is about to be sent. */
   const retainer = await retainerForSend(env, caseNo, body.retainer_amount);
+  /* THE NON-REFUNDABLE PORTION, mirroring `emailSheet` step for step through
+     the same one function — same refusals, same code names, so the rehearsal
+     cannot answer READY TO SEND about a figure the sender would reject. */
+  if (body.non_refundable !== undefined && body.non_refundable !== null
+      && String(body.non_refundable).trim() !== '' && sendCtx !== SEND_CONTEXT.PRIVATE) {
+    return { fail: json({ error: 'A non-refundable retainer portion describes a private-client '
+      + `engagement, and this send is ${sendCtx}. Leave it out, or send from the private card.`,
+      code: 'non_refundable_not_private' }, 400) };
+  }
+  const nonRef = nonRefundableFor(retainer, body.non_refundable);
+  if (nonRef.error) return { fail: json({ error: nonRef.error, code: nonRef.code }, 400) };
   const sheet = legalSvc && legalSvc.model === 'fixed'
     ? legalFixedSheet(legalSvc, flatFee)
-    : sheetForContext(id, sendCtx, retainer);
+    : sheetForContext(id, sendCtx, retainer, nonRef.amount);
   const includeIntake = body.include_intake === true || body.include_intake === 1 || body.include_intake === '1';
   const baseDoor = includeIntake ? (intakeForContext(sendCtx) || null) : null;
   const intakeDoor = baseDoor && legalSvc
@@ -14235,7 +14397,7 @@ async function assistantSheetPlan(env, body) {
     ? `${sheet.name} — Always Precise Investigations (case ${caseNo})`
     : `${sheet.name} — Always Precise Investigations`;
   return { to, subject, text, sendCtx, legalSvc, flatFee, sheet, intakeDoor,
-           payment, npPicked, linkedCase, caseNo };
+           payment, npPicked, linkedCase, caseNo, nonRef };
 }
 
 /* POST /assistant/prepare-sheet — what WOULD go, priced by the real
@@ -14245,6 +14407,7 @@ async function assistantPrepareSheet(request, env) {
   if (plan.fail) return plan.fail;
   return json({ ok: true, dry_run: true, to: plan.to, case_no: plan.linkedCase,
     send_context: plan.sendCtx, sheet: plan.sheet.id, sheet_name: plan.sheet.name,
+    non_refundable: plan.sendCtx === SEND_CONTEXT.PRIVATE ? plan.nonRef.amount : undefined,
     legal_service: plan.legalSvc
       ? { id: plan.legalSvc.id, label: plan.legalSvc.label, model: plan.legalSvc.model } : undefined,
     flat_fee: plan.legalSvc && plan.legalSvc.model === 'fixed' ? plan.flatFee : undefined,
@@ -14266,7 +14429,8 @@ async function assistantSimulateSheet(request, env, user) {
   return assistantLogged(env, user, 'sheet_send',
     { ok: true, outcome: ASSISTANT_SIM_OUTCOME, to: plan.to,
       case_no: plan.linkedCase, send_context: plan.sendCtx,
-      sheet: plan.sheet.id, sheet_name: plan.sheet.name },
+      sheet: plan.sheet.id, sheet_name: plan.sheet.name,
+      non_refundable: plan.sendCtx === SEND_CONTEXT.PRIVATE ? plan.nonRef.amount : undefined },
     { context: plan.sendCtx, sheet_id: plan.sheet.id, subject: plan.subject,
       door: plan.intakeDoor ? plan.intakeDoor.url : null,
       methods: plan.npPicked.length ? plan.npPicked : plan.payment.map(x => x.id) });
@@ -16369,9 +16533,25 @@ async function route(request, env) {
        nothing and shows nothing new. The PRIVATE card never gains the line —
        the map is legal/insurance contexts only. */
     const billcom = await billcomState(env);
-    return json({ sheets: sheetCards(retainer).map(c =>
+    /* THE NON-REFUNDABLE PORTION TRAVELS BESIDE THE RETAINER, for the reason
+       the retainer does: the wizard's control has to open on the figure this
+       send will actually carry, and parsing it back out of the card's own
+       wording would work until someone reworded the wording. `?nr=` is the
+       amount typed on a send; absent, the ONE function supplies the standard
+       one. An amount the sender would refuse is refused here too, so the
+       screen cannot preview a document the send will not produce. */
+    const nrAsked = url.searchParams.get('nr');
+    const nrRead = nonRefundableFor(retainer, nrAsked);
+    if (nrRead.error) return json({ error: nrRead.error, code: nrRead.code }, 400);
+    return json({ sheets: sheetCards(retainer, nrRead.amount).map(c =>
                     c.context === SEND_CONTEXT.PRIVATE ? c : withBillcomLine(c, billcom.ready)),
                   retainer,
+                  /* Observable, like `send_context`: the screen states the
+                     figure it resolved rather than leaving it to be inferred
+                     from the card, and `non_refundable_default` is what a
+                     blank box means so the page never hard-codes 500. */
+                  non_refundable: nrRead.amount,
+                  non_refundable_default: nonRefundableFor(retainer, null).amount,
                   /* LEGAL-SERVICES.md — the catalogue the legal send wizard
                      offers. price_label is COMPOSED HERE so no figure ever
                      lives in the page source (the no-dollar guard), and
