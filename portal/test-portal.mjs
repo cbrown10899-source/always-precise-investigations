@@ -17380,7 +17380,11 @@ section('Intakes: tapping a submitted intake opens what the client signed');
       doorTab: door ? door.dataset.tab : null,
       /* the identity is INSIDE the door, so tapping the name is tapping it */
       nameInDoor: door ? /Michelle Fultz/.test(door.innerText) : false,
-      signed: /Signed/.test(c.innerText),
+      /* CASE-INSENSITIVE ON PURPOSE: `.tag` is text-transform:uppercase and
+         innerText returns RENDERED text, so the card reads "SIGNED ✓". The
+         first version of this assertion matched the source casing and failed
+         against correct output — the test was wrong, not the card. */
+      signed: /signed/i.test(c.innerText),
       /* the admin ladder is folded, not deleted */
       statusInHeader: !!c.querySelector('.pc-top select'),
       statusUnderMore: !!c.querySelector('.pc-more select'),
