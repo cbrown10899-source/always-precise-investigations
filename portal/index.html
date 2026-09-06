@@ -4649,8 +4649,9 @@ function dashBands(){
                money.length ? "warn" : "", {set: money, go: "cases"})
     /* NEVER A WARNING. The owner is explicit that assignment stays optional, so
        this card reports and does not scold: a case can run unassigned. */
-    + statCard("Needs assignment", s.unassigned || 0, "No investigator yet — optional",
-               "", {go: "cases"})
+    + (prefHidden("needs_assignment") ? ""
+       : statCard("Needs assignment", s.unassigned || 0, "No investigator yet — optional",
+               "", {go: "cases"}))
     /* UNIT 5 — a dead file store is attention, a healthy one is not: the card
        exists only in the broken states, because "Dropbox: fine" on every
        morning's dashboard is how a card stops being read. The flag arrives on
@@ -9049,7 +9050,11 @@ function mypResetAll(){
 }
 
 function settingsView(){
-  return `${myPortalHtml()}${notifySettingsHtml()}${billingSettingsHtml()}${caseTypesHtml()}${paymentSettingsHtml()}${dropboxSettingsHtml()}${storageHealthHtml()}<div class="card">
+  /* MY PORTAL SITS SECOND, after Who gets told: the recipients card is the
+     Settings landing the suite and the owner already know, and displacing it
+     broke a dozen assertions about "the first card". Personal does not need
+     to be first to be findable. */
+  return `${notifySettingsHtml()}${myPortalHtml()}${billingSettingsHtml()}${caseTypesHtml()}${paymentSettingsHtml()}${dropboxSettingsHtml()}${storageHealthHtml()}<div class="card">
     <div class="bar"><h2 style="margin:0">Settings</h2></div>
     <h3 style="margin:6px 0 4px;font-size:1rem">Developer &amp; testing</h3>
     <p class="note">Working material for trying the portal out. None of it touches a real case.</p>
@@ -15877,7 +15882,8 @@ function fcFormHtml(d){
     ${fcLedgerHtml(d, { projected: false })}
     ${rec > 0 ? `<div class="fc-presets" role="group" aria-label="Retained amount presets">
       <span class="optn">Retain:</span>
-      <button class="btn sm ghost" data-act="fcPreset" data-amt="500">$500</button>
+      ${(d.retain_presets || []).map(v =>
+        `<button class="btn sm ghost" data-act="fcPreset" data-amt="${esc(String(v))}">${usd(v)}</button>`).join("")}
       <button class="btn sm ghost" data-act="fcPreset" data-amt="${esc(String(rec))}">Full amount</button>
       <button class="btn sm ghost" data-act="fcPreset" data-amt="">Custom</button>
     </div>` : ""}

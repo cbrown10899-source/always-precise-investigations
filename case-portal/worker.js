@@ -5616,7 +5616,12 @@ async function closeoutRead(env, user, caseNo) {
   return json({ ok: true, ...m,
     checklist_open: await closeoutBlockers(env, caseNo),
     reasons: Object.entries(CLOSE_REASONS).map(([id, label]) => ({ id, label })),
-    refund_statuses: Object.entries(REFUND_STATUSES).map(([id, label]) => ({ id, label })) });
+    refund_statuses: Object.entries(REFUND_STATUSES).map(([id, label]) => ({ id, label })),
+    /* The retain preset is the SAME business figure as the rate sheet's
+       standard non-refundable portion — one source, and the page holds no
+       dollar literal (the no-rate-in-page-source guard caught the first cut,
+       and the guard was right). */
+    retain_presets: [NON_REFUNDABLE_DEFAULT] });
 }
 
 /* POST /cases/:no/closeout/prepare — the office's decision, NO MONEY MOVED.

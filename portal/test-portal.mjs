@@ -716,9 +716,13 @@ section('The dashboard');
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
   const stats = await text(page, '.stats');
-  for (const label of ['Open cases', 'Needs assignment', 'Out now', 'Reports due', 'Authorization low']) {
+  for (const label of ['Open cases', 'Out now', 'Reports due', 'Authorization low']) {
     ok(`the dashboard shows ${label}`, has(stats, label), stats);
   }
+  /* FACTORY-HIDDEN (CEO charter Mission 2): an owner-operated firm has nobody
+     to formally assign, so the card is personal-optional now — asserted per
+     user in the My Portal section, including that unhiding brings it back. */
+  ok('Needs assignment is factory-hidden from the cards', !has(stats, 'Needs assignment'), stats);
   ok('carrier and private counts moved to the case bar, not the cards',
      !has(stats, 'Carrier') && has(await text(page, '.bar'), 'carrier'));
   ok('the counts are real numbers', /\d/.test(stats));
@@ -4839,9 +4843,11 @@ section('The dashboard leads with two named bands');
   const heads = (await page.locator('.bandhead h2').allInnerTexts()).map(s => s.trim().toLowerCase());
   ok('named Needs attention then Current work', heads.join('|') === 'needs attention|current work', heads.join('|'));
 
-  for (const c of ['New intakes', 'Reports due', 'Retainer / authorization', 'Needs assignment']) {
+  for (const c of ['New intakes', 'Reports due', 'Retainer / authorization']) {
     ok(`Needs attention carries ${c}`, has(body, c), body.slice(0, 400));
   }
+  ok('Needs assignment is factory-hidden from the bands too', !has(body, 'Needs assignment'),
+     body.slice(0, 200));
   for (const c of ['Active today', 'Ready to build', 'Packages ready', 'Outstanding']) {
     ok(`Current work carries ${c}`, has(body, c), body.slice(0, 400));
   }
@@ -4867,11 +4873,21 @@ section('The dashboard leads with two named bands');
   }
   ok('storage is accounted for somewhere on the dashboard', has(body, 'storage'), also);
 
-  // Assignment stays optional: the card reports, it never scolds.
+  // Assignment stays optional WHEN A USER UNHIDES IT: the card reports, it
+  // never scolds. The unhide is this user's own, restored below.
+  await page.evaluate(async () => {
+    await api('/me/prefs', { method: 'POST', body: { hidden: [] } });
+    await loadMyPrefs(); paint();
+  });
+  await page.waitForTimeout(400);
   const assign = await page.locator('.stat', { hasText: 'Needs assignment' }).first();
-  ok('Needs assignment is never dressed as a warning',
+  ok('unhidden, Needs assignment is never dressed as a warning',
      !(await assign.getAttribute('class')).includes('warn'), await assign.getAttribute('class'));
   ok('and says so in words', has(await assign.innerText(), 'optional'), await assign.innerText());
+  await page.evaluate(async () => {
+    await api('/me/prefs', { method: 'POST', body: { hidden: null } });
+    await loadMyPrefs(); paint();
+  });
 
   await page.close();
 }
@@ -6804,11 +6820,19 @@ section('A lead has its own life, and its sends live on the card');
 
   const card = page.locator('.pcard', { hasText: 'API-20260812-4005' });
   ok('a fresh lead is on the desk', await card.count() === 1);
-  /* THE LADDER IS STILL HERE, FOLDED. It moved under Admin status because a
-     dropdown was as loud as the client's own name on a card whose job is
-     "somebody submitted this, read it" — so the visible text must NOT lead
-     with it, while the control itself is still present and still works. */
-  ok('the lead ladder is present but folded under Admin status',
+  /* FACTORY-HIDDEN ENTIRELY NOW (CEO charter Mission 5): the CRM ladder is
+     not the primary intake experience. The statuses keep working underneath —
+     unhiding is a personal choice, and the folded disclosure returns exactly
+     as it was for that user. */
+  ok('the lead ladder is factory-hidden from the card',
+     await card.locator('.pc-more').count() === 0, (await card.innerText()).slice(0, 160));
+  await page.evaluate(async () => {
+    await api('/me/prefs', { method: 'POST', body: { hidden: ['needs_assignment'] } });
+    await loadMyPrefs(); paint();
+  });
+  await page.waitForTimeout(400);
+  /* THE LADDER IS STILL HERE, FOLDED, for the user who wants it. */
+  ok('unhidden, the lead ladder is present but folded under Admin status',
      has(await card.innerText(), 'Admin status')
      && !has(await card.innerText(), 'Lead status')
      && await card.locator('select[data-act="leadStatus"]').count() === 1,
@@ -6894,6 +6918,11 @@ section('A lead has its own life, and its sends live on the card');
   ok('the Comm log records what the portal itself sent', has(log, 'Sent from the portal'));
   ok('including the attempt that failed, marked failed', has(log, 'Failed'));
   ok('naming who it went to', has(log, 'riley@example.test'));
+  /* Factory state back for every later section — the unhide above was this
+     user's own row and would otherwise leak forward. */
+  await page.evaluate(async () => {
+    await api('/me/prefs', { method: 'POST', body: { hidden: null } });
+  });
   await page.close();
 }
 
@@ -20722,6 +20751,10 @@ section('My Portal: two sign-ins, two layouts, one shared caseload');
     [...document.querySelectorAll('.qtapps [data-qt]')].map(b => b.dataset.qt)[0]);
   ok("the same browser tab, signed in as B, draws B's portal — not the last user's",
      sameTab === 'sheets', String(sameTab));
+  /* Leave the shared fixture user factory-clean for anything that runs after. */
+  await pageB.evaluate(async () => {
+    await api('/me/prefs', { method: 'POST', body: { hidden: null, qt_order: null } });
+  });
   await pageA.close();
   await pageB.close();
 }
