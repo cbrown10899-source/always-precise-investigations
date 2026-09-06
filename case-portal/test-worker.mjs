@@ -19889,6 +19889,390 @@ section('The private rate sheet carries a non-refundable portion, from one sourc
   globalThis.fetch = realFetch;
 }
 
+section('Case closeout: a refund is its own event and the payment is never touched');
+{
+  /* THE OWNER'S ONE ACCOUNTING RULE, in their own words: "Do NOT modify the
+     original payment to pretend less money was received." Every assertion in
+     this section is written to catch the opposite of that — so the payment row
+     is read back byte for byte AFTER a refund has been issued against it, not
+     merely counted. */
+  const realFetch = globalThis.fetch;
+  let mailed = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) { mailed = JSON.parse(init.body); return new Response('{"id":"re_1"}', { status: 200 }); }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.INGEST_PER_MINUTE = '80';
+  env.MAIL_PER_MINUTE = '80';
+  env.RESEND_API_KEY = 'test-resend-key';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const invLink = (await jsonOf(await invite(env, admin,
+    { username: 'fieldco', role: 'investigator', display_name: 'Field Co' }))).url;
+  const invTok = new URL(invLink, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${invTok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'fieldco', 'FieldWork2026x')).cookie;
+  ok('the investigator account this section needs actually signed in', inv !== '');
+
+  const ALL_TICKS = { field_work: true, activity_logs: true, evidence: true, report: true,
+                      admin_review: true, deliverables: true, expenses: true, billing: true };
+
+  /* One case, one payment of a stated size, checklist finished — the ordinary
+     shape a closeout meets. Everything below builds on this. */
+  const caseWith = async (no, amount, opts = {}) => {
+    await ingest(env, { case_no: no, service: 'Surveillance',
+      client_name: opts.client || 'Vanessa Reed', subject_name: 'S. Subject' });
+    if (amount > 0) {
+      await call(env, `/cases/${no}/retainer`, { method: 'POST', cookie: admin,
+        body: { retainer_amount: 1500, received: true, amount_received: amount,
+                method: 'venmo', paid_on: '2026-09-01', reference: `wire ${no}` } });
+    }
+    if (opts.checklist !== false) {
+      await call(env, `/cases/${no}/closure`, { method: 'POST', cookie: admin,
+        body: { checklist: ALL_TICKS } });
+    }
+    return no;
+  };
+  const money = async no => jsonOf(await call(env, `/cases/${no}/closeout-money`, { cookie: admin }));
+  const prepare = (no, body) => call(env, `/cases/${no}/closeout/prepare`,
+    { method: 'POST', cookie: admin, body });
+  const confirm = (no, body = {}) => call(env, `/cases/${no}/closeout/confirm`,
+    { method: 'POST', cookie: admin, body });
+  const payments = async no => (await jsonOf(await call(env, `/cases/${no}/workspace`,
+    { cookie: admin }))).authorization.retainer.payments || [];
+
+  /* ---- THE OWNER'S FIRST WORKED CASE: $1,000 received, $400 retained,
+     $600 refunded. ---- */
+  await caseWith('API-CLO-A', 1000);
+  let m = await money('API-CLO-A');
+  ok('the ledger reads the money the case actually took in, without being retyped',
+     m.retainer_received === 1000, String(m.retainer_received));
+  ok('and refuses to state a final balance before anyone has said what was earned',
+     m.retained === null && m.final_balance === null, JSON.stringify([m.retained, m.final_balance]));
+  ok('while saying what is still unallocated', m.unallocated === 1000);
+
+  /* THE PAYMENT ROW, PHOTOGRAPHED BEFORE. Compared byte for byte after the
+     refund below — a count would not catch an amount edited in place. */
+  const payBefore = JSON.stringify(await payments('API-CLO-A'));
+
+  let r = await jsonOf(await prepare('API-CLO-A',
+    { retained: 400, refund: 600, reason: 'completed', note: 'Surveillance concluded early.' }));
+  ok('preparing records the office decision and computes the balance from the ledger',
+     r.retained === 400 && r.closeout.agreed_refund === 600, JSON.stringify(r.retained));
+  /* THE TWO BALANCES ARE DIFFERENT QUESTIONS, and conflating them is how a
+     screen ends up asserting a refund that has not been issued. Before the
+     confirm the LEDGER balance is $600, because the office is still holding
+     $600; the PROJECTION is what the agreed figures would settle to. */
+  ok('$1,000 in, $400 earned, $600 still held — the ledger says $600, truthfully',
+     r.final_balance === 600, String(r.final_balance));
+  ok('and the projection the office reviews says the closeout settles to zero',
+     r.projected_balance === 0 && r.refund_pending === 600,
+     JSON.stringify([r.projected_balance, r.refund_pending]));
+  ok('and PREPARING MOVES NO MONEY — the refund ledger is still empty',
+     r.refunded === 0 && r.refunds.length === 0, JSON.stringify(r.refunds));
+
+  mailed = null;
+  let c = await jsonOf(await confirm('API-CLO-A', { method: 'venmo', refunded_on: '2026-09-06' }));
+  ok('confirming writes the refund as its own ledger event',
+     c.refunds.length === 1 && c.refunds[0].amount === 600, JSON.stringify(c.refunds));
+  ok('the refund names its own method, date and who recorded it',
+     c.refunds[0].method === 'venmo' && c.refunds[0].refunded_on === '2026-09-06'
+     && c.refunds[0].recorded_by_name === 'Trever', JSON.stringify(c.refunds[0]));
+  ok('and the case closes through the checklist door that already existed',
+     c.case_closed === true && c.checklist_open.length === 0, JSON.stringify(c.checklist_open));
+  ok('CLOSING EMAILED NOBODY — the owner\'s rule, asserted at the transport',
+     mailed === null);
+
+  /* ---- THE RULE ITSELF. ---- */
+  ok('THE ORIGINAL PAYMENT IS UNCHANGED, byte for byte, after the refund',
+     JSON.stringify(await payments('API-CLO-A')) === payBefore);
+  m = await money('API-CLO-A');
+  ok('and the case still reports the full $1,000 it actually received',
+     m.retainer_received === 1000, String(m.retainer_received));
+  ok('the refund stands as a separate -$600 event beside it', m.refunded === 600);
+  ok('and the three reconcile: 1000 - 400 - 600 = 0', m.final_balance === 0);
+  ok('the projection and the ledger agree once the refund is real, with nothing left pending',
+     m.projected_balance === 0 && m.refund_pending === 0,
+     JSON.stringify([m.projected_balance, m.refund_pending]));
+  const ws = await jsonOf(await call(env, '/cases/API-CLO-A/workspace', { cookie: admin }));
+  ok('the case reads as closed', ws.status === 'closed' && ws.stage === 'closed');
+
+  /* ---- THE OWNER'S SECOND WORKED CASE: $1,500 / $500 / $1,000. ---- */
+  await caseWith('API-CLO-B', 1500);
+  await prepare('API-CLO-B', { retained: 500, refund: 1000, reason: 'client_requested' });
+  c = await jsonOf(await confirm('API-CLO-B'));
+  ok('$1,500 received, $500 retained, $1,000 refunded also settles to zero',
+     c.retainer_received === 1500 && c.retained === 500 && c.refunded === 1000
+     && c.final_balance === 0, JSON.stringify([c.retainer_received, c.retained, c.refunded]));
+
+  /* ---- NO REFUND AT ALL. The whole retainer was earned. ---- */
+  await caseWith('API-CLO-C', 1500);
+  await prepare('API-CLO-C', { retained: 1500, refund: 0, reason: 'completed' });
+  c = await jsonOf(await confirm('API-CLO-C'));
+  ok('a case that earned the whole retainer settles with no refund',
+     c.retained === 1500 && c.refunded === 0 && c.final_balance === 0);
+  ok('and NO REFUND ROW IS WRITTEN for a zero — an event that did not happen is not recorded',
+     c.refunds.length === 0, JSON.stringify(c.refunds));
+
+  /* ---- PARTIAL REFUND, and the honest leftover. Money that is neither
+     earned nor returned is a real state, and the portal shows it as one
+     rather than rounding it into whichever column makes the total tidy. ---- */
+  await caseWith('API-CLO-D', 1000);
+  await prepare('API-CLO-D', { retained: 400, refund: 200, reason: 'no_further_action' });
+  c = await jsonOf(await confirm('API-CLO-D'));
+  ok('a partial refund leaves the unallocated remainder visible, not hidden',
+     c.refunded === 200 && c.final_balance === 400 && c.unallocated === 400,
+     JSON.stringify([c.refunded, c.final_balance]));
+
+  /* ---- THE REFUSAL. "Refund + amount retained must not exceed legitimate
+     money received." ---- */
+  await caseWith('API-CLO-E', 1000);
+  let res = await prepare('API-CLO-E', { retained: 600, refund: 600 });
+  let j = await jsonOf(res);
+  ok('allocating more than the case ever received is REFUSED, by name',
+     res.status === 400 && j.code === 'closeout_does_not_reconcile', JSON.stringify(j).slice(0, 120));
+  ok('and the refusal shows the arithmetic rather than saying "invalid"',
+     /\$600 retained plus \$600 refunded is \$1,200, and only \$1,000 was actually received/
+       .test(j.error), j.error);
+  res = await prepare('API-CLO-E', { retained: 0, refund: 1200 });
+  ok('a refund alone larger than the money received is refused the same way',
+     res.status === 400 && (await jsonOf(res)).code === 'closeout_does_not_reconcile');
+  res = await prepare('API-CLO-E', { retained: -50, refund: 0 });
+  ok('a negative retained figure is refused', res.status === 400);
+  res = await prepare('API-CLO-E', { retained: 0, refund: -50 });
+  ok('and so is a negative refund', res.status === 400);
+  m = await money('API-CLO-E');
+  ok('and NOTHING was written by any of those attempts',
+     m.refunds.length === 0 && m.closeout === null, JSON.stringify(m.closeout));
+  /* THE EXACT BOUNDARY IS ALLOWED. Spending every dollar is the ordinary case,
+     and a >= comparison would have refused it. */
+  ok('allocating exactly what was received is accepted',
+     (await prepare('API-CLO-E', { retained: 1000, refund: 0 })).status === 200);
+  /* CENTS ARE COMPARED AS CENTS. Two sums of REAL columns can miss equality by
+     1e-13, and refusing correct arithmetic over that is the portal being wrong
+     about the one thing it is here to get right. */
+  await caseWith('API-CLO-F', 100.10);
+  await prepare('API-CLO-F', { retained: 33.37, refund: 66.73 });
+  c = await jsonOf(await confirm('API-CLO-F'));
+  ok('a closeout to the cent reconciles, and does not trip on binary floats',
+     c.final_balance === 0, JSON.stringify([c.retainer_received, c.retained, c.refunded, c.final_balance]));
+
+  /* ---- CONFIRMING IS THE CONSEQUENTIAL HALF, AND IT IS ORDERED. ---- */
+  await caseWith('API-CLO-G', 1000);
+  res = await confirm('API-CLO-G');
+  ok('confirming before preparing is refused — the figures are reviewed first',
+     res.status === 400 && (await jsonOf(res)).code === 'not_prepared');
+  await prepare('API-CLO-G', { retained: 1000, refund: 0 });
+  await confirm('API-CLO-G');
+  res = await confirm('API-CLO-G');
+  ok('and an already-closed case refuses a second closeout, by name',
+     res.status === 409 && (await jsonOf(res)).code === 'already_closed_out');
+  m = await money('API-CLO-G');
+  ok('so the ledger cannot be doubled by a second tap', m.refunds.length === 0);
+  /* The refund case, same shape: the second confirm must not issue a second
+     refund against the same decision. */
+  await caseWith('API-CLO-H', 1000);
+  await prepare('API-CLO-H', { retained: 100, refund: 900 });
+  await confirm('API-CLO-H');
+  await confirm('API-CLO-H');
+  m = await money('API-CLO-H');
+  ok('a repeated confirmation issues exactly one refund, never two',
+     m.refunds.length === 1 && m.refunded === 900, JSON.stringify(m.refunds));
+
+  /* ---- THE CHECKLIST IS STILL THE ONLY DOOR, and a refund that happened is
+     still reported as having happened. ---- */
+  await caseWith('API-CLO-I', 1000, { checklist: false });
+  m = await money('API-CLO-I');
+  ok('the closeout screen is told what is still open BEFORE the button',
+     m.checklist_open.length === 8 && m.checklist_open.includes('Billing reviewed'),
+     JSON.stringify(m.checklist_open.length));
+  await prepare('API-CLO-I', { retained: 300, refund: 700 });
+  c = await jsonOf(await confirm('API-CLO-I'));
+  ok('an unfinished checklist leaves the case OPEN, and says so',
+     c.case_closed === false && c.checklist_open.length === 8);
+  ok('but the refund it recorded is still on the ledger — a fact is not hidden '
+     + 'because a tick is missing', c.refunds.length === 1 && c.refunded === 700);
+  const iws = await jsonOf(await call(env, '/cases/API-CLO-I/workspace', { cookie: admin }));
+  ok('and the case genuinely did not close', iws.status !== 'closed');
+
+  /* ---- A VOIDED PAYMENT IS MONEY THAT NEVER STAYED, and the reconciliation
+     is re-checked at the moment of writing rather than only at prepare. ---- */
+  await caseWith('API-CLO-J', 1000);
+  await prepare('API-CLO-J', { retained: 400, refund: 600 });
+  for (const p of await payments('API-CLO-J')) {
+    await call(env, `/cases/API-CLO-J/retainer/payment/${p.id}/void`,
+      { method: 'POST', cookie: admin, body: { reason: 'bank reversed it' } });
+  }
+  res = await confirm('API-CLO-J');
+  ok('a closeout that stopped reconciling after a void is refused at the write',
+     res.status === 400 && (await jsonOf(res)).code === 'closeout_does_not_reconcile');
+  m = await money('API-CLO-J');
+  ok('and no refund was issued against money the case no longer has',
+     m.retainer_received === 0 && m.refunds.length === 0);
+
+  /* ---- THE STATEMENT AND THE EMAIL ARE SEPARATE EXPLICIT ACTS. ---- */
+  const emailIt = (no, body) => call(env, `/cases/${no}/closeout/email`,
+    { method: 'POST', cookie: admin, body });
+  await caseWith('API-CLO-L', 1000);
+  mailed = null;
+  res = await emailIt('API-CLO-L', { to: 'client@example.com' });
+  ok('a statement cannot be emailed about a closeout nobody has even prepared',
+     res.status === 400 && (await jsonOf(res)).code === 'not_closed_out',
+     `${res.status} ${JSON.stringify(await jsonOf(res)).slice(0, 90)}`);
+  await prepare('API-CLO-L', { retained: 400, refund: 600 });
+  res = await emailIt('API-CLO-L', { to: 'client@example.com' });
+  ok('nor one that is only prepared — preparing moves no money and closes nothing',
+     res.status === 400 && (await jsonOf(res)).code === 'not_closed_out');
+  ok('and nothing left the building', mailed === null);
+  /* THE DOCUMENT PRINTS "CASE STATUS: CLOSED", SO THE CASE HAS TO BE CLOSED.
+     API-CLO-I confirmed its closeout and issued a real refund, and its
+     checklist refused to close the case — a state the confirm reports rather
+     than hides. Emailing the statement there would tell the client their case
+     is closed when it is open. */
+  res = await emailIt('API-CLO-I', { to: 'client@example.com' });
+  j = await jsonOf(res);
+  ok('nor about a case the checklist has not actually closed',
+     res.status === 400 && j.code === 'case_not_closed', JSON.stringify(j).slice(0, 120));
+  ok('and the refusal names what is still open rather than saying "not allowed"',
+     Array.isArray(j.checklist_open) && j.checklist_open.includes('Billing reviewed'),
+     JSON.stringify(j.checklist_open));
+  ok('nothing left the building for that one either', mailed === null);
+  mailed = null;
+  res = await emailIt('API-CLO-A', { to: 'not-an-address' });
+  ok('a malformed address is refused', res.status === 400);
+  ok('still nothing sent', mailed === null);
+  let sent = await jsonOf(await emailIt('API-CLO-A', { to: 'vanessa@example.com' }));
+  ok('emailing the statement is its own act, on its own route', sent.ok === true
+     && sent.sent_to === 'vanessa@example.com');
+  const doc = `${mailed.text}\n${mailed.html}`;
+  ok('the document is a FINAL CLOSEOUT STATEMENT, not an invoice',
+     /Final Closeout Statement/i.test(mailed.subject) && /FINAL CLOSEOUT STATEMENT/.test(mailed.text)
+     && !/invoice/i.test(doc), mailed.subject);
+  ok('and every figure on it is the ledger\'s',
+     /Retainer received\.+ \$1,000/.test(mailed.text)
+     && /Non-refundable retained\.+ \$400/.test(mailed.text)
+     && /Refund issued\.+ \$600/.test(mailed.text)
+     && /FINAL BALANCE\.+ \$0/.test(mailed.text), mailed.text.slice(0, 400));
+  ok('it names the client and the case, and states the status in words',
+     /Vanessa Reed/.test(doc) && /API-CLO-A/.test(doc) && /CASE STATUS: CLOSED/.test(mailed.text));
+  ok('it asks for no money and quotes no rate',
+     !/amount due|please remit|pay now|per hour|\/hr/i.test(doc));
+  mailed = null;
+  res = await emailIt('API-CLO-A', { to: 'vanessa@example.com' });
+  ok('a second send is refused by name rather than quietly duplicated',
+     res.status === 409 && (await jsonOf(res)).code === 'already_emailed');
+  ok('and it did not send', mailed === null);
+  sent = await jsonOf(await emailIt('API-CLO-A', { to: 'vanessa@example.com', resend: true }));
+  ok('but a deliberate resend goes, because the office said it meant it',
+     sent.ok === true && mailed !== null);
+  m = await money('API-CLO-A');
+  ok('the send is recorded on the closeout itself', m.closeout.emailed_at != null
+     && m.closeout.emailed_to === 'vanessa@example.com');
+  ok('AND EMAILING CHANGED NOT ONE FIGURE',
+     m.retainer_received === 1000 && m.retained === 400 && m.refunded === 600
+     && m.final_balance === 0 && m.refunds.length === 1);
+
+  /* ---- THE ROLE BOUNDARY, on all four routes. ---- */
+  for (const [path, method] of [['closeout-money', 'GET'], ['closeout/prepare', 'POST'],
+                                ['closeout/confirm', 'POST'], ['closeout/email', 'POST']]) {
+    const rr = await call(env, `/cases/API-CLO-A/${path}`,
+      { method, cookie: inv, body: method === 'POST' ? {} : undefined });
+    ok(`an investigator is refused ${path}`, rr.status === 403, String(rr.status));
+  }
+  ok('and an invented case number answers not found, never a ledger',
+     (await call(env, '/cases/API-NOT-A-CASE/closeout-money', { cookie: admin })).status === 404);
+
+  /* ---- HOSTILE INPUT. ---- */
+  await caseWith('API-CLO-K', 1000);
+  ok('a reason that is not one of the four is refused',
+     (await prepare('API-CLO-K', { retained: 0, refund: 0, reason: 'because' })).status === 400);
+  ok('a dollar sign and commas in the typed figure are read, not rejected',
+     (await jsonOf(await prepare('API-CLO-K', { retained: '$1,000', refund: '0' }))).retained === 1000);
+  r = await jsonOf(await prepare('API-CLO-K',
+    { retained: 500, refund: 500, note: '<img src=x onerror=alert(1)>' }));
+  ok('a note is stored as the text it is', r.closeout.note === '<img src=x onerror=alert(1)>');
+  await confirm('API-CLO-K');
+  await emailIt('API-CLO-K', { to: 'k@example.com' });
+  ok('and no note reaches the client document at all',
+     !/<img src=x/.test(`${mailed.text}\n${mailed.html}`));
+
+  /* ---- INTAKE DELETE STILL REFUSES A CASE THAT HAS MONEY HISTORY. A refund
+     and a closeout are financial records, so they join the blockers rather
+     than being swept away with the intake's own paperwork. ---- */
+  const del = await call(env, '/cases/API-CLO-B/intake-delete', { method: 'POST', cookie: admin });
+  ok('a case carrying a refund refuses the intake hard-delete, naming what it found',
+     del.status === 409 && /refund/i.test((await jsonOf(del)).error),
+     JSON.stringify(await jsonOf(del)).slice(0, 160));
+
+  /* ---- THE ASSISTANT MAY NEVER DO ANY OF THIS. The owner's line: it "may
+     never record, post, void, or alter a payment directly", and must never
+     execute a refund, a closure or an email from natural language. ---- */
+  const say = async (t, ctx = {}) => jsonOf(await call(env, '/assistant/command',
+    { method: 'POST', cookie: admin, body: { text: t, context: ctx } }));
+  const onCase = { route: 'case', case_no: 'API-CLO-D' };
+  for (const phrase of ['refund the client $600', 'issue a refund on this case',
+                        'close this case', 'close out this case and email the client',
+                        'email the client their closeout statement',
+                        'void the retainer payment', 'change the payment to $400']) {
+    const a = await say(phrase, onCase);
+    ok(`"${phrase}" is refused, with no command to confirm`,
+       a.kind === 'refused' && !a.command, JSON.stringify([a.kind, !!a.command]));
+  }
+  const wsrc = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+  const reg = wsrc.slice(wsrc.indexOf('const ASSISTANT_COMMANDS'),
+                         wsrc.indexOf('const ASSISTANT_SEND_ROUTES'));
+  ok('and no closeout, refund or close route is executable from the registry at all',
+     !/closeout|refund|\/close'/.test(reg), reg.match(/route: '[^']*'/g).join(' ').slice(0, 200));
+  m = await money('API-CLO-D');
+  ok('after all of that the ledger is exactly where it was',
+     m.refunds.length === 1 && m.refunded === 200 && m.retained === 400);
+
+  /* ---- THE DEMO SWEEP TAKES BOTH TABLES, so a TEST- case leaves nothing
+     behind — the orphan-row lesson this project has already paid for. ---- */
+  await ingest(env, { case_no: 'TEST-CLO-1', service: 'Surveillance', client_name: 'T', subject_name: 'S' });
+  await call(env, '/cases/TEST-CLO-1/retainer', { method: 'POST', cookie: admin,
+    body: { retainer_amount: 1500, received: true, amount_received: 500, method: 'cash' } });
+  await call(env, '/cases/TEST-CLO-1/closure', { method: 'POST', cookie: admin, body: { checklist: ALL_TICKS } });
+  await prepare('TEST-CLO-1', { retained: 100, refund: 400 });
+  await confirm('TEST-CLO-1');
+  const cnt = async t => (await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${t}`).first()).n;
+  const [refBefore, cloBefore] = [await cnt('case_refund'), await cnt('case_closeout')];
+  const testRef = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM case_refund WHERE case_no LIKE 'TEST-%'").first();
+  ok('the TEST- case really did write a refund row to sweep', testRef.n === 1, String(testRef.n));
+  await call(env, '/demo-case/clear', { method: 'POST', cookie: admin });
+  ok('clearing test cases sweeps the refund ledger with them',
+     (await cnt('case_refund')) === refBefore - 1, `${refBefore} -> ${await cnt('case_refund')}`);
+  ok('and the closeout row too',
+     (await cnt('case_closeout')) === cloBefore - 1, `${cloBefore} -> ${await cnt('case_closeout')}`);
+  const realLeft = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM case_refund WHERE case_no = 'API-CLO-A'").first();
+  ok('while an identically-shaped real case is untouched', realLeft.n === 1);
+
+  /* ---- WITHOUT THE TABLES. Between a merge and the manual portal-setup
+     dispatch these do not exist, and the read must degrade rather than take
+     out the case screen — the guard every marker table here carries. ---- */
+  const bare = freshEnv();
+  await bare.DB.prepare('DROP TABLE case_refund').run();
+  await bare.DB.prepare('DROP TABLE case_closeout').run();
+  await bootstrapAdmin(bare);
+  const bareAdmin = (await login(bare, 'trever', 'FirstAdminPass1')).cookie;
+  await ingest(bare, { case_no: 'API-CLO-Z', service: 'Surveillance', client_name: 'Z', subject_name: 'S' });
+  const bareRead = await call(bare, '/cases/API-CLO-Z/closeout-money', { cookie: bareAdmin });
+  ok('the ledger read still answers with the tables absent', bareRead.status === 200);
+  const bm = await jsonOf(bareRead);
+  ok('and names what is missing rather than reporting zero refunds as a fact',
+     bm.missing.includes('case_refund') && bm.missing.includes('case_closeout'),
+     JSON.stringify(bm.missing));
+  const bareWrite = await call(bare, '/cases/API-CLO-Z/closeout/prepare',
+    { method: 'POST', cookie: bareAdmin, body: { retained: 0, refund: 0 } });
+  ok('while the write refuses 503 naming the workflow to run',
+     bareWrite.status === 503 && /portal-setup/.test((await jsonOf(bareWrite)).error));
+
+  globalThis.fetch = realFetch;
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));

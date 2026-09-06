@@ -5383,6 +5383,414 @@ async function closeCase(env, user, caseNo) {
   return json({ ok: true, status: 'closed' });
 }
 
+/* ================= THE FINANCIAL CLOSEOUT (owner brief 2026-09-06) =========
+
+   THE ONE ACCOUNTING RULE, in the owner's own words: "Do NOT modify the
+   original payment to pretend less money was received." A refund is its own
+   row in `case_refund`; `retainer_payment` is never touched. Money received
+   stays +$1,000 forever, a refund is a separate -$600 event, and net retained
+   is arithmetic over the two — computed on every read, like every other figure
+   in this portal. There is no stored total anywhere: a stored one would be a
+   second answer to a question the ledger already answers, and the two would
+   disagree the first time a payment was voided.
+
+   THE FOUR FIGURES, and what each of them is:
+
+     retainer_received  SUM of live retainer payments. Voided ones do not
+                        count, because a voided payment is money that never
+                        stayed. Read, never typed — the owner asked not to
+                        retype what the portal already knows.
+     retained           the non-refundable portion the office EARNED. Typed at
+                        closeout; this is the one genuinely new decision.
+     refunded           SUM of the refund ledger. After a closeout is confirmed
+                        this equals what was agreed, because confirming is what
+                        writes the row.
+     final_balance      received - retained - refunded. Zero means settled:
+                        every dollar that came in is either earned or returned.
+                        Positive means the office is still holding money that is
+                        neither, which is a real state and is shown as one.
+
+   RECONCILIATION IS A REFUSAL, NOT A WARNING (the brief: "Refund + amount
+   retained must not exceed legitimate money received"). Over-allocating is
+   refused BY NAME with the arithmetic in the message, because an impossible
+   financial state that was merely flagged is one somebody clicks past. */
+
+const CLOSE_REASONS = {
+  completed: 'Investigation completed',
+  client_requested: 'Client requested closure',
+  no_further_action: 'No further action requested',
+  other: 'Other',
+};
+
+const money2 = n => Math.round(Number(n || 0) * 100) / 100;
+
+/* Cents, compared as cents. Two floats that both came from sums of REAL
+   columns can miss equality by 1e-13, and "your figures do not add up" over
+   that would be the portal refusing correct arithmetic. */
+const centsEqual = (a, b) => Math.abs(Math.round(a * 100) - Math.round(b * 100)) <= 1;
+
+async function closeoutMoney(env, caseNo) {
+  const missing = await missingTables(env);
+  const have = t => !missing.includes(t);
+
+  let received = 0;
+  if (have('retainer_payment')) {
+    const r = await env.DB.prepare(
+      `SELECT COALESCE(SUM(p.amount), 0) AS n FROM retainer_payment p
+        WHERE p.case_no = ?${have('retainer_payment_void')
+          ? ' AND p.id NOT IN (SELECT payment_id FROM retainer_payment_void)' : ''}`)
+      .bind(caseNo).first();
+    received = money2(r && r.n);
+  }
+
+  let refunded = 0, refunds = [];
+  if (have('case_refund')) {
+    const { results } = await env.DB.prepare(
+      `SELECT r.id, r.amount, r.method, r.reference, r.refunded_on, r.reason,
+              r.recorded_at, u.display_name AS recorded_by_name
+         FROM case_refund r LEFT JOIN users u ON u.id = r.recorded_by
+        WHERE r.case_no = ? ORDER BY r.id`).bind(caseNo).all();
+    refunds = results || [];
+    refunded = money2(refunds.reduce((a, x) => a + Number(x.amount || 0), 0));
+  }
+
+  let prep = null;
+  if (have('case_closeout')) {
+    prep = await env.DB.prepare(
+      `SELECT c.retained, c.refunded AS agreed_refund, c.reason, c.note, c.prepared_at,
+              c.closed_at, c.statement_at, c.emailed_at, c.emailed_to,
+              u.display_name AS prepared_by_name
+         FROM case_closeout c LEFT JOIN users u ON u.id = c.prepared_by
+        WHERE c.case_no = ?`).bind(caseNo).first() || null;
+  }
+
+  const retained = prep && prep.retained != null ? money2(prep.retained) : null;
+  /* The balance is only answerable once the office has said what it earned.
+     Guessing a retained figure to make a number appear would be the portal
+     inventing the one value this whole workflow exists to capture. */
+  const finalBalance = retained == null ? null : money2(received - retained - refunded);
+
+  /* TWO BALANCES, AND THEY ARE NOT THE SAME QUESTION.
+
+     `final_balance` is the LEDGER'S — received minus earned minus refunds that
+     have actually been issued — and the owner's rule is that it comes from
+     there and nowhere else. Before a closeout is confirmed no refund has been
+     issued, so on a $1,000 case with $400 earned it reads $600, which is
+     exactly right: the office is still holding $600.
+
+     `projected_balance` is what the AGREED figures WOULD settle to, and it is
+     what the review screen shows beside the Confirm button — otherwise the
+     office is asked to approve an outcome the screen cannot state. It is named
+     apart from the ledger figure rather than replacing it, because a screen
+     that draws a projection under the word FINAL is the portal asserting
+     something that has not happened yet. The two converge the moment the
+     refund is written, and the client's statement prints only the ledger's. */
+  const agreedRefund = prep && prep.agreed_refund != null ? money2(prep.agreed_refund) : null;
+  const pendingRefund = prep && prep.closed_at ? 0 : (agreedRefund || 0);
+  const projected = retained == null
+    ? null : money2(received - retained - refunded - pendingRefund);
+
+  return {
+    retainer_received: received,
+    refunded, refunds,
+    retained,
+    final_balance: finalBalance,
+    projected_balance: projected,
+    /* What a confirm would still write, so a caller never has to work out
+       whether the agreed refund has already been issued. */
+    refund_pending: pendingRefund,
+    /* WHAT IS STILL ALLOCATABLE, so the screen can say what is left rather
+       than leaving the office to subtract. */
+    unallocated: money2(received - refunded - (retained || 0)),
+    closeout: prep,
+    /* Named so a caller can tell "no refund ledger yet" from "no refunds". */
+    missing: ['case_refund', 'case_closeout'].filter(t => !have(t)),
+  };
+}
+
+/* THE CHECKLIST IS STILL THE ONLY DOOR, and the closeout screen says so BEFORE
+   the button rather than after it. `closeCase` refuses while items are open —
+   an owner decision this unit does not touch — so a financial closeout that
+   ended in that refusal would be a wasted trip. The panel is told what is
+   still open so it can show the requirement up front. */
+async function closeoutBlockers(env, caseNo) {
+  const c = await env.DB.prepare(
+    'SELECT checklist_json FROM case_closure WHERE case_no = ?').bind(caseNo).first();
+  let ticks = {};
+  try { ticks = c && c.checklist_json ? JSON.parse(c.checklist_json) : {}; } catch { ticks = {}; }
+  return CLOSURE_ITEMS.filter(([k]) => !ticks[k]).map(([, l]) => l);
+}
+
+/* The reconciliation, in one place so the prepare, the confirm and the tests
+   cannot each decide it differently. Returns an error STRING or null.
+
+   `refunded` IS THE WHOLE REFUNDING — anything already on the ledger plus what
+   this closeout would add. Only `closeoutConfirm` writes a refund row and it
+   refuses a second closeout, so today the first term is always zero; passing
+   the total anyway means a manual refund entry added later cannot open a hole
+   under a guard that was only ever checking the new figure. */
+function closeoutCheck(received, retained, refunded) {
+  if (!(Number.isFinite(retained) && retained >= 0)) {
+    return 'Enter the non-refundable amount retained as a dollar figure of zero or more.';
+  }
+  if (!(Number.isFinite(refunded) && refunded >= 0)) {
+    return 'Enter the refund as a dollar figure of zero or more.';
+  }
+  const allocated = money2(retained + refunded);
+  if (allocated > money2(received) && !centsEqual(allocated, received)) {
+    return `${nrMoney(retained)} retained plus ${nrMoney(refunded)} refunded is `
+         + `${nrMoney(allocated)}, and only ${nrMoney(received)} was actually received. `
+         + `A closeout cannot allocate money the case never took in.`;
+  }
+  return null;
+}
+
+/* GET /cases/:no/closeout-money — the ledger, read-only. */
+async function closeoutRead(env, user, caseNo) {
+  const m = await closeoutMoney(env, caseNo);
+  return json({ ok: true, ...m,
+    checklist_open: await closeoutBlockers(env, caseNo),
+    reasons: Object.entries(CLOSE_REASONS).map(([id, label]) => ({ id, label })) });
+}
+
+/* POST /cases/:no/closeout/prepare — the office's decision, NO MONEY MOVED.
+   Writing what was agreed is not the same act as issuing the refund, and this
+   is deliberately the harmless half: it can be edited, re-run and abandoned. */
+async function closeoutPrepare(request, env, user, caseNo) {
+  if ((await missingTables(env)).includes('case_closeout')) {
+    return json({ error: 'The closeout tables are not set up yet — run the portal-setup workflow.',
+                  code: 'not_set_up' }, 503);
+  }
+  const body = await readJson(request);
+  const m = await closeoutMoney(env, caseNo);
+  const retained = money2(String(body.retained ?? '').replace(/[$,\s]/g, ''));
+  const refund = money2(String(body.refund ?? '').replace(/[$,\s]/g, ''));
+  const bad = closeoutCheck(m.retainer_received, retained, money2(m.refunded + refund));
+  if (bad) return json({ error: bad, code: 'closeout_does_not_reconcile' }, 400);
+  const reason = String(body.reason || '').trim();
+  if (reason && !CLOSE_REASONS[reason]) {
+    return json({ error: 'Pick one of the closing reasons.', code: 'bad_reason' }, 400);
+  }
+  const note = String(body.note || '').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '').slice(0, 2000);
+  const now = nowIso();
+  await env.DB.prepare(
+    `INSERT INTO case_closeout (case_no, retained, refunded, reason, note, prepared_by, prepared_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+     ON CONFLICT(case_no) DO UPDATE SET retained = ?2, refunded = ?3, reason = ?4,
+       note = ?5, prepared_by = ?6, prepared_at = ?7`)
+    .bind(caseNo, retained, refund, reason || null, note || null, user.id, now).run();
+  return closeoutRead(env, user, caseNo);
+}
+
+/* POST /cases/:no/closeout/confirm — the consequential act, and the ONLY place
+   a refund row is written.
+
+   THE REFUND AND THE CLOSURE ARE ONE CONFIRMATION BUT TWO RECORDS, in that
+   order: the money is recorded first, then the case is closed through the
+   EXISTING `closeCase` — the checklist door, untouched. If the checklist
+   refuses, the refund has still been recorded correctly and the office is told
+   what is still open; re-confirming will not write it twice, because a
+   confirmed closeout is marked and refuses to issue a second refund.
+
+   NOTHING HERE EMAILS ANYTHING. The owner's line: closing must not email the
+   client, ever, and the send is its own explicit act on its own route. */
+async function closeoutConfirm(request, env, user, caseNo) {
+  if ((await missingTables(env)).includes('case_closeout')
+      || (await missingTables(env)).includes('case_refund')) {
+    return json({ error: 'The closeout tables are not set up yet — run the portal-setup workflow.',
+                  code: 'not_set_up' }, 503);
+  }
+  const body = await readJson(request);
+  const m = await closeoutMoney(env, caseNo);
+  if (!m.closeout || m.closeout.prepared_at == null) {
+    return json({ error: 'Prepare the closeout first — the figures have to be reviewed before they '
+                       + 'are recorded.', code: 'not_prepared' }, 400);
+  }
+  if (m.closeout.closed_at) {
+    return json({ error: 'This case has already been closed out. Its statement and its ledger are '
+                       + 'unchanged.', code: 'already_closed_out' }, 409);
+  }
+  const retained = money2(m.closeout.retained);
+  const refund = money2(m.closeout.agreed_refund);
+  /* CHECKED AGAIN AT THE MOMENT OF WRITING. The prepare validated against the
+     ledger as it stood then; a payment could have been voided since, and an
+     allocation that used to reconcile would quietly stop doing so. */
+  const bad = closeoutCheck(m.retainer_received, retained, money2(m.refunded + refund));
+  if (bad) return json({ error: bad, code: 'closeout_does_not_reconcile' }, 400);
+
+  const now = nowIso();
+  if (refund > 0) {
+    await env.DB.prepare(
+      `INSERT INTO case_refund (case_no, amount, method, reference, refunded_on, reason,
+                                recorded_by, recorded_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(caseNo, refund,
+        RETAINER_METHODS.includes(String(body.method || '')) ? String(body.method) : null,
+        String(body.reference || '').slice(0, 120) || null,
+        /^\d{4}-\d{2}-\d{2}$/.test(String(body.refunded_on || '')) ? String(body.refunded_on) : now.slice(0, 10),
+        m.closeout.reason ? CLOSE_REASONS[m.closeout.reason] || null : null,
+        user.id, now).run();
+  }
+  await env.DB.prepare('UPDATE case_closeout SET closed_at = ? WHERE case_no = ?')
+    .bind(now, caseNo).run();
+
+  /* THE EXISTING DOOR, UNCHANGED. Its refusal is passed straight back with the
+     money already correctly recorded — a refund that happened is a fact, and
+     hiding it because the checklist was not finished would be the worse lie. */
+  const closed = await closeCase(env, user, caseNo);
+  const out = await closeoutMoney(env, caseNo);
+  return json({ ok: true, ...out,
+    case_closed: closed.status === 200,
+    checklist_open: await closeoutBlockers(env, caseNo) });
+}
+
+/* THE FINAL CLOSEOUT STATEMENT — the client's own document.
+
+   "Prefer this wording rather than Invoice when the document primarily
+   documents disposition/refund of a retainer" (the brief). It is not an
+   invoice, it creates no invoice row, and it asks for nothing: it states what
+   came in, what was earned, what went back and what is left. Every figure is
+   the LEDGER'S — `closeoutMoney` composes them and this only formats.
+
+   ONE COMPOSER, TWO MEDIA, the `sheetEmail` shape: the page prints its own
+   rendering of the same figures and the email carries these. Neither invents a
+   number, so the printed copy and the emailed copy cannot disagree. */
+function closeoutStatement(caseNo, clientName, m, closedOn) {
+  const row = (label, amount) => `${label}${'.'.repeat(Math.max(2, 34 - label.length))} ${nrMoney(amount)}`;
+  const lines = [
+    row('Retainer received', m.retainer_received),
+    row('Non-refundable retained', m.retained || 0),
+    row('Refund issued', m.refunded),
+  ];
+  const text =
+`ALWAYS PRECISE INVESTIGATIONS, LLC
+FINAL CLOSEOUT STATEMENT
+Va DCJS #11-9159
+
+Client: ${clientName || '—'}
+Case: ${caseNo}
+Closed: ${closedOn}
+
+${lines.join('\n')}
+
+${row('FINAL BALANCE', m.final_balance || 0)}
+
+CASE STATUS: CLOSED
+
+This statement documents the disposition of the retainer held on this case.
+Questions: (434) 907-0975
+Always Precise Investigations, LLC`;
+
+  const money = n => escHtml(nrMoney(n));
+  const html =
+`<div style="font-family:'Segoe UI',Arial,sans-serif;color:#1c2531;line-height:1.55;max-width:560px">
+  <p style="margin:0 0 4px;font-size:.82rem;color:#5c6775;letter-spacing:.04em;text-transform:uppercase">
+    Always Precise Investigations, LLC &middot; Va DCJS #11-9159</p>
+  <h2 style="margin:0 0 14px;color:#12305a">Final Closeout Statement</h2>
+  <p style="margin:0 0 4px"><b>Client:</b> ${escHtml(clientName || '—')}</p>
+  <p style="margin:0 0 4px"><b>Case:</b> ${escHtml(caseNo)}</p>
+  <p style="margin:0 0 18px"><b>Closed:</b> ${escHtml(closedOn)}</p>
+  <table style="width:100%;border-collapse:collapse;margin:0 0 12px">
+    <tr><td style="padding:8px 0;border-bottom:1px solid #e4e9ed">Retainer received</td>
+        <td style="padding:8px 0;border-bottom:1px solid #e4e9ed;text-align:right">${money(m.retainer_received)}</td></tr>
+    <tr><td style="padding:8px 0;border-bottom:1px solid #e4e9ed">Non-refundable retained</td>
+        <td style="padding:8px 0;border-bottom:1px solid #e4e9ed;text-align:right;color:#c14133;font-weight:700">${money(m.retained || 0)}</td></tr>
+    <tr><td style="padding:8px 0;border-bottom:1px solid #e4e9ed">Refund issued</td>
+        <td style="padding:8px 0;border-bottom:1px solid #e4e9ed;text-align:right">${money(m.refunded)}</td></tr>
+    <tr><td style="padding:10px 0;font-weight:800">FINAL BALANCE</td>
+        <td style="padding:10px 0;text-align:right;font-weight:800;font-size:1.15rem;color:#12305a">${money(m.final_balance || 0)}</td></tr>
+  </table>
+  <p style="margin:0 0 14px;font-weight:800;color:#12305a">CASE STATUS: CLOSED</p>
+  <p style="margin:0 0 14px;font-size:.92rem">This statement documents the disposition of the
+    retainer held on this case.</p>
+  <hr style="border:0;border-top:1px solid #dfe3e8">
+  <p style="font-size:.82rem;color:#5c6775">Questions? (434) 907-0975<br>
+     Always Precise Investigations, LLC</p>
+</div>`;
+  return { subject: `Final Closeout Statement — ${caseNo}`, text, html };
+}
+
+/* POST /cases/:no/closeout/email — ITS OWN ACT, ALWAYS.
+
+   The owner's rule, twice over: closing the case must not email the client,
+   and emailing is a separate explicit confirmation every time. So this route
+   does not close anything, is not called by the confirm, and refuses to run on
+   a case whose closeout has not been confirmed — a statement about a
+   disposition that has not happened would be a document asserting something
+   untrue.
+
+   DOUBLE-SEND IS REFUSED BY NAME rather than silently deduplicated. A second
+   tap, a retry after a dropped response and a deliberate resend all look the
+   same from here, and the first two must not send twice while the third is
+   still possible — so `emailed_at` refuses, and `resend: true` is the office
+   saying it meant it. */
+async function closeoutEmail(request, env, user, caseNo) {
+  if ((await missingTables(env)).includes('case_closeout')) {
+    return json({ error: 'The closeout tables are not set up yet — run the portal-setup workflow.',
+                  code: 'not_set_up' }, 503);
+  }
+  const body = await readJson(request);
+  const m = await closeoutMoney(env, caseNo);
+  if (!m.closeout || !m.closeout.closed_at) {
+    return json({ error: 'Confirm the closeout first. A statement describes a disposition that has '
+                       + 'actually happened.', code: 'not_closed_out' }, 400);
+  }
+  /* AND THE CASE ITSELF HAS TO BE CLOSED, which is a different fact from the
+     closeout having been confirmed. `closeoutConfirm` records the money first
+     and then calls `closeCase`, and that call can legitimately refuse — the
+     checklist is still the only door. On such a case the refund is real and
+     the closeout is confirmed while the case is OPEN, and this document prints
+     'CASE STATUS: CLOSED' in the client's own copy. Sending it there would be
+     the portal telling a client something untrue about their own case, so it
+     is refused NAMING WHAT IS STILL OPEN rather than left to be discovered by
+     the person who receives it. */
+  const closureOpen = await closeoutBlockers(env, caseNo);
+  const sub0 = await env.DB.prepare(
+    'SELECT status FROM submissions WHERE case_no = ?').bind(caseNo).first();
+  if (!sub0 || sub0.status !== 'closed') {
+    return json({ error: 'The statement says the case is closed, and it is not yet'
+                       + (closureOpen.length ? ' — still open: ' + closureOpen.join('; ') + '.' : '.')
+                       + ' Finish the closing checklist and close the case first.',
+                  code: 'case_not_closed', checklist_open: closureOpen }, 400);
+  }
+  if (m.closeout.emailed_at && body.resend !== true) {
+    return json({ error: `This statement was already emailed to ${m.closeout.emailed_to || 'the client'}`
+                       + ` on ${m.closeout.emailed_at.slice(0, 10)}. Send it again only if you mean to.`,
+                  code: 'already_emailed' }, 409);
+  }
+  const to = String(body.to || '').trim();
+  if (!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(to) || to.length > 200) {
+    return json({ error: 'Enter a valid email address.' }, 400);
+  }
+  if (!(await withinRateLimit(env, 'mail'))) {
+    return json({ error: 'Too many emails in one minute — wait a moment and send again.' }, 429);
+  }
+  const sub = await env.DB.prepare(
+    'SELECT client_name FROM submissions WHERE case_no = ?').bind(caseNo).first() || {};
+  const doc = closeoutStatement(caseNo, sub.client_name, m, m.closeout.closed_at.slice(0, 10));
+  const mail = await sendMail(env, { to, subject: doc.subject, text: doc.text, html: doc.html });
+  if (!mail.sent) {
+    /* NOT WRITTEN TO `send_log`, AND THAT IS A SCHEMA FACT RATHER THAN A
+       CHOICE. That table's `kind` carries CHECK (kind IN ('rate_sheet',
+       'intake')) — widening it means rebuilding the table, which schema.sql
+       cannot do idempotently, so a fresh database would accept 'closeout'
+       while the LIVE one refused it: green in every test, broken only in
+       production. This portal has paid for that shape once already
+       (`client_token`). The statement's own send record is
+       `case_closeout.emailed_at` / `emailed_to`, which is where a reader
+       would look for it anyway, and a send that did not happen stamps
+       nothing. */
+    return json({ error: mail.reason === 'not_configured'
+      ? 'Email is not configured on the Worker. Add RESEND_API_KEY to send from here.'
+      : 'That did not send. Check the address and try again.', reason: mail.reason }, 502);
+  }
+  await env.DB.prepare(
+    'UPDATE case_closeout SET emailed_at = ?, emailed_to = ?, statement_at = COALESCE(statement_at, ?) WHERE case_no = ?')
+    .bind(nowIso(), to, nowIso(), caseNo).run();
+  const out = await closeoutMoney(env, caseNo);
+  return json({ ok: true, sent_to: to, ...out });
+}
+
 /* ------------------------------------------------------- case workspace */
 
 /* THE ACCESS RULE for everything in the workspace. An investigator reaches a
@@ -12023,6 +12431,12 @@ const INTAKE_BLOCKERS = [
   ['case_content_removed', 'content-removal records'],
   ['case_content_event',   'content-removal history'],
   ['storage_failure',      'storage-failure records'],
+  /* MONEY THAT WENT BACK, AND THE DISPOSITION THAT SENT IT. A refund is a real
+     financial event and a closeout is the record of how a case ended — either
+     makes an intake something other than a fresh duplicate nobody has touched,
+     which is the only thing the quick delete is for. */
+  ['case_refund',          'a recorded refund'],
+  ['case_closeout',        'a financial closeout'],
 ];
 
 /* Neither deleted nor blocking, each with its reason on the record. The
@@ -12214,6 +12628,8 @@ const DEMO_SWEEP = [
      null case_no and are untouched, like a pre-case send. */
   ['assistant_log',         'DELETE FROM assistant_log WHERE case_no LIKE ?'],
   ['video_stamp',           'DELETE FROM video_stamp WHERE case_no LIKE ?'],
+  ['case_refund',           'DELETE FROM case_refund WHERE case_no LIKE ?'],
+  ['case_closeout',         'DELETE FROM case_closeout WHERE case_no LIKE ?'],
 
   /* --- the spine, last --- */
   ['submissions',           'DELETE FROM submissions WHERE case_no LIKE ?'],
@@ -13668,6 +14084,7 @@ const EXPECTED_TABLES = [
   'build_template', 'evidence_integrity', 'case_day_summary', 'storage_failure',
   'case_retention', 'legal_hold', 'retention_event', 'case_day_end',
   'case_content_removed', 'case_content_event', 'feed_hidden', 'assistant_log',
+  'case_refund', 'case_closeout',
 ];
 
 async function missingTables(env) {
@@ -13999,6 +14416,17 @@ const ASSISTANT_BLOCKED = [
      this list and matches only an amount being RECORDED, so neither of these
      can reach it. */
   [/\bvoid\b/i, 'voiding a payment'],
+  /* REFUNDING AND CLOSING OUT, added 2026-09-06 with the financial closeout.
+     The owner's line is that the Assistant "must never execute the refund,
+     case closure, or email directly from natural language" — and until this
+     was written, "refund the client $600" fell through every branch to the
+     ordinary help answer. Nothing could have refunded anything, because
+     nothing executes without a registry row; what was missing was the REFUSAL
+     BY NAME, and a shrug is not a refusal. `\brefund\b` does not match
+     "non-refundable" (the boundary fails against the following letter), so the
+     rate-sheet vocabulary is untouched. */
+  [/\brefund/i, 'issuing a refund'],
+  [/\bclose ?out\b|\bcloseout\b/i, 'closing out a case'],
   [/\b(change|edit|alter|adjust|correct|fix)\b[^]{0,30}\bpayment\b/i, 'altering a payment'],
   [/\bdelete\b/i, 'deleting records'],
   [/\barchiv/i, 'archiving'],
@@ -17812,6 +18240,36 @@ async function route(request, env) {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     if (!(await caseFor(env, user, m[1]))) return json({ error: 'not found' }, 404);
     return json({ facts: await closeoutFacts(env, m[1]), generated_at: nowIso() });
+  }
+
+  /* THE FINANCIAL CLOSEOUT. Admin-only, and every one of them resolves the
+     case through `caseFor` first — the IDOR boundary. All four sit under
+     /cases/:no/, so the router's deleted/archived chokepoint already refuses
+     them on a case that has been filed away, which is the reason that
+     chokepoint is matched on the path rather than listed per route. */
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/closeout-money$/);
+  if (m && method === 'GET') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    if (!(await caseFor(env, user, m[1]))) return json({ error: 'not found' }, 404);
+    return closeoutRead(env, user, m[1]);
+  }
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/closeout\/prepare$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    if (!(await caseFor(env, user, m[1]))) return json({ error: 'not found' }, 404);
+    return closeoutPrepare(request, env, user, m[1]);
+  }
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/closeout\/confirm$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    if (!(await caseFor(env, user, m[1]))) return json({ error: 'not found' }, 404);
+    return closeoutConfirm(request, env, user, m[1]);
+  }
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/closeout\/email$/);
+  if (m && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    if (!(await caseFor(env, user, m[1]))) return json({ error: 'not found' }, 404);
+    return closeoutEmail(request, env, user, m[1]);
   }
 
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/closure$/);
