@@ -2570,6 +2570,10 @@
     padding-top:9px;font-weight:800;}
   .fc-row.fc-tot b{font-size:1.1rem;color:var(--navy-2);}
   .fc-presets{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:8px 0 2px;}
+  .myp-row{display:flex;justify-content:space-between;align-items:center;gap:10px;
+    padding:7px 0;border-bottom:1px solid var(--line);}
+  .myp-n{font-size:.92rem;font-weight:600;}
+  .myp-acts{display:flex;gap:4px;}
   .fc-refs{margin:10px 0 4px;padding:10px 12px;background:var(--paper);border-radius:8px;}
   .fc-refs h4{margin:0 0 4px;font-size:.85rem;letter-spacing:.04em;text-transform:uppercase;
     color:var(--muted);}
@@ -4860,6 +4864,41 @@ function recentlyCompletedHtml(){
    and .more-primary already use in this file. Reordering with flex `order`
    instead would have put the visual order and the focus order out of step,
    which is the defect rather than the fix. */
+/* MY PORTAL — the signed-in user's OWN layout (owner addendum 2026-09-06).
+   `PREFS` is that user's row from the Worker and nothing else's; every apply
+   below reads it, so two accounts on one portal each see their own choices.
+   The FACTORY view is the CEO charter's: the Needs-assignment alert is not
+   primary for an owner-operated firm, and the lead-status disclosure is CRM
+   paperwork — both return the moment a user unhides them, for that user. */
+let PREFS = {};
+let PREFS_STORED = true;
+const DEFAULT_HIDDEN = ["needs_assignment", "lead_status"];
+const prefHidden = id => (Array.isArray(PREFS.hidden) ? PREFS.hidden : DEFAULT_HIDDEN).includes(id);
+async function loadMyPrefs(){
+  try{
+    const r = await api("/me/prefs");
+    PREFS = (r && r.prefs) || {};
+    PREFS_STORED = !r || r.stored !== false;
+  }catch{ PREFS = {}; }
+}
+/* One tap, counted for this user's own CEO Bot. Fire-and-forget: a lost count
+   is a lost count, and nothing about the tap waits on it. */
+function noteUse(action){
+  try{ api("/me/prefs/use", {method: "POST", body: {action}}).catch(() => {}); }catch{}
+}
+/* The per-user order over a default list: stored ids first (that exist),
+   then anything the default has that the stored order predates — a new door
+   arrives at the end rather than disappearing. */
+function prefOrder(defaults){
+  const ord = Array.isArray(PREFS.qt_order) && PREFS.qt_order.length ? PREFS.qt_order : null;
+  if(!ord) return defaults.filter(id => !prefHidden("qt:" + id));
+  const seen = new Set();
+  const out = [];
+  for(const id of ord) if(defaults.includes(id) && !seen.has(id)){ seen.add(id); out.push(id); }
+  for(const id of defaults) if(!seen.has(id)){ seen.add(id); out.push(id); }
+  return out.filter(id => !prefHidden("qt:" + id));
+}
+
 const QT = {
   sheets:  {act:"tab", tab:"sheets",   icon:"&#128179;", label:"Rate Sheet",
             sub:"Prepare &amp; send", admin:true, lead:true},
@@ -4919,17 +4958,20 @@ function quickToolsHtml(){
   const attrs = t => `data-act="${t.act}"${t.tab ? ` data-tab="${t.tab}"` : ""}${
     t.k ? ` data-k="${t.k}"` : ""}${t.caseless ? ` data-case=""` : ""}`;
   const deskBtn = id => { const t = QT[id];
-    return `<button class="qtool${t.pair ? " qt-pair" : ""}" ${attrs(t)}><b>${t.icon}</b> ${t.dlabel || t.label}</button>`; };
+    return `<button class="qtool${t.pair ? " qt-pair" : ""}" data-qt="${id}" ${attrs(t)}><b>${t.icon}</b> ${t.dlabel || t.label}</button>`; };
   const appCard = id => { const t = QT[id];
-    return `<button class="qtapp${t.lead ? " qtapp-lead" : ""}" ${attrs(t)}>${
+    return `<button class="qtapp${t.lead ? " qtapp-lead" : ""}" data-qt="${id}" ${attrs(t)}>${
       t.lead ? `<span class="qtapp-flag">Fastest action</span>` : ""}
       <span class="qtapp-i" aria-hidden="true">${t.icon}</span>
       <span class="qtapp-n">${t.label}</span>
       <span class="qtapp-s">${t.sub}</span></button>`; };
+  /* THE USER'S OWN ORDER over each surface's default — stored ids first, new
+     doors appended, hidden ones withdrawn. With nothing stored, both rows are
+     byte-what-they-were. */
   return `<div class="qtools">
     <span class="qtools-l">Quick tools</span>
-    <div class="qtgrid">${QT_DESK.filter(ok).map(deskBtn).join("")}</div>
-    <div class="qtapps">${QT_PHONE.filter(ok).map(appCard).join("")}</div>
+    <div class="qtgrid">${prefOrder(QT_DESK).filter(ok).map(deskBtn).join("")}</div>
+    <div class="qtapps">${prefOrder(QT_PHONE).filter(ok).map(appCard).join("")}</div>
   </div>`;
 }
 
@@ -5565,8 +5607,14 @@ function summaryCards(){
 
   const cards = admin
     ? card("Open cases", s.open || 0, total ? "" : "None yet")
-      + card("Needs assignment", s.unassigned || 0,
-             "Waiting on you", (s.unassigned || 0) ? "warn" : "")
+      /* HIDDEN BY FACTORY DEFAULT (CEO charter Mission 2): an owner-operated
+         firm has nobody to formally assign, so "Needs assignment" is noise
+         dressed as a warning. The card — and its warn tone — returns for any
+         user who unhides it in Settings -> My Portal; the Worker's count and
+         the assignment panel are untouched either way. */
+      + (prefHidden("needs_assignment") ? ""
+         : card("Needs assignment", s.unassigned || 0,
+             "Waiting on you", (s.unassigned || 0) ? "warn" : ""))
       + card("Out now", active.length, "A day is running", active.length ? "live" : "", active)
       + card("Reports due", due.length, "Day done, no report", due.length ? "warn" : "", due)
       + card("Authorization low", low.length,
@@ -5936,14 +5984,14 @@ function leadsView(){
            stamps are untouched, because other screens and the send flows key
            off them. It is folded under a disclosure, which is where the brief
            asked for "truly necessary administrative status controls". */""}
-      <details class="pc-more">
+      ${prefHidden("lead_status") ? "" : `<details class="pc-more">
         <summary>Admin status</summary>
         <label class="f" style="margin:8px 0 0"><span>Lead status</span>
           <select data-act="leadStatus" data-case="${esc(c.case_no)}">
             ${Object.entries(LEAD_LABEL).map(([v, l]) =>
               `<option value="${v}" ${ls === v ? "selected" : ""}>${l}</option>`).join("")}
           </select></label>
-      </details>
+      </details>`}
     </div>`;
   };
 
@@ -8895,8 +8943,113 @@ async function addCaseType(){
   CT_SAVING = false; paint();
 }
 
+
+/* ================= SETTINGS -> MY PORTAL (owner addendum 2026-09-06) =======
+
+   The signed-in user's OWN layout, and nobody else's: quick-action order,
+   hidden features, and the reset doors. Every save posts one key to
+   /me/prefs — absent-unchanged on the Worker — and repaints from the answer,
+   so the screen always shows what is actually stored.
+
+   TWO RESETS, because the owner named two: "Reset My Layout" clears the
+   order alone (hides and CEO state survive), "Restore Default Portal View"
+   clears every personal key. Both confirm, both are one write. */
+const MYP_HIDEABLE = [
+  ["needs_assignment", "Needs-assignment alert card",
+   "The dashboard card that warns when no investigator is formally assigned. Hidden by default — an owner-operated firm has nobody to formally assign."],
+  ["lead_status", "Lead status controls on intake cards",
+   "The CRM ladder (Lead, Declined, Closed Lead…) folded under each intake card. The statuses keep working underneath; this hides the control."],
+  ["qt:photo", "Timestamp Photo quick action", "The door stays in the navigation either way."],
+  ["qt:video", "Timestamp Video quick action", "The door stays in the navigation either way."],
+  ["qt:delivery", "Reports & Packages quick action", "The tab itself stays in the navigation."],
+  ["qt:cases", "Cases quick action", "The tab itself stays in the navigation."],
+];
+let MYP_MSG = "";
+
+function myPortalHtml(){
+  const hiddenNow = Array.isArray(PREFS.hidden) ? PREFS.hidden : DEFAULT_HIDDEN;
+  const order = prefOrder(QT_PHONE);
+  const row = (id, i) => { const t = QT[id];
+    return `<div class="myp-row">
+      <span class="myp-n">${t.icon} ${t.label}</span>
+      <span class="myp-acts">
+        <button class="btn sm ghost" data-act="mypMove" data-id="${id}" data-dir="-1"
+          ${i === 0 ? "disabled" : ""} aria-label="Move ${esc(t.label)} up">&uarr;</button>
+        <button class="btn sm ghost" data-act="mypMove" data-id="${id}" data-dir="1"
+          ${i === order.length - 1 ? "disabled" : ""} aria-label="Move ${esc(t.label)} down">&darr;</button>
+      </span></div>`; };
+  return `<div class="card">
+    <div class="bar"><h2 style="margin:0">My Portal</h2>
+      <span class="count">Only your sign-in &mdash; nobody else's changes</span></div>
+    <p class="note">Layout choices here are <b>${esc(ME.display_name || ME.username)}</b>'s own.
+      Another account signing in sees their own arrangement, and shared case data is untouched
+      either way.</p>
+    ${PREFS_STORED ? "" : `<p class="hint"><b>The preference store is not on the database yet</b>
+      &mdash; run the portal-setup workflow and saving starts working. Until then the factory view
+      applies.</p>`}
+    <h3 style="margin:10px 0 4px;font-size:1rem">My quick actions</h3>
+    <p class="hint">The order of the Home quick-action cards, yours alone. New tools always join at
+      the end rather than disappearing.</p>
+    <div class="myp-list">${order.map(row).join("")}</div>
+    <h3 style="margin:14px 0 4px;font-size:1rem">My hidden features</h3>
+    ${MYP_HIDEABLE.map(([id, label, why]) => `
+      <label class="cap" style="align-items:flex-start;margin-bottom:8px">
+        <input type="checkbox" data-act="mypHide" data-id="${id}" ${hiddenNow.includes(id) ? "checked" : ""}>
+        <span><b>Hide:</b> ${esc(label)}<br><span class="optn">${esc(why)}</span></span></label>`).join("")}
+    <h3 style="margin:14px 0 4px;font-size:1rem">Reset</h3>
+    <div class="actions">
+      <button class="btn sm ghost" data-act="mypResetOrder">Reset my layout</button>
+      <button class="btn sm ghost" data-act="mypResetAll">Restore default portal view</button>
+    </div>
+    <p class="hint">Reset my layout puts the quick actions back in the standard order and keeps your
+      hidden-feature choices. Restore default clears every personal choice &mdash; order, hides and
+      CEO Bot state &mdash; back to the factory view.</p>
+    ${MYP_MSG ? `<div class="linkbox">${esc(MYP_MSG)}</div>` : ""}
+  </div>`;
+}
+
+async function mypSave(key, value, saidWhat){
+  MYP_MSG = "";
+  try{
+    const r = await api("/me/prefs", {method: "POST", body: {[key]: value}});
+    PREFS = {...(r.prefs || {}), __loaded: true};
+    MYP_MSG = saidWhat;
+  }catch(e){ MYP_MSG = e.message; }
+  paint();
+}
+
+function mypMove(id, dir){
+  const order = prefOrder(QT_PHONE).slice();
+  const i = order.indexOf(id);
+  const j = i + dir;
+  if(i < 0 || j < 0 || j >= order.length) return;
+  [order[i], order[j]] = [order[j], order[i]];
+  mypSave("qt_order", order, "Saved — this order is yours alone.");
+}
+
+function mypHide(id, on){
+  const cur = (Array.isArray(PREFS.hidden) ? PREFS.hidden : DEFAULT_HIDDEN).slice();
+  const next = on ? [...new Set([...cur, id])] : cur.filter(x => x !== id);
+  mypSave("hidden", next, on ? "Hidden — for your sign-in only." : "Shown again.");
+}
+
+function mypResetOrder(){
+  if(!confirm("Put your quick actions back in the standard order?\n\nYour hidden-feature choices stay.")) return;
+  mypSave("qt_order", null, "Your layout is back to the standard order.");
+}
+function mypResetAll(){
+  if(!confirm("Restore the default portal view?\n\nThis clears your quick-action order, hidden "
+    + "features and CEO Bot state — yours only. Shared case data is untouched.")) return;
+  MYP_MSG = "";
+  api("/me/prefs", {method: "POST",
+    body: {qt_order: null, hidden: null, dismissed: null, metrics: null, ceo: null, suggestion_state: null}})
+    .then(r => { PREFS = {...(r.prefs || {}), __loaded: true};
+      MYP_MSG = "Everything personal is back to the default view."; paint(); })
+    .catch(e => { MYP_MSG = e.message; paint(); });
+}
+
 function settingsView(){
-  return `${notifySettingsHtml()}${billingSettingsHtml()}${caseTypesHtml()}${paymentSettingsHtml()}${dropboxSettingsHtml()}${storageHealthHtml()}<div class="card">
+  return `${myPortalHtml()}${notifySettingsHtml()}${billingSettingsHtml()}${caseTypesHtml()}${paymentSettingsHtml()}${dropboxSettingsHtml()}${storageHealthHtml()}<div class="card">
     <div class="bar"><h2 style="margin:0">Settings</h2></div>
     <h3 style="margin:6px 0 4px;font-size:1rem">Developer &amp; testing</h3>
     <p class="note">Working material for trying the portal out. None of it touches a real case.</p>
@@ -13070,6 +13223,12 @@ async function render(){
       try{ OUT_NOW = await api("/active"); }catch(e){ OUT_NOW = null; }
     })());
   }
+  {
+    /* MY PORTAL rides the same parallel round for BOTH roles — layout is
+       personal, not an admin feature. Fetched when empty so a repaint cannot
+       flash the factory view over a user's own order. */
+    if(!PREFS.__loaded) jobs.push(loadMyPrefs().then(() => { PREFS.__loaded = true; }));
+  }
   await Promise.all(jobs);
   paint();
 }
@@ -13142,6 +13301,10 @@ function sessionForget(){
   PAYCFG = null; PAY_DRAFT = {}; PAY_MSG = ""; PAY_ERR = false;
   SUMMARY = null; SHEETS = []; SHEET_MAIL = ""; OPEN_SHEET = null; SHEET_MSG = ""; SHEET_WIZ = null;
   BILLCOM_READY = null; LEGAL_SVCS = [];
+  /* MY PORTAL IS THE SIGNED-IN USER'S OWN — the previous account's layout,
+     hides and metrics leave with their session, or the next person to sign in
+     on this machine briefly wears someone else's portal. */
+  PREFS = {}; PREFS_STORED = true;
   asstReset();
   NL = null; LEAD_SEND = null; LEAD_MSG = ""; PAY_SEND = null;
   SRCH = { q: "", results: null, err: "", busy: false, hi: -1 };
@@ -21368,6 +21531,14 @@ document.addEventListener("click", ev => {
   const act = el.dataset.act;
   if(SR_NAV_ACTS.includes(act)) SR_SCREEN = null;   // arrive, do not announce
   else srActed();
+  /* ONE TAP, COUNTED FOR THIS USER'S OWN CEO BOT — the quick tools carry
+     data-qt, and the two case-row core actions count under their own names.
+     Fire-and-forget; nothing about the tap waits on the write. */
+  const qtEl = ev.target.closest("[data-qt]");
+  if(qtEl) noteUse("qt:" + qtEl.dataset.qt);
+  else if(act === "retQuick") noteUse("retainer_paid");
+  else if(act === "fcQuick") noteUse("close_case");
+  else if(act === "openCaseTab" && el.dataset.tab === "details") noteUse("view_intake");
   if(act === "backToCases"){ VIEW = "list"; render(); }
   else if(act === "navToggle"){
     /* The drawer slides rather than blinks (owner, 2026-09-02). Opening rides
@@ -21783,6 +21954,9 @@ document.addEventListener("click", ev => {
   else if(act === "retQuick"){ WS_TAB = "auth"; WS_MORE = false; RET_FORM = true; paintCase(); }
   else if(act === "fcQuick"){ WS_TAB = "billing"; WS_MORE = false; fcOpen(); }
   else if(act === "intakeArchive"){ intakeArchiveWithReason(); }
+  else if(act === "mypMove"){ mypMove(el.dataset.id, parseInt(el.dataset.dir, 10)); }
+  else if(act === "mypResetOrder"){ mypResetOrder(); }
+  else if(act === "mypResetAll"){ mypResetAll(); }
   else if(act === "reopenCase"){ reopenCase(); }
   else if(act === "archiveCase"){ archiveCase(); }
   else if(act === "restoreCase"){ restoreCase(); }
@@ -22430,6 +22604,10 @@ document.addEventListener("submit", ev => {
    posted. A control that draws is not a control that works — the same lesson
    the Timestamp Video quick tool taught at a different layer. */
 document.addEventListener("change", ev => {
+  {
+    const hd = ev.target.closest('[data-act="mypHide"]');
+    if(hd){ mypHide(hd.dataset.id, hd.checked); return; }
+  }
   /* THE COMBINED SUMMARY SAVES ON BLUR, and this is where blur arrives
      (closeout audit, 2026-09-03). It was registered on `input` while its own
      comment said `change`: every keystroke POSTed, the response repainted the

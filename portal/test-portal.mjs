@@ -20632,6 +20632,100 @@ section('An intake can end without a case, reason on the record');
   await page.close();
 }
 
+
+section('My Portal: two sign-ins, two layouts, one shared caseload');
+{
+  /* THE OWNER'S OWN WALK, through the real page: one admin reorders and
+     unhides, the second admin's portal does not move. */
+  const pageA = await newPage();
+  await signIn(pageA, 'trever', 'AdminPassword1x');
+  await pageA.waitForTimeout(900);
+
+  /* FACTORY VIEW (CEO charter Mission 2): the Needs-assignment card is not
+     primary for an owner-operated firm, and the intake card's lead ladder is
+     folded away entirely. */
+  const factory = await pageA.evaluate(() => ({
+    needs: [...document.querySelectorAll('.statcard, .stat')].some(c => /Needs assignment/.test(c.textContent))
+      || /Needs assignment/.test(document.body.innerText),
+    strip: [...document.querySelectorAll('.qtapps [data-qt]')].map(b => b.dataset.qt).slice(0, 3),
+  }));
+  ok('the factory dashboard carries no Needs-assignment alert', factory.needs === false,
+     JSON.stringify(factory));
+  ok('and Rate Sheet leads the quick actions', factory.strip[0] === 'sheets',
+     JSON.stringify(factory.strip));
+
+  /* A SECOND ADMIN — the other person in the two-person firm. */
+  const invite2 = await pageA.evaluate(async () => {
+    const r = await api('/invites', { method: 'POST',
+      body: { username: 'brother', display_name: 'Brother B', role: 'admin' } });
+    return r.url;
+  });
+  const tok2 = new URL(invite2, 'https://x.test').searchParams.get('invite');
+  await post(`/invite/${tok2}/accept`, { password: 'BrotherPass2026x' });
+
+  /* A reorders: move the first quick action down one. */
+  await pageA.evaluate(() => { TAB = 'settings'; paint(); });
+  await pageA.waitForTimeout(400);
+  const myp = await pageA.evaluate(() => ({
+    panel: /My Portal/.test(document.body.innerText),
+    personal: /nobody else/i.test(document.body.innerText),
+    rows: document.querySelectorAll('.myp-row').length,
+  }));
+  ok('Settings carries My Portal, first, saying whose it is',
+     myp.panel && myp.personal && myp.rows >= 6, JSON.stringify(myp));
+  await pageA.evaluate(() => {
+    const b = document.querySelector('.myp-row [data-act="mypMove"][data-dir="1"]');
+    if (b) b.click();
+  });
+  await pageA.waitForTimeout(900);
+  /* And A un-hides the Needs-assignment card — their own choice. */
+  await pageA.evaluate(() => {
+    const cb = document.querySelector('[data-act="mypHide"][data-id="needs_assignment"]');
+    if (cb) { cb.checked = false; cb.dispatchEvent(new Event('change', { bubbles: true })); }
+  });
+  await pageA.waitForTimeout(900);
+  await pageA.evaluate(() => { TAB = 'dashboard'; paint(); });
+  await pageA.waitForTimeout(400);
+  const aView = await pageA.evaluate(() => ({
+    strip: [...document.querySelectorAll('.qtapps [data-qt]')].map(b => b.dataset.qt).slice(0, 3),
+    needs: /Needs assignment/.test(document.body.innerText),
+  }));
+  ok("A's reorder took: the second card leads now", aView.strip[0] === 'newlead',
+     JSON.stringify(aView.strip));
+  ok("and A's un-hide brought the Needs-assignment card back — for A", aView.needs === true);
+
+  /* B signs in on their own context: the FACTORY view, untouched by A. */
+  const pageB = await newPage();
+  await signIn(pageB, 'brother', 'BrotherPass2026x');
+  await pageB.waitForTimeout(900);
+  const bView = await pageB.evaluate(() => ({
+    strip: [...document.querySelectorAll('.qtapps [data-qt]')].map(b => b.dataset.qt).slice(0, 3),
+    needs: /Needs assignment/.test(document.body.innerText),
+    cases: CASES.length,
+  }));
+  ok("B's quick actions are the standard order — A's reorder never reached them",
+     bView.strip[0] === 'sheets', JSON.stringify(bView.strip));
+  ok("and B's dashboard still hides the Needs-assignment card", bView.needs === false);
+
+  /* SHARED DATA STAYS SHARED: both admins read the same caseload. */
+  const aCases = await pageA.evaluate(() => CASES.length);
+  ok('while the caseload is the same shared set for both', aCases === bView.cases,
+     `${aCases} vs ${bView.cases}`);
+
+  /* A SIGN-OUT ON A'S MACHINE LEAVES NOTHING OF A BEHIND: B signing in on the
+     SAME tab wears their own portal, not A's. */
+  await pageA.evaluate(() => { const b = document.querySelector('[data-act="logout"]'); if (b) b.click(); });
+  await pageA.waitForTimeout(1500);
+  await signIn(pageA, 'brother', 'BrotherPass2026x');
+  await pageA.waitForTimeout(900);
+  const sameTab = await pageA.evaluate(() =>
+    [...document.querySelectorAll('.qtapps [data-qt]')].map(b => b.dataset.qt)[0]);
+  ok("the same browser tab, signed in as B, draws B's portal — not the last user's",
+     sameTab === 'sheets', String(sameTab));
+  await pageA.close();
+  await pageB.close();
+}
+
 await browser.close();
 server.close();
 
