@@ -20321,7 +20321,7 @@ section('Case closeout: the page records a refund and emails nobody');
   /* THE TYPED FIGURES SURVIVE A REPAINT — the EDIT_DRAFT rule. Every paint
      rebuilds these inputs from the page's own draft, so without it a corrected
      refund would revert to the stored value while the save reported success. */
-  await page.evaluate(() => { document.querySelector('[data-act="fcOpen"]').click(); });
+  await page.evaluate(() => { const b = document.querySelector('[data-act="fcOpen"]'); if (b) b.click(); });
   await page.waitForTimeout(300);
   await page.evaluate(() => {
     document.getElementById('fc_retained').value = '400';
@@ -20342,7 +20342,7 @@ section('Case closeout: the page records a refund and emails nobody');
 
   /* THE REVIEW SCREEN SHOWS A PROJECTION, NAMED AS ONE. Drawing it under the
      word FINAL would be the portal asserting a refund that has not happened. */
-  await page.evaluate(() => { document.querySelector('[data-act="fcPreview"]').click(); });
+  await page.evaluate(() => { const b = document.querySelector('[data-act="fcPreview"]'); if (b) b.click(); });
   await page.waitForTimeout(900);
   const prev = await page.evaluate(async () => {
     const rows = [...document.querySelectorAll('.fc-box .fc-row')]
@@ -20361,7 +20361,7 @@ section('Case closeout: the page records a refund and emails nobody');
   /* THE CONFIRMATION ASKS, AND IT NAMES THE FIGURES. */
   let asked = '';
   page.once('dialog', d => { asked = d.message(); d.accept(); });
-  await page.evaluate(() => { document.querySelector('[data-act="fcConfirm"]').click(); });
+  await page.evaluate(() => { const b = document.querySelector('[data-act="fcConfirm"]'); if (b) b.click(); });
   await page.waitForTimeout(2000);
   ok('confirming asks first, in the figures on screen',
      /\$400/.test(asked) && /\$600/.test(asked), asked.slice(0, 160));
@@ -20414,7 +20414,7 @@ section('Case closeout: the page records a refund and emails nobody');
   ok('and it prints through the browser dialog, from its own button', doc.print === true);
 
   /* EMAILING IS ITS OWN EXPLICIT CONFIRMATION, EVERY TIME. */
-  await page.evaluate(() => { document.querySelector('[data-act="fcEmailOpen"]').click(); });
+  await page.evaluate(() => { const b = document.querySelector('[data-act="fcEmailOpen"]'); if (b) b.click(); });
   await page.waitForTimeout(300);
   const to = await page.evaluate(() => {
     const el = document.getElementById('fc_to');
@@ -20424,7 +20424,7 @@ section('Case closeout: the page records a refund and emails nobody');
      to === 'closeout@example.com', String(to));
   let emailAsk = '';
   page.once('dialog', d => { emailAsk = d.message(); d.dismiss(); });
-  await page.evaluate(() => { document.querySelector('[data-act="fcEmailSend"]').click(); });
+  await page.evaluate(() => { const b = document.querySelector('[data-act="fcEmailSend"]'); if (b) b.click(); });
   await page.waitForTimeout(700);
   const dismissed = await page.evaluate(async () => (await (await fetch(
     '/portal-api/cases/API-FC-E2E/closeout-money', { credentials: 'include' })).json()).closeout.emailed_at);

@@ -15507,10 +15507,11 @@ function fcCollect(){
   if(f !== undefined) FC_DRAFT.refund = f;
   if(rs !== undefined) FC_DRAFT.reason = rs;
   if(n !== undefined) FC_DRAFT.note = n;
-  const m = v("fc_method"), ref = v("fc_ref"), d = v("fc_date");
+  const m = v("fc_method"), ref = v("fc_ref"), d = v("fc_date"), to = v("fc_to");
   if(m !== undefined) FC_DRAFT.method = m;
   if(ref !== undefined) FC_DRAFT.reference = ref;
   if(d !== undefined) FC_DRAFT.refunded_on = d;
+  if(to !== undefined) FC_DRAFT.to = to;
 }
 
 const fcMoney = n => (n == null ? "\u2014" : usd(n));
@@ -15581,6 +15582,18 @@ function fcStatementHtml(d, s){
    that in words rather than shown an empty form. */
 function finalCloseoutPanel(s){
   if(ME.role !== "admin" || !WS) return "";
+  /* CAPTURE BEFORE THE DOM IS REPLACED, which is the `focusCapture()` shape and
+     the reason it works: `paint()` composes the whole string first, so the OLD
+     inputs are still on the page while this runs.
+
+     Doing it per action was not enough, and the suite caught it. The closeout
+     form is open while two late reads can still land — `loadCloseout`, the
+     checklist facts, and `loadFinalCloseout` itself — and each of them repaints.
+     A repaint rebuilds these inputs from `FC_DRAFT`, so a figure typed and not
+     yet previewed was silently reverted to blank, on a form about a refund.
+     That is the `EDIT_DRAFT` defect exactly, and the fix belongs where every
+     repaint passes rather than at the handlers that happen to be remembered. */
+  fcCollect();
   if(s.kind === "claims"){
     return `<div class="feebox fc-box"><div class="row"><span><b>Case closeout</b></span></div>
       <p class="hint">A claim assignment is authorized in hour blocks and invoiced per fee schedule,
@@ -15808,13 +15821,12 @@ function fcPrint(){
 }
 
 function fcEmailOpen(){ FC_EMAIL_OPEN = true; FC_MSG = ""; FC_ERR = false; paintCase(); }
-function fcEmailCancel(){ const el = $("fc_to"); if(el) FC_DRAFT.to = el.value; FC_EMAIL_OPEN = false; paintCase(); }
+function fcEmailCancel(){ fcCollect(); FC_EMAIL_OPEN = false; paintCase(); }
 
 async function fcEmailSend(){
   if(FC_BUSY) return;
-  const el = $("fc_to");
-  const to = el ? el.value.trim() : "";
-  FC_DRAFT.to = to;
+  fcCollect();
+  const to = String(FC_DRAFT.to || "").trim();
   /* EMAILING THE CLIENT IS ITS OWN EXPLICIT CONFIRMATION, EVERY TIME — the
      owner's rule, and the second half of it is that closing never does this. */
   const already = ((FC[WS_CASE] || {}).data || {}).closeout || {};

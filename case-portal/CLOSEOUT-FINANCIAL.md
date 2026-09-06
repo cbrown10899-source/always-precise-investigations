@@ -158,6 +158,21 @@ screen can offer *Create case* or *Open case* and **be right about which**.
 Deriving it from a stage or an assignment would be inference about the one fact
 that row exists to hold.
 
+## D10 — THE DRAFT IS CAPTURED AT RENDER, NOT AT EACH ACTION
+
+Found by the e2e. `fcCollect()` was called by each `fc*` handler, which is what
+`edCollect` does — and it was not enough. The closeout form is open while two
+late reads can still land (`loadCloseout`, the checklist facts, and
+`loadFinalCloseout` itself), and each of them repaints. A repaint rebuilds these
+inputs from `FC_DRAFT`, so a figure typed and not yet previewed was silently
+reverted to blank, **on a form about a refund**.
+
+The capture now happens at the top of `finalCloseoutPanel()`. That is the
+`focusCapture()` shape and the reason it works: `paint()` composes the whole
+string first, so the OLD inputs are still on the page while the panel renders.
+**The fix belongs where every repaint passes, not at the handlers that happen to
+be remembered.**
+
 ## What this unit does NOT do
 
 - **No destructive schema change.** Two additive tables, no CHECK constraints,
