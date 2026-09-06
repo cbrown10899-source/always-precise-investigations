@@ -490,6 +490,67 @@ CREATE TABLE IF NOT EXISTS case_status (
 -- The closing checklist: eight human attestations, and the only door to the
 -- closed stage. The row keeps who closed the case and when; reopening clears
 -- the stamp but keeps the ticks as history.
+-- ---------------------------------------------------------------------------
+-- THE REFUND LEDGER (owner brief 2026-09-06).
+--
+-- A REFUND IS ITS OWN EVENT AND THE PAYMENT IT REFUNDS IS NEVER TOUCHED. The
+-- owner's rule, in their own words: "Do NOT modify the original payment to
+-- pretend less money was received." So this is a separate table rather than a
+-- column on `retainer_payment` or an edit to its amount — and that is what
+-- makes the promise structural rather than remembered. Money received stays
+-- +$1,000 forever; a refund is -$600 recorded here; net retained is arithmetic
+-- over the two, computed on every read like every other figure in this portal.
+--
+-- `amount` IS POSITIVE. The direction is in the table's name, not in a sign
+-- somebody has to remember to apply — a negative row here would be a refund of
+-- a refund, which is not a thing the office does.
+--
+-- `method` carries no CHECK: the Worker validates it against the same list the
+-- payment methods use, for the standing reason a CHECK cannot be widened
+-- idempotently by a file that is re-applied on every setup run.
+CREATE TABLE IF NOT EXISTS case_refund (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_no     TEXT    NOT NULL,
+  amount      REAL    NOT NULL,
+  method      TEXT,
+  reference   TEXT,
+  refunded_on TEXT,               -- the calendar date the CLIENT was refunded
+  reason      TEXT,
+  recorded_by INTEGER REFERENCES users(id),
+  recorded_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_refund_case ON case_refund(case_no, id);
+
+-- ---------------------------------------------------------------------------
+-- THE FINANCIAL CLOSEOUT — what the office decided when it closed the case.
+--
+-- SEPARATE FROM `case_closure`, which is the eight-tick checklist and the
+-- closing stamp. This is the money side: how much of the retainer was earned,
+-- how much went back, why the case closed, and whether a Final Closeout
+-- Statement was generated and emailed. Two concerns, two tables, so neither
+-- has to grow a column meaning the other's business.
+--
+-- NOTHING HERE IS THE LEDGER. `retained` and `refunded` are what was AGREED at
+-- closeout; the money itself lives in `retainer_payment` and `case_refund`,
+-- and every figure a person or a client sees is summed from those. A stored
+-- total would be a second answer to a question the ledger already answers.
+--
+-- `emailed_at` is what makes a second send a deliberate act rather than a
+-- double tap: the route refuses to send again unless it is explicitly asked.
+CREATE TABLE IF NOT EXISTS case_closeout (
+  case_no      TEXT PRIMARY KEY,
+  retained     REAL,
+  refunded     REAL,
+  reason       TEXT,
+  note         TEXT,
+  prepared_by  INTEGER REFERENCES users(id),
+  prepared_at  TEXT,
+  closed_at    TEXT,
+  statement_at TEXT,
+  emailed_at   TEXT,
+  emailed_to   TEXT
+);
+
 CREATE TABLE IF NOT EXISTS case_closure (
   case_no        TEXT PRIMARY KEY,
   checklist_json TEXT NOT NULL DEFAULT '{}',

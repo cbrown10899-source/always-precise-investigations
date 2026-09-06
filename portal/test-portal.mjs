@@ -20272,6 +20272,204 @@ section('Mobile Assistant: every long flow reaches its own bottom');
   await page.close();
 }
 
+/* ============================================================================
+   THE FINANCIAL CLOSEOUT ON SCREEN (owner brief 2026-09-06).
+
+   The rules these assert are the owner's own, in their words: the original
+   payment is never altered, a refund is its own ledger event, the final
+   balance comes from the real ledger, and closing the case and emailing the
+   client are two separate explicit confirmations — the email never happens
+   automatically when the case is closed.
+
+   Every one of those is asserted through the REAL page against the REAL
+   Worker, because a promise about money is not something a comment can keep.
+   ========================================================================= */
+section('Case closeout: the page records a refund and emails nobody');
+{
+  await post('/ingest', { case_no: 'API-FC-E2E', service: 'Surveillance',
+    client_name: 'Closeout Client', client_email: 'closeout@example.com',
+    subject_name: 'Closeout Subject' }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.evaluate(() => openCase('API-FC-E2E'));
+  await page.waitForTimeout(700);
+
+  /* $1,000 in, through the case's own Record Payment route — the same writer
+     the office uses, so what the closeout reads is a real payment. */
+  await page.evaluate(async () => {
+    await api('/cases/API-FC-E2E/retainer', { method: 'POST', body: {
+      retainer_amount: 1500, received: true, amount_received: 1000, method: 'venmo',
+      paid_on: '2026-09-01', reference: 'e2e closeout' } });
+    await api('/cases/API-FC-E2E/closure', { method: 'POST', body: { checklist: {
+      field_work: true, activity_logs: true, evidence: true, report: true,
+      admin_review: true, deliverables: true, expenses: true, billing: true } } });
+    await reloadWorkspace();
+    WS_TAB = 'billing'; WS_MORE = false; paintCase();
+  });
+  await page.waitForTimeout(900);
+
+  const ledger = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.fc-box .fc-row')]
+      .map(r => r.textContent.replace(/\s+/g, ' ').trim());
+    return { rows, hasOpen: !!document.querySelector('[data-act="fcOpen"]') };
+  });
+  ok('the closeout panel draws the ledger it read from the Worker',
+     ledger.rows.some(r => /Retainer received.*\$1,000/.test(r)), JSON.stringify(ledger.rows));
+  ok('and offers to close the case out', ledger.hasOpen === true);
+
+  /* THE TYPED FIGURES SURVIVE A REPAINT — the EDIT_DRAFT rule. Every paint
+     rebuilds these inputs from the page's own draft, so without it a corrected
+     refund would revert to the stored value while the save reported success. */
+  await page.evaluate(() => { const b = document.querySelector('[data-act="fcOpen"]'); if (b) b.click(); });
+  await page.waitForTimeout(300);
+  await page.evaluate(() => {
+    document.getElementById('fc_retained').value = '400';
+    document.getElementById('fc_refund').value = '600';
+    document.getElementById('fc_reason').value = 'completed';
+    paintCase();
+  });
+  await page.waitForTimeout(200);
+  const kept = await page.evaluate(() => {
+    fcCollect();
+    paintCase();
+    return { r: document.getElementById('fc_retained').value,
+             f: document.getElementById('fc_refund').value,
+             rs: document.getElementById('fc_reason').value };
+  });
+  ok('what is typed into the closeout survives a repaint',
+     kept.r === '400' && kept.f === '600' && kept.rs === 'completed', JSON.stringify(kept));
+
+  /* THE REVIEW SCREEN SHOWS A PROJECTION, NAMED AS ONE. Drawing it under the
+     word FINAL would be the portal asserting a refund that has not happened. */
+  await page.evaluate(() => { const b = document.querySelector('[data-act="fcPreview"]'); if (b) b.click(); });
+  await page.waitForTimeout(900);
+  const prev = await page.evaluate(async () => {
+    const rows = [...document.querySelectorAll('.fc-box .fc-row')]
+      .map(r => r.textContent.replace(/\s+/g, ' ').trim());
+    const w = await (await fetch('/portal-api/cases/API-FC-E2E/closeout-money',
+      { credentials: 'include' })).json();
+    return { rows, refunds: (w.refunds || []).length,
+             confirm: !!document.querySelector('[data-act="fcConfirm"]') };
+  });
+  ok('the review names the balance as PROJECTED, never as final',
+     prev.rows.some(r => /Projected final balance.*\$0/.test(r))
+     && !prev.rows.some(r => /^Final balance/.test(r)), JSON.stringify(prev.rows));
+  ok('and PREVIEWING ISSUED NO REFUND', prev.refunds === 0, String(prev.refunds));
+  ok('the confirm control is on the review screen, not on the form', prev.confirm === true);
+
+  /* THE CONFIRMATION ASKS, AND IT NAMES THE FIGURES. */
+  let asked = '';
+  page.once('dialog', d => { asked = d.message(); d.accept(); });
+  await page.evaluate(() => { const b = document.querySelector('[data-act="fcConfirm"]'); if (b) b.click(); });
+  await page.waitForTimeout(2000);
+  ok('confirming asks first, in the figures on screen',
+     /\$400/.test(asked) && /\$600/.test(asked), asked.slice(0, 160));
+  ok('and the confirmation says the original payment is not changed',
+     /original payment is not changed/.test(asked), asked.slice(0, 220));
+  ok('and that nothing is emailed by it', /Nothing is emailed/.test(asked), asked.slice(-120));
+
+  const after = await page.evaluate(async () => {
+    const w = await (await fetch('/portal-api/cases/API-FC-E2E/closeout-money',
+      { credentials: 'include' })).json();
+    const ws = await (await fetch('/portal-api/cases/API-FC-E2E/workspace',
+      { credentials: 'include' })).json();
+    const pays = (ws.authorization && ws.authorization.retainer
+      && ws.authorization.retainer.payments) || [];
+    return { received: w.retainer_received, retained: w.retained, refunded: w.refunded,
+      bal: w.final_balance, refunds: (w.refunds || []).length,
+      emailed: w.closeout ? w.closeout.emailed_at : 'no-closeout',
+      pay: pays.map(p => `${p.amount}|${p.method}|${p.paid_on}|${p.reference}`),
+      status: ws.status };
+  });
+  ok('THE ORIGINAL PAYMENT IS UNTOUCHED — same amount, method, date and reference',
+     after.pay.length === 1 && after.pay[0] === '1000|venmo|2026-09-01|e2e closeout',
+     JSON.stringify(after.pay));
+  ok('and the case still reports the whole $1,000 it received', after.received === 1000);
+  ok('the refund stands as its own ledger event', after.refunds === 1 && after.refunded === 600);
+  ok('the final balance comes out of the ledger: 1000 - 400 - 600 = 0', after.bal === 0);
+  ok('the case is closed', after.status === 'closed', after.status);
+  ok('AND NOTHING WAS EMAILED BY CLOSING', after.emailed === null, String(after.emailed));
+
+  /* THE STATEMENT IS A PRINT REGION, and there is still exactly one PDF writer
+     in this page — printing goes through the browser's own dialog. */
+  const doc = await page.evaluate(() => {
+    const d = document.getElementById('fcdoc');
+    if (!d) return null;
+    const txt = d.innerText.replace(/\s+/g, ' ');
+    return { txt, print: !!document.querySelector('[data-act="fcPrint"]'),
+      /* NOTHING OF THE OFFICE'S IS INSIDE THE CLIENT'S DOCUMENT. */
+      controls: d.querySelectorAll('button, input, select, textarea').length };
+  });
+  ok('the Final Closeout Statement is on screen as the client will read it',
+     !!doc && /FINAL CLOSEOUT STATEMENT/i.test(doc.txt)
+     && /Closeout Client/.test(doc.txt) && /API-FC-E2E/.test(doc.txt), doc && doc.txt.slice(0, 140));
+  ok('it carries the four figures and states the status',
+     /\$1,000/.test(doc.txt) && /\$400/.test(doc.txt) && /\$600/.test(doc.txt)
+     && /CASE STATUS: CLOSED/i.test(doc.txt), doc.txt.slice(0, 260));
+  ok('it is not called an invoice and asks for nothing',
+     !/invoice/i.test(doc.txt) && !/amount due|please remit/i.test(doc.txt));
+  ok('NO CONTROL OF THE OFFICE\'S SITS INSIDE THE PRINTED REGION', doc.controls === 0,
+     String(doc.controls));
+  ok('and it prints through the browser dialog, from its own button', doc.print === true);
+
+  /* EMAILING IS ITS OWN EXPLICIT CONFIRMATION, EVERY TIME. */
+  await page.evaluate(() => { const b = document.querySelector('[data-act="fcEmailOpen"]'); if (b) b.click(); });
+  await page.waitForTimeout(300);
+  const to = await page.evaluate(() => {
+    const el = document.getElementById('fc_to');
+    return el ? el.value : null;
+  });
+  ok("the send form opens on the client's own address, for review",
+     to === 'closeout@example.com', String(to));
+  let emailAsk = '';
+  page.once('dialog', d => { emailAsk = d.message(); d.dismiss(); });
+  await page.evaluate(() => { const b = document.querySelector('[data-act="fcEmailSend"]'); if (b) b.click(); });
+  await page.waitForTimeout(700);
+  const dismissed = await page.evaluate(async () => (await (await fetch(
+    '/portal-api/cases/API-FC-E2E/closeout-money', { credentials: 'include' })).json()).closeout.emailed_at);
+  ok('sending the statement asks first, naming who it goes to',
+     /closeout@example\.com/.test(emailAsk), emailAsk.slice(0, 140));
+  ok('and saying no sends nothing', dismissed === null, String(dismissed));
+
+  await page.close();
+}
+
+section('The intake screen carries the intake\'s own actions');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => openCase('API-FC-E2E', 'details'));
+  await page.waitForTimeout(900);
+  const acts = await page.evaluate(() => {
+    const box = [...document.querySelectorAll('.feebox')]
+      .find(b => /What happens to this intake/.test(b.textContent));
+    if (!box) return null;
+    const btns = [...box.querySelectorAll('button')];
+    return {
+      labels: btns.map(b => (b.getAttribute('aria-label') || b.textContent).replace(/\s+/g, ' ').trim()),
+      small: btns.filter(b => Math.round(b.getBoundingClientRect().height) < 44).length,
+      overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    };
+  });
+  /* THE OWNER'S REPORT WAS THE DISTANCE: reading a submitted intake and then
+     acting on it meant going back to the Intakes desk for every one of these.
+     Every button is an EXISTING one — same data-act, same handler, same route
+     — so this is one flow with two doors and never a second implementation. */
+  ok('the intake screen offers what happens to the intake, without going back',
+     !!acts && acts.labels.length >= 5, JSON.stringify(acts && acts.labels));
+  for (const want of [/accept/i, /Internal note/i, /Message/i, /Archive intake/i, /Delete this intake/i]) {
+    ok(`it offers ${want}`, acts.labels.some(l => want.test(l)), JSON.stringify(acts.labels));
+  }
+  ok('no control there is under the 44px tap floor on a phone', acts.small === 0,
+     String(acts.small));
+  ok('and the row causes no sideways scroll at 390', acts.overflow === false);
+
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.close();
+}
+
 await browser.close();
 server.close();
 

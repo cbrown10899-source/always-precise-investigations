@@ -3515,6 +3515,80 @@ auto-submitted**; the transcript is shown for review and only Use Text turns it
 into an entry. The privacy wording says only what is verifiable ("this page
 keeps no audio"), never the mockup's "never stored".
 
+## A refund is its own event, and the original payment is never touched
+
+Owner brief 2026-09-06, derived decisions D1–D9 in
+`case-portal/CLOSEOUT-FINANCIAL.md`. The owner's own accounting rule: **"Do NOT
+modify the original payment to pretend less money was received."** So a refund
+is a row in `case_refund`, `retainer_payment` is never touched, and every total
+is arithmetic over the two, computed on read. **There is no stored total
+anywhere** — a stored one would be a second answer to a question the ledger
+already answers, and the two would disagree the first time a payment was voided.
+
+Four admin-only routes under `/cases/:no/`, so the router's deleted/archived
+chokepoint already covers them: `closeout-money` (the ledger, read-only),
+`closeout/prepare` (the office's decision, NO MONEY MOVED), `closeout/confirm`
+(the one writer of a refund row) and `closeout/email` (its own explicit act,
+always).
+
+**TWO BALANCES ARE NOT ONE QUESTION.** `final_balance` is the LEDGER'S —
+received minus earned minus refunds actually issued — so before a confirm it
+reads $600 on a $1,000 case with $400 earned, which is exactly right: the office
+really is still holding $600. `projected_balance` is what the AGREED figures
+would settle to, and it is what the review screen shows beside Confirm.
+**A projection drawn under the word FINAL is the portal asserting something that
+has not happened.** They converge the moment the refund is written, and the
+client's statement prints only the ledger's.
+
+**Reconciliation is a REFUSAL, not a warning**, by name and with the arithmetic
+in the message — an impossible financial state that was merely flagged is one
+somebody clicks past. The exact boundary is allowed (`>=` would have refused
+spending every dollar) and cents are compared as cents, because refusing correct
+arithmetic over a 1e-13 float miss would be the portal wrong about the one thing
+it exists to get right.
+
+**The checklist is still the only door.** Confirming records the money and then
+calls the EXISTING `closeCase`, which can legitimately refuse. On such a case the
+refund is real and the case is OPEN, and the response says so — **a fact is not
+hidden because a tick is missing.**
+
+**THE STATEMENT PRINTS "CASE STATUS: CLOSED", SO THE CASE HAS TO BE CLOSED.**
+Found by the suite, and it follows from the line above: a confirmed closeout on
+an unfinished checklist would have emailed a client that their open case was
+closed. `closeout/email` requires the case's own `status`, and refuses naming
+what is still open.
+
+**Closing emails nobody**, asserted at the transport in both suites rather than
+at the route. A second send is refused BY NAME rather than deduplicated — a
+second tap, a dropped-response retry and a deliberate resend all look the same
+from here, and `resend: true` is the office saying it meant it.
+
+**The statement is not written to `send_log`, and that is a schema fact rather
+than a choice.** That table's `kind` carries `CHECK (kind IN ('rate_sheet',
+'intake'))`, and widening a CHECK is the non-idempotent rebuild `schema.sql`
+cannot do — a fresh database would accept `'closeout'` while the LIVE one
+refused it. The send record is `case_closeout.emailed_at` / `emailed_to`.
+
+**The Assistant PREPARES and never executes**, and it is the Daily Summary shape
+rather than the payment prefill's: it answers from the record and opens the
+panel, and **proposes no split**. What the firm earned is not derivable from
+anything the portal holds, so suggesting it would be the Assistant deciding how
+much of a client's money the firm keeps. The carve-out stands down the moment
+the sentence carries an executing verb — *"close out this case and email the
+client"* names a send and goes to the refusal. **`refund` and `closeout` were
+ADDED to `ASSISTANT_BLOCKED`**: nothing could ever have refunded anything, but
+*"refund the client $600"* fell through to the ordinary help answer, and a shrug
+is not a refusal.
+
+**The intake screen carries the intake's own actions** (owner, live iPhone).
+Every button is an EXISTING one — same `data-act`, same handler, same route — so
+it is one flow with two doors, never a second implementation. `lead_status` rides
+the workspace (admin-only) so the screen can offer *Create case* or *Open case*
+and be right about which; deriving it from a stage would be inference about the
+one fact that row exists to hold.
+
+**Adding these tables means a manual `portal-setup.yml` dispatch after merge.**
+
 ## The API Assistant sends three things and refuses the rest by name
 
 Owner master spec 2026-09-02 (§1–38), architecture and unit ledger in
