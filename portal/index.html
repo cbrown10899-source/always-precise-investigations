@@ -2570,6 +2570,14 @@
     padding-top:9px;font-weight:800;}
   .fc-row.fc-tot b{font-size:1.1rem;color:var(--navy-2);}
   .fc-presets{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:8px 0 2px;}
+  .fc-ident2{padding:8px 10px;background:var(--paper);border-radius:8px;margin:8px 0 4px;font-size:.9rem;}
+  .fc-after{margin:10px 0 2px;padding:8px 10px;background:var(--neutral-bg);border-radius:8px;
+    font-size:.88rem;}
+  .fc-closed{border-left:3px solid var(--navy-2);}
+  .fc-cl-r{display:flex;justify-content:space-between;gap:10px;align-items:baseline;
+    padding:5px 0;border-bottom:1px solid var(--line);font-size:.9rem;}
+  .fc-cl-r b{font-variant-numeric:tabular-nums;text-align:right;}
+  .fc-cl-r.fc-cl-t{border-bottom:0;border-top:2px solid var(--navy-2);font-weight:800;}
   .myp-row{display:flex;justify-content:space-between;align-items:center;gap:10px;
     padding:7px 0;border-bottom:1px solid var(--line);}
   .myp-n{font-size:.92rem;font-weight:600;}
@@ -3500,6 +3508,14 @@ async function asstSend(text){
     if(r.kind === "payment_prefill" && r.prefill){
       ASST.msgs[ASST.msgs.length - 1].prefill = r.prefill;
     }
+    /* THE CLOSEOUT PREFILL (closeout brief §21) rides the same shape: a review
+       card whose one button OPENS the case's own closeout form with the
+       owner's stated figures seeded. Nothing is recorded by saying it, and the
+       form's two confirmations are unchanged. */
+    if(r.kind === "closeout_prefill" && r.prefill){
+      ASST.msgs[ASST.msgs.length - 1].coPrefill = { ...r.prefill, case_no: r.card && r.card[0]
+        ? r.card[0].case_no : (ASST.case || "") };
+    }
     if(r.kind === "command" && r.command && ASST_CMD[r.command.action]){
       ASST.pending = { ...r.command, token: asstCmdToken() };
       ASST.msgs[ASST.msgs.length - 1].command = ASST.pending;
@@ -3683,6 +3699,53 @@ function asstPrefillHtml(p){
         data-meth="${esc(p.method || "")}">Continue to Record Payment</button>
     </div>
   </div>`;
+}
+
+/* THE CLOSEOUT PREFILL CARD. Same operational identity as the payment card
+   (`.asst-pf` — the Assistant is navy/teal), same promise: a review, then the
+   EXISTING form. Every value shown is what the owner SAID, parsed; the case's
+   own Confirm & close case is what commits. */
+function asstCloseoutPrefillHtml(p){
+  const row = (l, v) => `<div class="asst-pf-r"><span>${esc(l)}</span><b>${esc(v)}</b></div>`;
+  return `<div class="asst-pf">
+    <div class="asst-pf-t">REVIEW &mdash; NOTHING RECORDED</div>
+    ${p.work_performed ? row("Work performed", FC_WORK_LABEL[p.work_performed] || p.work_performed) : ""}
+    ${p.retained !== undefined ? row("Non-refundable retained", usd(p.retained)) : ""}
+    ${p.refund !== undefined ? row("Refund", usd(p.refund)) : ""}
+    ${p.refund_status ? row("Refund status",
+      (FC_RSTATUS_FALLBACK.find(r => r.id === p.refund_status) || {}).label || p.refund_status) : ""}
+    ${p.reason ? row("Reason", FC_REASON_LABEL[p.reason] || p.reason) : ""}
+    <div class="asst-pf-n">These are the figures you said, filled into the closeout form. The
+      portal issues no refund &mdash; it documents what you did. You press
+      <b>Confirm &amp; close case</b> on the case yourself.</div>
+    <div class="asst-acts">
+      <button class="btn sm accent" data-act="asstCloseoutGo"
+        data-p="${esc(JSON.stringify(p))}">Continue to Case Closeout</button>
+    </div>
+  </div>`;
+}
+
+async function asstCloseoutGo(raw){
+  let p = {};
+  try{ p = JSON.parse(raw || "{}"); }catch{ p = {}; }
+  if(!p.case_no) return;
+  const phone = window.innerWidth < 900;
+  if(phone && ASST) ASST.open = false;
+  /* The closeout lives on Billing & closing — looked up, not assumed, the
+     lesson the payment prefill already paid for. */
+  await openCase(String(p.case_no), "billing");
+  fcEnter();
+  FC_OPEN = true; FC_STEP = "form";
+  /* SEEDED THROUGH fcSeed so the render-time capture cannot discard it — a
+     programmatic draft followed by a paint was exactly the defect the suite
+     found on the presets. */
+  fcSeed({
+    retained: p.retained !== undefined ? String(p.retained) : undefined,
+    refund: p.refund !== undefined ? String(p.refund) : undefined,
+    rstatus: p.refund_status || undefined,
+    reason: p.reason || undefined,
+    work: p.work_performed || undefined,
+  });
 }
 
 async function asstPrefillGo(caseNo, amt, meth){
@@ -4274,6 +4337,7 @@ function asstMsgHtml(m){
     ${m.check ? asstCheckHtml(m.check) : ""}
     ${m.draft ? asstDraftHtml(m.draft) : ""}
     ${m.prefill ? asstPrefillHtml(m.prefill) : ""}
+    ${m.coPrefill ? asstCloseoutPrefillHtml(m.coPrefill) : ""}
     ${m.card ? `<div class="asst-card">${m.card.map(c => c.case_no
       /* A ROW THAT CAN OPEN NOTHING IS NOT A BUTTON. Some card rows carry no
          case number at all, and drawn as buttons they invited a tap that did
@@ -15649,6 +15713,19 @@ let FC_STEP = "form";   /* form -> preview -> (confirmed) */
 let FC_DRAFT = {};
 let FC_MSG = ""; let FC_ERR = false; let FC_BUSY = false;
 let FC_EMAIL_OPEN = false;
+/* A PROGRAMMATIC SEED MUST SURVIVE THE RENDER-TIME CAPTURE. The capture at
+   the top of finalCloseoutPanel exists so a late repaint cannot discard what
+   a PERSON typed — but it reads the OLD inputs, so a draft written by code
+   (a preset, an Assistant prefill) followed by a paint was immediately
+   overwritten by the stale DOM it was about to replace. The suite caught it:
+   every preset seeded "" on arrival. fcSeed writes the draft and skips
+   exactly one capture — the paint that draws the seeded values. */
+let FC_SKIP_CAPTURE = false;
+function fcSeed(patch){
+  FC_DRAFT = {...FC_DRAFT, ...patch};
+  FC_SKIP_CAPTURE = true;
+  paintCase();
+}
 
 function fcEnter(){ FC_OPEN = false; FC_STEP = "form"; FC_DRAFT = {}; FC_MSG = ""; FC_ERR = false;
   FC_BUSY = false; FC_EMAIL_OPEN = false; }
@@ -15678,6 +15755,10 @@ function fcCollect(){
   if(n !== undefined) FC_DRAFT.note = n;
   const st = v("fc_rstatus");
   if(st !== undefined) FC_DRAFT.rstatus = st;
+  const wk = v("fc_work");
+  if(wk !== undefined) FC_DRAFT.work = wk;
+  const rdet = v("fc_rdetail");
+  if(rdet !== undefined) FC_DRAFT.rdetail = rdet;
   const m = v("fc_method"), ref = v("fc_ref"), d = v("fc_date"), to = v("fc_to");
   if(m !== undefined) FC_DRAFT.method = m;
   if(ref !== undefined) FC_DRAFT.reference = ref;
@@ -15747,8 +15828,10 @@ function fcStatementHtml(d, s){
         <b>${fcMoney(d.retainer_received)}</b></div>
       <div class="fc-row"><span>Non-refundable retained</span>
         <b class="fc-keep">${fcMoney(d.retained)}</b></div>
+      ${d.work_performed ? `<div class="fc-row"><span>Work performed</span>
+        <b>${esc(FC_WORK_LABEL[d.work_performed] || d.work_performed)}</b></div>` : ""}
       ${d.refunded > 0
-        ? `<div class="fc-row"><span>Refund issued${(d.refund_date || (d.refunds[0] && d.refunds[0].refunded_on))
+        ? `<div class="fc-row"><span>Refund completed outside portal${(d.refund_date || (d.refunds[0] && d.refunds[0].refunded_on))
             ? ` <span class="optn">&middot; ${esc(d.refund_date || d.refunds[0].refunded_on)}</span>` : ""}</span>
             <b>${fcMoney(d.refunded)}</b></div>`
         : d.refund_status === "requested" && d.agreed_refund > 0
@@ -15761,11 +15844,47 @@ function fcStatementHtml(d, s){
           - (d.refunded > 0 ? d.refunded : (d.refund_status === "requested" ? (d.agreed_refund || 0) : 0))) * 100) / 100)}</b></div>
     </div>
     <div class="fc-status">CASE STATUS: CLOSED</div>
-    ${d.closeout && d.closeout.reason ? `<p class="fc-note"><b>Reason:</b> ${esc(FC_REASON_LABEL[d.closeout.reason] || d.closeout.reason)}</p>` : ""}
-    ${d.refunded > 0 && d.refund_status === "completed_external"
-      ? `<p class="fc-note">The refund was completed outside this portal and is documented above.</p>` : ""}
+    ${fcReason(d) ? `<p class="fc-note"><b>Reason:</b> ${esc(fcReason(d))}</p>` : ""}
     <p class="fc-note">This statement documents the disposition of the retainer held on this case.</p>
     <div class="fc-foot">Questions? (434) 907-0975<br>Always Precise Investigations, LLC</div>
+  </div>`;
+}
+
+/* THE CLOSED-CASE SUMMARY (closeout brief §16): a permanent, concise block at
+   the top of a closed case's Overview, so the disposition is the first thing
+   the office reads. It is the SAME closeout read the panel uses — one source,
+   so the two screens cannot say different things — and its wording follows the
+   record: "completed outside portal" only over a real ledger row. */
+function fcClosedSummaryHtml(s){
+  if(ME.role !== "admin" || !WS) return "";
+  if(((WS.stage || s.status) !== "closed") || s.kind === "claims") return "";
+  if(!FC[WS_CASE]) setTimeout(() => loadFinalCloseout(WS_CASE), 0);
+  const st = FC[WS_CASE] || { state: "loading" };
+  if(st.state !== "ok" || !st.data.closeout || !st.data.closeout.closed_at) return "";
+  const d = st.data;
+  const money = n => (n == null ? "—" : usd(n));
+  /* The refund's WORD and its FIGURE, kept apart — a regex tidying the label
+     off a composed sentence is how a dollar literal got into this file once
+     and tripped the no-rate-in-source guard. */
+  const refundWord = d.refunded > 0 ? "Completed outside portal"
+    : d.refund_status === "requested" ? "Requested"
+    : d.refund_status === "none_due" ? "No refund due"
+    : d.refund_status === "not_requested" ? "Not requested" : "";
+  const refundAmt = d.refunded > 0 ? d.refunded
+    : d.refund_status === "requested" ? (d.agreed_refund || 0) : null;
+  const settle = Math.round((d.retainer_received - (d.retained || 0)
+    - (d.refunded > 0 ? d.refunded : (d.refund_status === "requested" ? (d.agreed_refund || 0) : 0))) * 100) / 100;
+  return `<div class="ovcard fc-closed">
+    <h3>Closed</h3>
+    ${fcReason(d) ? `<div class="fc-cl-r"><span>Reason</span><b>${esc(fcReason(d))}</b></div>` : ""}
+    ${d.work_performed ? `<div class="fc-cl-r"><span>Work performed</span>
+      <b>${esc(FC_WORK_LABEL[d.work_performed] || d.work_performed)}</b></div>` : ""}
+    <div class="fc-cl-r"><span>Retainer received</span><b>${money(d.retainer_received)}</b></div>
+    <div class="fc-cl-r"><span>Non-refundable retained</span><b>${money(d.retained)}</b></div>
+    ${refundWord ? `<div class="fc-cl-r"><span>Refund</span><b>${esc(refundWord)}${
+      refundAmt != null ? " &middot; " + money(refundAmt) : ""}</b></div>` : ""}
+    <div class="fc-cl-r fc-cl-t"><span>Final balance</span><b>${money(settle)}</b></div>
+    <div class="ov-foot"><button class="btn sm ghost" data-act="wsTab" data-tab="billing">Open the closeout &rarr;</button></div>
   </div>`;
 }
 
@@ -15785,7 +15904,8 @@ function finalCloseoutPanel(s){
      yet previewed was silently reverted to blank, on a form about a refund.
      That is the `EDIT_DRAFT` defect exactly, and the fix belongs where every
      repaint passes rather than at the handlers that happen to be remembered. */
-  fcCollect();
+  if(FC_SKIP_CAPTURE) FC_SKIP_CAPTURE = false;
+  else fcCollect();
   if(s.kind === "claims"){
     return `<div class="feebox fc-box"><div class="row"><span><b>Case closeout</b></span></div>
       <p class="hint">A claim assignment is authorized in hour blocks and invoiced per fee schedule,
@@ -15834,8 +15954,9 @@ function finalCloseoutPanel(s){
       : d.refund_status && d.refund_status !== "completed_external"
         ? `<div class="fc-row"><span>Refund status</span>
           <b>${esc((FC_RSTATUS_FALLBACK.find(r => r.id === d.refund_status) || {}).label || d.refund_status)}</b></div>` : ""}
-      ${d.closeout.reason ? `<div class="fc-row"><span>Reason</span>
-        <b>${esc(FC_REASON_LABEL[d.closeout.reason] || d.closeout.reason)}</b></div>` : ""}
+      ${d.work_performed ? `<div class="fc-row"><span>Work performed</span>
+        <b>${esc(FC_WORK_LABEL[d.work_performed] || d.work_performed)}</b></div>` : ""}
+      ${fcReason(d) ? `<div class="fc-row"><span>Reason</span><b>${esc(fcReason(d))}</b></div>` : ""}
       ${d.closeout.note ? `<p class="hint" style="white-space:pre-wrap">${esc(d.closeout.note)}</p>` : ""}
       ${fcStatementHtml(d, s)}
       <div class="actions">
@@ -15864,7 +15985,7 @@ function finalCloseoutPanel(s){
   }
 
   if(FC_STEP === "preview") return fcPreviewHtml(d, s);
-  return fcFormHtml(d);
+  return fcFormHtml(d, s);
 }
 
 const FC_REASON_LABEL = {
@@ -15872,14 +15993,49 @@ const FC_REASON_LABEL = {
   no_work: "No work performed",
   completed: "Investigation completed",
   client_requested: "Client requested closure",
-  no_further_action: "No further action requested", other: "Other" };
+  no_further_action: "No further action requested",
+  unable_to_proceed: "Unable to proceed", other: "Other" };
+const FC_WORK_LABEL = { none: "No work performed", limited: "Limited work performed",
+  completed: "Investigation completed", other: "Other" };
+/* One reader of the PRINTED reason: the id's label, and for "Other" the
+   owner's own words from the detail — the Worker's closeoutReasonLabel rule,
+   mirrored so the two documents cannot disagree. */
+function fcReason(d){
+  const id = d.closeout && d.closeout.reason;
+  if(!id) return null;
+  if(id === "other" && d.reason_detail) return d.reason_detail;
+  return FC_REASON_LABEL[id] || null;
+}
+/* The §4/§12 identity header: who and which case this closeout is about, and
+   what it is now — drawn on the form AND the review so neither screen asks
+   the owner to remember. */
+function fcIdentHtml(s){
+  const p = (s && s.payload) || {};
+  return `<div class="fc-ident2">
+    <div><b>${esc(p.client_name || s.client_name || "—")}</b> &middot; ${esc(WS_CASE)}</div>
+    <div class="optn">${esc((WS && WS.authorization && WS.authorization.case_type) || (s.kind === "claims" ? "Claim assignment" : "Client intake"))}
+      &middot; currently ${esc((WS && WS.stage) || s.status || "open")}</div>
+  </div>`;
+}
 
-function fcFormHtml(d){
+function fcFormHtml(d, s){
   const rec = d.retainer_received || 0;
+  /* THE SUGGESTION IS THE WORKER'S, AND IT IS A SUGGESTION. Undefined draft
+     means the owner has not touched the control, so the record's own reading
+     shows; the moment they pick anything, their pick is what stands. */
+  const work = FC_DRAFT.work !== undefined ? FC_DRAFT.work : (d.suggested_work || "");
   return `<div class="feebox fc-box">
     <div class="row"><span><b>Case closeout</b></span>
       <button class="btn sm ghost" data-act="fcCancel">Cancel</button></div>
+    ${fcIdentHtml(s)}
     ${fcLedgerHtml(d, { projected: false })}
+    <label class="f"><span>Work performed <span class="optn">(optional)</span></span>
+      <select id="fc_work"><option value="">&mdash;</option>${
+        (d.work_options || []).map(w =>
+          `<option value="${esc(w.id)}"${work === w.id ? " selected" : ""}>${esc(w.label)}</option>`).join("")}</select></label>
+    ${d.suggested_work && FC_DRAFT.work === undefined ? `<p class="hint">Suggested from the record
+      &mdash; this case holds no investigation day and no activity entry. Change it if that is
+      wrong; nothing is assumed.</p>` : ""}
     ${rec > 0 ? `<div class="fc-presets" role="group" aria-label="Retained amount presets">
       <span class="optn">Retain:</span>
       ${(d.retain_presets || []).map(v =>
@@ -15905,6 +16061,9 @@ function fcFormHtml(d){
           (d.reasons || []).map(r =>
             `<option value="${esc(r.id)}"${FC_DRAFT.reason === r.id ? " selected" : ""}>${esc(r.label)}</option>`).join("")}</select></label>
     </div>
+    ${FC_DRAFT.reason === "other" ? `<label class="f"><span>Reason, in your words</span>
+      <input id="fc_rdetail" maxlength="200" placeholder="This prints on the client's statement."
+        value="${esc(FC_DRAFT.rdetail || "")}"></label>` : ""}
     <label class="f"><span>Internal note <span class="optn">(optional)</span></span>
       <textarea id="fc_note" rows="2" placeholder="Kept on the case. It never reaches the client's statement."
         >${esc(FC_DRAFT.note || "")}</textarea></label>
@@ -15938,15 +16097,13 @@ function fcPreset(amt){
   const d = ((FC[WS_CASE] || {}).data || {});
   const rec = d.retainer_received || 0;
   if(amt === ""){
-    FC_DRAFT.retained = "";
-    FC_DRAFT.refund = "";
+    fcSeed({ retained: "", refund: "" });
   }else{
     const keep = Math.min(Number(amt), rec);
-    FC_DRAFT.retained = String(keep);
-    FC_DRAFT.refund = String(Math.round((rec - keep) * 100) / 100);
-    if(!FC_DRAFT.rstatus) FC_DRAFT.rstatus = rec - keep > 0 ? "requested" : "none_due";
+    fcSeed({ retained: String(keep),
+      refund: String(Math.round((rec - keep) * 100) / 100),
+      rstatus: FC_DRAFT.rstatus || (rec - keep > 0 ? "requested" : "none_due") });
   }
-  paintCase();
   const el = $("fc_retained");
   if(el && amt === "") el.focus();
 }
@@ -15961,10 +16118,12 @@ function fcPreviewHtml(d, s){
   return `<div class="feebox fc-box">
     <div class="row"><span><b>Review the closeout</b></span>
       <button class="btn sm ghost" data-act="fcBack">Edit</button></div>
+    ${fcIdentHtml(s)}
+    ${d.work_performed ? `<div class="fc-row"><span>Work performed</span>
+      <b>${esc(FC_WORK_LABEL[d.work_performed] || d.work_performed)}</b></div>` : ""}
     ${fcLedgerHtml(d, { projected: true })}
     ${statusLabel ? `<div class="fc-row"><span>Refund status</span><b>${esc(statusLabel)}</b></div>` : ""}
-    ${d.closeout && d.closeout.reason ? `<div class="fc-row"><span>Reason</span>
-      <b>${esc(FC_REASON_LABEL[d.closeout.reason] || d.closeout.reason)}</b></div>` : ""}
+    ${fcReason(d) ? `<div class="fc-row"><span>Reason</span><b>${esc(fcReason(d))}</b></div>` : ""}
     ${completing ? `<div class="two">
       <label class="f"><span>Refund method <span class="optn">(optional)</span></span>
         <select id="fc_method"><option value="">&mdash;</option>${RETAINER_METHOD_OPTIONS
@@ -15978,10 +16137,12 @@ function fcPreviewHtml(d, s){
     ${status === "requested" ? `<p class="hint">The refund is recorded as <b>requested</b> — the
       ledger keeps saying the money is held, because it is. When you actually send it, the closed
       case offers <b>Refund completed</b> and the record moves then, on your word.</p>` : ""}
+    <div class="fc-after">Case status after confirmation: <b>CLOSED</b></div>
     <div class="actions">
       <button class="btn sm" data-act="fcConfirm"${FC_BUSY ? " disabled" : ""}>${
         FC_BUSY ? "Recording&hellip;" : "Confirm &amp; close case"}</button>
       <button class="btn sm ghost" data-act="fcBack">Edit</button>
+      <button class="btn sm ghost" data-act="fcCancel">Cancel</button>
     </div>
     <p class="hint">Confirming records the disposition and <b>closes the case</b> &mdash; no
       checklist required, and closing is not deleting. It <b>does not email anybody</b>: the
@@ -16026,7 +16187,10 @@ async function fcPreview(){
     const d = await api(`/cases/${encodeURIComponent(WS_CASE)}/closeout/prepare`, {method: "POST",
       body: { retained: retained || "0", refund: refund || "0",
               reason: FC_DRAFT.reason || "", note: FC_DRAFT.note || "",
-              refund_status: FC_DRAFT.rstatus || "" }});
+              refund_status: FC_DRAFT.rstatus || "",
+              work_performed: FC_DRAFT.work !== undefined ? FC_DRAFT.work
+                : (((FC[WS_CASE] || {}).data || {}).suggested_work || ""),
+              reason_detail: FC_DRAFT.rdetail || "" }});
     FC[WS_CASE] = { state: "ok", data: d };
     FC_STEP = "preview";
   }catch(e){ FC_MSG = e.message; FC_ERR = true; }
@@ -18142,6 +18306,10 @@ function overviewPanel(s, a){
   const thumbs = evLive.filter(e => String(e.content_type || "").startsWith("image/")).slice(0, 4);
 
   return `
+    ${/* A CLOSED CASE LEADS WITH ITS DISPOSITION (closeout brief §16) — on an
+         open case this renders nothing at all, so the Next-step-first rule
+         below is untouched for every case still being worked. */""}
+    ${fcClosedSummaryHtml(s)}
     ${/* NEXT STEP FIRST. It is the answer to the question someone opened the
          case to ask, so it is the first thing on the page rather than the
          third card in a grid. The surveillance door is NOT repeated here: the
@@ -21957,6 +22125,7 @@ document.addEventListener("click", ev => {
   else if(act === "fcEmailSend"){ fcEmailSend(); }
   else if(act === "fcPreset"){ fcPreset(el.dataset.amt); }
   else if(act === "fcRefundDone"){ fcRefundDone(); }
+  else if(act === "asstCloseoutGo"){ asstCloseoutGo(el.dataset.p); }
   else if(act === "retQuick"){ WS_TAB = "auth"; WS_MORE = false; RET_FORM = true; paintCase(); }
   else if(act === "fcQuick"){ WS_TAB = "billing"; WS_MORE = false; fcOpen(); }
   else if(act === "intakeArchive"){ intakeArchiveWithReason(); }

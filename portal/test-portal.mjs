@@ -17429,9 +17429,12 @@ section('Intakes: tapping a submitted intake opens what the client signed');
   ok('and it points at the submitted intake, not the case overview',
      shape.doorTab === 'details', shape.doorTab);
   ok('the card says the client signed it', shape.signed === true);
-  ok('the lead ladder is folded under Admin status, not sitting in the header',
-     shape.statusInHeader === false && shape.statusUnderMore === true
-     && shape.moreClosed === true, JSON.stringify(shape));
+  /* FACTORY-HIDDEN entirely now (CEO charter Mission 5) — the ladder never
+     sits in the header, and by default the disclosure is not drawn at all.
+     The unhide behaviour has its own section. */
+  ok('the lead ladder neither sits in the header nor draws by default',
+     shape.statusInHeader === false && shape.statusUnderMore === false
+     && shape.moreClosed === null, JSON.stringify(shape));
   ok('the door contains no nested control — one destination, one tab stop',
      shape.nested === 0, String(shape.nested));
   ok('"Review" is gone, replaced by a control that says what it opens',
@@ -20563,10 +20566,16 @@ section('The no-work close: pay, change mind, two taps, honest record');
   ok('and reads the refund as REQUESTED until the owner says otherwise',
      seeded.status === 'requested', seeded.status);
 
-  await page.evaluate(() => {
+  const suggested = await page.evaluate(() => {
+    const w = document.getElementById('fc_work');
+    const picked = w ? w.value : null;
     document.getElementById('fc_reason').value = 'cancelled_before_work';
     fcCollect();
+    return picked;
   });
+  /* THE RECORD'S OWN SUGGESTION: no day, no activity, so the form opens on
+     "No work performed" — a suggestion, and the owner may change it. */
+  ok('the work statement opens on the record\'s suggestion', suggested === 'none', String(suggested));
   await page.evaluate(() => { const b = document.querySelector('[data-act="fcPreview"]'); if (b) b.click(); });
   await page.waitForTimeout(900);
   const prev2 = await page.evaluate(() => ({
@@ -20578,6 +20587,10 @@ section('The no-work close: pay, change mind, two taps, honest record');
      prev2.txt.slice(0, 240));
   ok('and the button says what it does: Confirm & close case',
      /Confirm & close case/.test(prev2.btn), prev2.btn);
+  ok('the review states the case status after confirmation, before the click',
+     /Case status after confirmation: CLOSED/.test(prev2.txt), prev2.txt.slice(-200));
+  ok('and it names the client and case it is about',
+     /Quick Cancel/.test(prev2.txt) && /API-NW-E2E/.test(prev2.txt), prev2.txt.slice(0, 160));
 
   page.once('dialog', d => d.accept());
   await page.evaluate(() => { const b = document.querySelector('[data-act="fcConfirm"]'); if (b) b.click(); });
@@ -20603,6 +20616,8 @@ section('The no-work close: pay, change mind, two taps, honest record');
   ok('the closed case is out of every dashboard alert', done.inQueues === false);
   ok('the statement on screen says Refund requested — never issued',
      /Refund requested/.test(done.doc) && !/issued/i.test(done.doc), done.doc.slice(0, 260));
+  ok('and it carries the work statement the owner chose',
+     /Work performed/.test(done.doc) && /No work performed/.test(done.doc), done.doc.slice(0, 300));
   ok('with the reason on it', /Client cancelled before work began/.test(done.doc));
   ok('and the settlement balance a client can add up', /Final balance \$0/.test(done.doc));
   ok('the Refund completed control waits for the owner\'s word', done.refundDoneBtn === true);
@@ -20627,6 +20642,110 @@ section('The no-work close: pay, change mind, two taps, honest record');
     return p && `${p.amount}|${p.method}`;
   });
   ok('AND THE ORIGINAL PAYMENT NEVER MOVED', payKept === '1000|cash_app', String(payKept));
+  await page.close();
+}
+
+
+section('The Assistant fills the closeout form in, and commits nothing');
+{
+  /* §21 through the real page: the owner says it, the card reviews it, the
+     button opens the case's OWN form with those values seeded — and the case
+     is still open until the form's own Confirm. */
+  await post('/ingest', { case_no: 'API-ACO-E2E', service: 'Surveillance',
+    client_name: 'Assistant Closeout', subject_name: 'S' }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.evaluate(() => openCase('API-ACO-E2E'));
+  await page.waitForTimeout(700);
+  await page.evaluate(async () => {
+    await api('/cases/API-ACO-E2E/retainer', { method: 'POST', body: {
+      retainer_amount: 1500, received: true, amount_received: 1000, method: 'venmo' } });
+    await reloadWorkspace();
+  });
+  await page.waitForTimeout(500);
+
+  await page.evaluate(async () => {
+    await asstOpen('API-ACO-E2E');
+    await asstSend('Client changed their mind. Close this case. Keep $500 non-refundable and note $500 refund requested.');
+  });
+  await page.waitForTimeout(1400);
+  const card = await page.evaluate(() => {
+    const c = document.querySelector('.asst-pf');
+    if (!c) return null;
+    return { rows: [...c.querySelectorAll('.asst-pf-r')].map(r => r.textContent.replace(/\s+/g, ' ').trim()),
+      btn: (c.querySelector('.btn') || {}).textContent || '',
+      note: c.querySelector('.asst-pf-n').textContent.replace(/\s+/g, ' '),
+      pending: !!(ASST && ASST.pending) };
+  });
+  ok('the sentence draws a review card, not a command', !!card && card.pending === false,
+     JSON.stringify(card));
+  ok('with the owner\'s own figures and the requested status',
+     card.rows.some(r => /Non-refundable retained.*\$500/.test(r))
+     && card.rows.some(r => /Refund.*\$500/.test(r))
+     && card.rows.some(r => /Refund requested/.test(r)), JSON.stringify(card.rows));
+  ok('and it says plainly that the portal issues no refund',
+     /issues no refund/.test(card.note) && /documents what you did/.test(card.note), card.note);
+  ok('the button opens the closeout rather than committing',
+     /Continue to Case Closeout/.test(card.btn), card.btn);
+
+  await page.evaluate(() => { const b = document.querySelector('.asst-pf .btn'); if (b) b.click(); });
+  await page.waitForTimeout(1600);
+  const seeded = await page.evaluate(async () => {
+    const w = await (await fetch('/portal-api/cases/API-ACO-E2E/closeout-money',
+      { credentials: 'include' })).json();
+    const ws = await (await fetch('/portal-api/cases/API-ACO-E2E/workspace',
+      { credentials: 'include' })).json();
+    return { tab: WS_TAB, caseNo: WS_CASE,
+      kept: (document.getElementById('fc_retained') || {}).value,
+      back: (document.getElementById('fc_refund') || {}).value,
+      status: (document.getElementById('fc_rstatus') || {}).value,
+      reason: (document.getElementById('fc_reason') || {}).value,
+      closeout: w.closeout, refunds: (w.refunds || []).length, caseStatus: ws.status };
+  });
+  ok('it lands on the closeout form, on the panel that holds it',
+     seeded.tab === 'billing' && seeded.caseNo === 'API-ACO-E2E' && seeded.kept === '500',
+     JSON.stringify(seeded));
+  ok('every value the owner said is seeded, and nothing else',
+     seeded.back === '500' && seeded.status === 'requested'
+     && seeded.reason === 'cancelled_before_work', JSON.stringify(seeded));
+  /* THE WHOLE POINT. */
+  ok('AND NOTHING WAS RECORDED OR CLOSED BY ANY OF IT',
+     seeded.closeout === null && seeded.refunds === 0 && seeded.caseStatus !== 'closed',
+     JSON.stringify([seeded.closeout, seeded.refunds, seeded.caseStatus]));
+  await page.close();
+}
+
+section('A closed case leads with its disposition');
+{
+  /* §16 on the Overview, from the same read the panel uses. */
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.evaluate(() => openCase('API-NW-E2E'));
+  await page.waitForTimeout(1400);
+  const sum = await page.evaluate(() => {
+    const c = document.querySelector('.fc-closed');
+    return c ? { txt: c.innerText.replace(/\s+/g, ' '),
+      go: !!c.querySelector('[data-tab="billing"]'),
+      firstCard: document.querySelector('.ovcard') === c } : null;
+  });
+  ok('the closed case shows its disposition at the top of the Overview',
+     !!sum && sum.firstCard === true, JSON.stringify(sum && sum.txt.slice(0, 120)));
+  ok('with the reason, the work statement and the money',
+     /cancelled before work began/i.test(sum.txt) && /No work performed/.test(sum.txt)
+     && /\$1,000/.test(sum.txt) && /\$500/.test(sum.txt), sum.txt.slice(0, 260));
+  ok('the refund reads as completed outside the portal — the word the record earned',
+     /Completed outside portal/.test(sum.txt), sum.txt.slice(0, 260));
+  ok('and it offers the way into the full closeout', sum.go === true);
+
+  /* An OPEN case shows none of it — the Next-step-first rule is untouched. */
+  await page.evaluate(() => openCase('API-20260812-4002'));
+  await page.waitForTimeout(1000);
+  const openCase2 = await page.evaluate(() => ({
+    closed: !!document.querySelector('.fc-closed'),
+    next: /Next step/i.test(document.body.innerText),
+  }));
+  ok('an open case shows no closed summary, and still leads with Next step',
+     openCase2.closed === false && openCase2.next === true, JSON.stringify(openCase2));
   await page.close();
 }
 
