@@ -19833,6 +19833,49 @@ section('The private rate sheet carries a non-refundable portion, from one sourc
   ok('but naming the law firm keeps the legal audience — the Worker refuses the pairing by name',
      a.form.context === 'legal', JSON.stringify(a.form));
 
+  /* ---- READING A SUBMITTED INTAKE (owner, from a real iPhone 2026-09-06).
+     The complaint was the DISTANCE: Intakes -> Review -> the case Overview ->
+     scroll -> Intake details. `details` is now a destination the Assistant can
+     name, and asking to read one is a READ — no command, no confirmation. ---- */
+  await ingest(env, { case_no: 'API-NR-SIGNED', service: 'Surveillance',
+    client_name: 'Michelle Fultz', subject_name: 'Gregory Hunter Fultz',
+    signature: 'data:image/png;base64,iVBORw0KGgo=' });
+  await ingest(env, { case_no: 'API-NR-UNSIGNED', service: 'Surveillance',
+    client_name: 'No Pen', subject_name: 'S' });
+  const rows = (await jsonOf(await call(env, '/submissions', { cookie: admin }))).submissions;
+  const sgn = rows.find(r => r.case_no === 'API-NR-SIGNED');
+  const uns = rows.find(r => r.case_no === 'API-NR-UNSIGNED');
+  ok('the intake list reports whether the client signed it', sgn && sgn.signed === 1,
+     JSON.stringify(sgn && sgn.signed));
+  ok('and says so honestly when they did not', uns && uns.signed === 0,
+     JSON.stringify(uns && uns.signed));
+  /* THE FACT TRAVELS, THE IMAGE DOES NOT. A signature is ~50KB and the desk
+     draws dozens of cards; none of them needs the picture. */
+  ok('and the signature image itself never reaches the list',
+     !/data:image/.test(JSON.stringify(rows)));
+
+  let r2 = await jsonOf(await call(env, '/assistant/command', { method: 'POST', cookie: admin,
+    body: { text: 'open the intake', context: { route: 'case', case_no: 'API-NR-SIGNED' } } }));
+  ok('"open the intake" on a case goes straight to the submitted intake',
+     r2.navigate && r2.navigate.kind === 'case_tab' && r2.navigate.id === 'details'
+     && r2.navigate.case_no === 'API-NR-SIGNED', JSON.stringify(r2.navigate));
+  ok('and it is a READ — no command, nothing to confirm',
+     !r2.command && r2.kind === 'status', r2.kind);
+  r2 = await jsonOf(await call(env, '/assistant/command', { method: 'POST', cookie: admin,
+    body: { text: 'show me the submission', context: {} } }));
+  ok('with no case in hand it points at the desk that lists them',
+     r2.actions && r2.actions[0].navigate.id === 'leads', JSON.stringify(r2.actions));
+  /* THE SEND CARVE-OUT STILL OWNS ITS OWN VERB. "Send an intake link" must
+     still open the workbench, not be swallowed by the read branch above it. */
+  r2 = await jsonOf(await call(env, '/assistant/command', { method: 'POST', cookie: admin,
+    body: { text: 'send an intake link to x@example.com', context: {} } }));
+  ok('"send an intake link" is still a preparation, not a read',
+     r2.kind === 'prepare_intake', r2.kind);
+  r2 = await jsonOf(await call(env, '/assistant/command', { method: 'POST', cookie: admin,
+    body: { text: 'delete this intake', context: { route: 'case', case_no: 'API-NR-SIGNED' } } }));
+  ok('and "delete this intake" is still refused, never read as an open',
+     r2.kind === 'refused', r2.kind);
+
   /* ---- WHAT MUST NOT HAVE MOVED. ---- */
   ok('the 4-hour minimum is still on the private sheet\'s own lines',
      privCard.lines.some(l => /4-hour minimum/i.test(`${l.sub} ${l.note}`)));

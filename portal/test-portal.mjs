@@ -17329,6 +17329,108 @@ section('API ASSISTANT Unit 4 — the intake dry-run workbench, on the real page
    reads shows the same amount the email will carry, and that none of it breaks
    at 390px.
    ========================================================================= */
+/* ============================================================================
+   ONE TAP FROM INTAKES TO THE SUBMITTED INTAKE (owner, from a real iPhone).
+
+   The reported path was Intakes -> Review -> the case Overview -> scroll to the
+   bottom -> Intake details. The regression the owner asked for is exactly that:
+   tap the card and be looking at what the client entered and signed, with NO
+   intermediate case Overview.
+   ========================================================================= */
+section('Intakes: tapping a submitted intake opens what the client signed');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await post('/ingest', {
+    case_no: 'API-TAP-1', service: 'Surveillance',
+    client_name: 'Michelle Fultz', client_phone: '4343861459',
+    client_email: 'michellefultz@me.com', subject_name: 'Gregory Hunter Fultz',
+    objective: 'Document weekday movements',
+    signature: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  await page.evaluate(() => { TAB = 'leads'; VIEW = 'list'; render(); });
+  await page.waitForTimeout(900);
+
+  /* THE CARD ITSELF IS THE DOOR. Located by the client's name, the way a
+     person finds it — not by a nth-child that would pass on the wrong card. */
+  const card = page.locator('.pcard', { hasText: 'Michelle Fultz' });
+  const shape = await page.evaluate(() => {
+    const c = [...document.querySelectorAll('.pcard')]
+      .find(x => /Michelle Fultz/.test(x.innerText));
+    if (!c) return null;
+    const door = c.querySelector('.pc-open');
+    return {
+      door: !!door,
+      doorTab: door ? door.dataset.tab : null,
+      /* the identity is INSIDE the door, so tapping the name is tapping it */
+      nameInDoor: door ? /Michelle Fultz/.test(door.innerText) : false,
+      signed: /Signed/.test(c.innerText),
+      /* the admin ladder is folded, not deleted */
+      statusInHeader: !!c.querySelector('.pc-top select'),
+      statusUnderMore: !!c.querySelector('.pc-more select'),
+      moreClosed: c.querySelector('.pc-more') ? !c.querySelector('.pc-more').open : null,
+      /* NO CONTROL INSIDE A CONTROL — the Unit 40 nesting rule */
+      nested: door ? door.querySelectorAll('button,a,select,input').length : -1,
+      viewBtn: !!c.querySelector('[data-tab="details"].btn'),
+      reviewGone: !/\bReview\b/.test(c.innerText),
+    };
+  });
+  ok('the intake card has a single door carrying the client identity',
+     shape && shape.door === true && shape.nameInDoor === true, JSON.stringify(shape));
+  ok('and it points at the submitted intake, not the case overview',
+     shape.doorTab === 'details', shape.doorTab);
+  ok('the card says the client signed it', shape.signed === true);
+  ok('the lead ladder is folded under Admin status, not sitting in the header',
+     shape.statusInHeader === false && shape.statusUnderMore === true
+     && shape.moreClosed === true, JSON.stringify(shape));
+  ok('the door contains no nested control — one destination, one tab stop',
+     shape.nested === 0, String(shape.nested));
+  ok('"Review" is gone, replaced by a control that says what it opens',
+     shape.reviewGone === true && shape.viewBtn === true, JSON.stringify(shape));
+
+  /* ---- THE REGRESSION THE OWNER ASKED FOR, ONE TAP ---- */
+  await card.locator('.pc-open').click();
+  await page.waitForTimeout(900);
+  const landed = await page.evaluate(() => ({
+    view: VIEW, tab: WS_TAB, caseNo: WS_CASE,
+    text: (document.querySelector('.casepage') || document.body).innerText,
+    sig: !!document.querySelector('img.sig'),
+    back: (document.querySelector('.pagebar .close') || {}).innerText || '',
+  }));
+  ok('ONE TAP lands on the submitted intake — no case Overview in between',
+     landed.tab === 'details' && landed.caseNo === 'API-TAP-1', JSON.stringify({
+       tab: landed.tab, caseNo: landed.caseNo }));
+  ok('the client, the subject and the objective are all on that first screen',
+     /Michelle Fultz/.test(landed.text) && /Gregory Hunter Fultz/.test(landed.text)
+     && /Document weekday movements/.test(landed.text), landed.text.slice(0, 200));
+  ok('the phone and the email they gave are there too',
+     /4343861459/.test(landed.text) && /michellefultz@me\.com/.test(landed.text));
+  ok('and the stored signature is rendered, not described', landed.sig === true);
+  ok('the way back says where it goes — Intakes, because that is where we came from',
+     /Back to Intakes/.test(landed.back), landed.back);
+
+  /* ---- 390px: the phone this was reported from ---- */
+  await page.evaluate(() => { VIEW = 'list'; render(); });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(500);
+  const phoneCard = await page.evaluate(() => {
+    const c = [...document.querySelectorAll('.pcard')]
+      .find(x => /Michelle Fultz/.test(x.innerText));
+    const d = c && c.querySelector('.pc-open');
+    return d ? { h: Math.round(d.getBoundingClientRect().height),
+                 overflow: document.documentElement.scrollWidth > window.innerWidth } : null;
+  });
+  ok(`the door is a comfortable target on a phone (${phoneCard && phoneCard.h}px)`,
+     phoneCard && phoneCard.h >= 44, JSON.stringify(phoneCard));
+  ok('and the intake list does not scroll sideways at 390px', phoneCard.overflow === false);
+  await page.locator('.pcard', { hasText: 'Michelle Fultz' }).locator('.pc-open').click();
+  await page.waitForTimeout(900);
+  ok('one tap on a phone lands on the same submitted intake',
+     await page.evaluate(() => WS_TAB) === 'details');
+
+  await page.close();
+}
+
 section('The send wizard offers the non-refundable amount, on Private only');
 {
   const page = await newPage();
