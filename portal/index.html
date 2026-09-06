@@ -48,6 +48,10 @@
     --ok-bg:#dff2e5; --ok-ink:#1a6b3c; --ok-line:#9fd3b2; --ok-soft:#f4faf6;
     --warn-bg:#fdf1e3;
     --gold-bg:#fdf7ec; --gold-line:#f0dcb6; --gold-ink:#7a5a12;
+    /* The attention tint: a step stronger than --gold-bg's notice ground, for
+       a chip or bar that has to be found rather than merely read. Promoted
+       from three literal uses by the anti-drift budget, which was right. */
+    --gold-tint:#f6ead2;
     --bad-bg:#fdecea; --bad-line:#f5c6c0; --bad-ink:#8a2318;
     --info-bg:#eaf5f7; --info-line:#b7dbe3; --info-ink:#1d5c6c;
     --neutral-bg:#e6ebf0; --neutral-ink:#42505f;
@@ -2680,7 +2684,24 @@
      appear. Red stays reserved for genuine risk. */
   .ceo-card{border:1px solid var(--line);border-radius:10px;
     padding:13px 15px;margin:0 0 11px;background:#fff;}
+  /* §8 — RESTRAINT. A recommendation gets a gold edge; everything else is a
+     plain card on white. The accent is the only place gold appears as a rule,
+     so it keeps meaning "the Bot is proposing something". */
   .ceo-card.ceo-task{border-left:3px solid var(--gold);}
+  /* §3 — EVIDENCE CHIPS. The facts the classifier used, short enough to scan,
+     composed in the Worker from the same classification as the evidence list —
+     a chip that disagreed with the list under it would be drift. */
+  .ceo-chips{display:flex;flex-wrap:wrap;gap:5px;margin:8px 0 0;}
+  .ceo-chip{font-size:.7rem;font-weight:700;letter-spacing:.02em;padding:3px 8px;
+    border-radius:11px;background:var(--paper);color:var(--navy-2);white-space:nowrap;}
+  .ceo-chip-ok{background:var(--ok-bg);color:var(--ok-ink);}
+  /* §5 — technical detail, one tap away, out of the executive view. */
+  .ceo-det{margin-top:9px;}
+  .ceo-det summary{font-size:.78rem;color:var(--muted);cursor:pointer;min-height:34px;
+    display:flex;align-items:center;}
+  .ceo-det summary:focus-visible{outline:2px solid var(--gold);outline-offset:2px;}
+  /* §1 — the third tone: available cleanup is neither a tick nor a warning. */
+  .ceo-hmk.tidy{color:#9fb4cc;}
   .ceo-card.ceo-hi{border-left-color:var(--bad);}
   .ceo-flag{display:inline-block;font-size:.68rem;font-weight:800;letter-spacing:.06em;
     color:var(--bad);margin-bottom:4px;}
@@ -2694,15 +2715,22 @@
   .ceo-flow{display:flex;gap:10px;align-items:baseline;margin-top:4px;}
   .ceo-fs{font-size:.7rem;font-weight:800;letter-spacing:.05em;padding:2px 7px;border-radius:9px;}
   .ceo-fs.ok{background:var(--ok-bg);color:var(--ok-ink);}
-  .ceo-fs.warn{background:#f6ead2;color:var(--gold-ink);}
+  .ceo-fs.warn{background:var(--gold-tint);color:var(--gold-ink);}
   /* §4 CEO PRIORITY — the top of the executive hierarchy, and the one place
      gold is a FILL rather than an accent. Two items maximum. */
-  .ceo-prio{border:1px solid var(--gold);border-radius:12px;margin:0 0 14px;overflow:hidden;}
-  .ceo-pt{background:var(--gold);color:var(--navy);font-weight:800;font-size:.72rem;
-    letter-spacing:.08em;padding:7px 14px;}
+  /* §4 — THE EXECUTIVE CARD. Navy header with a gold rule under it rather than
+     a gold fill: the fill read as a banner competing with the drawer's own
+     head, and ordinary cleanup should not arrive looking like an alert. */
+  .ceo-prio{border:1px solid var(--line);border-radius:12px;margin:0 0 14px;overflow:hidden;
+    background:#fff;box-shadow:0 1px 3px rgba(14,26,44,.06);}
+  .ceo-pt{background:var(--navy-2);color:#fff;font-weight:800;font-size:.7rem;
+    letter-spacing:.09em;padding:9px 15px;border-bottom:3px solid var(--gold);}
   .ceo-pitem{padding:12px 14px;border-top:1px solid var(--line);}
   .ceo-pitem:first-of-type{border-top:0;}
+  /* HIGHEST IMPACT wears the gold; LOW-RISK CLEANUP is deliberately quieter,
+     because the two are not the same call to action. */
   .ceo-plab{font-size:.66rem;font-weight:800;letter-spacing:.07em;color:var(--muted);}
+  .ceo-pitem.hi .ceo-plab{color:var(--gold-ink);}
   .ceo-ph{font-weight:800;font-size:1rem;margin:3px 0 0;line-height:1.3;}
   .ceo-pw{font-size:.86rem;color:var(--muted);margin:5px 0 0;line-height:1.5;}
   .ceo-prio-none .ceo-pnone{padding:12px 14px;margin:0;font-size:.9rem;color:var(--muted);}
@@ -2714,7 +2742,7 @@
   .ceo-hstate{display:inline-block;font-size:.68rem;font-weight:800;letter-spacing:.06em;
     padding:2px 8px;border-radius:9px;margin-left:6px;vertical-align:middle;}
   .ceo-hstate.ok{background:var(--ok-bg);color:var(--ok-ink);}
-  .ceo-hstate.warn{background:#f6ead2;color:var(--gold-ink);}
+  .ceo-hstate.warn{background:var(--gold-tint);color:var(--gold-ink);}
   .ceo-hstate.bad{background:#f7ded9;color:var(--bad);}
   .ceo-hgrp{margin-top:10px;}
   .ceo-hgt{font-size:.64rem;font-weight:800;letter-spacing:.07em;color:var(--gold);}
@@ -2748,7 +2776,7 @@
   .ceo-none p{margin:8px 0 0;font-size:.9rem;line-height:1.55;}
   .ceo-fs.exc{background:var(--ok-bg);color:var(--ok-ink);}
   .ceo-fs.bad{background:#f7ded9;color:var(--bad);}
-  .ceo-prevbar{position:sticky;top:0;z-index:2;background:#f6ead2;color:var(--gold-ink);
+  .ceo-prevbar{position:sticky;top:0;z-index:2;background:var(--gold-tint);color:var(--gold-ink);
     border:1px solid var(--gold);border-radius:10px;padding:10px 12px;margin:0 0 10px;
     display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;
     font-size:.85rem;font-weight:700;}
@@ -2756,12 +2784,25 @@
      pill hides while the panel is open. */
   @media(max-width:640px){
     .ceo-panel{width:100%;}
+    /* §2 — FOUR TABS IN 390px. Measured: at 14px of side padding each the
+       strip needed to scroll, which works but hides a tab behind a gesture
+       nobody is told about. Tightening the padding and the tracking fits all
+       four with the labels whole; the strip keeps its own overflow so a fifth
+       tab would scroll rather than clip. */
+    .ceo-tabs button{padding:11px 7px;font-size:.68rem;letter-spacing:.02em;}
     .ceo-fab{display:inline-flex;}
     body.ceoopen .ceo-fab{display:none;}
     body.ceoopen{overflow:hidden;}
     /* Cleared over the bottom navigation by the nav's own height, the same
        expression `.asst-pill` uses — one number, two controls. */
     body.hasmnav .ceo-fab{bottom:calc(64px + max(10px, env(safe-area-inset-bottom)));}
+  }
+  /* §6 — 320px. The two floating doors have 292px between their outer edges
+     there; the chip drops its word to its mark so the pair cannot meet in the
+     middle, and both keep the 44px floor. */
+  @media(max-width:359px){
+    .ceo-fab{padding:8px 11px;}
+    .ceo-fab span:last-child{display:none;}
   }
 
 </style>
@@ -4666,9 +4707,11 @@ function ceoClose(){
 function ceoHealthHtml(h){
   if(!h) return "";
   const grp = (title, rows) => `<div class="ceo-hgrp"><div class="ceo-hgt">${title}</div>
-    ${(rows || []).map(r => `<div class="ceo-hrow"><span class="ceo-hmk ${r.ok ? "ok" : "warn"}"
-      aria-hidden="true">${r.ok ? "&#10003;" : "&#9651;"}</span>
-      <span>${esc(r.text)}</span></div>`).join("")}</div>`;
+    ${(rows || []).map(r => {
+      const tone = r.tone || (r.ok ? "ok" : "warn");
+      const mark = tone === "ok" ? "&#10003;" : tone === "tidy" ? "&#8226;" : "&#9651;";
+      return `<div class="ceo-hrow"><span class="ceo-hmk ${tone}" aria-hidden="true">${mark}</span>
+      <span>${esc(r.text)}</span></div>`; }).join("")}</div>`;
   const tone = h.label === "GOOD" ? "ok" : h.label === "WATCH" ? "warn" : "bad";
   return `<div class="ceo-health">
     <div class="ceo-hl">PORTAL HEALTH <span class="ceo-hstate ${tone}">${esc(h.label)}</span></div>
@@ -4755,7 +4798,10 @@ function ceoSugCard(s){
     <div class="ceo-t">${esc(s.title)}</div>
     ${stLbl ? `<span class="ceo-st">${esc(stLbl)}</span>` : ""}
     <p class="ceo-why">${esc(s.why)}</p>
-    ${s.metric ? `<div class="ceo-ev">${esc(s.metric)}</div>` : ""}
+    ${(s.chips || []).length
+      ? `<div class="ceo-chips">${s.chips.map(c =>
+          `<span class="ceo-chip">${esc(c)}</span>`).join("")}</div>`
+      : s.metric ? `<div class="ceo-ev">${esc(s.metric)}</div>` : ""}
     ${s.impact ? `<p class="ceo-imp">${esc(s.impact)}</p>` : ""}
     ${open ? `<div class="ceo-whybox">
       <div class="ceo-fl">WHY THIS SUGGESTION?</div>
@@ -4799,7 +4845,7 @@ function ceoBodyHtml(){
     return `${ceoPriorityHtml(d.priority)}
       ${ceoFixFirstHtml(d.fix_first)}
       ${ceoHealthHtml(d.health)}
-      ${briefRows.length ? `<div class="ceo-card"><div class="ceo-t">Today</div>
+      ${briefRows.length ? `<div class="ceo-card"><div class="ceo-t">Daily CEO brief</div>
         <div class="ceo-brief">${briefRows.map(([n, w]) =>
           `<div><b>${n}</b> ${esc(w)}</div>`).join("")}</div></div>` : ""}
       ${ceoPlanHtml(d.plan, L)}
@@ -4823,7 +4869,7 @@ function ceoBodyHtml(){
       ${(d.working || []).length ? `<div class="ceo-card ceo-keep">
         <div class="ceo-cat">WORKING WELL &mdash; NO CHANGE</div>
         ${d.working.map(w => `<div class="ceo-krow"><b>${esc(w.label)}</b>
-          <span class="ceo-kact">${esc(w.action_label)}</span></div>`).join("")}
+          <span class="ceo-chip ceo-chip-ok">${esc(w.action_label)}</span></div>`).join("")}
         <p class="ceo-why">A good portal is mostly one nobody needs to change.</p></div>` : ""}`;
   }
 
@@ -4859,7 +4905,13 @@ function ceoBodyHtml(){
       <p class="ceo-why">The CEO UX Gate walks the public site, the intake doors, the portal and
         the phone render before a release &mdash; dead ends, tap floors, sideways scroll, internal
         vocabulary on client pages. The Bot displays its findings; it never runs its own crawler.</p>
-      <p class="optn">node portal/test-ceo-gate.mjs</p></div>`;
+      ${/* §5 — THE COMMAND IS FOR WHOEVER RUNS THE RELEASE, not for the owner
+            reading his own portal on a phone. It stays available, one tap
+            behind a disclosure, rather than sitting in the executive view. */""}
+      <details class="ceo-det"><summary>Technical details</summary>
+        <p class="optn">node portal/test-ceo-gate.mjs</p>
+        <p class="ceo-why">Run before a release; it fails if the totals above drift.</p>
+      </details></div>`;
 }
 
 const ceoActionLabel = id => {

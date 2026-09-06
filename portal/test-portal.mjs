@@ -21064,8 +21064,19 @@ section('CEO Bot refinement: priority, protection and a plan, at both widths');
                  r.querySelector('.ceo-plv').textContent.trim()]);
     return Object.fromEntries(rows);
   });
-  ok('My portal plan groups the user\'s own direction',
-     !!plan['Keep prominent'] && /Rate Sheet/.test(plan['Keep prominent']), JSON.stringify(plan));
+  /* THE PROPERTY, NOT A PARTICULAR GROUP. Whether the user's most-used control
+     reads "Keep prominent" or "Promote" depends on their own saved order — and
+     an earlier section of this suite reorders that user's Home, so pinning one
+     group made this assertion depend on test order rather than on behaviour.
+     What §1 and §3 actually protect is that a heavily-used core control is
+     never proposed away. */
+  const planOf = label => Object.entries(plan)
+    .filter(([, v]) => new RegExp(`\\b${label}\\b`).test(v)).map(([k]) => k);
+  ok('My portal plan places the most-used control in a keep-or-promote group',
+     ['Keep prominent', 'Promote'].some(g => planOf('Rate Sheet').includes(g)),
+     JSON.stringify(planOf('Rate Sheet')));
+  ok('and never in a group that would take it off the user\'s Home',
+     !planOf('Rate Sheet').some(g => /Hide|Move/.test(g)), JSON.stringify(plan));
   ok('and Cases appears ONLY under removing the duplicate shortcut',
      /Cases/.test(plan['Hide duplicate shortcut'] || '')
      && !Object.entries(plan).some(([k, v]) =>

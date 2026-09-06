@@ -20975,10 +20975,18 @@ section('CEO Bot: a capability is not its shortcut, and most answers are "leave 
   ok('the release-gate totals are the CEO UX Gate\'s own',
      d.health.gate.pass === 43 && d.health.gate.warn === 0 && d.health.gate.fail === 0,
      JSON.stringify(d.health.gate));
+  const dupRow = d.health.owner.find(o => /duplicate/i.test(o.text)) || {};
   ok('the duplicate count in health matches the classification, never a typed number',
-     (d.health.owner.find(o => /duplicate/.test(o.text)) || {}).text
-       === `${d.suggestions.filter(s => s.action === 'HIDE_DUPLICATE').length} duplicate primary shortcuts`,
+     dupRow.text.startsWith(
+       `${d.suggestions.filter(s => s.action === 'HIDE_DUPLICATE').length} duplicate primary shortcut`),
      JSON.stringify(d.health.owner));
+  /* §1 — AVAILABLE CLEANUP IS A THIRD STATE. It is neither a tick nor a
+     warning, and drawing it as a fault is what made a brand-new portal with a
+     green gate announce itself as needing watching. */
+  ok('and it is marked as an opportunity rather than a fault',
+     dupRow.tone === 'tidy' && /you could clear/.test(dupRow.text), JSON.stringify(dupRow));
+  ok('duplicate shortcuts alone never move overall health off GOOD',
+     d.health.label === 'GOOD', JSON.stringify([d.health.label, dupRow.text]));
   ok('and the status word is one of the three the owner named',
      ['GOOD', 'WATCH', 'NEEDS ATTENTION'].includes(d.health.label), d.health.label);
 

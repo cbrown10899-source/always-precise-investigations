@@ -6555,6 +6555,16 @@ async function ceoInsights(env, user) {
       evidence: c.evidence,
       /* The one-line metric §8 asks the card to show. */
       metric: `${c.uses} Home tap${c.uses === 1 ? '' : 's'} in ${totalTaps} counted actions`,
+      /* §3 — THE SAME FACTS AS CHIPS. Short, scannable, and derived from the
+         classification rather than written twice: a chip that disagreed with
+         the evidence list underneath it would be the drift this project keeps
+         recording. */
+      chips: [
+        `${c.uses} Home tap${c.uses === 1 ? '' : 's'}`,
+        ...(c.cap.core ? ['Core destination'] : []),
+        ...(c.action === 'HIDE_DUPLICATE' ? ['Duplicate shortcut'] : []),
+        ...(c.cap.alt && c.action !== 'HIDE_DUPLICATE' ? [`Also in ${c.cap.alt}`] : []),
+      ],
       protects_core: !!c.cap.core,
       value: c.value,
     });
@@ -6615,9 +6625,20 @@ async function ceoInsights(env, user) {
   const dupes = classified.filter(c => c.action === 'HIDE_DUPLICATE').length;
   const unnecessary = classified.filter(c => CEO_REMOVING.includes(c.action)).length;
   const atTarget = CEO_FLOWS.filter(f => f.status === 'EXCELLENT' || f.status === 'GOOD').length;
+  /* §1 — A TIDY-UP IS NOT A PROBLEM. The label used to go to WATCH when this
+     user had more than two removable shortcuts, so a brand-new portal — every
+     quick action untouched, every gate check green, no client anywhere near a
+     dead end — announced itself as needing watching because somebody had not
+     personalised their Home yet. That is the overall health of the PRODUCT
+     reporting one person's layout preference.
+
+     It now keys off the things that are actually wrong: a failing gate check,
+     a gate warning, or a real operational item (an unresolved closeout). The
+     duplicate count still appears under OWNER EXPERIENCE, marked as an
+     opportunity rather than a fault. */
   const health = {
     label: CEO_GATE_SUMMARY.fail > 0 ? 'NEEDS ATTENTION'
-         : (CEO_GATE_SUMMARY.warn > 0 || unnecessary > 2) ? 'WATCH' : 'GOOD',
+         : (CEO_GATE_SUMMARY.warn > 0 || closeoutWatch.length > 0) ? 'WATCH' : 'GOOD',
     gate: CEO_GATE_SUMMARY,
     client: [
       { ok: CEO_GATE_SUMMARY.fail === 0, text: `${CEO_GATE_SUMMARY.fail} dead ends` },
@@ -6626,7 +6647,12 @@ async function ceoInsights(env, user) {
     ],
     owner: [
       { ok: true, text: `${atTarget} core workflows at target` },
-      { ok: dupes === 0, text: `${dupes} duplicate primary shortcut${dupes === 1 ? '' : 's'}` },
+      /* `tone: 'tidy'` — neither a tick nor a warning. Cleanup available is a
+         third state, and drawing it as a fault is what made a healthy portal
+         look unhealthy. */
+      { ok: dupes === 0, tone: dupes === 0 ? 'ok' : 'tidy',
+        text: dupes === 0 ? 'No duplicate primary shortcuts'
+          : `${dupes} duplicate primary shortcut${dupes === 1 ? '' : 's'} you could clear` },
       { ok: closeoutWatch.length === 0,
         text: `${closeoutWatch.length} unresolved closeout alert${closeoutWatch.length === 1 ? '' : 's'}` },
     ],
