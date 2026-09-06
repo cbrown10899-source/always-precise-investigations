@@ -287,11 +287,17 @@ field read off it — identical on both — and a leak the moment the private ca
 gained this block. Now matched on id **and** context, agreeing with
 `sheetWizardHtml`.
 
-### D5 — standard is a name, not an array position
+### D5 — standard is a name, not an array position; the selector is unchanged
 
-`RETAINER_PRESETS[0]` decided both the *Standard* label and the selector's
-opening choice. Adding $1,000 to the front of the list would have relabelled it
-and opened every private send on it. `RETAINER_STANDARD` is separate now.
+The brief calls $1,000 a "normal Private retainer option". It is not one of the
+three presets, and adding it was **refused by an existing assertion** — "the
+owner's four choices, standard first". That list is an approved decision, the
+rule works on any figure, and a thousand typed into Custom resolves exactly as
+a preset would. **Left alone; raised with the owner instead.**
+
+The fix underneath it stays: `RETAINER_PRESETS[0]` decided both the *Standard*
+label and the selector's opening choice, so any reorder would silently move
+which figure is called standard. `RETAINER_STANDARD` is separate now.
 `PERSONAL.retainer` is unchanged and is still the standard figure.
 
 ### D6 — the colours are measured

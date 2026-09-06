@@ -17385,7 +17385,11 @@ section('The send wizard offers the non-refundable amount, on Private only');
   ok('the red statement is not shrunk below body size on a phone',
      phone.alertPx >= 15, String(phone.alertPx));
 
-  await openWiz('Private Client — $1,500');
+  /* THE CARD IS ALREADY OPEN — `openSheet` TOGGLES, so calling openWiz here
+     would shut it and leave no Send button to press. The existing rate-sheet
+     section records the same trap. */
+  await page.locator('.btn', { hasText: 'Send this sheet' }).click();
+  await page.waitForSelector('.amsheet', { timeout: 4000 });
   const phoneCtl = await page.evaluate(() => {
     const el = document.getElementById('wiz_nr');
     if (!el) return null;

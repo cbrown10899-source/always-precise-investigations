@@ -704,13 +704,20 @@ stopped being harmless the moment the private card gained a block a law firm
 must never see. Matched on id **and** context now, which is how
 `sheetWizardHtml` already picked its card; the two agree.
 
-**`RETAINER_PRESETS[0]` WAS DOING TWO JOBS.** It decided both the *Standard*
-label and the selector's opening choice, so adding $1,000 at the front of the
-list — which the owner's brief calls a normal option — would have quietly
-relabelled it and opened every private send on it. `RETAINER_STANDARD` is its
-own name now: **a list's ORDER is a display decision; which figure is standard
-is a pricing fact**, and the two must not be the same expression.
-`PERSONAL.retainer` in the Worker is still the standard and did not move.
+**THE RETAINER SELECTOR DID NOT CHANGE, AND THE SUITE IS WHY.** The brief calls
+$1,000 a *"normal Private retainer option"*; it is not one of the three presets,
+so I added it — and an existing assertion refused: **"the owner's four choices,
+standard first"** is a decision that list already carries. The rule works on any
+figure, a thousand typed into Custom resolves exactly as a preset would, and the
+tests prove that case. **Changing an approved selector on an inference is scope
+a brief did not ask for**; it is a question for the owner, not a keystroke.
+
+What DID stay is the fix underneath it: **`RETAINER_PRESETS[0]` was doing two
+jobs**, deciding both the *Standard* label and the selector's opening choice, so
+any future reorder would silently move which figure the office is told is
+standard. `RETAINER_STANDARD` is its own name now — **a list's ORDER is a
+display decision; which figure is standard is a pricing fact**, and the two must
+not be the same expression. `PERSONAL.retainer` in the Worker is unchanged.
 
 **The two colours were measured, not picked.** On the block's `--paper` ground
 the red (`--bad`) is **4.73:1** and the gold (`--gold-ink`) **5.84:1**, both

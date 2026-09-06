@@ -7173,8 +7173,14 @@ async function wizSheetLoad(){
   const w = SHEET_WIZ;
   /* A carried figure has to be re-read too, or a pre-case send previews the
      standard sheet while the email carries the agreed one — the same screen /
-     client split, arriving through the new door. */
-  if(!w || (!w.caseNo && w.retainerOffered == null)) return;
+     client split, arriving through the new door.
+
+     A TYPED NON-REFUNDABLE AMOUNT IS ONE OF THOSE FIGURES. This guard existed
+     to skip a pointless fetch, and it bailed on the commonest opening of all —
+     no case, no chosen retainer — so a custom amount previewed as the standard
+     one while the email would have carried what was typed. Exactly the split
+     the comment above describes, arriving through a third door. */
+  if(!w || (!w.caseNo && w.retainerOffered == null && (w.nonRef || "") === "")) return;
   try{
     const q = `case=${encodeURIComponent(w.caseNo || "")}`
       + (w.retainerOffered != null ? `&retainer=${encodeURIComponent(w.retainerOffered)}` : "")
