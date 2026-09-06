@@ -17161,7 +17161,10 @@ section('API Assistant — Beta reads, role-scoped navigation, refusals by name'
     ['Change the amount on that payment', /altering a payment/],
     ['Delete this intake', /deleting/],
     ['Archive this case', /archiving/],
-    ['Close the case', /closing cases/],
+    /* 'Close the case' moved to the CLOSEOUT PREPARATION carve-out (CEO
+       charter 2026-09-06, Mission 13) — it answers from the record and opens
+       the panel, executing nothing; asserted in the closeout section below.
+       A close combined with a send still refuses, also asserted there. */
     ['Assign Dana to this case', /assigning/],
     ['Change the price to $99', /changing pricing/],
   ]) {
@@ -20080,21 +20083,29 @@ section('Case closeout: a refund is its own event and the payment is never touch
   ok('a repeated confirmation issues exactly one refund, never two',
      m.refunds.length === 1 && m.refunded === 900, JSON.stringify(m.refunds));
 
-  /* ---- THE CHECKLIST IS STILL THE ONLY DOOR, and a refund that happened is
-     still reported as having happened. ---- */
+  /* ---- THE CHECKLIST DOES NOT BLOCK THE CLOSEOUT (CEO charter 2026-09-06,
+     Mission 7: clients pay and change their minds, and closing such a case
+     must not require pretending work occurred). The confirm's own explicit
+     confirmation is the sign-off; the eight attestations stay as the
+     pre-close review for worked cases, and setStatus still refuses closed. */
   await caseWith('API-CLO-I', 1000, { checklist: false });
   m = await money('API-CLO-I');
-  ok('the closeout screen is told what is still open BEFORE the button',
+  ok('the closeout screen is told what the checklist still has open, as information',
      m.checklist_open.length === 8 && m.checklist_open.includes('Billing reviewed'),
      JSON.stringify(m.checklist_open.length));
   await prepare('API-CLO-I', { retained: 300, refund: 700 });
   c = await jsonOf(await confirm('API-CLO-I'));
-  ok('an unfinished checklist leaves the case OPEN, and says so',
-     c.case_closed === false && c.checklist_open.length === 8);
-  ok('but the refund it recorded is still on the ledger — a fact is not hidden '
-     + 'because a tick is missing', c.refunds.length === 1 && c.refunded === 700);
+  ok('a NO-TICKS case closes — zero attestations, zero work, and no pretending',
+     c.case_closed === true, JSON.stringify([c.case_closed, c.checklist_open]));
+  ok('and the refund is on the ledger', c.refunds.length === 1 && c.refunded === 700);
   const iws = await jsonOf(await call(env, '/cases/API-CLO-I/workspace', { cookie: admin }));
-  ok('and the case genuinely did not close', iws.status !== 'closed');
+  ok('the case genuinely closed', iws.status === 'closed' && iws.stage === 'closed');
+  ok('with who closed it and when on the closure record, exactly as the checklist path writes it',
+     iws.closure && iws.closure.closed_by === 'Trever' && iws.closure.closed_at != null,
+     JSON.stringify(iws.closure && iws.closure.closed_by));
+  ok('and the ticks it never had are still honestly absent — nothing invented a confirmation',
+     Object.values(iws.closure.checklist || {}).filter(Boolean).length === 0,
+     JSON.stringify(iws.closure.checklist));
 
   /* ---- A VOIDED PAYMENT IS MONEY THAT NEVER STAYED, and the reconciliation
      is re-checked at the moment of writing rather than only at prepare. ---- */
@@ -20125,18 +20136,16 @@ section('Case closeout: a refund is its own event and the payment is never touch
   ok('nor one that is only prepared — preparing moves no money and closes nothing',
      res.status === 400 && (await jsonOf(res)).code === 'not_closed_out');
   ok('and nothing left the building', mailed === null);
-  /* THE DOCUMENT PRINTS "CASE STATUS: CLOSED", SO THE CASE HAS TO BE CLOSED.
-     API-CLO-I confirmed its closeout and issued a real refund, and its
-     checklist refused to close the case — a state the confirm reports rather
-     than hides. Emailing the statement there would tell the client their case
-     is closed when it is open. */
+  /* THE DOCUMENT PRINTS "CASE STATUS: CLOSED", SO THE CASE HAS TO BE CLOSED —
+     and since the confirm now closes, the way to reach the mismatch is to
+     REOPEN a closed-out case. The statement must refuse there: emailing it
+     would tell the client their reopened case is closed. */
+  await call(env, '/submissions/API-CLO-I/status', { method: 'POST', cookie: admin,
+    body: { status: 'open' } });
   res = await emailIt('API-CLO-I', { to: 'client@example.com' });
   j = await jsonOf(res);
-  ok('nor about a case the checklist has not actually closed',
+  ok('a REOPENED case refuses the statement — the document would assert closed about open',
      res.status === 400 && j.code === 'case_not_closed', JSON.stringify(j).slice(0, 120));
-  ok('and the refusal names what is still open rather than saying "not allowed"',
-     Array.isArray(j.checklist_open) && j.checklist_open.includes('Billing reviewed'),
-     JSON.stringify(j.checklist_open));
   ok('nothing left the building for that one either', mailed === null);
   mailed = null;
   res = await emailIt('API-CLO-A', { to: 'not-an-address' });
@@ -20149,10 +20158,11 @@ section('Case closeout: a refund is its own event and the payment is never touch
   ok('the document is a FINAL CLOSEOUT STATEMENT, not an invoice',
      /Final Closeout Statement/i.test(mailed.subject) && /FINAL CLOSEOUT STATEMENT/.test(mailed.text)
      && !/invoice/i.test(doc), mailed.subject);
-  ok('and every figure on it is the ledger\'s',
+  ok('and every figure on it is the ledger\'s, in the owner\'s wording — the portal sent no money',
      /Retainer received\.+ \$1,000/.test(mailed.text)
      && /Non-refundable retained\.+ \$400/.test(mailed.text)
-     && /Refund issued\.+ \$600/.test(mailed.text)
+     && /Refund completed outside portal\.+ \$600/.test(mailed.text)
+     && !/issued/i.test(mailed.text)
      && /FINAL BALANCE\.+ \$0/.test(mailed.text), mailed.text.slice(0, 400));
   ok('it names the client and the case, and states the status in words',
      /Vanessa Reed/.test(doc) && /API-CLO-A/.test(doc) && /CASE STATUS: CLOSED/.test(mailed.text));
@@ -20212,7 +20222,7 @@ section('Case closeout: a refund is its own event and the payment is never touch
     { method: 'POST', cookie: admin, body: { text: t, context: ctx } }));
   const onCase = { route: 'case', case_no: 'API-CLO-D' };
   for (const phrase of ['refund the client $600', 'issue a refund on this case',
-                        'close this case', 'close out this case and email the client',
+                        'close out this case and email the client',
                         'email the client their closeout statement',
                         'void the retainer payment', 'change the payment to $400']) {
     const a = await say(phrase, onCase);
@@ -20297,6 +20307,285 @@ section('Case closeout: a refund is its own event and the payment is never touch
   ok('the lead ladder is admin paperwork and never reaches the field',
      !('lead_status' in iws2), JSON.stringify(Object.keys(iws2).filter(k => /lead/.test(k))));
 
+
+
+  /* ---- REQUESTED IS NOT COMPLETED (CEO charter Mission 9): "Never claim
+     money was refunded unless owner explicitly records that it was completed
+     outside the portal." A requested refund writes NO case_refund row — the
+     ledger keeps saying the office holds the money, because it does. ---- */
+  await caseWith('API-CLO-N', 1000);
+  await prepare('API-CLO-N', { retained: 500, refund: 500, reason: 'cancelled_before_work',
+                               refund_status: 'requested' });
+  c = await jsonOf(await confirm('API-CLO-N'));
+  ok('a REQUESTED refund closes the case with NO refund row written',
+     c.case_closed === true && c.refunds.length === 0 && c.refunded === 0,
+     JSON.stringify([c.refunds.length, c.refunded]));
+  ok('the ledger keeps saying the office still holds the money — because it does',
+     c.final_balance === 500, String(c.final_balance));
+  ok('and the status word is on the record', c.refund_status === 'requested');
+  mailed = null;
+  await emailIt('API-CLO-N', { to: 'n@example.com' });
+  ok('the statement says REQUESTED, and the word "issued" appears nowhere on it',
+     /Refund requested\.+ \$500/.test(mailed.text) && !/issued/i.test(mailed.text),
+     mailed.text.slice(0, 400));
+  ok('its balance line settles the statement the client is reading: 1000 - 500 - 500 = 0',
+     /FINAL BALANCE\.+ \$0/.test(mailed.text));
+  ok('and the reason prints in the owner\'s own vocabulary',
+     /Reason:\nClient cancelled before work began/.test(mailed.text), mailed.text.slice(-300));
+
+  /* THE COMPLETION IS THE OWNER'S EXPLICIT WORD, on its own route. */
+  let done1 = await call(env, '/cases/API-CLO-N/closeout/refund-done',
+    { method: 'POST', cookie: admin, body: { method: 'venmo', refunded_on: '2026-09-07' } });
+  let rj = await jsonOf(done1);
+  ok('marking the refund done writes the completed row, dated by the person who sent it',
+     done1.status === 200 && rj.refunds.length === 1 && rj.refunds[0].refunded_on === '2026-09-07'
+     && rj.refund_status === 'completed_external', JSON.stringify(rj.refunds));
+  ok('and the ledger settles to zero only now', rj.final_balance === 0);
+  done1 = await call(env, '/cases/API-CLO-N/closeout/refund-done',
+    { method: 'POST', cookie: admin, body: {} });
+  ok('a second completion is refused — the ledger cannot be doubled',
+     done1.status === 409 && (await jsonOf(done1)).code === 'not_requested');
+  mailed = null;
+  await emailIt('API-CLO-N', { to: 'n@example.com', resend: true });
+  ok('the statement now says completed outside portal, with the refund date',
+     /Refund completed outside portal\.+ \$500/.test(mailed.text)
+     && /Refund date\.+ 2026-09-07/.test(mailed.text)
+     && !/issued/i.test(mailed.text), mailed.text.slice(0, 400));
+
+  /* ---- THE VOCABULARY IS VALIDATED AGAINST THE FIGURE. ---- */
+  await caseWith('API-CLO-O', 1000);
+  res = await prepare('API-CLO-O', { retained: 500, refund: 500, refund_status: 'none_due' });
+  ok('"no refund due" beside a $500 refund figure is refused — the record cannot disagree with itself',
+     res.status === 400 && (await jsonOf(res)).code === 'bad_refund_status');
+  res = await prepare('API-CLO-O', { retained: 1000, refund: 0, refund_status: 'requested' });
+  ok('and "requested" with nothing to refund is refused too', res.status === 400);
+  await prepare('API-CLO-O', { retained: 1000, refund: 0, refund_status: 'none_due' });
+  c = await jsonOf(await confirm('API-CLO-O'));
+  ok('a full-retention closeout carries "no refund due" and writes no refund',
+     c.case_closed === true && c.refund_status === 'none_due' && c.refunds.length === 0);
+  mailed = null;
+  await emailIt('API-CLO-O', { to: 'o@example.com' });
+  ok('and its statement says so in words', /Refund\.+ None due/.test(mailed.text),
+     mailed.text.slice(0, 400));
+  ok('with the Date received beside the money, read off the one live payment',
+     /Date received\.+ 2026-09-01/.test(mailed.text));
+
+  /* ---- SCENARIO D (charter Mission 17): a case with NO payment and NO work
+     closes cleanly, with no fake financial or work records. ---- */
+  await ingest(env, { case_no: 'API-CLO-P', service: 'Surveillance',
+    client_name: 'Changed Mind', subject_name: 'S' });
+  await prepare('API-CLO-P', { retained: 0, refund: 0, reason: 'cancelled_before_work' });
+  c = await jsonOf(await confirm('API-CLO-P'));
+  ok('a zero-payment, zero-work case closes cleanly',
+     c.case_closed === true && c.retainer_received === 0 && c.refunds.length === 0,
+     JSON.stringify([c.case_closed, c.retainer_received]));
+  const pws = await jsonOf(await call(env, '/cases/API-CLO-P/workspace', { cookie: admin }));
+  ok('with no invented work anywhere on it',
+     pws.status === 'closed' && (pws.days || []).length === 0 && (pws.activity || []).length === 0
+     && Object.values((pws.closure && pws.closure.checklist) || {}).filter(Boolean).length === 0);
+
+  /* ---- A RUNNING DAY IS THE ONE BLOCKER, the owner's own carve-out. ---- */
+  await caseWith('API-CLO-Q', 1000);
+  await call(env, '/cases/API-CLO-Q/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-09-06', start_time: '08:00' } });
+  await prepare('API-CLO-Q', { retained: 1000, refund: 0 });
+  res = await confirm('API-CLO-Q');
+  const dayRef = await jsonOf(res);
+  ok('a running investigation day refuses the close, naming who holds it',
+     res.status === 409 && dayRef.code === 'day_running' && /Trever/.test(dayRef.error),
+     JSON.stringify(dayRef).slice(0, 140));
+  m = await money('API-CLO-Q');
+  ok('and nothing was recorded by the refusal', m.closeout.closed_at == null && m.refunds.length === 0);
+  await call(env, '/cases/API-CLO-Q/day/end', { method: 'POST', cookie: admin,
+    body: { end_time: '09:00' } });
+  ok('ending the day is all it takes', (await confirm('API-CLO-Q')).status === 200);
+
+  /* ---- MISSION 11: a closed case leaves the working queues. ---- */
+  const sum = await jsonOf(await call(env, '/summary', { cookie: admin }));
+  for (const done of ['API-CLO-N', 'API-CLO-O', 'API-CLO-P', 'API-CLO-Q']) {
+    const where = Object.entries(sum).filter(([, v]) => JSON.stringify(v || '').includes(done))
+      .map(([k]) => k);
+    ok(`${done} is in no dashboard alert`, where.length === 0, `found under: ${where.join(', ')}`);
+  }
+  const attn = await jsonOf(await call(env, '/attention', { cookie: admin }));
+  ok('the closed cases raise no attention alerts',
+     !JSON.stringify(attn).includes('API-CLO-N') && !JSON.stringify(attn).includes('API-CLO-P'));
+  const act = await jsonOf(await call(env, '/my/active', { cookie: admin }));
+  ok('and none is offered by the surveillance launcher',
+     !JSON.stringify(act).includes('API-CLO-N') && !JSON.stringify(act).includes('API-CLO-Q'));
+
+  /* ---- "CLOSE MICHELLE'S CASE" (Mission 13) prepares — by name, one match,
+     nothing executed. ---- */
+  await ingest(env, { case_no: 'API-CLO-MICH', service: 'Surveillance',
+    client_name: 'Michelle Andrews', subject_name: 'Watched Person' });
+  await call(env, '/cases/API-CLO-MICH/retainer', { method: 'POST', cookie: admin,
+    body: { retainer_amount: 1500, received: true, amount_received: 1000, method: 'venmo' } });
+  ap = await say("Close Michelle's case", {});
+  ok('"Close Michelle\'s case" resolves the case by name and PREPARES',
+     ap.kind === 'status' && !ap.command && /API-CLO-MICH|\$1,000/.test(ap.text || ''),
+     JSON.stringify(ap).slice(0, 160));
+  ok('it opens the panel and decides nothing',
+     ap.actions && ap.actions[0].navigate.id === 'billing', JSON.stringify(ap.actions));
+  const mich = await money('API-CLO-MICH');
+  ok('and NOTHING was closed or recorded by asking',
+     mich.closeout === null && mich.refunds.length === 0);
+  ap = await say('close this case', { route: 'case', case_no: 'API-CLO-MICH' });
+  ok('"close this case" on an open case is the same preparation, not a shrug and not a refusal',
+     ap.kind === 'status' && /\$1,000/.test(ap.text || ''), JSON.stringify(ap).slice(0, 120));
+  ap = await say("close Zzzzz's case", {});
+  ok('a name that matches nothing is said, never guessed',
+     /Nothing matches/.test(ap.text || ''), ap.text);
+
+
+  /* ---- THE CONSOLIDATED CLOSEOUT BRIEF (owner, 2026-09-06 §§4-22): the work
+     statement, the custom reason, the owner's exact wording, and the reads. */
+  await caseWith('API-CLO-R', 1500);
+  let sw = await jsonOf(await call(env, '/cases/API-CLO-R/closeout-money', { cookie: admin }));
+  ok('a case with no day and no activity SUGGESTS "no work performed" — suggested, never stored',
+     sw.suggested_work === 'none' && sw.work_options.some(w => w.id === 'limited'),
+     JSON.stringify([sw.suggested_work, sw.work_options.length]));
+  await call(env, '/cases/API-CLO-R/day/start', { method: 'POST', cookie: admin,
+    body: { day_date: '2026-09-05', start_time: '08:00' } });
+  await call(env, '/cases/API-CLO-R/day/end', { method: 'POST', cookie: admin,
+    body: { end_time: '10:00' } });
+  sw = await jsonOf(await call(env, '/cases/API-CLO-R/closeout-money', { cookie: admin }));
+  ok('and a case with a real day suggests nothing — the record does not contradict itself',
+     sw.suggested_work === null, String(sw.suggested_work));
+
+  /* EXAMPLE C of the brief (§11): $1,500 / $750 / $750, with the work
+     statement and a custom "Other" reason that IS the printed reason. */
+  await prepare('API-CLO-R', { retained: 750, refund: 750, refund_status: 'requested',
+    work_performed: 'limited', reason: 'other',
+    reason_detail: 'Client relocated out of state mid-engagement' });
+  c = await jsonOf(await confirm('API-CLO-R'));
+  ok('EXAMPLE C closes: $1,500 received, $750 retained, $750 requested',
+     c.case_closed === true && c.retained === 750 && c.agreed_refund === 750
+     && c.refund_status === 'requested' && c.refunds.length === 0,
+     JSON.stringify([c.retained, c.agreed_refund, c.refund_status]));
+  ok('the work statement is on the record', c.work_performed === 'limited');
+  mailed = null;
+  await emailIt('API-CLO-R', { to: 'r@example.com' });
+  ok('the statement prints the work statement and the owner\'s own Other reason',
+     /Work performed\.+ Limited work performed/.test(mailed.text)
+     && /Reason:\nClient relocated out of state mid-engagement/.test(mailed.text),
+     mailed.text.slice(0, 400));
+  ok('an invented work statement is refused',
+     (await prepare('API-CLO-A', { retained: 0, refund: 0, work_performed: 'heroic' })).status === 400);
+  ok('and the new closing reason exists in the vocabulary',
+     (await jsonOf(await call(env, '/cases/API-CLO-R/closeout-money', { cookie: admin })))
+       .reasons.some(r => r.id === 'unable_to_proceed'));
+
+  /* ---- §22: CLOSED-CASE QUESTIONS, answered from the stored record. ---- */
+  const rq = { route: 'case', case_no: 'API-CLO-R' };
+  let qa = await say('Why was this case closed?', rq);
+  ok('"Why was this case closed?" answers with the stored reason, verbatim',
+     qa.kind === 'status' && /Client relocated out of state/.test(qa.text || ''), qa.text);
+  qa = await say('How much retainer did they pay?', rq);
+  ok('"How much retainer did they pay?" reads the ledger',
+     /\$1,500/.test(qa.text || ''), qa.text);
+  qa = await say('How much was retained?', rq);
+  ok('"How much was retained?" reads the closeout', /\$750/.test(qa.text || ''), qa.text);
+  qa = await say('Was the refund completed?', rq);
+  ok('"Was the refund completed?" answers from the STATUS WORD — requested, not completed',
+     /REQUESTED — not completed/.test(qa.text || ''), qa.text);
+  qa = await say('Was any work performed?', rq);
+  ok('"Was any work performed?" reads the work statement',
+     /Limited work performed/.test(qa.text || ''), qa.text);
+  qa = await say("Why was Vanessa's case closed?", {});
+  ok('a possessive question resolves by name — and zero or several matches are SAID',
+     qa.kind === 'status' && /matches|Closed/i.test(qa.text || ''), JSON.stringify(qa).slice(0, 140));
+
+  /* ---- §21: THE PARSED PREFILL — figures the owner SAID become seeded form
+     values; nothing is recorded by saying them. ---- */
+  await caseWith('API-CLO-S', 1000);
+  let pf = await say('Client changed their mind. Close this case. Keep $500 non-refundable and note $500 refund requested.',
+    { route: 'case', case_no: 'API-CLO-S' });
+  ok('the sentence parses into a prefill, not an act',
+     pf.kind === 'closeout_prefill' && !pf.command, JSON.stringify([pf.kind, !!pf.command]));
+  ok('with exactly the owner\'s figures and words',
+     pf.prefill.retained === '500' && pf.prefill.refund === '500'
+     && pf.prefill.refund_status === 'requested'
+     && pf.prefill.reason === 'cancelled_before_work', JSON.stringify(pf.prefill));
+  let ms = await money('API-CLO-S');
+  ok('and NOTHING was recorded by saying it', ms.closeout === null && ms.refunds.length === 0);
+  pf = await say('Close this case, full retainer retained. No work was performed.',
+    { route: 'case', case_no: 'API-CLO-S' });
+  ok('"full retainer retained" resolves against the ledger\'s own figure',
+     pf.prefill.retained === '1000' && pf.prefill.refund === '0'
+     && pf.prefill.refund_status === 'none_due' && pf.prefill.work_performed === 'none',
+     JSON.stringify(pf.prefill));
+  pf = await say('Close this case without a report', { route: 'case', case_no: 'API-CLO-S' });
+  ok('"without a report" seeds the work statement and opens the form — no readiness gate',
+     pf.prefill && pf.prefill.work_performed === 'none', JSON.stringify(pf.prefill));
+
+  /* ---- §27: the closeout and the refund reach the audit trail. ---- */
+  const at = await jsonOf(await call(env, '/audit', { cookie: admin }));
+  ok('the audit trail carries the confirmed closeout with its figures',
+     (at.entries || []).some(e => e.kind === 'closeout' && /\$750 retained/.test(e.what)),
+     JSON.stringify((at.entries || []).filter(e => e.kind === 'closeout').slice(0, 2)));
+  ok('and each refund documented as completed outside the portal',
+     (at.entries || []).some(e => e.kind === 'refund' && /outside the portal/.test(e.what)),
+     JSON.stringify((at.entries || []).filter(e => e.kind === 'refund').slice(0, 2)));
+
+  /* ---- READING A FIELD OFF THE INTAKE (owner brief Part 8). A READ: no
+     command, nothing written, and the answer is the payload's own value. The
+     role boundary is the SAME `redactPayload` the case read uses, so an
+     investigator asking for the paying side gets what that read already gives
+     them — nothing — and is told why rather than told "not provided". ---- */
+  await ingest(env, { case_no: 'API-CLO-RD', service: 'Surveillance',
+    client_name: 'Vanessa Reed', client_phone: '(540) 555-0147', client_email: 'vanessa@example.com',
+    subject_name: 'Rex Dalton', subject_address: '14 Elm St, Bedford, VA',
+    subject_description: 'Blue 2019 Ford F-150, VA plate ABC-1234',
+    objective: 'Document daily activity', date_of_loss_status: 'unknown',
+    signature: 'data:image/png;base64,iVBORw0KGgo=' });
+  const rd = { route: 'case', case_no: 'API-CLO-RD' };
+  let q = await say('What phone number did Vanessa provide?', rd);
+  ok('"What phone number did Vanessa provide?" answers from the intake, verbatim',
+     q.kind === 'status' && !q.command && /\(540\) 555-0147/.test(q.text || ''),
+     JSON.stringify(q).slice(0, 160));
+  ok('and offers the intake screen — a navigation, never a command',
+     q.actions && q.actions[0].navigate.id === 'details' && q.actions[0].navigate.kind === 'case_tab',
+     JSON.stringify(q.actions));
+  q = await say("what is the subject's address", rd);
+  ok('the subject address reads back', /14 Elm St, Bedford, VA/.test(q.text || ''), q.text);
+  q = await say('what vehicle did they describe', rd);
+  ok('the vehicle reads back', /Blue 2019 Ford F-150/.test(q.text || ''), q.text);
+  q = await say('what email did she give', rd);
+  ok('the email reads back', /vanessa@example\.com/.test(q.text || ''), q.text);
+  q = await say('what is the mailing address', rd);
+  ok('a field left blank says so, and invents nothing from another field',
+     /No mailing address was given/.test(q.text || '') && !/Elm St/.test(q.text || ''), q.text);
+  q = await say('what is the date of loss', rd);
+  ok('a field the client marked unavailable reports the status they chose',
+     /marked "unknown"/.test(q.text || ''), q.text);
+  q = await say('is there a signature', rd);
+  ok('a signature is answered as a fact, never read out',
+     /Vanessa Reed signed the intake/.test(q.text || '') && !/data:image/.test(q.text || ''), q.text);
+  q = await say('what phone number did Vanessa provide', {});
+  ok('with no case in hand it is not this branch, and nothing leaks',
+     typeof q.kind === 'string' && !/555-0147/.test(q.text || ''), JSON.stringify(q).slice(0, 100));
+  q = await say('email me the phone number Vanessa provided', rd);
+  ok('an executing verb in the sentence still reaches the refusal', q.kind === 'refused', q.kind);
+
+  /* THE ROLE BOUNDARY IS INHERITED, NOT RE-DECIDED. */
+  const fieldco = await env.DB.prepare("SELECT id FROM users WHERE username = 'fieldco'").first();
+  await call(env, '/submissions/API-CLO-RD/assign', { method: 'POST', cookie: admin,
+    body: { user_id: fieldco.id } });
+  const sayInv = async (t, ctx) => jsonOf(await call(env, '/assistant/command',
+    { method: 'POST', cookie: inv, body: { text: t, context: ctx } }));
+  q = await sayInv('What phone number did Vanessa provide?', rd);
+  ok("an investigator asking for the CLIENT's phone is told it is office-side — and the digits never appear",
+     /office side/.test(q.text || '') && !/555-0147/.test(q.text || ''), q.text);
+  q = await sayInv('what email did the client give', rd);
+  ok("nor does the client's email", !/vanessa@example\.com/.test(q.text || ''), q.text);
+  q = await sayInv("what is the subject's address", rd);
+  ok("while the SUBJECT's address — fieldwork — reads back to them", /14 Elm St/.test(q.text || ''), q.text);
+  q = await sayInv('what vehicle', rd);
+  ok('and the vehicle', /F-150/.test(q.text || ''), q.text);
+  q = await sayInv('What phone number did Vanessa provide?', { route: 'case', case_no: 'API-CLO-A' });
+  ok('a case they are not on answers as unreadable, revealing nothing',
+     !/555/.test(q.text || '') && !/Vanessa/.test(q.text || ''), q.text);
+
   /* ---- THE DEMO SWEEP TAKES BOTH TABLES, so a TEST- case leaves nothing
      behind — the orphan-row lesson this project has already paid for. ---- */
   await ingest(env, { case_no: 'TEST-CLO-1', service: 'Surveillance', client_name: 'T', subject_name: 'S' });
@@ -20340,6 +20629,99 @@ section('Case closeout: a refund is its own event and the payment is never touch
      bareWrite.status === 503 && /portal-setup/.test((await jsonOf(bareWrite)).error));
 
   globalThis.fetch = realFetch;
+}
+
+section('My Portal is per user: one account\'s choices never reach another\'s screen');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const corey = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const inv2 = await jsonOf(await invite(env, corey,
+    { username: 'trever2', role: 'admin', display_name: 'Trever B' }));
+  const tok2 = new URL(inv2.url, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok2}/accept`, { method: 'POST', body: { password: 'SecondAdmin2026x' } });
+  const trever = (await login(env, 'trever2', 'SecondAdmin2026x')).cookie;
+
+  /* THE OWNER'S OWN TEST, verbatim from the addendum: Corey hides Assignment
+     -> Trever still sees it; Trever reorders -> Corey unchanged. */
+  await call(env, '/me/prefs', { method: 'POST', cookie: corey,
+    body: { hidden: ['needs_assignment', 'lead_status'], qt_order: ['sheets', 'newlead'] } });
+  let c = await jsonOf(await call(env, '/me/prefs', { cookie: corey }));
+  let t = await jsonOf(await call(env, '/me/prefs', { cookie: trever }));
+  ok("Corey's hides and order are on Corey's row",
+     c.prefs.hidden.includes('needs_assignment') && c.prefs.qt_order[0] === 'sheets',
+     JSON.stringify(c.prefs));
+  ok("and Trever's row is UNTOUCHED — no hides, no order",
+     !t.prefs.hidden && !t.prefs.qt_order, JSON.stringify(t.prefs));
+  await call(env, '/me/prefs', { method: 'POST', cookie: trever,
+    body: { qt_order: ['vstamp', 'sheets'] } });
+  c = await jsonOf(await call(env, '/me/prefs', { cookie: corey }));
+  t = await jsonOf(await call(env, '/me/prefs', { cookie: trever }));
+  ok("Trever's reorder lands on Trever's row", t.prefs.qt_order[0] === 'vstamp');
+  ok("and changes nothing of Corey's", c.prefs.qt_order[0] === 'sheets'
+     && c.prefs.hidden.includes('lead_status'), JSON.stringify(c.prefs));
+
+  /* Dismissed suggestions are personal too. */
+  await call(env, '/me/prefs', { method: 'POST', cookie: corey,
+    body: { dismissed: ['hide_assignment'] } });
+  t = await jsonOf(await call(env, '/me/prefs', { cookie: trever }));
+  ok("Corey dismissing a CEO suggestion leaves Trever's list alone", !t.prefs.dismissed,
+     JSON.stringify(t.prefs));
+
+  /* THE MERGE RULE IS /meta's: absent unchanged, null clears. */
+  await call(env, '/me/prefs', { method: 'POST', cookie: corey, body: { ceo: { active: true } } });
+  c = await jsonOf(await call(env, '/me/prefs', { cookie: corey }));
+  ok('posting one key leaves every other key exactly as it was',
+     c.prefs.hidden.length === 2 && c.prefs.qt_order[0] === 'sheets' && c.prefs.ceo.active === true,
+     JSON.stringify(c.prefs));
+  await call(env, '/me/prefs', { method: 'POST', cookie: corey, body: { hidden: null } });
+  c = await jsonOf(await call(env, '/me/prefs', { cookie: corey }));
+  ok('and an explicit null clears exactly that key — Restore Default in one write',
+     !c.prefs.hidden && c.prefs.qt_order[0] === 'sheets', JSON.stringify(c.prefs));
+
+  /* LOGOUT/LOGIN PERSISTS — the store is the database, not the tab. */
+  const corey2 = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  c = await jsonOf(await call(env, '/me/prefs', { cookie: corey2 }));
+  ok('a fresh sign-in reads the same personal row', c.prefs.qt_order[0] === 'sheets');
+
+  /* USAGE METRICS are the caller's own. */
+  for (let i = 0; i < 3; i++) {
+    await call(env, '/me/prefs/use', { method: 'POST', cookie: corey, body: { action: 'sheets' } });
+  }
+  await call(env, '/me/prefs/use', { method: 'POST', cookie: trever, body: { action: 'vstamp' } });
+  c = await jsonOf(await call(env, '/me/prefs', { cookie: corey }));
+  t = await jsonOf(await call(env, '/me/prefs', { cookie: trever }));
+  ok("three taps count three on Corey's row and nothing on Trever's",
+     c.prefs.metrics.sheets.n === 3 && !t.prefs.metrics.sheets,
+     JSON.stringify([c.prefs.metrics, t.prefs.metrics]));
+  ok("and Trever's tap is his own", t.prefs.metrics.vstamp.n === 1);
+
+  /* HOSTILE INPUT: unknown keys refused by omission, junk action named. */
+  await call(env, '/me/prefs', { method: 'POST', cookie: corey,
+    body: { evil_key: 'x', qt_order: ['a'] } });
+  c = await jsonOf(await call(env, '/me/prefs', { cookie: corey }));
+  ok('an unknown key is not stored — the allow-list is the schema here',
+     !('evil_key' in c.prefs), JSON.stringify(Object.keys(c.prefs)));
+  ok('a junk action name is refused',
+     (await call(env, '/me/prefs/use', { method: 'POST', cookie: corey,
+        body: { action: '<script>' } })).status === 400);
+  ok('an oversized blob is refused by name',
+     (await jsonOf(await call(env, '/me/prefs', { method: 'POST', cookie: corey,
+        body: { ceo: { pad: 'x'.repeat(30000) } } }))).code === 'prefs_too_large');
+  ok('and signing out ends access to the row entirely',
+     (await call(env, '/me/prefs', {})).status === 401);
+
+  /* WITHOUT THE TABLE the read answers with defaults and says the store is
+     not there; the write refuses naming the workflow. */
+  const bare = freshEnv();
+  await bare.DB.prepare('DROP TABLE user_pref').run();
+  await bootstrapAdmin(bare);
+  const bAdmin = (await login(bare, 'trever', 'FirstAdminPass1')).cookie;
+  const br = await jsonOf(await call(bare, '/me/prefs', { cookie: bAdmin }));
+  ok('with no table the read still answers, saying no store exists yet',
+     br.ok === true && br.stored === false, JSON.stringify(br));
+  ok('while the write refuses 503 naming the workflow',
+     (await call(bare, '/me/prefs', { method: 'POST', cookie: bAdmin, body: { hidden: [] } })).status === 503);
 }
 
 /* ------------------------------------------------------------------ report */

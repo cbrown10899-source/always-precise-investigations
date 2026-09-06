@@ -716,9 +716,13 @@ section('The dashboard');
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
   const stats = await text(page, '.stats');
-  for (const label of ['Open cases', 'Needs assignment', 'Out now', 'Reports due', 'Authorization low']) {
+  for (const label of ['Open cases', 'Out now', 'Reports due', 'Authorization low']) {
     ok(`the dashboard shows ${label}`, has(stats, label), stats);
   }
+  /* FACTORY-HIDDEN (CEO charter Mission 2): an owner-operated firm has nobody
+     to formally assign, so the card is personal-optional now — asserted per
+     user in the My Portal section, including that unhiding brings it back. */
+  ok('Needs assignment is factory-hidden from the cards', !has(stats, 'Needs assignment'), stats);
   ok('carrier and private counts moved to the case bar, not the cards',
      !has(stats, 'Carrier') && has(await text(page, '.bar'), 'carrier'));
   ok('the counts are real numbers', /\d/.test(stats));
@@ -4839,9 +4843,11 @@ section('The dashboard leads with two named bands');
   const heads = (await page.locator('.bandhead h2').allInnerTexts()).map(s => s.trim().toLowerCase());
   ok('named Needs attention then Current work', heads.join('|') === 'needs attention|current work', heads.join('|'));
 
-  for (const c of ['New intakes', 'Reports due', 'Retainer / authorization', 'Needs assignment']) {
+  for (const c of ['New intakes', 'Reports due', 'Retainer / authorization']) {
     ok(`Needs attention carries ${c}`, has(body, c), body.slice(0, 400));
   }
+  ok('Needs assignment is factory-hidden from the bands too', !has(body, 'Needs assignment'),
+     body.slice(0, 200));
   for (const c of ['Active today', 'Ready to build', 'Packages ready', 'Outstanding']) {
     ok(`Current work carries ${c}`, has(body, c), body.slice(0, 400));
   }
@@ -4867,11 +4873,21 @@ section('The dashboard leads with two named bands');
   }
   ok('storage is accounted for somewhere on the dashboard', has(body, 'storage'), also);
 
-  // Assignment stays optional: the card reports, it never scolds.
+  // Assignment stays optional WHEN A USER UNHIDES IT: the card reports, it
+  // never scolds. The unhide is this user's own, restored below.
+  await page.evaluate(async () => {
+    await api('/me/prefs', { method: 'POST', body: { hidden: [] } });
+    await loadMyPrefs(); paint();
+  });
+  await page.waitForTimeout(400);
   const assign = await page.locator('.stat', { hasText: 'Needs assignment' }).first();
-  ok('Needs assignment is never dressed as a warning',
+  ok('unhidden, Needs assignment is never dressed as a warning',
      !(await assign.getAttribute('class')).includes('warn'), await assign.getAttribute('class'));
   ok('and says so in words', has(await assign.innerText(), 'optional'), await assign.innerText());
+  await page.evaluate(async () => {
+    await api('/me/prefs', { method: 'POST', body: { hidden: null } });
+    await loadMyPrefs(); paint();
+  });
 
   await page.close();
 }
@@ -6804,11 +6820,19 @@ section('A lead has its own life, and its sends live on the card');
 
   const card = page.locator('.pcard', { hasText: 'API-20260812-4005' });
   ok('a fresh lead is on the desk', await card.count() === 1);
-  /* THE LADDER IS STILL HERE, FOLDED. It moved under Admin status because a
-     dropdown was as loud as the client's own name on a card whose job is
-     "somebody submitted this, read it" — so the visible text must NOT lead
-     with it, while the control itself is still present and still works. */
-  ok('the lead ladder is present but folded under Admin status',
+  /* FACTORY-HIDDEN ENTIRELY NOW (CEO charter Mission 5): the CRM ladder is
+     not the primary intake experience. The statuses keep working underneath —
+     unhiding is a personal choice, and the folded disclosure returns exactly
+     as it was for that user. */
+  ok('the lead ladder is factory-hidden from the card',
+     await card.locator('.pc-more').count() === 0, (await card.innerText()).slice(0, 160));
+  await page.evaluate(async () => {
+    await api('/me/prefs', { method: 'POST', body: { hidden: ['needs_assignment'] } });
+    await loadMyPrefs(); paint();
+  });
+  await page.waitForTimeout(400);
+  /* THE LADDER IS STILL HERE, FOLDED, for the user who wants it. */
+  ok('unhidden, the lead ladder is present but folded under Admin status',
      has(await card.innerText(), 'Admin status')
      && !has(await card.innerText(), 'Lead status')
      && await card.locator('select[data-act="leadStatus"]').count() === 1,
@@ -6894,6 +6918,11 @@ section('A lead has its own life, and its sends live on the card');
   ok('the Comm log records what the portal itself sent', has(log, 'Sent from the portal'));
   ok('including the attempt that failed, marked failed', has(log, 'Failed'));
   ok('naming who it went to', has(log, 'riley@example.test'));
+  /* Factory state back for every later section — the unhide above was this
+     user's own row and would otherwise leak forward. */
+  await page.evaluate(async () => {
+    await api('/me/prefs', { method: 'POST', body: { hidden: null } });
+  });
   await page.close();
 }
 
@@ -17400,9 +17429,12 @@ section('Intakes: tapping a submitted intake opens what the client signed');
   ok('and it points at the submitted intake, not the case overview',
      shape.doorTab === 'details', shape.doorTab);
   ok('the card says the client signed it', shape.signed === true);
-  ok('the lead ladder is folded under Admin status, not sitting in the header',
-     shape.statusInHeader === false && shape.statusUnderMore === true
-     && shape.moreClosed === true, JSON.stringify(shape));
+  /* FACTORY-HIDDEN entirely now (CEO charter Mission 5) — the ladder never
+     sits in the header, and by default the disclosure is not drawn at all.
+     The unhide behaviour has its own section. */
+  ok('the lead ladder neither sits in the header nor draws by default',
+     shape.statusInHeader === false && shape.statusUnderMore === false
+     && shape.moreClosed === null, JSON.stringify(shape));
   ok('the door contains no nested control — one destination, one tab stop',
      shape.nested === 0, String(shape.nested));
   ok('"Review" is gone, replaced by a control that says what it opens',
@@ -20367,7 +20399,9 @@ section('Case closeout: the page records a refund and emails nobody');
      /\$400/.test(asked) && /\$600/.test(asked), asked.slice(0, 160));
   ok('and the confirmation says the original payment is not changed',
      /original payment is not changed/.test(asked), asked.slice(0, 220));
-  ok('and that nothing is emailed by it', /Nothing is emailed/.test(asked), asked.slice(-120));
+  ok('and that nothing is emailed by it', /nothing is emailed/i.test(asked), asked.slice(-160));
+  ok('and that it CLOSES the case — the charter behavior, said before the click',
+     /CLOSE the case/.test(asked) && /Closing is not deleting/.test(asked), asked.slice(0, 120));
 
   const after = await page.evaluate(async () => {
     const w = await (await fetch('/portal-api/cases/API-FC-E2E/closeout-money',
@@ -20468,6 +20502,385 @@ section('The intake screen carries the intake\'s own actions');
 
   await page.setViewportSize({ width: 1200, height: 900 });
   await page.close();
+}
+
+
+section('The no-work close: pay, change mind, two taps, honest record');
+{
+  /* SCENARIO C of the charter's acceptance list, through the real page: a
+     client pays $1,000 and cancels before any work. No surveillance, no
+     report, no package, no checklist — Close Case on the case row, preset
+     $500, refund REQUESTED, confirm. The case leaves the working queues and
+     the statement is ready. */
+  await post('/ingest', { case_no: 'API-NW-E2E', service: 'Surveillance',
+    client_name: 'Quick Cancel', client_email: 'qc@example.com', subject_name: 'Nobody Watched' },
+    { 'X-Ingest-Key': 'e2e-ingest-key' });
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.evaluate(() => openCase('API-NW-E2E'));
+  await page.waitForTimeout(700);
+
+  /* MISSION 6: Retainer Paid is one tap from the case header. */
+  const acts = await page.evaluate(() => ({
+    ret: !!document.querySelector('[data-act="retQuick"]'),
+    close: !!document.querySelector('[data-act="fcQuick"]'),
+  }));
+  ok('Retainer paid and Close case sit on the case actions row', acts.ret && acts.close,
+     JSON.stringify(acts));
+  await page.evaluate(() => { document.querySelector('[data-act="retQuick"]').click(); });
+  await page.waitForTimeout(400);
+  const retForm = await page.evaluate(() => ({
+    tab: WS_TAB, amt: !!document.getElementById('ret_amt'),
+  }));
+  ok('Retainer paid opens the EXISTING Record Payment form, on the panel that holds it',
+     retForm.tab === 'auth' && retForm.amt === true, JSON.stringify(retForm));
+  await page.evaluate(async () => {
+    document.getElementById('ret_amt').value = '1000';
+    document.getElementById('ret_method').value = 'cash_app';
+    await recordRetainerPayment(true);
+  });
+  await page.waitForTimeout(900);
+
+  /* MISSION 7: Close Case, one tap, no checklist. */
+  await page.evaluate(() => { document.querySelector('[data-act="fcQuick"]').click(); });
+  await page.waitForTimeout(600);
+  const form = await page.evaluate(() => ({
+    tab: WS_TAB, form: !!document.getElementById('fc_retained'),
+    presets: [...document.querySelectorAll('[data-act="fcPreset"]')].map(b => b.textContent.trim()),
+  }));
+  ok('Close case opens the closeout form directly', form.tab === 'billing' && form.form,
+     JSON.stringify(form));
+  ok('with the charter presets: $500, Full amount, Custom',
+     form.presets.join('|') === '$500|Full amount|Custom', JSON.stringify(form.presets));
+
+  /* THE PRESET SEEDS BOTH HALVES, reviewable. */
+  await page.evaluate(() => { document.querySelector('[data-act="fcPreset"]').click(); });
+  await page.waitForTimeout(300);
+  const seeded = await page.evaluate(() => ({
+    kept: document.getElementById('fc_retained').value,
+    back: document.getElementById('fc_refund').value,
+    status: document.getElementById('fc_rstatus').value,
+  }));
+  ok('$500 preset seeds retained 500 and the $500 remainder as the refund',
+     seeded.kept === '500' && seeded.back === '500', JSON.stringify(seeded));
+  ok('and reads the refund as REQUESTED until the owner says otherwise',
+     seeded.status === 'requested', seeded.status);
+
+  const suggested = await page.evaluate(() => {
+    const w = document.getElementById('fc_work');
+    const picked = w ? w.value : null;
+    document.getElementById('fc_reason').value = 'cancelled_before_work';
+    fcCollect();
+    return picked;
+  });
+  /* THE RECORD'S OWN SUGGESTION: no day, no activity, so the form opens on
+     "No work performed" — a suggestion, and the owner may change it. */
+  ok('the work statement opens on the record\'s suggestion', suggested === 'none', String(suggested));
+  await page.evaluate(() => { const b = document.querySelector('[data-act="fcPreview"]'); if (b) b.click(); });
+  await page.waitForTimeout(900);
+  const prev2 = await page.evaluate(() => ({
+    txt: document.querySelector('.fc-box').innerText.replace(/\s+/g, ' '),
+    btn: (document.querySelector('[data-act="fcConfirm"]') || {}).textContent || '',
+  }));
+  ok('the review names the requested status and the reason',
+     /Refund requested/i.test(prev2.txt) && /cancelled before work began/i.test(prev2.txt),
+     prev2.txt.slice(0, 240));
+  ok('and the button says what it does: Confirm & close case',
+     /Confirm & close case/.test(prev2.btn), prev2.btn);
+  ok('the review states the case status after confirmation, before the click',
+     /Case status after confirmation: CLOSED/.test(prev2.txt), prev2.txt.slice(-200));
+  ok('and it names the client and case it is about',
+     /Quick Cancel/.test(prev2.txt) && /API-NW-E2E/.test(prev2.txt), prev2.txt.slice(0, 160));
+
+  page.once('dialog', d => d.accept());
+  await page.evaluate(() => { const b = document.querySelector('[data-act="fcConfirm"]'); if (b) b.click(); });
+  await page.waitForTimeout(2000);
+
+  const done = await page.evaluate(async () => {
+    const w = await (await fetch('/portal-api/cases/API-NW-E2E/closeout-money',
+      { credentials: 'include' })).json();
+    const ws = await (await fetch('/portal-api/cases/API-NW-E2E/workspace',
+      { credentials: 'include' })).json();
+    const sum = await (await fetch('/portal-api/summary', { credentials: 'include' })).json();
+    const doc = document.getElementById('fcdoc');
+    return { closed: ws.status, refunds: (w.refunds || []).length, status: w.refund_status,
+      bal: w.final_balance, agreed: w.agreed_refund,
+      inQueues: JSON.stringify(sum).includes('API-NW-E2E'),
+      refundDoneBtn: !!document.querySelector('[data-act="fcRefundDone"]'),
+      doc: doc ? doc.innerText.replace(/\s+/g, ' ') : '' };
+  });
+  ok('the case closed with ZERO work records and zero checklist ticks', done.closed === 'closed');
+  ok('the requested refund wrote NO ledger row — the money is still held, truthfully',
+     done.refunds === 0 && done.status === 'requested' && done.bal === 500,
+     JSON.stringify([done.refunds, done.status, done.bal]));
+  ok('the closed case is out of every dashboard alert', done.inQueues === false);
+  ok('the statement on screen says Refund requested — never issued',
+     /Refund requested/.test(done.doc) && !/issued/i.test(done.doc), done.doc.slice(0, 260));
+  ok('and it carries the work statement the owner chose',
+     /Work performed/.test(done.doc) && /No work performed/.test(done.doc), done.doc.slice(0, 300));
+  ok('with the reason on it', /Client cancelled before work began/.test(done.doc));
+  ok('and the settlement balance a client can add up', /Final balance \$0/.test(done.doc));
+  ok('the Refund completed control waits for the owner\'s word', done.refundDoneBtn === true);
+
+  /* THE OWNER SENDS THE MONEY, THEN TELLS THE PORTAL. */
+  page.once('dialog', d => d.accept());   // the date prompt, accepting today
+  await page.evaluate(() => { document.querySelector('[data-act="fcRefundDone"]').click(); });
+  await page.waitForTimeout(1200);
+  const after2 = await page.evaluate(async () => {
+    const w = await (await fetch('/portal-api/cases/API-NW-E2E/closeout-money',
+      { credentials: 'include' })).json();
+    return { refunds: (w.refunds || []).length, status: w.refund_status, bal: w.final_balance,
+      pays: null };
+  });
+  ok('Refund completed writes the one ledger row and settles the balance',
+     after2.refunds === 1 && after2.status === 'completed_external' && after2.bal === 0,
+     JSON.stringify(after2));
+  const payKept = await page.evaluate(async () => {
+    const ws = await (await fetch('/portal-api/cases/API-NW-E2E/workspace',
+      { credentials: 'include' })).json();
+    const p = (ws.authorization.retainer.payments || [])[0];
+    return p && `${p.amount}|${p.method}`;
+  });
+  ok('AND THE ORIGINAL PAYMENT NEVER MOVED', payKept === '1000|cash_app', String(payKept));
+  await page.close();
+}
+
+
+section('The Assistant fills the closeout form in, and commits nothing');
+{
+  /* §21 through the real page: the owner says it, the card reviews it, the
+     button opens the case's OWN form with those values seeded — and the case
+     is still open until the form's own Confirm. */
+  await post('/ingest', { case_no: 'API-ACO-E2E', service: 'Surveillance',
+    client_name: 'Assistant Closeout', subject_name: 'S' }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.evaluate(() => openCase('API-ACO-E2E'));
+  await page.waitForTimeout(700);
+  await page.evaluate(async () => {
+    await api('/cases/API-ACO-E2E/retainer', { method: 'POST', body: {
+      retainer_amount: 1500, received: true, amount_received: 1000, method: 'venmo' } });
+    await reloadWorkspace();
+  });
+  await page.waitForTimeout(500);
+
+  await page.evaluate(async () => {
+    await asstOpen('API-ACO-E2E');
+    await asstSend('Client changed their mind. Close this case. Keep $500 non-refundable and note $500 refund requested.');
+  });
+  await page.waitForTimeout(1400);
+  const card = await page.evaluate(() => {
+    const c = document.querySelector('.asst-pf');
+    if (!c) return null;
+    return { rows: [...c.querySelectorAll('.asst-pf-r')].map(r => r.textContent.replace(/\s+/g, ' ').trim()),
+      btn: (c.querySelector('.btn') || {}).textContent || '',
+      note: c.querySelector('.asst-pf-n').textContent.replace(/\s+/g, ' '),
+      pending: !!(ASST && ASST.pending) };
+  });
+  ok('the sentence draws a review card, not a command', !!card && card.pending === false,
+     JSON.stringify(card));
+  ok('with the owner\'s own figures and the requested status',
+     card.rows.some(r => /Non-refundable retained.*\$500/.test(r))
+     && card.rows.some(r => /Refund.*\$500/.test(r))
+     && card.rows.some(r => /Refund requested/.test(r)), JSON.stringify(card.rows));
+  ok('and it says plainly that the portal issues no refund',
+     /issues no refund/.test(card.note) && /documents what you did/.test(card.note), card.note);
+  ok('the button opens the closeout rather than committing',
+     /Continue to Case Closeout/.test(card.btn), card.btn);
+
+  await page.evaluate(() => { const b = document.querySelector('.asst-pf .btn'); if (b) b.click(); });
+  await page.waitForTimeout(1600);
+  const seeded = await page.evaluate(async () => {
+    const w = await (await fetch('/portal-api/cases/API-ACO-E2E/closeout-money',
+      { credentials: 'include' })).json();
+    const ws = await (await fetch('/portal-api/cases/API-ACO-E2E/workspace',
+      { credentials: 'include' })).json();
+    return { tab: WS_TAB, caseNo: WS_CASE,
+      kept: (document.getElementById('fc_retained') || {}).value,
+      back: (document.getElementById('fc_refund') || {}).value,
+      status: (document.getElementById('fc_rstatus') || {}).value,
+      reason: (document.getElementById('fc_reason') || {}).value,
+      closeout: w.closeout, refunds: (w.refunds || []).length, caseStatus: ws.status };
+  });
+  ok('it lands on the closeout form, on the panel that holds it',
+     seeded.tab === 'billing' && seeded.caseNo === 'API-ACO-E2E' && seeded.kept === '500',
+     JSON.stringify(seeded));
+  ok('every value the owner said is seeded, and nothing else',
+     seeded.back === '500' && seeded.status === 'requested'
+     && seeded.reason === 'cancelled_before_work', JSON.stringify(seeded));
+  /* THE WHOLE POINT. */
+  ok('AND NOTHING WAS RECORDED OR CLOSED BY ANY OF IT',
+     seeded.closeout === null && seeded.refunds === 0 && seeded.caseStatus !== 'closed',
+     JSON.stringify([seeded.closeout, seeded.refunds, seeded.caseStatus]));
+  await page.close();
+}
+
+section('A closed case leads with its disposition');
+{
+  /* §16 on the Overview, from the same read the panel uses. */
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.evaluate(() => openCase('API-NW-E2E'));
+  await page.waitForTimeout(1400);
+  const sum = await page.evaluate(() => {
+    const c = document.querySelector('.fc-closed');
+    return c ? { txt: c.innerText.replace(/\s+/g, ' '),
+      go: !!c.querySelector('[data-tab="billing"]'),
+      firstCard: document.querySelector('.ovcard') === c } : null;
+  });
+  ok('the closed case shows its disposition at the top of the Overview',
+     !!sum && sum.firstCard === true, JSON.stringify(sum && sum.txt.slice(0, 120)));
+  ok('with the reason, the work statement and the money',
+     /cancelled before work began/i.test(sum.txt) && /No work performed/.test(sum.txt)
+     && /\$1,000/.test(sum.txt) && /\$500/.test(sum.txt), sum.txt.slice(0, 260));
+  ok('the refund reads as completed outside the portal — the word the record earned',
+     /Completed outside portal/.test(sum.txt), sum.txt.slice(0, 260));
+  ok('and it offers the way into the full closeout', sum.go === true);
+
+  /* An OPEN case shows none of it — the Next-step-first rule is untouched. */
+  await page.evaluate(() => openCase('API-20260812-4002'));
+  await page.waitForTimeout(1000);
+  const openCase2 = await page.evaluate(() => ({
+    closed: !!document.querySelector('.fc-closed'),
+    next: /Next step/i.test(document.body.innerText),
+  }));
+  ok('an open case shows no closed summary, and still leads with Next step',
+     openCase2.closed === false && openCase2.next === true, JSON.stringify(openCase2));
+  await page.close();
+}
+
+section('An intake can end without a case, reason on the record');
+{
+  await post('/ingest', { case_no: 'API-ARC-E2E', service: 'Surveillance',
+    client_name: 'Never Proceeded', subject_name: 'S' }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.evaluate(() => openCase('API-ARC-E2E', 'details'));
+  await page.waitForTimeout(800);
+  page.once('dialog', d => { d.accept('Client changed mind'); });
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('[data-act="intakeArchive"]')][0];
+    if (b) b.click();
+  });
+  await page.waitForTimeout(1500);
+  const st = await page.evaluate(async () => {
+    const ws = await (await fetch('/portal-api/cases/API-ARC-E2E/workspace',
+      { credentials: 'include' })).json();
+    const subs = await (await fetch('/portal-api/submissions', { credentials: 'include' })).json();
+    /* THE SUBMITTED INTAKE IS ITS OWN ROUTE — the workspace never carried it,
+       and the page merges the two. Reading it here is what proves the signed
+       record survived the archive. */
+    const one = await (await fetch('/portal-api/submissions/API-ARC-E2E',
+      { credentials: 'include' })).json();
+    return { archived: !!ws.archived,
+      notes: (ws.notes || []).map(n => n.body).join(' | '),
+      inActiveList: (subs.submissions || []).some(r => r.case_no === 'API-ARC-E2E'),
+      sig: (one.submission && one.submission.client_name) || null };
+  });
+  ok('the intake archives without inventing a case or deleting anything',
+     st.archived === true && st.sig === 'Never Proceeded', JSON.stringify([st.archived, st.sig]));
+  ok('with the reason on the record as the office\'s own note',
+     /Intake closed\/archived — Client changed mind/.test(st.notes), st.notes.slice(0, 120));
+  ok('and it leaves the active list', st.inActiveList === false);
+  await page.close();
+}
+
+
+section('My Portal: two sign-ins, two layouts, one shared caseload');
+{
+  /* THE OWNER'S OWN WALK, through the real page: one admin reorders and
+     unhides, the second admin's portal does not move. */
+  const pageA = await newPage();
+  await signIn(pageA, 'trever', 'AdminPassword1x');
+  await pageA.waitForTimeout(900);
+
+  /* FACTORY VIEW (CEO charter Mission 2): the Needs-assignment card is not
+     primary for an owner-operated firm, and the intake card's lead ladder is
+     folded away entirely. */
+  const factory = await pageA.evaluate(() => ({
+    needs: [...document.querySelectorAll('.statcard, .stat')].some(c => /Needs assignment/.test(c.textContent))
+      || /Needs assignment/.test(document.body.innerText),
+    strip: [...document.querySelectorAll('.qtapps [data-qt]')].map(b => b.dataset.qt).slice(0, 3),
+  }));
+  ok('the factory dashboard carries no Needs-assignment alert', factory.needs === false,
+     JSON.stringify(factory));
+  ok('and Rate Sheet leads the quick actions', factory.strip[0] === 'sheets',
+     JSON.stringify(factory.strip));
+
+  /* A SECOND ADMIN — the other person in the two-person firm. */
+  const invite2 = await pageA.evaluate(async () => {
+    const r = await api('/invites', { method: 'POST',
+      body: { username: 'brother', display_name: 'Brother B', role: 'admin' } });
+    return r.url;
+  });
+  const tok2 = new URL(invite2, 'https://x.test').searchParams.get('invite');
+  await post(`/invite/${tok2}/accept`, { password: 'BrotherPass2026x' });
+
+  /* A reorders: move the first quick action down one. */
+  await pageA.evaluate(() => { TAB = 'settings'; paint(); });
+  await pageA.waitForTimeout(400);
+  const myp = await pageA.evaluate(() => ({
+    panel: /My Portal/.test(document.body.innerText),
+    personal: /nobody else/i.test(document.body.innerText),
+    rows: document.querySelectorAll('.myp-row').length,
+  }));
+  ok('Settings carries My Portal, first, saying whose it is',
+     myp.panel && myp.personal && myp.rows >= 6, JSON.stringify(myp));
+  await pageA.evaluate(() => {
+    const b = document.querySelector('.myp-row [data-act="mypMove"][data-dir="1"]');
+    if (b) b.click();
+  });
+  await pageA.waitForTimeout(900);
+  /* And A un-hides the Needs-assignment card — their own choice. */
+  await pageA.evaluate(() => {
+    const cb = document.querySelector('[data-act="mypHide"][data-id="needs_assignment"]');
+    if (cb) { cb.checked = false; cb.dispatchEvent(new Event('change', { bubbles: true })); }
+  });
+  await pageA.waitForTimeout(900);
+  await pageA.evaluate(() => { TAB = 'dashboard'; paint(); });
+  await pageA.waitForTimeout(400);
+  const aView = await pageA.evaluate(() => ({
+    strip: [...document.querySelectorAll('.qtapps [data-qt]')].map(b => b.dataset.qt).slice(0, 3),
+    needs: /Needs assignment/.test(document.body.innerText),
+  }));
+  ok("A's reorder took: the second card leads now", aView.strip[0] === 'newlead',
+     JSON.stringify(aView.strip));
+  ok("and A's un-hide brought the Needs-assignment card back — for A", aView.needs === true);
+
+  /* B signs in on their own context: the FACTORY view, untouched by A. */
+  const pageB = await newPage();
+  await signIn(pageB, 'brother', 'BrotherPass2026x');
+  await pageB.waitForTimeout(900);
+  const bView = await pageB.evaluate(() => ({
+    strip: [...document.querySelectorAll('.qtapps [data-qt]')].map(b => b.dataset.qt).slice(0, 3),
+    needs: /Needs assignment/.test(document.body.innerText),
+    cases: CASES.length,
+  }));
+  ok("B's quick actions are the standard order — A's reorder never reached them",
+     bView.strip[0] === 'sheets', JSON.stringify(bView.strip));
+  ok("and B's dashboard still hides the Needs-assignment card", bView.needs === false);
+
+  /* SHARED DATA STAYS SHARED: both admins read the same caseload. */
+  const aCases = await pageA.evaluate(() => CASES.length);
+  ok('while the caseload is the same shared set for both', aCases === bView.cases,
+     `${aCases} vs ${bView.cases}`);
+
+  /* A SIGN-OUT ON A'S MACHINE LEAVES NOTHING OF A BEHIND: B signing in on the
+     SAME tab wears their own portal, not A's. */
+  await pageA.evaluate(() => { const b = document.querySelector('[data-act="logout"]'); if (b) b.click(); });
+  await pageA.waitForTimeout(1500);
+  await signIn(pageA, 'brother', 'BrotherPass2026x');
+  await pageA.waitForTimeout(900);
+  const sameTab = await pageA.evaluate(() =>
+    [...document.querySelectorAll('.qtapps [data-qt]')].map(b => b.dataset.qt)[0]);
+  ok("the same browser tab, signed in as B, draws B's portal — not the last user's",
+     sameTab === 'sheets', String(sameTab));
+  /* Leave the shared fixture user factory-clean for anything that runs after. */
+  await pageB.evaluate(async () => {
+    await api('/me/prefs', { method: 'POST', body: { hidden: null, qt_order: null } });
+  });
+  await pageA.close();
+  await pageB.close();
 }
 
 await browser.close();

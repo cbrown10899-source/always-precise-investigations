@@ -537,6 +537,36 @@ CREATE INDEX IF NOT EXISTS idx_refund_case ON case_refund(case_no, id);
 --
 -- `emailed_at` is what makes a second send a deliberate act rather than a
 -- double tap: the route refuses to send again unless it is explicitly asked.
+-- PERSONAL, PER-USER PORTAL STATE (owner addendum 2026-09-06): Corey and
+-- Trever sign in separately and must not share personal layout decisions,
+-- CEO Bot suggestions, or usage metrics. One row per user, one JSON blob —
+-- quick-action order, hidden features, dismissed suggestions, usage counters.
+-- SHARED business data (cases, pricing, statuses, permissions) lives where it
+-- always did; nothing case-scoped is duplicated here, and the sweep ignores
+-- this table because it carries no case_no.
+CREATE TABLE IF NOT EXISTS user_pref (
+  user_id    INTEGER PRIMARY KEY REFERENCES users(id),
+  prefs      TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT
+);
+
+-- Everything the closeout records that the LIVE case_closeout table cannot
+-- hold (it shipped 2026-09-06 and CREATE TABLE IF NOT EXISTS cannot widen
+-- it): the refund's STATE in the owner's own vocabulary ("requested" and
+-- "completed" are NOT interchangeable — a case_refund row is the record of a
+-- refund COMPLETED outside the portal, and everything short of that is a
+-- word here), the WORK PERFORMED statement, and the custom text behind an
+-- "Other" reason. One companion row per closeout.
+CREATE TABLE IF NOT EXISTS case_closeout_detail (
+  case_no        TEXT PRIMARY KEY,
+  refund_status  TEXT,
+  refund_date    TEXT,
+  work_performed TEXT,
+  reason_detail  TEXT,
+  set_by         INTEGER REFERENCES users(id),
+  set_at         TEXT
+);
+
 CREATE TABLE IF NOT EXISTS case_closeout (
   case_no      TEXT PRIMARY KEY,
   retained     REAL,

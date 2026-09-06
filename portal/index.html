@@ -2569,6 +2569,19 @@
   .fc-row.fc-tot{border-bottom:0;border-top:2px solid var(--navy-2);margin-top:2px;
     padding-top:9px;font-weight:800;}
   .fc-row.fc-tot b{font-size:1.1rem;color:var(--navy-2);}
+  .fc-presets{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:8px 0 2px;}
+  .fc-ident2{padding:8px 10px;background:var(--paper);border-radius:8px;margin:8px 0 4px;font-size:.9rem;}
+  .fc-after{margin:10px 0 2px;padding:8px 10px;background:var(--neutral-bg);border-radius:8px;
+    font-size:.88rem;}
+  .fc-closed{border-left:3px solid var(--navy-2);}
+  .fc-cl-r{display:flex;justify-content:space-between;gap:10px;align-items:baseline;
+    padding:5px 0;border-bottom:1px solid var(--line);font-size:.9rem;}
+  .fc-cl-r b{font-variant-numeric:tabular-nums;text-align:right;}
+  .fc-cl-r.fc-cl-t{border-bottom:0;border-top:2px solid var(--navy-2);font-weight:800;}
+  .myp-row{display:flex;justify-content:space-between;align-items:center;gap:10px;
+    padding:7px 0;border-bottom:1px solid var(--line);}
+  .myp-n{font-size:.92rem;font-weight:600;}
+  .myp-acts{display:flex;gap:4px;}
   .fc-refs{margin:10px 0 4px;padding:10px 12px;background:var(--paper);border-radius:8px;}
   .fc-refs h4{margin:0 0 4px;font-size:.85rem;letter-spacing:.04em;text-transform:uppercase;
     color:var(--muted);}
@@ -3495,6 +3508,14 @@ async function asstSend(text){
     if(r.kind === "payment_prefill" && r.prefill){
       ASST.msgs[ASST.msgs.length - 1].prefill = r.prefill;
     }
+    /* THE CLOSEOUT PREFILL (closeout brief §21) rides the same shape: a review
+       card whose one button OPENS the case's own closeout form with the
+       owner's stated figures seeded. Nothing is recorded by saying it, and the
+       form's two confirmations are unchanged. */
+    if(r.kind === "closeout_prefill" && r.prefill){
+      ASST.msgs[ASST.msgs.length - 1].coPrefill = { ...r.prefill, case_no: r.card && r.card[0]
+        ? r.card[0].case_no : (ASST.case || "") };
+    }
     if(r.kind === "command" && r.command && ASST_CMD[r.command.action]){
       ASST.pending = { ...r.command, token: asstCmdToken() };
       ASST.msgs[ASST.msgs.length - 1].command = ASST.pending;
@@ -3678,6 +3699,53 @@ function asstPrefillHtml(p){
         data-meth="${esc(p.method || "")}">Continue to Record Payment</button>
     </div>
   </div>`;
+}
+
+/* THE CLOSEOUT PREFILL CARD. Same operational identity as the payment card
+   (`.asst-pf` — the Assistant is navy/teal), same promise: a review, then the
+   EXISTING form. Every value shown is what the owner SAID, parsed; the case's
+   own Confirm & close case is what commits. */
+function asstCloseoutPrefillHtml(p){
+  const row = (l, v) => `<div class="asst-pf-r"><span>${esc(l)}</span><b>${esc(v)}</b></div>`;
+  return `<div class="asst-pf">
+    <div class="asst-pf-t">REVIEW &mdash; NOTHING RECORDED</div>
+    ${p.work_performed ? row("Work performed", FC_WORK_LABEL[p.work_performed] || p.work_performed) : ""}
+    ${p.retained !== undefined ? row("Non-refundable retained", usd(p.retained)) : ""}
+    ${p.refund !== undefined ? row("Refund", usd(p.refund)) : ""}
+    ${p.refund_status ? row("Refund status",
+      (FC_RSTATUS_FALLBACK.find(r => r.id === p.refund_status) || {}).label || p.refund_status) : ""}
+    ${p.reason ? row("Reason", FC_REASON_LABEL[p.reason] || p.reason) : ""}
+    <div class="asst-pf-n">These are the figures you said, filled into the closeout form. The
+      portal issues no refund &mdash; it documents what you did. You press
+      <b>Confirm &amp; close case</b> on the case yourself.</div>
+    <div class="asst-acts">
+      <button class="btn sm accent" data-act="asstCloseoutGo"
+        data-p="${esc(JSON.stringify(p))}">Continue to Case Closeout</button>
+    </div>
+  </div>`;
+}
+
+async function asstCloseoutGo(raw){
+  let p = {};
+  try{ p = JSON.parse(raw || "{}"); }catch{ p = {}; }
+  if(!p.case_no) return;
+  const phone = window.innerWidth < 900;
+  if(phone && ASST) ASST.open = false;
+  /* The closeout lives on Billing & closing — looked up, not assumed, the
+     lesson the payment prefill already paid for. */
+  await openCase(String(p.case_no), "billing");
+  fcEnter();
+  FC_OPEN = true; FC_STEP = "form";
+  /* SEEDED THROUGH fcSeed so the render-time capture cannot discard it — a
+     programmatic draft followed by a paint was exactly the defect the suite
+     found on the presets. */
+  fcSeed({
+    retained: p.retained !== undefined ? String(p.retained) : undefined,
+    refund: p.refund !== undefined ? String(p.refund) : undefined,
+    rstatus: p.refund_status || undefined,
+    reason: p.reason || undefined,
+    work: p.work_performed || undefined,
+  });
 }
 
 async function asstPrefillGo(caseNo, amt, meth){
@@ -4269,6 +4337,7 @@ function asstMsgHtml(m){
     ${m.check ? asstCheckHtml(m.check) : ""}
     ${m.draft ? asstDraftHtml(m.draft) : ""}
     ${m.prefill ? asstPrefillHtml(m.prefill) : ""}
+    ${m.coPrefill ? asstCloseoutPrefillHtml(m.coPrefill) : ""}
     ${m.card ? `<div class="asst-card">${m.card.map(c => c.case_no
       /* A ROW THAT CAN OPEN NOTHING IS NOT A BUTTON. Some card rows carry no
          case number at all, and drawn as buttons they invited a tap that did
@@ -4644,8 +4713,9 @@ function dashBands(){
                money.length ? "warn" : "", {set: money, go: "cases"})
     /* NEVER A WARNING. The owner is explicit that assignment stays optional, so
        this card reports and does not scold: a case can run unassigned. */
-    + statCard("Needs assignment", s.unassigned || 0, "No investigator yet — optional",
-               "", {go: "cases"})
+    + (prefHidden("needs_assignment") ? ""
+       : statCard("Needs assignment", s.unassigned || 0, "No investigator yet — optional",
+               "", {go: "cases"}))
     /* UNIT 5 — a dead file store is attention, a healthy one is not: the card
        exists only in the broken states, because "Dropbox: fine" on every
        morning's dashboard is how a card stops being read. The flag arrives on
@@ -4859,6 +4929,41 @@ function recentlyCompletedHtml(){
    and .more-primary already use in this file. Reordering with flex `order`
    instead would have put the visual order and the focus order out of step,
    which is the defect rather than the fix. */
+/* MY PORTAL — the signed-in user's OWN layout (owner addendum 2026-09-06).
+   `PREFS` is that user's row from the Worker and nothing else's; every apply
+   below reads it, so two accounts on one portal each see their own choices.
+   The FACTORY view is the CEO charter's: the Needs-assignment alert is not
+   primary for an owner-operated firm, and the lead-status disclosure is CRM
+   paperwork — both return the moment a user unhides them, for that user. */
+let PREFS = {};
+let PREFS_STORED = true;
+const DEFAULT_HIDDEN = ["needs_assignment", "lead_status"];
+const prefHidden = id => (Array.isArray(PREFS.hidden) ? PREFS.hidden : DEFAULT_HIDDEN).includes(id);
+async function loadMyPrefs(){
+  try{
+    const r = await api("/me/prefs");
+    PREFS = (r && r.prefs) || {};
+    PREFS_STORED = !r || r.stored !== false;
+  }catch{ PREFS = {}; }
+}
+/* One tap, counted for this user's own CEO Bot. Fire-and-forget: a lost count
+   is a lost count, and nothing about the tap waits on it. */
+function noteUse(action){
+  try{ api("/me/prefs/use", {method: "POST", body: {action}}).catch(() => {}); }catch{}
+}
+/* The per-user order over a default list: stored ids first (that exist),
+   then anything the default has that the stored order predates — a new door
+   arrives at the end rather than disappearing. */
+function prefOrder(defaults){
+  const ord = Array.isArray(PREFS.qt_order) && PREFS.qt_order.length ? PREFS.qt_order : null;
+  if(!ord) return defaults.filter(id => !prefHidden("qt:" + id));
+  const seen = new Set();
+  const out = [];
+  for(const id of ord) if(defaults.includes(id) && !seen.has(id)){ seen.add(id); out.push(id); }
+  for(const id of defaults) if(!seen.has(id)){ seen.add(id); out.push(id); }
+  return out.filter(id => !prefHidden("qt:" + id));
+}
+
 const QT = {
   sheets:  {act:"tab", tab:"sheets",   icon:"&#128179;", label:"Rate Sheet",
             sub:"Prepare &amp; send", admin:true, lead:true},
@@ -4918,17 +5023,20 @@ function quickToolsHtml(){
   const attrs = t => `data-act="${t.act}"${t.tab ? ` data-tab="${t.tab}"` : ""}${
     t.k ? ` data-k="${t.k}"` : ""}${t.caseless ? ` data-case=""` : ""}`;
   const deskBtn = id => { const t = QT[id];
-    return `<button class="qtool${t.pair ? " qt-pair" : ""}" ${attrs(t)}><b>${t.icon}</b> ${t.dlabel || t.label}</button>`; };
+    return `<button class="qtool${t.pair ? " qt-pair" : ""}" data-qt="${id}" ${attrs(t)}><b>${t.icon}</b> ${t.dlabel || t.label}</button>`; };
   const appCard = id => { const t = QT[id];
-    return `<button class="qtapp${t.lead ? " qtapp-lead" : ""}" ${attrs(t)}>${
+    return `<button class="qtapp${t.lead ? " qtapp-lead" : ""}" data-qt="${id}" ${attrs(t)}>${
       t.lead ? `<span class="qtapp-flag">Fastest action</span>` : ""}
       <span class="qtapp-i" aria-hidden="true">${t.icon}</span>
       <span class="qtapp-n">${t.label}</span>
       <span class="qtapp-s">${t.sub}</span></button>`; };
+  /* THE USER'S OWN ORDER over each surface's default — stored ids first, new
+     doors appended, hidden ones withdrawn. With nothing stored, both rows are
+     byte-what-they-were. */
   return `<div class="qtools">
     <span class="qtools-l">Quick tools</span>
-    <div class="qtgrid">${QT_DESK.filter(ok).map(deskBtn).join("")}</div>
-    <div class="qtapps">${QT_PHONE.filter(ok).map(appCard).join("")}</div>
+    <div class="qtgrid">${prefOrder(QT_DESK).filter(ok).map(deskBtn).join("")}</div>
+    <div class="qtapps">${prefOrder(QT_PHONE).filter(ok).map(appCard).join("")}</div>
   </div>`;
 }
 
@@ -5564,8 +5672,14 @@ function summaryCards(){
 
   const cards = admin
     ? card("Open cases", s.open || 0, total ? "" : "None yet")
-      + card("Needs assignment", s.unassigned || 0,
-             "Waiting on you", (s.unassigned || 0) ? "warn" : "")
+      /* HIDDEN BY FACTORY DEFAULT (CEO charter Mission 2): an owner-operated
+         firm has nobody to formally assign, so "Needs assignment" is noise
+         dressed as a warning. The card — and its warn tone — returns for any
+         user who unhides it in Settings -> My Portal; the Worker's count and
+         the assignment panel are untouched either way. */
+      + (prefHidden("needs_assignment") ? ""
+         : card("Needs assignment", s.unassigned || 0,
+             "Waiting on you", (s.unassigned || 0) ? "warn" : ""))
       + card("Out now", active.length, "A day is running", active.length ? "live" : "", active)
       + card("Reports due", due.length, "Day done, no report", due.length ? "warn" : "", due)
       + card("Authorization low", low.length,
@@ -5935,14 +6049,14 @@ function leadsView(){
            stamps are untouched, because other screens and the send flows key
            off them. It is folded under a disclosure, which is where the brief
            asked for "truly necessary administrative status controls". */""}
-      <details class="pc-more">
+      ${prefHidden("lead_status") ? "" : `<details class="pc-more">
         <summary>Admin status</summary>
         <label class="f" style="margin:8px 0 0"><span>Lead status</span>
           <select data-act="leadStatus" data-case="${esc(c.case_no)}">
             ${Object.entries(LEAD_LABEL).map(([v, l]) =>
               `<option value="${v}" ${ls === v ? "selected" : ""}>${l}</option>`).join("")}
           </select></label>
-      </details>
+      </details>`}
     </div>`;
   };
 
@@ -8894,8 +9008,117 @@ async function addCaseType(){
   CT_SAVING = false; paint();
 }
 
+
+/* ================= SETTINGS -> MY PORTAL (owner addendum 2026-09-06) =======
+
+   The signed-in user's OWN layout, and nobody else's: quick-action order,
+   hidden features, and the reset doors. Every save posts one key to
+   /me/prefs — absent-unchanged on the Worker — and repaints from the answer,
+   so the screen always shows what is actually stored.
+
+   TWO RESETS, because the owner named two: "Reset My Layout" clears the
+   order alone (hides and CEO state survive), "Restore Default Portal View"
+   clears every personal key. Both confirm, both are one write. */
+const MYP_HIDEABLE = [
+  ["needs_assignment", "Needs-assignment alert card",
+   "The dashboard card that warns when no investigator is formally assigned. Hidden by default — an owner-operated firm has nobody to formally assign."],
+  ["lead_status", "Lead status controls on intake cards",
+   "The CRM ladder (Lead, Declined, Closed Lead…) folded under each intake card. The statuses keep working underneath; this hides the control."],
+  ["qt:photo", "Timestamp Photo quick action", "The door stays in the navigation either way."],
+  ["qt:video", "Timestamp Video quick action", "The door stays in the navigation either way."],
+  ["qt:delivery", "Reports & Packages quick action", "The tab itself stays in the navigation."],
+  ["qt:cases", "Cases quick action", "The tab itself stays in the navigation."],
+];
+let MYP_MSG = "";
+
+function myPortalHtml(){
+  const hiddenNow = Array.isArray(PREFS.hidden) ? PREFS.hidden : DEFAULT_HIDDEN;
+  const order = prefOrder(QT_PHONE);
+  const row = (id, i) => { const t = QT[id];
+    return `<div class="myp-row">
+      <span class="myp-n">${t.icon} ${t.label}</span>
+      <span class="myp-acts">
+        <button class="btn sm ghost" data-act="mypMove" data-id="${id}" data-dir="-1"
+          ${i === 0 ? "disabled" : ""} aria-label="Move ${esc(t.label)} up">&uarr;</button>
+        <button class="btn sm ghost" data-act="mypMove" data-id="${id}" data-dir="1"
+          ${i === order.length - 1 ? "disabled" : ""} aria-label="Move ${esc(t.label)} down">&darr;</button>
+      </span></div>`; };
+  return `<div class="card">
+    <div class="bar"><h2 style="margin:0">My Portal</h2>
+      <span class="count">Only your sign-in &mdash; nobody else's changes</span></div>
+    <p class="note">Layout choices here are <b>${esc(ME.display_name || ME.username)}</b>'s own.
+      Another account signing in sees their own arrangement, and shared case data is untouched
+      either way.</p>
+    ${PREFS_STORED ? "" : `<p class="hint"><b>The preference store is not on the database yet</b>
+      &mdash; run the portal-setup workflow and saving starts working. Until then the factory view
+      applies.</p>`}
+    <h3 style="margin:10px 0 4px;font-size:1rem">My quick actions</h3>
+    <p class="hint">The order of the Home quick-action cards, yours alone. New tools always join at
+      the end rather than disappearing.</p>
+    <div class="myp-list">${order.map(row).join("")}</div>
+    <h3 style="margin:14px 0 4px;font-size:1rem">My hidden features</h3>
+    ${MYP_HIDEABLE.map(([id, label, why]) => `
+      <label class="cap" style="align-items:flex-start;margin-bottom:8px">
+        <input type="checkbox" data-act="mypHide" data-id="${id}" ${hiddenNow.includes(id) ? "checked" : ""}>
+        <span><b>Hide:</b> ${esc(label)}<br><span class="optn">${esc(why)}</span></span></label>`).join("")}
+    <h3 style="margin:14px 0 4px;font-size:1rem">Reset</h3>
+    <div class="actions">
+      <button class="btn sm ghost" data-act="mypResetOrder">Reset my layout</button>
+      <button class="btn sm ghost" data-act="mypResetAll">Restore default portal view</button>
+    </div>
+    <p class="hint">Reset my layout puts the quick actions back in the standard order and keeps your
+      hidden-feature choices. Restore default clears every personal choice &mdash; order, hides and
+      CEO Bot state &mdash; back to the factory view.</p>
+    ${MYP_MSG ? `<div class="linkbox">${esc(MYP_MSG)}</div>` : ""}
+  </div>`;
+}
+
+async function mypSave(key, value, saidWhat){
+  MYP_MSG = "";
+  try{
+    const r = await api("/me/prefs", {method: "POST", body: {[key]: value}});
+    PREFS = {...(r.prefs || {}), __loaded: true};
+    MYP_MSG = saidWhat;
+  }catch(e){ MYP_MSG = e.message; }
+  paint();
+}
+
+function mypMove(id, dir){
+  const order = prefOrder(QT_PHONE).slice();
+  const i = order.indexOf(id);
+  const j = i + dir;
+  if(i < 0 || j < 0 || j >= order.length) return;
+  [order[i], order[j]] = [order[j], order[i]];
+  mypSave("qt_order", order, "Saved — this order is yours alone.");
+}
+
+function mypHide(id, on){
+  const cur = (Array.isArray(PREFS.hidden) ? PREFS.hidden : DEFAULT_HIDDEN).slice();
+  const next = on ? [...new Set([...cur, id])] : cur.filter(x => x !== id);
+  mypSave("hidden", next, on ? "Hidden — for your sign-in only." : "Shown again.");
+}
+
+function mypResetOrder(){
+  if(!confirm("Put your quick actions back in the standard order?\n\nYour hidden-feature choices stay.")) return;
+  mypSave("qt_order", null, "Your layout is back to the standard order.");
+}
+function mypResetAll(){
+  if(!confirm("Restore the default portal view?\n\nThis clears your quick-action order, hidden "
+    + "features and CEO Bot state — yours only. Shared case data is untouched.")) return;
+  MYP_MSG = "";
+  api("/me/prefs", {method: "POST",
+    body: {qt_order: null, hidden: null, dismissed: null, metrics: null, ceo: null, suggestion_state: null}})
+    .then(r => { PREFS = {...(r.prefs || {}), __loaded: true};
+      MYP_MSG = "Everything personal is back to the default view."; paint(); })
+    .catch(e => { MYP_MSG = e.message; paint(); });
+}
+
 function settingsView(){
-  return `${notifySettingsHtml()}${billingSettingsHtml()}${caseTypesHtml()}${paymentSettingsHtml()}${dropboxSettingsHtml()}${storageHealthHtml()}<div class="card">
+  /* MY PORTAL SITS SECOND, after Who gets told: the recipients card is the
+     Settings landing the suite and the owner already know, and displacing it
+     broke a dozen assertions about "the first card". Personal does not need
+     to be first to be findable. */
+  return `${notifySettingsHtml()}${myPortalHtml()}${billingSettingsHtml()}${caseTypesHtml()}${paymentSettingsHtml()}${dropboxSettingsHtml()}${storageHealthHtml()}<div class="card">
     <div class="bar"><h2 style="margin:0">Settings</h2></div>
     <h3 style="margin:6px 0 4px;font-size:1rem">Developer &amp; testing</h3>
     <p class="note">Working material for trying the portal out. None of it touches a real case.</p>
@@ -13069,6 +13292,12 @@ async function render(){
       try{ OUT_NOW = await api("/active"); }catch(e){ OUT_NOW = null; }
     })());
   }
+  {
+    /* MY PORTAL rides the same parallel round for BOTH roles — layout is
+       personal, not an admin feature. Fetched when empty so a repaint cannot
+       flash the factory view over a user's own order. */
+    if(!PREFS.__loaded) jobs.push(loadMyPrefs().then(() => { PREFS.__loaded = true; }));
+  }
   await Promise.all(jobs);
   paint();
 }
@@ -13141,6 +13370,10 @@ function sessionForget(){
   PAYCFG = null; PAY_DRAFT = {}; PAY_MSG = ""; PAY_ERR = false;
   SUMMARY = null; SHEETS = []; SHEET_MAIL = ""; OPEN_SHEET = null; SHEET_MSG = ""; SHEET_WIZ = null;
   BILLCOM_READY = null; LEGAL_SVCS = [];
+  /* MY PORTAL IS THE SIGNED-IN USER'S OWN — the previous account's layout,
+     hides and metrics leave with their session, or the next person to sign in
+     on this machine briefly wears someone else's portal. */
+  PREFS = {}; PREFS_STORED = true;
   asstReset();
   NL = null; LEAD_SEND = null; LEAD_MSG = ""; PAY_SEND = null;
   SRCH = { q: "", results: null, err: "", busy: false, hi: -1 };
@@ -15480,6 +15713,19 @@ let FC_STEP = "form";   /* form -> preview -> (confirmed) */
 let FC_DRAFT = {};
 let FC_MSG = ""; let FC_ERR = false; let FC_BUSY = false;
 let FC_EMAIL_OPEN = false;
+/* A PROGRAMMATIC SEED MUST SURVIVE THE RENDER-TIME CAPTURE. The capture at
+   the top of finalCloseoutPanel exists so a late repaint cannot discard what
+   a PERSON typed — but it reads the OLD inputs, so a draft written by code
+   (a preset, an Assistant prefill) followed by a paint was immediately
+   overwritten by the stale DOM it was about to replace. The suite caught it:
+   every preset seeded "" on arrival. fcSeed writes the draft and skips
+   exactly one capture — the paint that draws the seeded values. */
+let FC_SKIP_CAPTURE = false;
+function fcSeed(patch){
+  FC_DRAFT = {...FC_DRAFT, ...patch};
+  FC_SKIP_CAPTURE = true;
+  paintCase();
+}
 
 function fcEnter(){ FC_OPEN = false; FC_STEP = "form"; FC_DRAFT = {}; FC_MSG = ""; FC_ERR = false;
   FC_BUSY = false; FC_EMAIL_OPEN = false; }
@@ -15507,6 +15753,12 @@ function fcCollect(){
   if(f !== undefined) FC_DRAFT.refund = f;
   if(rs !== undefined) FC_DRAFT.reason = rs;
   if(n !== undefined) FC_DRAFT.note = n;
+  const st = v("fc_rstatus");
+  if(st !== undefined) FC_DRAFT.rstatus = st;
+  const wk = v("fc_work");
+  if(wk !== undefined) FC_DRAFT.work = wk;
+  const rdet = v("fc_rdetail");
+  if(rdet !== undefined) FC_DRAFT.rdetail = rdet;
   const m = v("fc_method"), ref = v("fc_ref"), d = v("fc_date"), to = v("fc_to");
   if(m !== undefined) FC_DRAFT.method = m;
   if(ref !== undefined) FC_DRAFT.reference = ref;
@@ -15570,10 +15822,69 @@ function fcStatementHtml(d, s){
       <div><b>Case:</b> ${esc(WS_CASE)}</div>
       <div><b>Closed:</b> ${esc(closedOn)}</div>
     </div>
-    ${fcLedgerHtml(d, { projected: false })}
+    <div class="fc-led">
+      <div class="fc-row"><span>Retainer received${d.received_on
+        ? ` <span class="optn">&middot; ${esc(d.received_on)}</span>` : ""}</span>
+        <b>${fcMoney(d.retainer_received)}</b></div>
+      <div class="fc-row"><span>Non-refundable retained</span>
+        <b class="fc-keep">${fcMoney(d.retained)}</b></div>
+      ${d.work_performed ? `<div class="fc-row"><span>Work performed</span>
+        <b>${esc(FC_WORK_LABEL[d.work_performed] || d.work_performed)}</b></div>` : ""}
+      ${d.refunded > 0
+        ? `<div class="fc-row"><span>Refund completed outside portal${(d.refund_date || (d.refunds[0] && d.refunds[0].refunded_on))
+            ? ` <span class="optn">&middot; ${esc(d.refund_date || d.refunds[0].refunded_on)}</span>` : ""}</span>
+            <b>${fcMoney(d.refunded)}</b></div>`
+        : d.refund_status === "requested" && d.agreed_refund > 0
+        ? `<div class="fc-row"><span>Refund requested</span><b>${fcMoney(d.agreed_refund)}</b></div>`
+        : d.refund_status === "none_due" ? `<div class="fc-row"><span>Refund</span><b>None due</b></div>`
+        : d.refund_status === "not_requested" ? `<div class="fc-row"><span>Refund</span><b>Not requested</b></div>`
+        : ""}
+      <div class="fc-row fc-tot"><span>Final balance</span><b>${
+        fcMoney(Math.round((d.retainer_received - (d.retained || 0)
+          - (d.refunded > 0 ? d.refunded : (d.refund_status === "requested" ? (d.agreed_refund || 0) : 0))) * 100) / 100)}</b></div>
+    </div>
     <div class="fc-status">CASE STATUS: CLOSED</div>
+    ${fcReason(d) ? `<p class="fc-note"><b>Reason:</b> ${esc(fcReason(d))}</p>` : ""}
     <p class="fc-note">This statement documents the disposition of the retainer held on this case.</p>
     <div class="fc-foot">Questions? (434) 907-0975<br>Always Precise Investigations, LLC</div>
+  </div>`;
+}
+
+/* THE CLOSED-CASE SUMMARY (closeout brief §16): a permanent, concise block at
+   the top of a closed case's Overview, so the disposition is the first thing
+   the office reads. It is the SAME closeout read the panel uses — one source,
+   so the two screens cannot say different things — and its wording follows the
+   record: "completed outside portal" only over a real ledger row. */
+function fcClosedSummaryHtml(s){
+  if(ME.role !== "admin" || !WS) return "";
+  if(((WS.stage || s.status) !== "closed") || s.kind === "claims") return "";
+  if(!FC[WS_CASE]) setTimeout(() => loadFinalCloseout(WS_CASE), 0);
+  const st = FC[WS_CASE] || { state: "loading" };
+  if(st.state !== "ok" || !st.data.closeout || !st.data.closeout.closed_at) return "";
+  const d = st.data;
+  const money = n => (n == null ? "—" : usd(n));
+  /* The refund's WORD and its FIGURE, kept apart — a regex tidying the label
+     off a composed sentence is how a dollar literal got into this file once
+     and tripped the no-rate-in-source guard. */
+  const refundWord = d.refunded > 0 ? "Completed outside portal"
+    : d.refund_status === "requested" ? "Requested"
+    : d.refund_status === "none_due" ? "No refund due"
+    : d.refund_status === "not_requested" ? "Not requested" : "";
+  const refundAmt = d.refunded > 0 ? d.refunded
+    : d.refund_status === "requested" ? (d.agreed_refund || 0) : null;
+  const settle = Math.round((d.retainer_received - (d.retained || 0)
+    - (d.refunded > 0 ? d.refunded : (d.refund_status === "requested" ? (d.agreed_refund || 0) : 0))) * 100) / 100;
+  return `<div class="ovcard fc-closed">
+    <h3>Closed</h3>
+    ${fcReason(d) ? `<div class="fc-cl-r"><span>Reason</span><b>${esc(fcReason(d))}</b></div>` : ""}
+    ${d.work_performed ? `<div class="fc-cl-r"><span>Work performed</span>
+      <b>${esc(FC_WORK_LABEL[d.work_performed] || d.work_performed)}</b></div>` : ""}
+    <div class="fc-cl-r"><span>Retainer received</span><b>${money(d.retainer_received)}</b></div>
+    <div class="fc-cl-r"><span>Non-refundable retained</span><b>${money(d.retained)}</b></div>
+    ${refundWord ? `<div class="fc-cl-r"><span>Refund</span><b>${esc(refundWord)}${
+      refundAmt != null ? " &middot; " + money(refundAmt) : ""}</b></div>` : ""}
+    <div class="fc-cl-r fc-cl-t"><span>Final balance</span><b>${money(settle)}</b></div>
+    <div class="ov-foot"><button class="btn sm ghost" data-act="wsTab" data-tab="billing">Open the closeout &rarr;</button></div>
   </div>`;
 }
 
@@ -15593,7 +15904,8 @@ function finalCloseoutPanel(s){
      yet previewed was silently reverted to blank, on a form about a refund.
      That is the `EDIT_DRAFT` defect exactly, and the fix belongs where every
      repaint passes rather than at the handlers that happen to be remembered. */
-  fcCollect();
+  if(FC_SKIP_CAPTURE) FC_SKIP_CAPTURE = false;
+  else fcCollect();
   if(s.kind === "claims"){
     return `<div class="feebox fc-box"><div class="row"><span><b>Case closeout</b></span></div>
       <p class="hint">A claim assignment is authorized in hour blocks and invoiced per fee schedule,
@@ -15633,8 +15945,18 @@ function finalCloseoutPanel(s){
           &middot; ${when(d.closeout.closed_at)}</span></div>
       ${fcLedgerHtml(d, { projected: false })}
       ${fcRefundsHtml(d)}
-      ${d.closeout.reason ? `<div class="fc-row"><span>Reason</span>
-        <b>${esc(FC_REASON_LABEL[d.closeout.reason] || d.closeout.reason)}</b></div>` : ""}
+      ${d.refund_status === "requested" ? `<div class="fc-row"><span>Refund status</span>
+        <b>Requested &mdash; ${fcMoney(d.agreed_refund)} not yet sent</b></div>
+      <div class="actions"><button class="btn sm" data-act="fcRefundDone"${FC_BUSY ? " disabled" : ""}>
+        Refund completed</button></div>
+      <p class="hint">The ledger keeps saying the money is held until you record that the refund
+        actually went out &mdash; the portal never moves money, it documents what you did.</p>`
+      : d.refund_status && d.refund_status !== "completed_external"
+        ? `<div class="fc-row"><span>Refund status</span>
+          <b>${esc((FC_RSTATUS_FALLBACK.find(r => r.id === d.refund_status) || {}).label || d.refund_status)}</b></div>` : ""}
+      ${d.work_performed ? `<div class="fc-row"><span>Work performed</span>
+        <b>${esc(FC_WORK_LABEL[d.work_performed] || d.work_performed)}</b></div>` : ""}
+      ${fcReason(d) ? `<div class="fc-row"><span>Reason</span><b>${esc(fcReason(d))}</b></div>` : ""}
       ${d.closeout.note ? `<p class="hint" style="white-space:pre-wrap">${esc(d.closeout.note)}</p>` : ""}
       ${fcStatementHtml(d, s)}
       <div class="actions">
@@ -15663,19 +15985,64 @@ function finalCloseoutPanel(s){
   }
 
   if(FC_STEP === "preview") return fcPreviewHtml(d, s);
-  return fcFormHtml(d);
+  return fcFormHtml(d, s);
 }
 
-const FC_REASON_LABEL = { completed: "Investigation completed",
+const FC_REASON_LABEL = {
+  cancelled_before_work: "Client cancelled before work began",
+  no_work: "No work performed",
+  completed: "Investigation completed",
   client_requested: "Client requested closure",
-  no_further_action: "No further action requested", other: "Other" };
+  no_further_action: "No further action requested",
+  unable_to_proceed: "Unable to proceed", other: "Other" };
+const FC_WORK_LABEL = { none: "No work performed", limited: "Limited work performed",
+  completed: "Investigation completed", other: "Other" };
+/* One reader of the PRINTED reason: the id's label, and for "Other" the
+   owner's own words from the detail — the Worker's closeoutReasonLabel rule,
+   mirrored so the two documents cannot disagree. */
+function fcReason(d){
+  const id = d.closeout && d.closeout.reason;
+  if(!id) return null;
+  if(id === "other" && d.reason_detail) return d.reason_detail;
+  return FC_REASON_LABEL[id] || null;
+}
+/* The §4/§12 identity header: who and which case this closeout is about, and
+   what it is now — drawn on the form AND the review so neither screen asks
+   the owner to remember. */
+function fcIdentHtml(s){
+  const p = (s && s.payload) || {};
+  return `<div class="fc-ident2">
+    <div><b>${esc(p.client_name || s.client_name || "—")}</b> &middot; ${esc(WS_CASE)}</div>
+    <div class="optn">${esc((WS && WS.authorization && WS.authorization.case_type) || (s.kind === "claims" ? "Claim assignment" : "Client intake"))}
+      &middot; currently ${esc((WS && WS.stage) || s.status || "open")}</div>
+  </div>`;
+}
 
-function fcFormHtml(d){
-  const open = d.checklist_open || [];
+function fcFormHtml(d, s){
+  const rec = d.retainer_received || 0;
+  /* THE SUGGESTION IS THE WORKER'S, AND IT IS A SUGGESTION. Undefined draft
+     means the owner has not touched the control, so the record's own reading
+     shows; the moment they pick anything, their pick is what stands. */
+  const work = FC_DRAFT.work !== undefined ? FC_DRAFT.work : (d.suggested_work || "");
   return `<div class="feebox fc-box">
     <div class="row"><span><b>Case closeout</b></span>
       <button class="btn sm ghost" data-act="fcCancel">Cancel</button></div>
+    ${fcIdentHtml(s)}
     ${fcLedgerHtml(d, { projected: false })}
+    <label class="f"><span>Work performed <span class="optn">(optional)</span></span>
+      <select id="fc_work"><option value="">&mdash;</option>${
+        (d.work_options || []).map(w =>
+          `<option value="${esc(w.id)}"${work === w.id ? " selected" : ""}>${esc(w.label)}</option>`).join("")}</select></label>
+    ${d.suggested_work && FC_DRAFT.work === undefined ? `<p class="hint">Suggested from the record
+      &mdash; this case holds no investigation day and no activity entry. Change it if that is
+      wrong; nothing is assumed.</p>` : ""}
+    ${rec > 0 ? `<div class="fc-presets" role="group" aria-label="Retained amount presets">
+      <span class="optn">Retain:</span>
+      ${(d.retain_presets || []).map(v =>
+        `<button class="btn sm ghost" data-act="fcPreset" data-amt="${esc(String(v))}">${usd(v)}</button>`).join("")}
+      <button class="btn sm ghost" data-act="fcPreset" data-amt="${esc(String(rec))}">Full amount</button>
+      <button class="btn sm ghost" data-act="fcPreset" data-amt="">Custom</button>
+    </div>` : ""}
     <div class="two">
       <label class="f"><span>Non-refundable retained</span>
         <input id="fc_retained" inputmode="decimal" placeholder="0.00"
@@ -15684,38 +16051,80 @@ function fcFormHtml(d){
         <input id="fc_refund" inputmode="decimal" placeholder="0.00"
           value="${esc(FC_DRAFT.refund || "")}"></label>
     </div>
-    <label class="f"><span>Reason for closing <span class="optn">(optional)</span></span>
-      <select id="fc_reason"><option value="">&mdash;</option>${
-        Object.entries(FC_REASON_LABEL).map(([v, l]) =>
-          `<option value="${v}"${FC_DRAFT.reason === v ? " selected" : ""}>${l}</option>`).join("")}</select></label>
+    <div class="two">
+      <label class="f"><span>Refund status <span class="optn">(optional)</span></span>
+        <select id="fc_rstatus"><option value="">&mdash;</option>${
+          (d.refund_statuses || FC_RSTATUS_FALLBACK).map(r =>
+            `<option value="${esc(r.id)}"${FC_DRAFT.rstatus === r.id ? " selected" : ""}>${esc(r.label)}</option>`).join("")}</select></label>
+      <label class="f"><span>Reason for closing <span class="optn">(optional)</span></span>
+        <select id="fc_reason"><option value="">&mdash;</option>${
+          (d.reasons || []).map(r =>
+            `<option value="${esc(r.id)}"${FC_DRAFT.reason === r.id ? " selected" : ""}>${esc(r.label)}</option>`).join("")}</select></label>
+    </div>
+    ${FC_DRAFT.reason === "other" ? `<label class="f"><span>Reason, in your words</span>
+      <input id="fc_rdetail" maxlength="200" placeholder="This prints on the client's statement."
+        value="${esc(FC_DRAFT.rdetail || "")}"></label>` : ""}
     <label class="f"><span>Internal note <span class="optn">(optional)</span></span>
       <textarea id="fc_note" rows="2" placeholder="Kept on the case. It never reaches the client's statement."
         >${esc(FC_DRAFT.note || "")}</textarea></label>
-    ${open.length ? `<p class="hint"><b>The closing checklist is not finished.</b> Still open:
-      ${esc(open.join("; "))}. The closeout will record the money correctly either way, but the case
-      itself stays open until every line below is confirmed.</p>` : ""}
     <div class="actions">
       <button class="btn sm" data-act="fcPreview">Preview the closeout</button>
       <button class="btn sm ghost" data-act="fcCancel">Cancel</button>
     </div>
     <p class="hint">Nothing is recorded by previewing. Retained plus refunded cannot exceed the
-      ${fcMoney(d.retainer_received)} this case actually received.</p>
+      ${fcMoney(rec)} this case actually received &mdash; and closing is not deleting: everything on
+      the case is kept.</p>
     ${FC_MSG ? `<div class="${FC_ERR ? "err" : "linkbox"}">${esc(FC_MSG)}</div>` : ""}
   </div>`;
+}
+
+/* The vocabulary comes from the Worker with the read; this fallback only keeps
+   the control drawable if a stale payload lacks it, and matches the Worker's
+   own list by construction of the tests. */
+const FC_RSTATUS_FALLBACK = [
+  { id: "requested", label: "Refund requested" },
+  { id: "completed_external", label: "Refund completed outside portal" },
+  { id: "none_due", label: "No refund due" },
+  { id: "not_requested", label: "Refund not requested" },
+  { id: "other", label: "Other" },
+];
+
+/* A PRESET SEEDS BOTH HALVES — the retained figure and the refund the
+   remainder implies — and the person can edit either before anything is
+   recorded. "auto-calculated but safely reviewable" is the charter's line. */
+function fcPreset(amt){
+  fcCollect();
+  const d = ((FC[WS_CASE] || {}).data || {});
+  const rec = d.retainer_received || 0;
+  if(amt === ""){
+    fcSeed({ retained: "", refund: "" });
+  }else{
+    const keep = Math.min(Number(amt), rec);
+    fcSeed({ retained: String(keep),
+      refund: String(Math.round((rec - keep) * 100) / 100),
+      rstatus: FC_DRAFT.rstatus || (rec - keep > 0 ? "requested" : "none_due") });
+  }
+  const el = $("fc_retained");
+  if(el && amt === "") el.focus();
 }
 
 /* THE REVIEW SCREEN. It shows the PROJECTION beside the ledger, named as one —
    a projection drawn under the word FINAL would be the portal asserting a
    refund that has not been issued. */
 function fcPreviewHtml(d, s){
-  const open = d.checklist_open || [];
+  const status = d.refund_status || "";
+  const statusLabel = (FC_RSTATUS_FALLBACK.find(r => r.id === status) || {}).label || "";
+  const completing = status === "completed_external" && d.refund_pending > 0;
   return `<div class="feebox fc-box">
     <div class="row"><span><b>Review the closeout</b></span>
       <button class="btn sm ghost" data-act="fcBack">Edit</button></div>
+    ${fcIdentHtml(s)}
+    ${d.work_performed ? `<div class="fc-row"><span>Work performed</span>
+      <b>${esc(FC_WORK_LABEL[d.work_performed] || d.work_performed)}</b></div>` : ""}
     ${fcLedgerHtml(d, { projected: true })}
-    ${d.closeout && d.closeout.reason ? `<div class="fc-row"><span>Reason</span>
-      <b>${esc(FC_REASON_LABEL[d.closeout.reason] || d.closeout.reason)}</b></div>` : ""}
-    <div class="two">
+    ${statusLabel ? `<div class="fc-row"><span>Refund status</span><b>${esc(statusLabel)}</b></div>` : ""}
+    ${fcReason(d) ? `<div class="fc-row"><span>Reason</span><b>${esc(fcReason(d))}</b></div>` : ""}
+    ${completing ? `<div class="two">
       <label class="f"><span>Refund method <span class="optn">(optional)</span></span>
         <select id="fc_method"><option value="">&mdash;</option>${RETAINER_METHOD_OPTIONS
           .map(([v, l]) => `<option value="${v}"${FC_DRAFT.method === v ? " selected" : ""}>${l}</option>`).join("")}</select></label>
@@ -15724,17 +16133,20 @@ function fcPreviewHtml(d, s){
     </div>
     <label class="f"><span>Reference <span class="optn">(optional)</span></span>
       <input id="fc_ref" placeholder="e.g. cheque 1042, or the app's note"
-        value="${esc(FC_DRAFT.reference || "")}"></label>
-    ${open.length ? `<p class="hint"><b>The case will stay open.</b> The closing checklist still has
-      ${open.length} unconfirmed: ${esc(open.join("; "))}. The refund is recorded either way.</p>` : ""}
+        value="${esc(FC_DRAFT.reference || "")}"></label>` : ""}
+    ${status === "requested" ? `<p class="hint">The refund is recorded as <b>requested</b> — the
+      ledger keeps saying the money is held, because it is. When you actually send it, the closed
+      case offers <b>Refund completed</b> and the record moves then, on your word.</p>` : ""}
+    <div class="fc-after">Case status after confirmation: <b>CLOSED</b></div>
     <div class="actions">
       <button class="btn sm" data-act="fcConfirm"${FC_BUSY ? " disabled" : ""}>${
-        FC_BUSY ? "Recording&hellip;" : "Record the closeout"}</button>
+        FC_BUSY ? "Recording&hellip;" : "Confirm &amp; close case"}</button>
       <button class="btn sm ghost" data-act="fcBack">Edit</button>
+      <button class="btn sm ghost" data-act="fcCancel">Cancel</button>
     </div>
-    <p class="hint">Recording writes the refund as its own ledger event and closes the case. It
-      <b>does not email anybody</b> &mdash; the statement is sent afterwards, on its own button,
-      every time.</p>
+    <p class="hint">Confirming records the disposition and <b>closes the case</b> &mdash; no
+      checklist required, and closing is not deleting. It <b>does not email anybody</b>: the
+      statement is sent afterwards, on its own button, every time.</p>
     ${FC_MSG ? `<div class="${FC_ERR ? "err" : "linkbox"}">${esc(FC_MSG)}</div>` : ""}
   </div>`;
 }
@@ -15774,7 +16186,11 @@ async function fcPreview(){
   try{
     const d = await api(`/cases/${encodeURIComponent(WS_CASE)}/closeout/prepare`, {method: "POST",
       body: { retained: retained || "0", refund: refund || "0",
-              reason: FC_DRAFT.reason || "", note: FC_DRAFT.note || "" }});
+              reason: FC_DRAFT.reason || "", note: FC_DRAFT.note || "",
+              refund_status: FC_DRAFT.rstatus || "",
+              work_performed: FC_DRAFT.work !== undefined ? FC_DRAFT.work
+                : (((FC[WS_CASE] || {}).data || {}).suggested_work || ""),
+              reason_detail: FC_DRAFT.rdetail || "" }});
     FC[WS_CASE] = { state: "ok", data: d };
     FC_STEP = "preview";
   }catch(e){ FC_MSG = e.message; FC_ERR = true; }
@@ -15789,11 +16205,12 @@ async function fcConfirm(){
   const refund = d ? d.refund_pending : 0;
   /* A DESTRUCTIVE-FEELING ACT CONFIRMS, and the confirmation states what it
      will do in the figures on screen rather than in general words. */
-  if(!confirm(`Record this closeout?\n\n`
+  const stLabel = (FC_RSTATUS_FALLBACK.find(r => r.id === (d && d.refund_status)) || {}).label;
+  if(!confirm(`Confirm this closeout and CLOSE the case?\n\n`
     + `Retained by the firm: ${fcMoney(d && d.retained)}\n`
-    + `Refund to the client: ${fcMoney(refund)}\n\n`
-    + `The refund is recorded as its own ledger event; the original payment is not changed. `
-    + `Nothing is emailed to the client by this.`)) return;
+    + `Refund to the client: ${fcMoney(refund)}${stLabel ? `\nRefund status: ${stLabel}` : ""}\n\n`
+    + `The original payment is not changed, and nothing is emailed to the client by this. `
+    + `Closing is not deleting — everything on the case is kept, under Closed.`)) return;
   FC_BUSY = true; FC_MSG = ""; FC_ERR = false; paintCase();
   try{
     const r = await api(`/cases/${encodeURIComponent(WS_CASE)}/closeout/confirm`, {method: "POST",
@@ -15801,11 +16218,8 @@ async function fcConfirm(){
               refunded_on: FC_DRAFT.refunded_on || "" }});
     FC[WS_CASE] = { state: "ok", data: r };
     FC_OPEN = false; FC_STEP = "form"; FC_DRAFT = {};
-    FC_MSG = r.case_closed
-      ? "Closeout recorded and the case is closed. Nothing has been emailed."
-      : `Closeout recorded &mdash; the refund is on the ledger. The case is still OPEN: `
-        + `${(r.checklist_open || []).join("; ")}.`;
-    FC_ERR = !r.case_closed;
+    FC_MSG = "Closeout recorded and the case is closed. Nothing has been emailed.";
+    FC_ERR = false;
     await reloadWorkspace();
   }catch(e){ FC_MSG = e.message; FC_ERR = true; }
   FC_BUSY = false;
@@ -15818,6 +16232,26 @@ function fcPrint(){
   document.body.classList.add("printing-closeout");
   window.print();
   setTimeout(() => document.body.classList.remove("printing-closeout"), 400);
+}
+
+/* THE REFUND WENT OUT — the owner's explicit word, and the only thing that
+   turns "requested" into a ledger row. */
+async function fcRefundDone(){
+  if(FC_BUSY) return;
+  const d = ((FC[WS_CASE] || {}).data || {});
+  const today = new Date().toISOString().slice(0, 10);
+  const when = prompt(`Record the refund of ${fcMoney(d.agreed_refund)} as completed.\n\n`
+    + `Date it went out (YYYY-MM-DD):`, today);
+  if(when === null) return;
+  FC_BUSY = true; FC_MSG = ""; FC_ERR = false; paintCase();
+  try{
+    const r = await api(`/cases/${encodeURIComponent(WS_CASE)}/closeout/refund-done`, {method: "POST",
+      body: { refunded_on: /^\d{4}-\d{2}-\d{2}$/.test(when.trim()) ? when.trim() : "" }});
+    FC[WS_CASE] = { state: "ok", data: r };
+    FC_MSG = "Refund recorded as completed — the ledger now shows the money went back.";
+  }catch(e){ FC_MSG = e.message; FC_ERR = true; }
+  FC_BUSY = false;
+  paintCase();
 }
 
 function fcEmailOpen(){ FC_EMAIL_OPEN = true; FC_MSG = ""; FC_ERR = false; paintCase(); }
@@ -15942,6 +16376,28 @@ function archivePanel(){
       at any time.</span><span></span></div>
     ${WS_ERR ? `<div class="err">${esc(WS_ERR)}</div>` : ""}
   </div>`;
+}
+
+/* AN INTAKE CAN END WITHOUT A CASE (CEO charter Mission 12): archive it with
+   the reason on the record, no fake case, nothing deleted. The reason is a
+   NOTE — the record type the case already has for the office's own words —
+   and the archive is the EXISTING archive: one marker, everything kept,
+   restorable. Cancelling the prompt archives nothing. */
+async function intakeArchiveWithReason(){
+  const reason = prompt("Close / archive this intake?\n\nEverything the client submitted and "
+    + "signed is kept, and it can be restored. Reason (optional):\n"
+    + "e.g. Client changed mind / Duplicate / No work proceeding / Not accepted", "");
+  if(reason === null) return;
+  WS_ERR = "";
+  try{
+    if(reason.trim()){
+      await api(`/cases/${encodeURIComponent(WS_CASE)}/notes`, {method: "POST",
+        body: { note_type: "admin", body: `Intake closed/archived — ${reason.trim()}` }});
+    }
+    await api(`/cases/${encodeURIComponent(WS_CASE)}/archive`, {method: "POST", body: {}});
+    RETC[WS_CASE] = null;
+  }catch(e){ WS_ERR = e.message; }
+  await reloadWorkspace();
 }
 
 async function archiveCase(){
@@ -17731,8 +18187,21 @@ function caseBodyHtml(){
    on the screen rather than two clicks into it. */
 function caseActionsHtml(){
   const cur = wsCurrentDay();
+  /* RETAINER PAID and CLOSE CASE are core business actions (CEO charter
+     Missions 6-7) — as operationally important as Start Day, so they sit on
+     the row every case screen carries. Admin only, never on a claim
+     assignment (hour blocks, no retainer), and Close Case withdraws once the
+     case is closed — a control that can do nothing is not drawn as a button.
+     Both open EXISTING flows: retQuick is the Authorization panel's own
+     Record Payment form, fcQuick the Billing panel's closeout. */
+  const s0 = (WS && WS.submission) || {};
+  const coreActs = ME.role === "admin" && s0.kind !== "claims" && WS
+    ? `${(WS.stage || s0.status) !== "closed"
+        ? `<button class="btn sm" data-act="retQuick">Retainer paid</button>
+           <button class="btn sm" data-act="fcQuick">Close case</button>` : ""}` : "";
   return `<div class="caseacts">
     <button class="btn addact" data-act="actOpen">+ Add activity</button>
+    ${coreActs}
     <button class="btn sm ghost" data-act="asstOpen" data-case="${esc(WS_CASE)}">&#10024; Ask Assistant</button>
     <button class="btn sm ghost" data-act="wsTab" data-tab="daily">Daily summary</button>
     ${cur.open
@@ -17837,6 +18306,10 @@ function overviewPanel(s, a){
   const thumbs = evLive.filter(e => String(e.content_type || "").startsWith("image/")).slice(0, 4);
 
   return `
+    ${/* A CLOSED CASE LEADS WITH ITS DISPOSITION (closeout brief §16) — on an
+         open case this renders nothing at all, so the Next-step-first rule
+         below is untouched for every case still being worked. */""}
+    ${fcClosedSummaryHtml(s)}
     ${/* NEXT STEP FIRST. It is the answer to the question someone opened the
          case to ask, so it is the first thing on the page rather than the
          third card in a grid. The surveillance door is NOT repeated here: the
@@ -19544,7 +20017,7 @@ function intakeActionsHtml(s){
       <button class="btn sm ghost" data-act="wsTab" data-tab="comms">Message the client</button>
       ${archived
         ? `<button class="btn sm ghost" data-act="restoreCase">Restore intake</button>`
-        : `<button class="btn sm ghost" data-act="archiveCase">Archive intake</button>`}
+        : `<button class="btn sm ghost" data-act="intakeArchive">Close / archive intake</button>`}
       <button class="btn-del" style="margin-left:auto" data-act="intakeDel"
         data-case="${esc(WS_CASE)}" data-name="${esc(s.client_name || (s.payload && s.payload.client_name) || WS_CASE)}"
         aria-label="Delete this intake" title="Delete intake">${TRASH_SVG}</button>
@@ -21232,6 +21705,14 @@ document.addEventListener("click", ev => {
   const act = el.dataset.act;
   if(SR_NAV_ACTS.includes(act)) SR_SCREEN = null;   // arrive, do not announce
   else srActed();
+  /* ONE TAP, COUNTED FOR THIS USER'S OWN CEO BOT — the quick tools carry
+     data-qt, and the two case-row core actions count under their own names.
+     Fire-and-forget; nothing about the tap waits on the write. */
+  const qtEl = ev.target.closest("[data-qt]");
+  if(qtEl) noteUse("qt:" + qtEl.dataset.qt);
+  else if(act === "retQuick") noteUse("retainer_paid");
+  else if(act === "fcQuick") noteUse("close_case");
+  else if(act === "openCaseTab" && el.dataset.tab === "details") noteUse("view_intake");
   if(act === "backToCases"){ VIEW = "list"; render(); }
   else if(act === "navToggle"){
     /* The drawer slides rather than blinks (owner, 2026-09-02). Opening rides
@@ -21642,6 +22123,15 @@ document.addEventListener("click", ev => {
   else if(act === "fcEmailOpen"){ fcEmailOpen(); }
   else if(act === "fcEmailCancel"){ fcEmailCancel(); }
   else if(act === "fcEmailSend"){ fcEmailSend(); }
+  else if(act === "fcPreset"){ fcPreset(el.dataset.amt); }
+  else if(act === "fcRefundDone"){ fcRefundDone(); }
+  else if(act === "asstCloseoutGo"){ asstCloseoutGo(el.dataset.p); }
+  else if(act === "retQuick"){ WS_TAB = "auth"; WS_MORE = false; RET_FORM = true; paintCase(); }
+  else if(act === "fcQuick"){ WS_TAB = "billing"; WS_MORE = false; fcOpen(); }
+  else if(act === "intakeArchive"){ intakeArchiveWithReason(); }
+  else if(act === "mypMove"){ mypMove(el.dataset.id, parseInt(el.dataset.dir, 10)); }
+  else if(act === "mypResetOrder"){ mypResetOrder(); }
+  else if(act === "mypResetAll"){ mypResetAll(); }
   else if(act === "reopenCase"){ reopenCase(); }
   else if(act === "archiveCase"){ archiveCase(); }
   else if(act === "restoreCase"){ restoreCase(); }
@@ -22289,6 +22779,10 @@ document.addEventListener("submit", ev => {
    posted. A control that draws is not a control that works — the same lesson
    the Timestamp Video quick tool taught at a different layer. */
 document.addEventListener("change", ev => {
+  {
+    const hd = ev.target.closest('[data-act="mypHide"]');
+    if(hd){ mypHide(hd.dataset.id, hd.checked); return; }
+  }
   /* THE COMBINED SUMMARY SAVES ON BLUR, and this is where blur arrives
      (closeout audit, 2026-09-03). It was registered on `input` while its own
      comment said `change`: every keystroke POSTed, the response repainted the

@@ -3515,6 +3515,61 @@ auto-submitted**; the transcript is shown for review and only Use Text turns it
 into an entry. The privacy wording says only what is verifiable ("this page
 keeps no audio"), never the mockup's "never stored".
 
+## The CEO charter: close without pretending, and a portal that is each user's own
+
+Owner briefs 2026-09-06 (the 18-mission charter + the per-user addendum),
+derived decisions C1–C12 in `case-portal/CEO-CHARTER.md`. The business reality
+they encode: owner-operated, flat-fee, two people; the portal's value is speed;
+every screen answers *"what does Corey actually need to do next?"* — and the
+instrument is HIDE/DE-EMPHASIZE, never deleting capability.
+
+**THE CLOSEOUT CONFIRM CLOSES THE CASE, WITHOUT THE CHECKLIST** — the owner's
+own overturn, for this path only: *"'Case Ready' must NOT block 'Close Case'"*,
+because clients pay and change their minds, and forcing 'Field work completed'
+ticks onto a no-work case makes the record assert things that did not happen.
+`setStatus` still refuses `closed`; the checklist stays as the worked-case
+review; a no-ticks case closes with its ticks honestly absent. **The one
+blocker is a running investigation day**, refused naming who holds the clock.
+
+**REQUESTED IS NOT COMPLETED.** A `case_refund` row is the record of a refund
+COMPLETED outside the portal — the portal never moves money, it documents what
+the owner did. A requested refund keeps the money on the ledger (truthfully)
+and carries its word in `case_refund_status`; `/closeout/refund-done` is the
+owner's explicit completion and the only other writer of a refund row. The
+statement wears the status: *issued* only over a ledger row, *requested* as
+requested, and the document's settlement balance nets the refund as stated on
+its own line so the client's page adds up.
+
+**A CLOSED CASE IS NOT WORK.** The Out-now and Reports-due summary arms had no
+status filter for an admin, so a no-work-closed case sat in "Reports due".
+Every alert arm now joins the case and requires it open.
+
+**"CLOSE MICHELLE'S CASE" PREPARES** — the phrase left the blocked list for the
+closeout preparation: answers from the record, resolves the name through the
+office's own search (exactly-one match), opens the panel, executes nothing.
+Combined with a send, a refund or a void it still refuses.
+
+**Retainer paid / Close case sit on the case actions row** (admin, non-claims,
+withdrawn when closed) and open EXISTING flows — the Authorization panel's own
+Record Payment form and the Billing panel's closeout. An intake can end without
+a case: Close/archive intake records the reason as an admin note and uses the
+existing archive marker.
+
+**MY PORTAL IS ONE ROW PER USER, KEYED TO THE SIGNED-IN IDENTITY.** `user_pref`
+holds layout and observation only — quick-action order, hidden features,
+dismissed suggestions, usage counters — under allow-listed keys with the /meta
+merge rule (absent unchanged, null clears). Every read and write binds
+`user.id`: no path exists by which Corey's choice reaches Trever's screen, and
+the addendum's own walk is a test. `PREFS` resets with the session on the page,
+so the next person on the same machine never briefly wears the last user's
+portal. **The factory view hides `needs_assignment` and `lead_status`** (the
+charter's noise list), each returnable per user in Settings → My Portal; the
+Worker's counts and routes are untouched. Usage metrics count through
+`/me/prefs/use` — fire-and-forget, capped, the user's own.
+
+**Adding `case_refund_status` and `user_pref` means a manual `portal-setup.yml`
+dispatch after merge.**
+
 ## A refund is its own event, and the original payment is never touched
 
 Owner brief 2026-09-06, derived decisions D1–D9 in
