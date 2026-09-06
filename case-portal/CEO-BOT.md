@@ -57,3 +57,74 @@ The CEO block's only INSERT target is `user_pref`; it calls `sendMail` never,
 `closeCase` never, touches no case table with a write, and the panel renders no
 operational verb — all asserted by tests that parse the block and walk the
 panel's buttons.
+
+## Wiring (2026-09-06) — what connecting it actually cost, and found
+
+**Worker:** the block sits beside the `/me/prefs` routes because that is the
+only layer it writes. Two routes: `GET /ceo/insights` (both roles; its answers
+are role-scoped inside) and `POST /ceo/suggestion` (this user's own suggestion
+state). No new table — suggestion state lives in the existing `user_pref` blob
+under the same allow-list, so this unit needs **no portal-setup dispatch**.
+
+**Page:** the panel renders beside the Assistant in the same template, never
+inside it. Desktop gets its own gold rail button; the phone gets a fab at
+bottom-**LEFT**, because the Assistant's pill owns bottom-right and two round
+buttons in one corner is two things claiming one thumb. `ceoReset()` runs with
+the session beside `asstReset()`.
+
+### THE COUNTER WAS 400-ING IN PRODUCTION, SILENTLY
+
+`noteUse` sends `"qt:" + id` for every Home quick action. `notePrefUse`'s
+allow-list was `^[a-z0-9_.-]+$` — **no colon** — so every quick-action tap was
+refused with a 400 behind that helper's own empty catch. Nothing on any screen
+said so, and the unit that shipped it had nothing reading the counters back.
+
+The consequence was worse than an empty feature. The counters that DID work
+(`retainer_paid`, `close_case`, `view_intake` — no colon) would have made the
+quick actions look genuinely untouched, and the Unused Feature Watch would then
+have recommended hiding controls the owner uses every day, printing *"you have
+not used this once"* underneath as the evidence. **A recommendation is only as
+honest as the measurement behind it.** Pinned now as a contract: each of the
+four shapes the page really emits, plus four hostile names still refused.
+
+### THE GATE CRIED WOLF, TWICE, AND BOTH WERE THE GATE
+
+1. It walked the intake by an invented selector (`objective`; the real key is
+   `o_goal`) and timed out.
+2. It drew the signature without `scrollIntoViewIfNeeded()` — at a phone
+   viewport the canvas is below the fold and a pointer event outside the
+   viewport is lost. `intake/test-intake.mjs` already carries that lesson in
+   its own helper; the gate did not inherit it. The strokes went nowhere, the
+   form said *"Please sign in the box above"*, and the gate reported **the
+   product** as failing to deliver the intake.
+
+A gate that cries wolf is worse than no gate: it is the one report the owner is
+meant to trust about dead ends, and its first finding would have been a dead end
+it caused itself.
+
+### THE SELF-CHECK HAD TO MOVE ABOVE THE DERIVATION
+
+`CEO_GATE_SUMMARY` is a literal in `worker.js` that the Health tab prints, so
+the gate asserts its own totals against it and fails on drift. Placed after
+`const fails = findings.filter(...)`, its own FAIL landed in `findings` while
+the summary counted a snapshot taken **before** it — the run printed `0 FAIL`
+and exited 0 with a real failure sitting in the JSON report. It now counts from
+`findings` directly, above the derivation, and the drift case is proven by
+running it against a wrong literal (fails, names the numbers to paste) and a
+right one (passes).
+
+### Measured at render
+
+| | desktop 1440 | phone 390 |
+| --- | --- | --- |
+| panel width | 430px | 390px (full sheet) |
+| tabs | INSIGHTS / SUGGESTIONS / WORKFLOW / HEALTH | same |
+| body is the one scroller | yes | yes |
+| page scrolls behind it | **yes** (400 → 800) | no — `body.ceoopen` locks it |
+| backdrop | yes (modal drawer) | yes |
+| controls under the 44px floor | 1 (the close ✕ at 37px, mouse target) | **0** |
+| case-write verbs in the panel | **0** | **0** |
+| sideways scroll | none | none |
+
+The desktop drawer is modal (backdrop) but leaves the page scrollable, so it
+does not repeat the Assistant's "the dim must not swallow the page" trap.

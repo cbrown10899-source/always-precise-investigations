@@ -20883,6 +20883,115 @@ section('My Portal: two sign-ins, two layouts, one shared caseload');
   await pageB.close();
 }
 
+
+section('The CEO Bot: gold drawer, four tabs, and no way to act on a case');
+{
+  await post('/ingest', { case_no: 'API-CEOW-1', service: 'Surveillance',
+    client_name: 'Watch Me', subject_name: 'S' }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.waitForTimeout(600);
+
+  const entry = await page.evaluate(() => ({
+    rail: !!document.querySelector('.side-ceo'),
+    fab: !!document.querySelector('.ceo-fab'),
+  }));
+  ok('the CEO Bot has its own entry — rail button and fab', entry.rail && entry.fab,
+     JSON.stringify(entry));
+
+  await page.evaluate(() => ceoOpen());
+  await page.waitForTimeout(900);
+  const panel = await page.evaluate(() => {
+    const p = document.querySelector('.ceo-panel');
+    if (!p) return null;
+    const cs = getComputedStyle(p);
+    const brand = document.querySelector('.ceo-brand');
+    return {
+      tabs: [...p.querySelectorAll('.ceo-tabs button')].map(b => b.textContent.trim()),
+      health: /PORTAL HEALTH/.test(p.innerText),
+      borderLeft: cs.borderLeftColor,
+      brandColor: brand ? getComputedStyle(brand).color : null,
+      /* THE SAFETY LINE ON SCREEN: no control in this panel posts to a case
+         route — the strongest verbs are Review (a navigation) and the pref
+         writes. No send, close, record, void, delete control exists. */
+      verbs: [...p.querySelectorAll('button')].map(b => b.textContent.trim().toLowerCase()),
+    };
+  });
+  ok('the drawer opens with the four tabs', panel
+     && panel.tabs.join('|') === 'INSIGHTS|SUGGESTIONS|WORKFLOW|HEALTH', JSON.stringify(panel && panel.tabs));
+  ok('with the Portal Health summary on top', panel.health === true);
+  /* Gold identity: the panel's left rule and the brand mark are the gold
+     token (#c99a3b), not the Assistant's teal. */
+  ok('and the navy/gold identity, not the Assistant\'s teal',
+     /201, 154, 59/.test(panel.borderLeft) && /201, 154, 59/.test(panel.brandColor),
+     JSON.stringify([panel.borderLeft, panel.brandColor]));
+  ok('no control in the panel is an operational case verb',
+     !panel.verbs.some(v => /^(send|close case|record|void|delete|archive|refund)/.test(v)),
+     JSON.stringify(panel.verbs));
+
+  for (const t of ['suggestions', 'workflow', 'health']) {
+    await page.evaluate(tb => { CEO_TAB = tb; paint(); }, t);
+    await page.waitForTimeout(250);
+    const has = await page.evaluate(() => document.querySelector('.ceo-body').innerText.length > 40);
+    ok(`the ${t} tab draws content`, has === true);
+  }
+
+  /* The Assistant still opens, separately, and the two identities never share
+     a panel. */
+  await page.evaluate(() => ceoClose());
+  await page.evaluate(async () => { await asstOpen(); });
+  await page.waitForTimeout(700);
+  const both = await page.evaluate(() => ({
+    asst: !!document.querySelector('.asst-panel, .asst-dock, [class*="asst-"]'),
+    ceo: !!document.querySelector('.ceo-panel'),
+  }));
+  ok('the Assistant opens as itself, with the CEO panel closed', both.asst && !both.ceo,
+     JSON.stringify(both));
+  await page.close();
+}
+
+section('Mobile CEO Bot: own scroll, locked portal, no collisions');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(500);
+  const pills = await page.evaluate(() => {
+    const ceo = document.querySelector('.ceo-fab');
+    const asst = document.querySelector('.asst-pill');
+    if (!ceo || !asst) return { ceo: !!ceo, asst: !!asst };
+    const a = ceo.getBoundingClientRect(), b = asst.getBoundingClientRect();
+    return { ceo: true, asst: true,
+      overlap: !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top),
+      ceoLeft: a.left < 100, h: Math.round(a.height) };
+  });
+  ok('the CEO pill sits bottom-left, clear of the Assistant pill, at the tap floor',
+     pills.ceo && pills.asst && pills.overlap === false && pills.ceoLeft && pills.h >= 44,
+     JSON.stringify(pills));
+
+  await page.evaluate(() => { window.scrollTo(0, 200); });
+  await page.evaluate(() => ceoOpen());
+  await page.waitForTimeout(900);
+  const lock = await page.evaluate(() => ({
+    overflow: getComputedStyle(document.body).overflow,
+    bodyScrollY: window.scrollY,
+    scroller: (() => { const b = document.querySelector('.ceo-body');
+      return b ? getComputedStyle(b).overflowY : null; })(),
+    over: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+  }));
+  ok('the open panel locks the portal behind it and owns its own scroll',
+     lock.overflow === 'hidden' && lock.scroller === 'auto' && lock.over === false,
+     JSON.stringify(lock));
+  await page.evaluate(() => ceoClose());
+  await page.waitForTimeout(300);
+  const after = await page.evaluate(() => ({
+    overflow: getComputedStyle(document.body).overflow, y: window.scrollY }));
+  ok('closing returns the portal exactly where it was',
+     after.overflow !== 'hidden' && after.y === 200, JSON.stringify(after));
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.close();
+}
+
 await browser.close();
 server.close();
 

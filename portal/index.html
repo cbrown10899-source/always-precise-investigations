@@ -2171,6 +2171,12 @@
   border:0;border-radius:24px;padding:12px 16px;font-size:1rem;cursor:pointer;
   box-shadow:0 6px 18px rgba(12,22,38,.3);min-height:48px}
 .side-asst{display:flex;align-items:center;gap:8px}
+/* TWO PRODUCTS, TWO DOORS, TWO COLOURS. The Assistant is case operations and
+   speaks the teal operational voice; the CEO Bot is portal/workflow advice and
+   speaks gold — the same attention voice the workbench uses. Reading them
+   apart in the rail is what stops "the Assistant" meaning two things. */
+.side-ceo{display:flex;align-items:center;gap:8px;color:var(--gold);}
+.side-ceo:hover{color:var(--gold);}
 /* The workbench. Gold family on purpose: it is the same attention voice the
    banner above it speaks, and READY TO SEND is exactly that. */
 /* NO MAX-HEIGHT AND NO SCROLLER OF ITS OWN. It used to cap at 46% of the panel
@@ -2606,6 +2612,66 @@
     .fc-row b{flex:0 0 auto;white-space:nowrap;}
     .fc-doc{padding:12px;}
     .fc-box .btn.sm{min-height:44px;}
+  }
+
+
+  /* ==================== THE CEO BOT (owner brief 2026-09-06) ================
+     Navy/GOLD executive identity, deliberately apart from the Assistant's
+     navy/teal: the accent, the left-edge rule and the brand mark are gold, no
+     teal fill anywhere in the panel. `.ceo-` is its own prefix. The drawer is
+     the Assistant dock's geometry on the OTHER visual identity, and the phone
+     pill sits bottom-LEFT so the two bots cannot collide. */
+  .ceo-fab{position:fixed;left:14px;bottom:calc(14px + env(safe-area-inset-bottom));z-index:58;
+    background:var(--navy-2);color:var(--gold);border:1px solid var(--gold);border-radius:22px;
+    padding:10px 16px;font-weight:800;font-size:.9rem;cursor:pointer;min-height:44px;
+    box-shadow:0 2px 10px rgba(14,26,44,.35);}
+  .ceo-fab:focus-visible{outline:2px solid var(--gold);outline-offset:2px;}
+  .ceo-back{position:fixed;inset:0;background:rgba(10,16,26,.45);z-index:70;border:0;}
+  .ceo-panel{position:fixed;top:0;right:0;bottom:0;width:min(430px,100%);z-index:71;
+    background:#fff;border-left:3px solid var(--gold);display:flex;flex-direction:column;}
+  .ceo-head{display:flex;align-items:center;gap:10px;padding:12px 14px;
+    background:var(--navy-2);color:#fff;}
+  .ceo-brand{font-weight:800;letter-spacing:.04em;color:var(--gold);}
+  .ceo-head .optn{color:#c8d4e4;}
+  .ceo-x{margin-left:auto;color:#fff;border-color:#3a4c66;background:transparent;}
+  .ceo-tabs{display:flex;border-bottom:2px solid var(--gold);background:var(--paper);}
+  .ceo-tabs button{flex:1;border:0;background:none;padding:11px 4px;font:inherit;font-size:.72rem;
+    font-weight:800;letter-spacing:.05em;color:var(--muted);cursor:pointer;min-height:44px;}
+  .ceo-tabs button.on{color:var(--navy-2);box-shadow:inset 0 -3px 0 var(--gold);}
+  /* ONE SCROLLER — the Assistant's own lesson applied on day one: the body is
+     the only overflow in the panel, min-height:0 so the column can shrink. */
+  .ceo-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;
+    padding:12px 14px calc(16px + env(safe-area-inset-bottom));}
+  .ceo-health{background:var(--navy-2);color:#fff;border-radius:10px;padding:12px 14px;margin:0 0 12px;}
+  .ceo-hl{font-weight:800;letter-spacing:.04em;font-size:.85rem;color:var(--gold);}
+  .ceo-health ul{margin:8px 0 0 18px;font-size:.85rem;}
+  .ceo-gate{margin-top:8px;font-size:.75rem;color:#c8d4e4;}
+  .ceo-card{border:1px solid var(--line);border-left:3px solid var(--gold);border-radius:10px;
+    padding:12px 14px;margin:0 0 10px;background:#fff;}
+  .ceo-card.ceo-hi{border-left-color:var(--bad);}
+  .ceo-flag{display:inline-block;font-size:.68rem;font-weight:800;letter-spacing:.06em;
+    color:var(--bad);margin-bottom:4px;}
+  .ceo-t{font-weight:800;font-size:.95rem;}
+  .ceo-st{display:inline-block;font-size:.72rem;color:var(--muted);margin-top:2px;}
+  .ceo-why{font-size:.85rem;color:var(--muted);margin:6px 0 0;}
+  .ceo-acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;}
+  .ceo-acts .btn{min-height:44px;}
+  .ceo-brief{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;font-size:.9rem;margin-top:6px;}
+  .ceo-most{margin:6px 0 0 20px;font-size:.9rem;}
+  .ceo-flow{display:flex;gap:10px;align-items:baseline;margin-top:4px;}
+  .ceo-fs{font-size:.7rem;font-weight:800;letter-spacing:.05em;padding:2px 7px;border-radius:9px;}
+  .ceo-fs.ok{background:var(--ok-bg);color:var(--ok-ink);}
+  .ceo-fs.warn{background:#f6ead2;color:var(--gold-ink);}
+  .ceo-prevbar{position:sticky;top:0;z-index:2;background:#f6ead2;color:var(--gold-ink);
+    border:1px solid var(--gold);border-radius:10px;padding:10px 12px;margin:0 0 10px;
+    display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;
+    font-size:.85rem;font-weight:700;}
+  /* Phone: the panel is the full sheet, the body still the one scroller; the
+     pill hides while the panel is open. */
+  @media(max-width:640px){
+    .ceo-panel{width:100%;}
+    body.ceoopen .ceo-fab{display:none;}
+    body.ceoopen{overflow:hidden;}
   }
 
 </style>
@@ -3326,6 +3392,7 @@ function shell(inner){
          BETA badge that sat here came off when the sends went live. It opens
          the dock; it changes no route. */""}
     <button class="side-vst side-asst" data-act="asstOpen">&#10024; Assistant</button>
+    <button class="side-vst side-ceo" data-act="ceoOpen">&#9733; CEO Bot</button>
     <button class="side-surv" data-act="surveillance">&#128373; Active Surveillance</button>
     <!-- Timestamp Video is a door that does something, so it belongs in this
          block rather than in a list of places. It is here for BOTH roles and
@@ -3431,7 +3498,8 @@ function shell(inner){
     <nav class="tabs" aria-label="Portal sections">${tabs}</nav>${schema}${problem}${quickToolsHtml()}${
     summaryCards()}${inner}${
     SHEET_WIZ ? sheetWizardHtml() : ""}${PAY_SEND ? paySendHtml() : ""}${
-    INTAKE_SEND ? preIntakeHtml() : ""}${asstPillHtml()}${asstHtml()}${mnavHtml()}`;
+    INTAKE_SEND ? preIntakeHtml() : ""}${asstPillHtml()}${asstHtml()}${
+    ceoFabHtml()}${ceoPanelHtml()}${mnavHtml()}`;
 }
 
 
@@ -3449,6 +3517,9 @@ let ASST = null;   // {open, busy, guide, state, msgs:[{who,text,card,actions,ki
                    //  preview,err,busy}}  (Unit 4)
 
 function asstReset(){ ASST = null; }
+/* THE CEO BOT RESETS WITH THE SESSION for the reason PREFS does: its answers
+   are one user's own metrics, hides and dismissals, and the next person on
+   the same machine must never briefly wear the last user's portal. */
 
 async function asstOpen(caseNo){
   if(!ASST) ASST = { open: true, busy: false, guide: false, state: null, msgs: [], err: "", view: "home", draft: "", pending: null, cmdBusy: false };
@@ -4439,6 +4510,240 @@ function asstHtml(){
 /* The phone door: a sticky pill on shell screens only — the case and field
    views keep their own bottom bars, and the case screen's door is the Ask
    Assistant action instead, so nothing fixed ever overlaps. */
+
+/* ==================== THE CEO BOT PANEL (owner brief 2026-09-06) ===========
+
+   PORTAL / WORKFLOW IMPROVEMENT — the AI Assistant is CASE OPERATIONS, and
+   the two stay visually and functionally apart: the Assistant is the
+   navy/teal operational dock on the right with the ✨ pill bottom-RIGHT on a
+   phone; the CEO Bot is the navy/GOLD executive drawer, its phone pill sits
+   bottom-LEFT, and nothing in this panel can execute a case action — every
+   card's strongest verb is a NAVIGATION into the ordinary portal or a write
+   to this user's own preference row.
+
+   The mockups' written spec: tabs INSIGHTS / SUGGESTIONS / WORKFLOW / HEALTH,
+   a Portal Health summary on top, card-based density, Preview / Not Now /
+   Why? on every suggestion. (The mockup images did not reach this session —
+   the layout below builds to the written list, flagged for the owner's
+   visual pass.)
+
+   PREVIEW IS LOCAL AND HONEST: it applies the change to this page's own
+   PREFS copy and repaints, with an Apply / Undo bar standing until one is
+   pressed — nothing is stored until Apply, and Undo restores the exact
+   previous value. Apply goes through the SAME /me/prefs write Settings → My
+   Portal uses, so there is one writer of a personal layout. */
+let CEO = null;          /* the insights payload, or null */
+let CEO_OPEN = false;
+let CEO_TAB = "insights";
+let CEO_ERR = "";
+let CEO_BUSY = false;
+let CEO_PREVIEW = null;  /* {sug, prevValue, key} while a preview is standing */
+let CEO_WHY = {};        /* suggestion id -> expanded */
+
+function ceoReset(){ CEO = null; CEO_OPEN = false; CEO_TAB = "insights"; CEO_ERR = "";
+  CEO_BUSY = false; CEO_PREVIEW = null; CEO_WHY = {};
+  /* The lock is a body class, so it outlives the state that set it unless the
+     reset takes it too — a signed-out page that cannot scroll is the failure. */
+  try{ document.body.classList.remove("ceoopen"); }catch{}
+}
+
+async function ceoOpen(){
+  CEO_OPEN = true; CEO_ERR = "";
+  /* THE PORTAL BEHIND THE SHEET DOES NOT MOVE. `body.ceoopen` is what the
+     phone rule keys off; without the class the rule is dead CSS and a swipe
+     inside the drawer scrolls the page behind it — the defect the Assistant's
+     sheet already paid for. `overflow:hidden` does not move the page, so
+     there is no scroll offset to save and none to restore. */
+  document.body.classList.add("ceoopen");
+  paint();
+  try{ CEO = await api("/ceo/insights"); }
+  catch(e){ CEO_ERR = e.message; }
+  paint();
+}
+function ceoClose(){
+  /* A standing preview leaves with the panel — an unapplied layout must not
+     survive the drawer that explained it. */
+  if(CEO_PREVIEW) ceoUndoPreview();
+  CEO_OPEN = false;
+  document.body.classList.remove("ceoopen");
+  paint();
+}
+
+function ceoHealthHtml(h){
+  if(!h) return "";
+  return `<div class="ceo-health">
+    <div class="ceo-hl">PORTAL HEALTH: <b>${esc(h.label)}</b></div>
+    <ul>${(h.lines || []).map(l => `<li>${esc(l)}</li>`).join("")}</ul>
+    <div class="ceo-gate">Last release gate: ${esc(String(h.gate && h.gate.ran || "never"))}
+      &middot; ${h.gate ? `${h.gate.pass} pass / ${h.gate.warn} warn / ${h.gate.fail} fail` : ""}</div>
+  </div>`;
+}
+
+function ceoSugCard(s){
+  const st = ((CEO && CEO.suggestion_state) || {})[s.id];
+  const stLbl = st ? { accepted: "Accepted", implemented: "Implemented", reviewed: "Reviewed",
+    not_now: "Not now", dismissed: "Dismissed" }[st.state] : "";
+  return `<div class="ceo-card${s.priority === "high" ? " ceo-hi" : ""}">
+    ${s.priority === "high" ? `<span class="ceo-flag">HIGH PRIORITY</span>` : ""}
+    <div class="ceo-t">${esc(s.title)}</div>
+    ${stLbl ? `<span class="ceo-st">${esc(stLbl)}</span>` : ""}
+    ${CEO_WHY[s.id] ? `<p class="ceo-why">${esc(s.why)}</p>` : ""}
+    <div class="ceo-acts">
+      ${s.kind === "navigate_case"
+        ? `<button class="btn sm" data-act="ceoReview" data-case="${esc(s.target)}">Review case</button>`
+        : `<button class="btn sm" data-act="ceoPreview" data-id="${esc(s.id)}">Preview</button>`}
+      <button class="btn sm ghost" data-act="ceoNotNow" data-id="${esc(s.id)}">Not now</button>
+      <button class="btn sm ghost" data-act="ceoWhy" data-id="${esc(s.id)}">Why?</button>
+    </div>
+  </div>`;
+}
+
+function ceoBodyHtml(){
+  if(CEO_ERR) return `<div class="err">${esc(CEO_ERR)}
+    <div class="actions"><button class="btn sm ghost" data-act="ceoRetry">Try again</button></div></div>`;
+  if(!CEO) return `<p class="hint">Reading your portal&hellip;</p>`;
+  const d = CEO;
+  if(CEO_TAB === "insights"){
+    const b = d.brief || {};
+    return `${ceoHealthHtml(d.health)}
+      ${Object.keys(b).length ? `<div class="ceo-card"><div class="ceo-t">Today</div>
+        <div class="ceo-brief">
+          ${b.new_signed_intakes != null ? `<div><b>${b.new_signed_intakes}</b> new signed intake${b.new_signed_intakes === 1 ? "" : "s"}</div>` : ""}
+          ${b.open_cases != null ? `<div><b>${b.open_cases}</b> open case${b.open_cases === 1 ? "" : "s"}</div>` : ""}
+          ${b.retainers_recorded_7d != null ? `<div><b>${b.retainers_recorded_7d}</b> retainer${b.retainers_recorded_7d === 1 ? "" : "s"} recorded this week</div>` : ""}
+          ${b.possible_closeouts != null ? `<div><b>${b.possible_closeouts}</b> possible closeout${b.possible_closeouts === 1 ? "" : "s"}</div>` : ""}
+        </div></div>` : ""}
+      ${d.most_used && d.most_used.length ? `<div class="ceo-card"><div class="ceo-t">Most used actions</div>
+        <ol class="ceo-most">${d.most_used.slice(0, 5).map(m =>
+          `<li>${esc(ceoActionLabel(m.id))} <span class="optn">${m.n} taps</span></li>`).join("")}</ol>
+        <p class="ceo-why">Counted from your own taps, on your sign-in only.</p></div>`
+        : `<div class="ceo-card"><div class="ceo-t">Most used actions</div>
+          <p class="ceo-why">Nothing counted yet — use the portal normally and this fills in, for
+          your sign-in only.</p></div>`}
+      ${(d.closeout_watch || []).length ? `<div class="ceo-card ceo-hi">
+        <span class="ceo-flag">POSSIBLE CLOSEOUT</span>
+        ${d.closeout_watch.map(c => `<div class="ceo-t">${esc(c.client)}</div>
+          <ul>${c.facts.map(f => `<li>${esc(f)}</li>`).join("")}</ul>
+          <div class="ceo-acts"><button class="btn sm" data-act="ceoReview" data-case="${esc(c.case_no)}">Review case</button>
+            <button class="btn sm ghost" data-act="ceoNotNow" data-id="closeout:${esc(c.case_no)}">Not now</button></div>`).join("")}
+        <p class="ceo-why">The CEO Bot never closes a case — Review opens it and the ordinary
+          Close Case confirmations stand.</p></div>` : ""}`;
+  }
+  if(CEO_TAB === "suggestions"){
+    const live = (d.suggestions || []);
+    return `${CEO_PREVIEW ? `<div class="ceo-prevbar">Previewing: ${esc(CEO_PREVIEW.sug.title)}
+      <span class="ceo-acts"><button class="btn sm" data-act="ceoApply">Apply</button>
+      <button class="btn sm ghost" data-act="ceoUndo">Undo</button></span></div>` : ""}
+      ${live.length ? live.map(ceoSugCard).join("")
+        : `<p class="hint">Nothing to suggest right now. Suggestions appear from your own usage —
+          never from anyone else's — and dismissed ones stay dismissed.</p>`}`;
+  }
+  if(CEO_TAB === "workflow"){
+    return `<p class="ceo-why">Measured flows of the shipped build — taps counted by the release
+      gate, your own usage beside each.</p>
+      ${(d.flows || []).map(f => {
+        const mine = ((d.most_used || []).find(m => m.id === `qt:${f.id}` || m.id === f.id) || {}).n;
+        return `<div class="ceo-card"><div class="ceo-t">${esc(f.label)}</div>
+        <div class="ceo-flow"><b>${f.taps} tap${f.taps === 1 ? "" : "s"}</b>
+          <span class="ceo-fs ${f.status === "GOOD" ? "ok" : "warn"}">${esc(f.status)}</span>
+          ${mine ? `<span class="optn">you: ${mine}&times;</span>` : ""}</div>
+        <div class="optn">${esc(f.path)}</div>
+        ${CEO_WHY[f.id] ? `<p class="ceo-why">${esc(f.evidence)}</p>` : ""}
+        <div class="ceo-acts"><button class="btn sm ghost" data-act="ceoWhy" data-id="${esc(f.id)}">Why?</button></div>
+      </div>`; }).join("")}`;
+  }
+  /* HEALTH */
+  return `${ceoHealthHtml(d.health)}
+    <div class="ceo-card"><div class="ceo-t">The release gate</div>
+      <p class="ceo-why">The CEO UX Gate walks the public site, the intake doors, the portal and
+        the phone render before a release — dead ends, tap floors, sideways scroll, internal
+        vocabulary on client pages. The Bot displays its findings; it never runs its own crawler.</p>
+      <p class="optn">node portal/test-ceo-gate.mjs</p></div>`;
+}
+
+const ceoActionLabel = id => {
+  const qt = id.startsWith("qt:") ? QT[id.slice(3)] : null;
+  if(qt) return qt.label.replace(/&amp;/g, "&");
+  return { retainer_paid: "Retainer paid", close_case: "Close case",
+    view_intake: "View intake" }[id] || id;
+};
+
+function ceoPanelHtml(){
+  if(!CEO_OPEN || !ME) return "";
+  return `<div class="ceo-back" data-act="ceoClose"></div>
+  <aside class="ceo-panel" role="complementary" aria-label="CEO Bot">
+    <div class="ceo-head">
+      <span class="ceo-brand">&#9733; CEO Bot</span>
+      <span class="optn">Your portal, your data only</span>
+      <button class="btn sm ghost ceo-x" data-act="ceoClose" aria-label="Close the CEO Bot">&#10005;</button>
+    </div>
+    <div class="ceo-tabs" role="tablist">
+      ${["insights", "suggestions", "workflow", "health"].map(t =>
+        `<button role="tab" aria-selected="${CEO_TAB === t}" class="${CEO_TAB === t ? "on" : ""}"
+          data-act="ceoTab" data-tab="${t}">${t.toUpperCase()}</button>`).join("")}
+    </div>
+    <div class="ceo-body">${ceoBodyHtml()}</div>
+  </aside>`;
+}
+
+/* ---- the actions ---- */
+async function ceoSetState(id, state){
+  try{
+    const r = await api("/ceo/suggestion", {method: "POST", body: {id, state}});
+    if(CEO) CEO.suggestion_state = r.suggestion_state;
+    if(CEO && state === "not_now") CEO.suggestions = (CEO.suggestions || []).filter(s => s.id !== id);
+    if(CEO && state === "dismissed") CEO.suggestions = (CEO.suggestions || []).filter(s => s.id !== id);
+  }catch(e){ CEO_ERR = e.message; }
+  paint();
+}
+function ceoPreviewSug(id){
+  const s = ((CEO && CEO.suggestions) || []).find(x => x.id === id);
+  if(!s || CEO_PREVIEW) return;
+  if(s.kind === "pref_hide"){
+    const prev = Array.isArray(PREFS.hidden) ? PREFS.hidden.slice() : null;
+    PREFS.hidden = [...new Set([...(prev || DEFAULT_HIDDEN), s.target])];
+    CEO_PREVIEW = { sug: s, key: "hidden", prevValue: prev };
+  }else if(s.kind === "pref_front"){
+    const prev = Array.isArray(PREFS.qt_order) ? PREFS.qt_order.slice() : null;
+    const base = prefOrder(QT_PHONE).filter(x => x !== s.target);
+    PREFS.qt_order = [s.target, ...base];
+    CEO_PREVIEW = { sug: s, key: "qt_order", prevValue: prev };
+  }
+  paint();
+}
+function ceoUndoPreview(){
+  if(!CEO_PREVIEW) return;
+  if(CEO_PREVIEW.prevValue === null) delete PREFS[CEO_PREVIEW.key];
+  else PREFS[CEO_PREVIEW.key] = CEO_PREVIEW.prevValue;
+  CEO_PREVIEW = null;
+  paint();
+}
+async function ceoApplyPreview(){
+  if(!CEO_PREVIEW || CEO_BUSY) return;
+  CEO_BUSY = true;
+  const { sug, key } = CEO_PREVIEW;
+  try{
+    const r = await api("/me/prefs", {method: "POST", body: {[key]: PREFS[key]}});
+    PREFS = {...(r.prefs || {}), __loaded: true};
+    CEO_PREVIEW = null;
+    await ceoSetState(sug.id, "accepted");
+  }catch(e){ CEO_ERR = e.message; }
+  CEO_BUSY = false;
+  paint();
+}
+function ceoReviewCase(caseNo){
+  ceoClose();
+  openCase(caseNo);
+}
+
+/* THE PHONE DOOR, bottom-LEFT — the Assistant's pill owns bottom-right, and
+   two round buttons in one corner is two things claiming the same thumb. It
+   withdraws while either panel is open so it cannot sit over its own drawer. */
+function ceoFabHtml(){
+  if(CEO_OPEN || (ASST && ASST.open)) return "";
+  return `<button class="ceo-fab" data-act="ceoOpen" aria-label="Open the CEO Bot">&#9733;</button>`;
+}
+
 function asstPillHtml(){
   if(ASST && ASST.open) return "";
   return `<button class="asst-pill" data-act="asstOpen" aria-label="Open the API Assistant">
@@ -13375,6 +13680,7 @@ function sessionForget(){
      on this machine briefly wears someone else's portal. */
   PREFS = {}; PREFS_STORED = true;
   asstReset();
+  ceoReset();
   NL = null; LEAD_SEND = null; LEAD_MSG = ""; PAY_SEND = null;
   SRCH = { q: "", results: null, err: "", busy: false, hi: -1 };
   ATTN = null; ATTN_OK = false; ATTN_ERR = ""; ATTN_FILTER = "all";
@@ -22112,6 +22418,18 @@ document.addEventListener("click", ev => {
   else if(act === "vehEdit"){ SUBJ_FORM = {mode:"veh", sid: Number(el.dataset.sid), vid: Number(el.dataset.vid)}; WS_ERR = ""; paintCase(); }
   else if(act === "subjCancel"){ SUBJ_FORM = null; WS_ERR = ""; paintCase(); }
   else if(act === "taskStatus"){ setTaskStat(Number(el.dataset.id), el.dataset.s); }
+  else if(act === "ceoOpen"){ ceoOpen(); }
+  else if(act === "ceoClose"){ ceoClose(); }
+  else if(act === "ceoTab"){ CEO_TAB = el.dataset.tab || "insights"; paint(); }
+  else if(act === "ceoRetry"){ CEO_ERR = ""; ceoOpen(); }
+  else if(act === "ceoWhy"){ const k = el.dataset.id; CEO_WHY[k] = !CEO_WHY[k]; paint(); }
+  else if(act === "ceoPreview"){ ceoPreviewSug(el.dataset.id); }
+  else if(act === "ceoApply"){ ceoApplyPreview(); }
+  else if(act === "ceoUndo"){ ceoUndoPreview(); }
+  else if(act === "ceoNotNow"){ ceoSetState(el.dataset.id, "not_now"); }
+  else if(act === "ceoDismiss"){ ceoSetState(el.dataset.id, "dismissed"); }
+  else if(act === "ceoReview"){ ceoReviewCase(el.dataset.case); }
+  else if(act === "ceoSimplify"){ CEO_TAB = "suggestions"; paint(); }
   else if(act === "closeCase"){ doCloseCase(); }
   else if(act === "fcOpen"){ fcOpen(); }
   else if(act === "fcCancel"){ fcCancel(); }
