@@ -9,3 +9,4 @@ _site/
 # Created by any wrangler command run from the repo root, never part of the
 # site or the Worker, and nothing should be able to commit it by accident.
 .wrangler/
+portal/ceo-gate-report.json
