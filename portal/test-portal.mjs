@@ -20767,10 +20767,15 @@ section('An intake can end without a case, reason on the record');
     const ws = await (await fetch('/portal-api/cases/API-ARC-E2E/workspace',
       { credentials: 'include' })).json();
     const subs = await (await fetch('/portal-api/submissions', { credentials: 'include' })).json();
+    /* THE SUBMITTED INTAKE IS ITS OWN ROUTE — the workspace never carried it,
+       and the page merges the two. Reading it here is what proves the signed
+       record survived the archive. */
+    const one = await (await fetch('/portal-api/submissions/API-ARC-E2E',
+      { credentials: 'include' })).json();
     return { archived: !!ws.archived,
       notes: (ws.notes || []).map(n => n.body).join(' | '),
       inActiveList: (subs.submissions || []).some(r => r.case_no === 'API-ARC-E2E'),
-      sig: (ws.submission && ws.submission.payload && ws.submission.payload.client_name) || null };
+      sig: (one.submission && one.submission.client_name) || null };
   });
   ok('the intake archives without inventing a case or deleting anything',
      st.archived === true && st.sig === 'Never Proceeded', JSON.stringify([st.archived, st.sig]));
