@@ -20228,6 +20228,75 @@ section('Case closeout: a refund is its own event and the payment is never touch
   ok('after all of that the ledger is exactly where it was',
      m.refunds.length === 1 && m.refunded === 200 && m.retained === 400);
 
+
+  /* ---- THE ASSISTANT'S CLOSEOUT PREPARATION. The owner's line is that it
+     must never execute the refund, the closure or the email from natural
+     language — so what it does is ANSWER FROM THE RECORD and open the panel.
+     It proposes no split, because what the firm earned is the one genuinely
+     new decision a closeout makes, and suggesting it would be the Assistant
+     deciding how much of a client's money the firm keeps. ---- */
+  await caseWith('API-CLO-M', 1000, { checklist: false });
+  let ap = await say('prepare the closeout', { route: 'case', case_no: 'API-CLO-M' });
+  ok('"prepare the closeout" answers from the record, and is not a command',
+     ap.kind === 'status' && !ap.command, JSON.stringify([ap.kind, !!ap.command]));
+  ok('it states the money the case actually received', /\$1,000/.test(ap.text), ap.text.slice(0, 120));
+  ok('AND PROPOSES NO SPLIT — it says the decision is the office\'s',
+     /your decision/.test(ap.text) && !/suggest(ed)? (a )?\$/.test(ap.text), ap.text.slice(0, 200));
+  ok('it names what the closing checklist still has open',
+     /8 unconfirmed/.test(ap.text) && /Billing reviewed/.test(ap.text), ap.text.slice(-220));
+  ok('and says plainly that none of it emails the client',
+     /Nothing is emailed to the client/.test(ap.text));
+  ok('the one action offered is a NAVIGATION to the panel the button lives on',
+     ap.actions.length === 1 && ap.actions[0].navigate.kind === 'case_tab'
+     && ap.actions[0].navigate.id === 'billing', JSON.stringify(ap.actions));
+  ok('and the card names the SUBJECT rather than drawing the case number as a name',
+     ap.card[0].title === 'S. Subject', JSON.stringify(ap.card));
+
+  ap = await say('what is the final balance', { route: 'case', case_no: 'API-CLO-A' });
+  ok('a closed-out case reports what it settled to, from the ledger',
+     /\$1,000/.test(ap.text) && /\$400/.test(ap.text) && /\$600/.test(ap.text)
+     && /already closed out/.test(ap.text), ap.text.slice(0, 200));
+  ok('and whether the statement went to the client', /emailed to vanessa@example.com/.test(ap.text),
+     ap.text.slice(-140));
+
+  ap = await say('close out this case', {});
+  ok('with no case in hand it asks for one instead of guessing',
+     ap.kind === 'status' && /Open the case first/.test(ap.text), ap.text.slice(0, 80));
+  await ingest(env, { case_no: 'API-CLO-CLM', service: 'Insurance claim', kind: 'claims',
+    client_name: 'Blue Ridge', carrier: 'Blue Ridge', subject_name: 'Claimant' });
+  ap = await say('close out this case', { route: 'case', case_no: 'API-CLO-CLM' });
+  ok('a claim assignment is told it has no retainer to dispose of, in words',
+     /no retainer to dispose of/.test(ap.text), ap.text.slice(0, 140));
+
+  /* THE CARVE-OUT MUST NEVER BE THE WAY ROUND THE THING IT SITS ABOVE. */
+  for (const phrase of ['close out this case and email the client',
+                        'email the closeout statement',
+                        'send the client their final statement',
+                        'close out this case and refund the client']) {
+    const a2 = await say(phrase, { route: 'case', case_no: 'API-CLO-M' });
+    ok(`"${phrase}" reaches the refusal, not the preparation`, a2.kind === 'refused',
+       JSON.stringify([a2.kind, (a2.text || '').slice(0, 70)]));
+  }
+  const inv2 = await call(env, '/assistant/command', { method: 'POST', cookie: inv,
+    body: { text: 'prepare the closeout', context: { route: 'case', case_no: 'API-CLO-M' } } });
+  const invAns = await jsonOf(inv2);
+  ok('an investigator asking is told it is an admin desk, and reads no ledger',
+     /requires Admin permission/.test(invAns.text || '') && !/\$/.test(invAns.text || ''),
+     JSON.stringify(invAns).slice(0, 140));
+
+  /* ---- THE INTAKE SCREEN'S OWN ACTIONS need to know whether the intake was
+     ACCEPTED, and that is a record, not an inference. ---- */
+  let ws2 = await jsonOf(await call(env, '/cases/API-CLO-M/workspace', { cookie: admin }));
+  ok('the workspace says the intake has not been accepted', ws2.lead_status !== 'converted',
+     String(ws2.lead_status));
+  await call(env, '/leads/API-CLO-M/status', { method: 'POST', cookie: admin,
+    body: { status: 'converted' } });
+  ws2 = await jsonOf(await call(env, '/cases/API-CLO-M/workspace', { cookie: admin }));
+  ok('and says so once it has been', ws2.lead_status === 'converted', String(ws2.lead_status));
+  const iws2 = await jsonOf(await call(env, '/cases/API-CLO-M/workspace', { cookie: inv }));
+  ok('the lead ladder is admin paperwork and never reaches the field',
+     !('lead_status' in iws2), JSON.stringify(Object.keys(iws2).filter(k => /lead/.test(k))));
+
   /* ---- THE DEMO SWEEP TAKES BOTH TABLES, so a TEST- case leaves nothing
      behind — the orphan-row lesson this project has already paid for. ---- */
   await ingest(env, { case_no: 'TEST-CLO-1', service: 'Surveillance', client_name: 'T', subject_name: 'S' });

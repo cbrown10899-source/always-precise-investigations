@@ -6608,6 +6608,16 @@ async function caseWorkspace(env, user, caseNo) {
     phones: await phonesFor(env, caseNo, { forAdmin: admin }),
     ...(admin ? { archived: await archiveOf(env, caseNo), deleted: await deletedOf(env, caseNo),
                   build_status: buildStatus, invoice_status: invoiceStatus,
+                  /* WHETHER THE INTAKE WAS ACCEPTED, so the intake screen can
+                     offer Create case or Open case and be right about which.
+                     One indexed lookup on the table that already holds the
+                     answer — deriving it from the stage or from an assignment
+                     would be inference, and `lead_status` is the record
+                     stating it. Admin-only like every other key in this block:
+                     the lead ladder is the office's paperwork. */
+                  lead_status: (await env.DB.prepare(
+                    'SELECT status FROM lead_status WHERE case_no = ?').bind(caseNo).first()
+                    || {}).status || null,
                   sends: (await env.DB.prepare(
                     `SELECT l.kind, l.sheet_id, l.door, l.recipient, l.ok, l.detail, l.sent_at,
                             u.display_name AS sent_by
@@ -15956,6 +15966,103 @@ async function assistantCommandCore(body, env, user) {
           method_note: methodNote,
           found_by: foundBy,
         } });
+    }
+  }
+
+
+  /* ---- THE CLOSEOUT PREPARATION (owner, 2026-09-06) -----------------------
+
+     "The Assistant must never execute the refund, case closure, or email
+     directly from natural language." So this is the DAILY SUMMARY shape, not
+     the payment prefill's: it answers FROM THE RECORD and opens the panel, and
+     it fills in nothing at all.
+
+     THE FIGURES ARE THE AUTHORSHIP. What the firm EARNED is the one genuinely
+     new decision a closeout makes — it is not derivable from anything the
+     portal holds, and a suggested split would be the Assistant deciding how
+     much of a client's money the firm keeps. `DAILY-SUMMARY.md` refuses to
+     guess a writer's picks for the same reason, on a document a client reads;
+     this is that rule where the document is about money.
+
+     IT SITS ABOVE THE BLOCKED LIST, like the intake, rate-sheet and payment
+     rehearsals, and it is narrower than all three: it matches only wording
+     that is ABOUT a closeout, and it stands down the moment the sentence also
+     carries an executing verb. "Close out this case and email the client"
+     names a send, so it goes to the refusal — the carve-out must never become
+     the way round the thing it sits above. */
+  {
+    const PREP = /\bclose ?out\b|\bcloseout\b|\bfinal (closeout )?(statement|balance)\b/i;
+    const EXEC = /\brefund (the|this|them|him|her|client|customer)\b|\bissue (a )?refund\b/i
+      .test(text) || /\bemail\b|\bsend\b|\bvoid\b|\bclose (the |this )?case\b/i.test(text);
+    if (PREP.test(text) && !EXEC) {
+      if (user.role !== 'admin') {
+        return json({ ok: true, kind: 'status',
+          text: 'Closing a case out is an admin desk — this action requires Admin permission.' });
+      }
+      if (!caseNo) {
+        return json({ ok: true, kind: 'status',
+          text: 'Open the case first and ask again — a closeout is about one case\'s own ledger.',
+          actions: [nav('CASES', 'cases')] });
+      }
+      const row = await caseFor(env, user, caseNo);
+      if (!row) return json({ ok: true, kind: 'status',
+        text: `I cannot read ${caseNo} with your access.` });
+      if (row.kind === 'claims') {
+        return json({ ok: true, kind: 'status',
+          text: `${caseNo} is a claim assignment. It is authorized in hour blocks and billed on its `
+              + 'invoice, so there is no retainer to dispose of and no closeout statement to issue.',
+          actions: [nav('BILLING', 'billing', 'case_tab', caseNo)] });
+      }
+      const m = await closeoutMoney(env, caseNo);
+      if ((m.missing || []).length) {
+        return json({ ok: true, kind: 'status',
+          text: 'The closeout tables are not on the database yet — run the portal-setup workflow '
+              + 'and the panel starts working.' });
+      }
+      const open = await closeoutBlockers(env, caseNo);
+      const names = await assistantCardNames(env, user, caseNo);
+      const go = [nav('OPEN THE CLOSEOUT', 'billing', 'case_tab', caseNo)];
+
+      if (m.closeout && m.closeout.closed_at) {
+        return json({ ok: true, kind: 'status',
+          text: `${caseNo} is already closed out. ${nrMoney(m.retainer_received)} was received, `
+              + `${nrMoney(m.retained || 0)} was retained and ${nrMoney(m.refunded)} was refunded, `
+              + `leaving ${nrMoney(m.final_balance || 0)}. `
+              + (m.closeout.emailed_at
+                  ? `The statement was emailed to ${m.closeout.emailed_to || 'the client'}.`
+                  : 'Nothing has been emailed to the client.'),
+          card: [{ case_no: caseNo, title: names.subject || caseNo,
+                   line: 'Closeout recorded' }],
+          actions: go });
+      }
+
+      /* WHAT THE RECORD CAN SAY, AND WHERE IT STOPS. The money received is a
+         fact; the split is not, and nothing here proposes one. */
+      const lines = [`${caseNo} has ${nrMoney(m.retainer_received)} recorded as received`];
+      if (m.refunded > 0) lines.push(`${nrMoney(m.refunded)} already refunded`);
+      if (m.closeout && m.closeout.prepared_at != null) {
+        lines.push(`a closeout prepared but not confirmed — ${nrMoney(m.closeout.retained || 0)} `
+          + `retained, ${nrMoney(m.closeout.agreed_refund || 0)} to be refunded`);
+      }
+      return json({ ok: true, kind: 'status',
+        text: `${lines.join(', ')}. `
+            + (m.retainer_received > 0
+                ? 'How much of that the firm earned is your decision, not something I can work out '
+                + 'from the record, so I will not suggest a figure. '
+                : 'No retainer payment is recorded on this case, so there is nothing to dispose of '
+                + 'until one is. ')
+            + (open.length
+                ? `The closing checklist still has ${open.length} unconfirmed: ${open.join('; ')}. `
+                + 'The closeout records the money either way; the case stays open until those are '
+                + 'ticked. '
+                : 'The closing checklist is finished, so confirming the closeout will close the '
+                + 'case. ')
+            + 'Nothing is emailed to the client by any of it — the statement is its own button '
+            + 'afterwards, every time.',
+        card: [{ case_no: caseNo, title: names.subject || caseNo,
+                 line: `Received ${nrMoney(m.retainer_received)}`
+                     + (m.refunded > 0 ? ` · refunded ${nrMoney(m.refunded)}` : '') }],
+        actions: go });
     }
   }
 
