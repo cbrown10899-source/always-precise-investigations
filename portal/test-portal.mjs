@@ -1998,8 +1998,12 @@ section('A private lead can be sent payment options; an insurance lead cannot');
   ok('and the insurance card still offers its own two sends',
      await ins.locator('.btn', { hasText: 'Send rate sheet' }).count() === 1
      && await ins.locator('.btn', { hasText: 'Send intake' }).count() === 1);
+  /* "Review" opened the CASE, which is not what the word promised — the owner
+     reported it from a phone. It is "View intake" now and goes to the
+     submission. The property this assertion protects is unchanged: the card's
+     other actions were not displaced by the rename. */
   ok('the private card keeps its existing actions too — nothing was displaced',
-     await priv.locator('.btn', { hasText: 'Review' }).count() === 1
+     await priv.locator('.btn', { hasText: 'View intake' }).count() === 1
      && await priv.locator('.btn', { hasText: 'Send rate sheet' }).count() === 1
      && await priv.locator('.btn', { hasText: 'Send intake' }).count() === 1);
 
@@ -4415,7 +4419,8 @@ section('Leads and intakes: cards, decisions, and the phone-call lead');
   await page.waitForTimeout(400);
   const desk = await text(page, '#app');
   ok('early-stage submissions wait as cards', await page.locator('.pcard').count() >= 1, desk.slice(0, 200));
-  ok('a card offers Review', await page.locator('.pcard .btn', { hasText: 'Review' }).count() >= 1);
+  ok('a card offers a way into the submitted intake, named for what it opens',
+     await page.locator('.pcard .btn', { hasText: 'View intake' }).count() >= 1);
   ok('and Accept routes to the assignment decision',
      await page.locator('.pcard .btn', { hasText: 'Accept' }).count() >= 1);
   // The hostile row is stage new, so it sits on this desk too — as text.
@@ -6799,13 +6804,24 @@ section('A lead has its own life, and its sends live on the card');
 
   const card = page.locator('.pcard', { hasText: 'API-20260812-4005' });
   ok('a fresh lead is on the desk', await card.count() === 1);
-  ok('with the lead vocabulary, not the case one',
-     has(await card.innerText(), 'Lead status'));
+  /* THE LADDER IS STILL HERE, FOLDED. It moved under Admin status because a
+     dropdown was as loud as the client's own name on a card whose job is
+     "somebody submitted this, read it" — so the visible text must NOT lead
+     with it, while the control itself is still present and still works. */
+  ok('the lead ladder is present but folded under Admin status',
+     has(await card.innerText(), 'Admin status')
+     && !has(await card.innerText(), 'Lead status')
+     && await card.locator('select[data-act="leadStatus"]').count() === 1,
+     (await card.innerText()).slice(0, 160));
   ok('and both send actions on the card',
      await card.locator('.btn', { hasText: 'Send rate sheet' }).count() === 1
      && await card.locator('.btn', { hasText: 'Send intake' }).count() === 1);
 
   // The office's own hand: set Contacted, and it survives a full reload.
+  // The disclosure has to be opened first — it is closed by default, which is
+  // the point of it. A keyboard user reaches it the same way.
+  await card.locator('.pc-more summary').click();
+  await page.waitForTimeout(200);
   await card.locator('select[data-act="leadStatus"]').selectOption('contacted');
   await page.waitForTimeout(600);
   await page.reload();
@@ -6870,7 +6886,7 @@ section('A lead has its own life, and its sends live on the card');
      real failure — and it has to be on the record as one. Done last, because
      opening the case leaves the leads desk behind. */
   await page.locator('.pcard', { hasText: 'API-20260812-4005' })
-    .locator('.btn', { hasText: 'Review' }).click();
+    .locator('.btn', { hasText: 'View intake' }).click();
   await page.waitForTimeout(700);
   await wsTab(page, 'Comm log');
   await page.waitForTimeout(500);
@@ -7056,8 +7072,8 @@ section('A returned private intake shows the retainer pending and the way to act
      await c1.locator('.btn', { hasText: 'Record payment' }).count() === 1);
   ok('§10: so is Send payment options',
      await c1.locator('.btn', { hasText: 'Send payment options' }).count() === 1);
-  ok('§10: and Review, which is the third named action',
-     await c1.locator('.btn', { hasText: 'Review' }).count() === 1);
+  ok('§10: and the way into the submitted intake, which is the third named action',
+     await c1.locator('.btn', { hasText: 'View intake' }).count() === 1);
 
   /* The condition is BOTH halves. A retainer that has arrived is not pending,
      and saying so anyway would send the office chasing money it already has. */
