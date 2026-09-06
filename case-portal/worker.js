@@ -6173,7 +6173,23 @@ async function notePrefUse(request, env, user) {
   if ((await missingTables(env)).includes('user_pref')) return json({ ok: true, counted: false });
   const body = await readJson(request);
   const act = String(body.action || '').trim().slice(0, 48);
-  if (!/^[a-z0-9_.-]+$/i.test(act)) return json({ error: 'Name the action.' }, 400);
+  /* THE COLON IS THE PAGE'S OWN NAMESPACE SEPARATOR, and leaving it out of
+     this allow-list made every quick-action counter fail silently.
+
+     `noteUse` sends `qt:` + the action id for the Home quick actions and bare
+     words (`retainer_paid`, `close_case`, `view_intake`) for the rest. This
+     pattern accepted the bare words and refused every `qt:` one with a 400 —
+     and `noteUse` is fire-and-forget with its own empty catch, so nothing on
+     any screen ever said so.
+
+     It survived its own unit because nothing read the counters back until the
+     CEO Bot did. The consequence was not an empty feature: the counters that
+     DID work would have made the quick actions look genuinely untouched, and
+     the Unused Feature Watch would then have recommended hiding controls the
+     owner uses every day, with "you have not used this once" printed
+     underneath as the evidence. A recommendation is only as honest as the
+     measurement behind it. */
+  if (!/^[a-z0-9_.:-]+$/i.test(act)) return json({ error: 'Name the action.' }, 400);
   const cur = (await prefsRow(env, user.id)) || {};
   const metrics = cur.metrics && typeof cur.metrics === 'object' ? cur.metrics : {};
   const m = metrics[act] && typeof metrics[act] === 'object' ? metrics[act] : { n: 0 };
@@ -6193,6 +6209,234 @@ async function notePrefUse(request, env, user) {
      ON CONFLICT(user_id) DO UPDATE SET prefs = ?2, updated_at = ?3`)
     .bind(user.id, JSON.stringify(cur), nowIso()).run();
   return json({ ok: true, counted: true });
+}
+
+
+/* ==================== THE CEO BOT (owner brief 2026-09-06) =================
+
+   READ-ONLY / RECOMMENDATION-FIRST. This block composes observations and
+   suggestions for the SIGNED-IN USER — their own metrics, their own hides,
+   their own dismissals — and writes NOTHING except through the /me/prefs
+   layer the personalization work already built (suggestion states live in
+   prefs.suggestion_state, per user, under the same allow-list).
+
+   THE SAFETY LINE, verbatim from the brief §17: the CEO Bot may NOT close
+   cases, record payments, issue refunds, send emails, delete records, change
+   pricing or permissions, globally hide features, or perform schema changes.
+   Structurally: no route in this block is a POST to anything but the pref
+   layer, and the page's CEO panel carries no case-write control — every
+   "Review case" is a navigation into the ordinary portal, where the ordinary
+   confirmations still stand. The AI Assistant is CASE OPERATIONS and is a
+   different block, a different panel and a different identity on screen.
+
+   THE GATE DETECTS, THE BOT DISPLAYS (brief §7): `CEO_GATE_SUMMARY` below is
+   the last CEO UX Gate run's totals, and the gate itself asserts this literal
+   matches its fresh results — so the number a user reads in the Health tab is
+   a gated fact, not a hope. Update it by running the gate and copying what it
+   prints when it drifts. */
+const CEO_GATE_SUMMARY = {
+  ran: '2026-09-06', pass: 0, warn: 0, fail: 0,   // the gate overwrites-checks this
+  notes: 'Run node portal/test-ceo-gate.mjs before a release; it fails if this drifts.',
+};
+
+/* The primary controls the Bot watches for disuse, each with where it lives
+   and which existing per-user hide (or reorder) answers it. Evidence-based:
+   a suggestion fires only off THIS user's own counters. */
+const CEO_WATCH = [
+  { id: 'qt:photo',  label: 'Timestamp Photo quick action', hideable: true },
+  { id: 'qt:video',  label: 'Timestamp Video quick action', hideable: true },
+  { id: 'qt:delivery', label: 'Reports & Packages quick action', hideable: true },
+  { id: 'qt:cases',  label: 'Cases quick action', hideable: true },
+  { id: 'needs_assignment', label: 'Needs-assignment alert card', hideable: true },
+  { id: 'lead_status', label: 'Lead status controls', hideable: true },
+];
+
+/* The measured flows the WORKFLOW tab shows. Tap counts are the gate's and
+   the suites' own measurements of the shipped screens — statements about the
+   BUILD, not about any client's data, and each names its evidence. */
+const CEO_FLOWS = [
+  { id: 'view_intake', label: 'View a signed intake', taps: 1, status: 'GOOD',
+    path: 'Intakes → tap the card', evidence: 'The card is the door (shipped 2026-09-06).' },
+  { id: 'rate_sheet', label: 'Prepare & send a rate sheet', taps: 2, status: 'GOOD',
+    path: 'Home → Rate Sheet → form', evidence: 'Quick action first on Home.' },
+  { id: 'retainer_paid', label: 'Record a retainer payment', taps: 2, status: 'GOOD',
+    path: 'Case → Retainer paid', evidence: 'On the case actions row (Mission 6).' },
+  { id: 'close_case', label: 'Close a no-work case', taps: 2, status: 'GOOD',
+    path: 'Case → Close case → preset → confirm', evidence: 'No checklist required (Mission 7).' },
+  { id: 'surveillance', label: 'Start Active Surveillance', taps: 2, status: 'GOOD',
+    path: 'Home → Active Surveillance → case', evidence: 'Top-level door, both roles.' },
+];
+
+async function ceoInsights(env, user) {
+  const missing = await missingTables(env);
+  const have = t => !missing.includes(t);
+  const admin = user.role === 'admin';
+  const prefs = (await prefsRow(env, user.id)) || {};
+  const metrics = prefs.metrics && typeof prefs.metrics === 'object' ? prefs.metrics : {};
+  const sugState = prefs.suggestion_state && typeof prefs.suggestion_state === 'object'
+    ? prefs.suggestion_state : {};
+  const hidden = Array.isArray(prefs.hidden) ? prefs.hidden : ['needs_assignment', 'lead_status'];
+  const now = Date.now();
+
+  /* ---- THE DAILY CEO BRIEF: today's numbers, from the shared record, scoped
+     by role exactly as the dashboard scopes them. ---- */
+  const brief = {};
+  if (admin) {
+    const dayAgo = new Date(now - 86400e3).toISOString();
+    const weekAgo = new Date(now - 7 * 86400e3).toISOString();
+    brief.new_signed_intakes = (await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM submissions
+        WHERE created_at > ? AND COALESCE(json_extract(payload, '$.signature'), '') != ''`)
+      .bind(dayAgo).first()).n;
+    brief.open_cases = (await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM submissions WHERE status != 'closed'").first()).n;
+    brief.retainers_recorded_7d = have('retainer_payment') ? (await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM retainer_payment WHERE recorded_at > ?').bind(weekAgo).first()).n : 0;
+  }
+
+  /* ---- CLOSEOUT WATCH (brief §11): possible closeouts, each a REVIEW
+     navigation and never an act. Derived from records that exist — retainer
+     in, no day ever started, case still open, older than 7 days; and open
+     cases with no activity for 14+ days. ---- */
+  let closeoutWatch = [];
+  if (admin && have('retainer_payment') && have('case_days')) {
+    /* THE MARKER TABLES ARE EXCLUDED THROUGH `hiddenCases`, NOT THROUGH A
+       SUBQUERY. A bare `NOT IN (SELECT case_no FROM case_deleted)` is a hard
+       reference to a table that does not exist between a merge and its manual
+       portal-setup dispatch — the same shape that would have taken out the
+       case list before `missingTables` was put in front of it. `hiddenCases`
+       already carries that guard and returns a Set, so the filter costs one
+       read the portal already makes everywhere else.
+
+       The void guard is inline for the same reason, and the LIMIT is applied
+       AFTER the exclusion: filtering a page of already-limited rows lets six
+       hidden cases empty a watch that has live candidates behind them. */
+    const hidden = await hiddenCases(env);
+    const voidGuard = have('retainer_payment_void')
+      ? ' WHERE id NOT IN (SELECT payment_id FROM retainer_payment_void)' : '';
+    const { results: paidNoWork } = await env.DB.prepare(
+      `SELECT s.case_no, s.client_name, p.total
+         FROM submissions s
+         JOIN (SELECT case_no, SUM(amount) AS total FROM retainer_payment${voidGuard}
+                GROUP BY case_no) p ON p.case_no = s.case_no
+        WHERE s.status != 'closed' AND p.total > 0
+          AND s.created_at < ?
+          AND NOT EXISTS (SELECT 1 FROM case_days d WHERE d.case_no = s.case_no)
+        LIMIT 40`).bind(new Date(now - 7 * 86400e3).toISOString()).all();
+    closeoutWatch = (paidNoWork || [])
+      .filter(r => !hidden.has(r.case_no))
+      .slice(0, 6)
+      .map(r => ({
+        case_no: r.case_no, client: r.client_name || r.case_no,
+        facts: ['Retainer paid', 'No investigation day started', 'Open 7+ days'],
+        amount: r.total }));
+  }
+  if (admin) brief.possible_closeouts = closeoutWatch.length;
+
+  /* ---- MOST USED: this user's own counters, labelled. ---- */
+  const mostUsed = Object.entries(metrics)
+    .map(([id, m]) => ({ id, n: Number(m.n) || 0, last: m.last || null }))
+    .filter(m => m.n > 0)
+    .sort((a, b) => b.n - a.n).slice(0, 6);
+
+  /* ---- SUGGESTIONS: deterministic, evidence-based, personal. Every one
+     names its why, previews through the EXISTING pref layer, and respects
+     this user's own dismissals. NOT NOW sleeps 14 days; DISMISSED sleeps
+     until the suggestion's evidence version changes. ---- */
+  const suggestions = [];
+  const asleep = id => {
+    const st = sugState[id];
+    if (!st) return false;
+    if (st.state === 'dismissed') return true;
+    if (st.state === 'not_now' && st.at && (now - Date.parse(st.at)) < 14 * 86400e3) return true;
+    if (st.state === 'accepted' || st.state === 'implemented') return true;
+    return false;
+  };
+  const totalTaps = mostUsed.reduce((a, m) => a + m.n, 0);
+  for (const w of CEO_WATCH) {
+    if (!w.hideable || hidden.includes(w.id)) continue;
+    const used = metrics[w.id] && Number(metrics[w.id].n) > 0;
+    /* Only speak when there is evidence: this user has really been working
+       (20+ counted taps) and this control took none of them. */
+    if (!used && totalTaps >= 20 && !asleep(`hide:${w.id}`)) {
+      suggestions.push({ id: `hide:${w.id}`, kind: 'pref_hide', target: w.id,
+        priority: 'normal', title: `Hide ${w.label} from my main view`,
+        why: `Across your last ${totalTaps} counted quick actions you have not used ${w.label} once, `
+           + 'but it occupies primary space. Hiding it changes only your own portal, and it can '
+           + 'come back any time from Settings → My Portal.' });
+    }
+  }
+  if (mostUsed.length && totalTaps >= 20) {
+    const top = mostUsed[0];
+    const order = Array.isArray(prefs.qt_order) && prefs.qt_order.length ? prefs.qt_order : null;
+    const first = order ? order[0] : 'sheets';
+    const topQt = top.id.startsWith('qt:') ? top.id.slice(3) : null;
+    if (topQt && topQt !== first && !asleep(`front:${topQt}`)) {
+      suggestions.push({ id: `front:${topQt}`, kind: 'pref_front', target: topQt,
+        priority: 'normal', title: `Keep your most-used action first on Home`,
+        why: `${top.id} is your most-used action (${top.n} of your last ${totalTaps} taps) and it `
+           + 'is not first. Moving it changes only your own portal.' });
+    }
+  }
+  for (const c of closeoutWatch) {
+    if (asleep(`closeout:${c.case_no}`)) continue;
+    suggestions.push({ id: `closeout:${c.case_no}`, kind: 'navigate_case',
+      target: c.case_no, priority: 'high', title: `Possible closeout — ${c.client}`,
+      why: `${c.facts.join('. ')}. Clients sometimes pay and change their minds; if this one has, `
+         + 'the Close Case flow documents the retention and any refund. Nothing here closes '
+         + 'anything — Review opens the case and the ordinary confirmations stand.' });
+  }
+
+  /* ---- PORTAL HEALTH: the gate's totals plus today's counts, in words. ---- */
+  const health = {
+    label: CEO_GATE_SUMMARY.fail > 0 ? 'Needs attention'
+         : CEO_GATE_SUMMARY.warn > 0 ? 'Fair' : 'Good',
+    gate: CEO_GATE_SUMMARY,
+    lines: [
+      `${CEO_GATE_SUMMARY.fail} critical dead ends in the last release gate`,
+      `${CEO_GATE_SUMMARY.warn} gate warnings open`,
+      `${suggestions.filter(s => s.kind === 'pref_hide').length} unused primary controls (yours)`,
+      `${closeoutWatch.length} possible closeout${closeoutWatch.length === 1 ? '' : 's'}`,
+    ],
+  };
+
+  return json({ ok: true,
+    health, brief, most_used: mostUsed, flows: CEO_FLOWS,
+    suggestions, closeout_watch: closeoutWatch,
+    suggestion_state: sugState,
+    /* Named so the page can say "no store yet" honestly. */
+    prefs_stored: !(await missingTables(env)).includes('user_pref') });
+}
+
+/* The one CEO write, and it is a PREF write: this user's own suggestion
+   state. The vocabulary is the brief's §15. */
+const CEO_SUG_STATES = ['new', 'reviewed', 'accepted', 'not_now', 'dismissed', 'implemented'];
+async function ceoSuggestionState(request, env, user) {
+  if ((await missingTables(env)).includes('user_pref')) {
+    return json({ error: 'The preference table is not set up yet — run the portal-setup workflow.',
+                  code: 'not_set_up' }, 503);
+  }
+  const body = await readJson(request);
+  const id = String(body.id || '').slice(0, 80);
+  const state = String(body.state || '');
+  if (!id || !CEO_SUG_STATES.includes(state)) {
+    return json({ error: 'Name the suggestion and one of its states.' }, 400);
+  }
+  const cur = (await prefsRow(env, user.id)) || {};
+  const st = cur.suggestion_state && typeof cur.suggestion_state === 'object' ? cur.suggestion_state : {};
+  st[id] = { state, at: nowIso() };
+  /* Bounded like the metrics: the oldest decisions fall out past 200. */
+  const keys = Object.keys(st);
+  if (keys.length > 200) {
+    keys.sort((a, b) => String(st[a].at || '').localeCompare(String(st[b].at || '')));
+    for (const k of keys.slice(0, keys.length - 200)) delete st[k];
+  }
+  cur.suggestion_state = st;
+  await env.DB.prepare(
+    `INSERT INTO user_pref (user_id, prefs, updated_at) VALUES (?1, ?2, ?3)
+     ON CONFLICT(user_id) DO UPDATE SET prefs = ?2, updated_at = ?3`)
+    .bind(user.id, JSON.stringify(cur), nowIso()).run();
+  return json({ ok: true, suggestion_state: st });
 }
 
 /* ------------------------------------------------------- case workspace */
@@ -18245,6 +18489,11 @@ async function route(request, env) {
      the CALLER'S OWN row. */
   if (p === '/me/prefs' && method === 'GET') return readMyPrefs(env, user);
   if (p === '/me/prefs' && method === 'POST') return writeMyPrefs(request, env, user);
+  /* THE CEO BOT — beside the pref routes because that is the only layer it
+     writes. Read is open to both roles (its answers are already role-scoped
+     inside); the one write is this user's own suggestion state. */
+  if (p === '/ceo/insights' && method === 'GET') return ceoInsights(env, user);
+  if (p === '/ceo/suggestion' && method === 'POST') return ceoSuggestionState(request, env, user);
   if (p === '/me/prefs/use' && method === 'POST') return notePrefUse(request, env, user);
 
   if (p === '/my/active' && method === 'GET') return myActiveDay(env, user);

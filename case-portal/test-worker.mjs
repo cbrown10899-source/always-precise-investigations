@@ -20724,6 +20724,123 @@ section('My Portal is per user: one account\'s choices never reach another\'s sc
      (await call(bare, '/me/prefs', { method: 'POST', cookie: bAdmin, body: { hidden: [] } })).status === 503);
 }
 
+section('The CEO Bot observes, recommends, and can execute nothing');
+{
+  const env = freshEnv();
+  env.INGEST_PER_MINUTE = '80';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  /* A paid-no-work case, aged, for the closeout watch. */
+  await ingest(env, { case_no: 'API-CEO-1', service: 'Surveillance',
+    client_name: 'Michelle Fultz', subject_name: 'S' });
+  await env.DB.prepare("UPDATE submissions SET created_at = '2026-08-20T10:00:00.000Z' WHERE case_no = 'API-CEO-1'").run();
+  await call(env, '/cases/API-CEO-1/retainer', { method: 'POST', cookie: admin,
+    body: { retainer_amount: 1500, received: true, amount_received: 1000, method: 'venmo' } });
+
+  let d = await jsonOf(await call(env, '/ceo/insights', { cookie: admin }));
+  ok('the insights read answers with health, brief, flows and watch',
+     d.ok === true && d.health && d.brief && Array.isArray(d.flows), JSON.stringify(Object.keys(d)));
+  ok('the closeout watch finds the paid-no-work case, with its facts in words',
+     d.closeout_watch.length === 1 && d.closeout_watch[0].case_no === 'API-CEO-1'
+     && d.closeout_watch[0].client === 'Michelle Fultz'
+     && d.closeout_watch[0].facts.includes('No investigation day started'),
+     JSON.stringify(d.closeout_watch));
+  ok('and it rides the suggestions as a REVIEW navigation, never an act',
+     d.suggestions.some(s => s.id === 'closeout:API-CEO-1' && s.kind === 'navigate_case'),
+     JSON.stringify(d.suggestions.map(s => s.id)));
+  ok('the daily brief counts the open cases and the recorded retainer',
+     d.brief.open_cases >= 1 && d.brief.retainers_recorded_7d === 1, JSON.stringify(d.brief));
+
+  /* NO UNUSED-FEATURE NAGGING WITHOUT EVIDENCE: a user with no counted taps
+     gets no hide suggestions. */
+  ok('with no usage evidence there is no unused-feature suggestion',
+     !d.suggestions.some(s => s.kind === 'pref_hide'), JSON.stringify(d.suggestions.map(s => s.id)));
+
+  /* Twenty-plus taps that never touch Timestamp Video -> the evidence-based
+     hide suggestion appears, with its why. */
+  for (let i = 0; i < 21; i++) {
+    await call(env, '/me/prefs/use', { method: 'POST', cookie: admin, body: { action: 'qt:sheets' } });
+  }
+  d = await jsonOf(await call(env, '/ceo/insights', { cookie: admin }));
+  const hideSug = d.suggestions.find(s => s.id === 'hide:qt:video');
+  ok('with 21 counted taps and zero on Timestamp Video, the hide suggestion appears',
+     !!hideSug && /have not used/.test(hideSug.why) && /only your own portal/i.test(hideSug.why),
+     JSON.stringify(d.suggestions.map(s => s.id)));
+  /* THE COUNTER MUST ACCEPT WHAT THE PAGE ACTUALLY SENDS. `noteUse` composes
+     "qt:" + the action id, and the allow-list refused the colon — so every
+     quick-action tap 400'd, silently, behind that helper's own empty catch.
+     Pinned as the CONTRACT rather than as a regex: each of the four shapes the
+     page emits is tried, and a hostile name is still refused. */
+  for (const shape of ['qt:sheets', 'qt:photo', 'retainer_paid', 'view_intake']) {
+    ok(`the counter accepts "${shape}" — the shape the page really sends`,
+       (await call(env, '/me/prefs/use', { method: 'POST', cookie: admin,
+         body: { action: shape } })).status === 200, shape);
+  }
+  for (const bad of ['qt:sheets; DROP TABLE user_pref', 'a b', '<script>', '']) {
+    ok(`and still refuses ${JSON.stringify(bad)}`,
+       (await call(env, '/me/prefs/use', { method: 'POST', cookie: admin,
+         body: { action: bad } })).status === 400, bad);
+  }
+  ok('most-used names the rate sheet from this user\'s own counters',
+     d.most_used[0] && d.most_used[0].id === 'qt:sheets' && d.most_used[0].n === 21,
+     JSON.stringify(d.most_used));
+
+  /* NOT NOW sleeps it; DISMISSED keeps it away; both per user. */
+  await call(env, '/ceo/suggestion', { method: 'POST', cookie: admin,
+    body: { id: 'hide:qt:video', state: 'not_now' } });
+  d = await jsonOf(await call(env, '/ceo/insights', { cookie: admin }));
+  ok('Not now takes the suggestion off the list',
+     !d.suggestions.some(s => s.id === 'hide:qt:video'), JSON.stringify(d.suggestions.map(s => s.id)));
+  ok('and the state is on the record with its when',
+     d.suggestion_state['hide:qt:video'].state === 'not_now'
+     && !!d.suggestion_state['hide:qt:video'].at);
+  ok('an invented state is refused',
+     (await call(env, '/ceo/suggestion', { method: 'POST', cookie: admin,
+       body: { id: 'x', state: 'obeyed' } })).status === 400);
+
+  /* A SECOND USER GETS THEIR OWN FINDINGS — Corey's dismissal does not
+     disappear Trever's, and Trever's empty metrics mean no nagging. */
+  const inv3 = await jsonOf(await invite(env, admin,
+    { username: 'brother', role: 'admin', display_name: 'Brother' }));
+  const tok3 = new URL(inv3.url, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok3}/accept`, { method: 'POST', body: { password: 'BrotherPass2026x' } });
+  const bro = (await login(env, 'brother', 'BrotherPass2026x')).cookie;
+  const bd = await jsonOf(await call(env, '/ceo/insights', { cookie: bro }));
+  ok("the second user's suggestion list is their own — no inherited dismissals, no inherited metrics",
+     Object.keys(bd.suggestion_state).length === 0 && bd.most_used.length === 0,
+     JSON.stringify([bd.suggestion_state, bd.most_used]));
+  ok('while the shared closeout watch reaches both admins',
+     bd.closeout_watch.length === 1);
+
+  /* THE SAFETY LINE IS STRUCTURAL: the CEO block holds no case write. The
+     block is parsed, not grepped loosely — from its banner to the panel const. */
+  const wsrc = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+  const blk = wsrc.slice(wsrc.indexOf('THE CEO BOT (owner brief'), wsrc.indexOf('async function caseFor'));
+  ok('the CEO block is a real block', blk.length > 2000, String(blk.length));
+  for (const forbidden of ['sendMail(', 'closeCase(', 'INSERT INTO case_refund',
+                           'INSERT INTO retainer_payment', 'UPDATE submissions',
+                           'DELETE FROM', 'setStage(']) {
+    ok(`the CEO block never calls ${forbidden.trim()}`, !blk.includes(forbidden), forbidden);
+  }
+  ok('its one INSERT target is the preference row',
+     (blk.match(/INSERT INTO (\w+)/g) || []).every(m => m === 'INSERT INTO user_pref'),
+     JSON.stringify(blk.match(/INSERT INTO (\w+)/g)));
+
+  /* An investigator gets their own personal layer and no business brief. */
+  const inv4 = await jsonOf(await invite(env, admin,
+    { username: 'fieldbot', role: 'investigator', display_name: 'Field' }));
+  const tok4 = new URL(inv4.url, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok4}/accept`, { method: 'POST', body: { password: 'FieldWork2026xx' } });
+  const field = (await login(env, 'fieldbot', 'FieldWork2026xx')).cookie;
+  const fd = await jsonOf(await call(env, '/ceo/insights', { cookie: field }));
+  ok('an investigator\'s CEO read carries no business numbers and no closeout watch',
+     Object.keys(fd.brief).length === 0 && fd.closeout_watch.length === 0
+     && !JSON.stringify(fd).includes('Michelle'), JSON.stringify(fd.brief));
+  ok('and signing out closes the door',
+     (await call(env, '/ceo/insights', {})).status === 401);
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));
