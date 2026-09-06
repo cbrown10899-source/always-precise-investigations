@@ -17334,7 +17334,7 @@ section('The send wizard offers the non-refundable amount, on Private only');
      rendering of the same numbers, which is how two screens start disagreeing. */
   await page.locator('#wiz_to').fill('nr-wizard@example.com');
   await page.locator('#wiz_nr').fill('750');
-  await page.locator('.amsheet .btn', { hasText: 'Next' }).click();
+  await page.locator('.amsheet .btn', { hasText: 'Preview' }).click();
   await page.waitForTimeout(700);
   const prevTxt = await page.evaluate(() => {
     const b = document.querySelector('.amsheet .rs-eng');
@@ -17357,7 +17357,7 @@ section('The send wizard offers the non-refundable amount, on Private only');
   ok('the legal wizard offers the retainer control', legalWiz.ret === true);
   ok('and offers NO non-refundable amount', legalWiz.nr === false, JSON.stringify(legalWiz));
   await page.locator('#wiz_to').fill('firm-nr@example.com');
-  await page.locator('.amsheet .btn', { hasText: 'Next' }).click();
+  await page.locator('.amsheet .btn', { hasText: 'Preview' }).click();
   await page.waitForTimeout(700);
   ok('and its preview carries no engagement block at all',
      await page.evaluate(() => !document.querySelector('.amsheet .rs-eng')));

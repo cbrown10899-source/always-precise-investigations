@@ -656,6 +656,78 @@ Three things this found, which is the point of auditing rather than assuming:
   already said "(optional)". The picker opens on *Not decided yet* now; the
   code was made to match the label rather than the other way round.
 
+## The private retainer has a non-refundable portion, and one function knows it
+
+Owner brief 2026-09-05. The private rate sheet now states three things to the
+client — the retainer, the **NON-REFUNDABLE PORTION** in red, and the
+**4-HOUR MINIMUM REQUIRED** in gold — plus one supporting sentence. **No
+percentage and no formula**, by the owner's own display rule.
+
+**`nonRefundableFor(retainer, offered)` in `case-portal/worker.js` is the ONE
+source of truth**, and it is the only thing in the codebase that knows the
+rule. The send, the Assistant rehearsal and the Rate Sheets screen all resolve
+through it — the `agreedRetainer` principle, which exists because four places
+that agree today disagree the first time one is edited.
+
+- **A blank box is not an absent figure.** It resolves to `NON_REFUNDABLE_DEFAULT`
+  ($500, set in one place), because the owner's rule is that the amount *"must
+  NEVER disappear just because I forgot to enter a custom value."*
+- **A typed amount is used exactly**, whatever the retainer.
+- **A retainer under the standard amount caps the portion at itself** — blank on
+  a $300 retainer is $300, not $500.
+- **An amount larger than the retainer is REFUSED BY NAME**
+  (`non_refundable_over_retainer`), never quietly clamped: a portion bigger than
+  the whole is incoherent, and the office typed a figure and is owed the reason
+  it cannot be used. Negative is refused too; **zero is honoured**, because the
+  owner's validation says `>= 0` and typing 0 is a deliberate act in a way an
+  empty box is not.
+
+**THE PAGE HOLDS NO DEFAULT AT ALL.** `/sheets` reports `non_refundable_default`
+and the wizard's placeholder shows it. That is not only tidiness — a test fails
+if any dollar figure appears in `portal/index.html`, so a hard-coded 500 would
+have broken the build as well as forked the rule.
+
+**PRIVATE ONLY, AND STRUCTURALLY SO.** The legal card is built as
+`{...priv, lines:[...priv.lines, MAIL_CHECK_LINE]}`, so **a line added to the
+private PRODUCT arrives on a law firm's sheet by inheritance**. The engagement
+block is therefore added in `sheetCards()` to the private CARD, where the legal
+card cannot pick it up — and the existing "the legal card is the private
+pricing verbatim" pin passed unchanged, which is what confirmed the placement.
+Asking for a non-refundable amount on a legal or insurance send is refused by
+name, the `flat_fee` precedent.
+
+**A LATENT LEAK THIS UNIT ACTIVATED AND HAD TO FIX.** The send wizard resolved
+`w.sheetData` by **sheet id alone**, and three cards share `private_retainer` —
+so a LEGAL wizard had always been reading the PRIVATE card. It was harmless
+while the only field read off it was `name`, which is identical on both, and
+stopped being harmless the moment the private card gained a block a law firm
+must never see. Matched on id **and** context now, which is how
+`sheetWizardHtml` already picked its card; the two agree.
+
+**`RETAINER_PRESETS[0]` WAS DOING TWO JOBS.** It decided both the *Standard*
+label and the selector's opening choice, so adding $1,000 at the front of the
+list — which the owner's brief calls a normal option — would have quietly
+relabelled it and opened every private send on it. `RETAINER_STANDARD` is its
+own name now: **a list's ORDER is a display decision; which figure is standard
+is a pricing fact**, and the two must not be the same expression.
+`PERSONAL.retainer` in the Worker is still the standard and did not move.
+
+**The two colours were measured, not picked.** On the block's `--paper` ground
+the red (`--bad`) is **4.73:1** and the gold (`--gold-ink`) **5.84:1**, both
+clear of AA. On `--neutral-bg` — the obvious first choice — the red is **4.30**
+and would have shipped a *prominent* statement that fails the line, which is
+worse than a quiet one. The suite measures both ratios in the browser rather
+than asserting a colour name. Do not restyle this onto a darker ground without
+re-running that.
+
+**There is no rate-sheet PDF or print path in this portal, and none was
+invented.** The brief listed one; the document is the EMAIL. Print regions
+exist for the invoice, package, report, timeline and manifest only. The paths
+that do exist — the Rate Sheets card, the send wizard's preview, the Assistant
+workbench, the rehearsal and the real send — are held together by the preview's
+body being **byte-identical** to what the send emails, rather than by three
+assertions that each check a number.
+
 ## The legal intake is the private pricing path wearing a firm's name
 
 Unit 6 (owner brief verbatim in `case-portal/LEGAL-INTAKE.md`, derived

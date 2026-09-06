@@ -2641,6 +2641,13 @@ function retainerEnter(caseNo){
 let PAY_MSG = "";
 let PAY_ERR = false;
 let SUMMARY = null, SHEETS = [], SHEET_MAIL = "", OPEN_SHEET = null, SHEET_MSG = "";
+/* WHAT A BLANK NON-REFUNDABLE BOX MEANS, as the Worker reports it. Held beside
+   SHEETS because the wizard's placeholder needs it the moment it opens, and
+   `wizSheetLoad` returns early on a send with no case and no chosen retainer —
+   which is the commonest way the wizard is opened. Null until /sheets has
+   answered; the placeholder is simply empty until then rather than guessing,
+   and no figure is written into this file. */
+let SHEETS_NR_DEFAULT = null;
 /* Three states, not two: an empty SHEETS is both "never loaded" and "failed",
    and the view drew both as a spinner that never resolves. */
 let SHEETS_OK = false, SHEETS_ERR = "";
@@ -6979,18 +6986,22 @@ async function wizFeeSave(){
    No figure is written in this file, here or anywhere else — a guard test fails
    on a dollar amount in the portal HTML, and these presets are numbers the
    `money()` helper decorates at render time. */
-/* A THOUSAND WAS ADDED 2026-09-05, because the owner's non-refundable brief
-   calls it a "normal Private retainer option" and it was reachable only by
-   typing it into Custom. `PERSONAL.retainer` in the Worker is unchanged and is
-   still the STANDARD; this list is only what the selector offers in one tap.
+/* THE OWNER'S FOUR CHOICES, STANDARD FIRST — an approved list, and it did NOT
+   change for the non-refundable brief. That brief calls a thousand a "normal
+   Private retainer option", and I added it here; the suite refused, correctly,
+   because "the owner's four choices, standard first" is a decision this list
+   already carries. The rule works on any figure — a thousand typed into Custom
+   resolves exactly as a preset would, and the tests prove that case — so
+   changing an approved selector on an inference was scope this brief did not
+   ask for. It is a question for the owner, not a keystroke.
 
-   STANDARD IS ITS OWN NAME NOW, NOT POSITION ZERO. It used to be
-   `RETAINER_PRESETS[0]` — which decided both the label and the selector's
-   opening choice — so putting a smaller figure at the front of the list would
-   have quietly relabelled it "Standard" and opened every send on it. A list's
-   ORDER is a display decision; which figure is standard is a pricing fact, and
-   the two must not be the same expression. */
-const RETAINER_PRESETS = [1000, 1500, 2000, 3000];
+   STANDARD IS ITS OWN NAME NOW, AND THAT PART STAYS. It used to be
+   `RETAINER_PRESETS[0]`, which decided both the *Standard* label and the
+   selector's opening choice — so reordering the list for any reason would have
+   silently moved which figure the office is told is standard. A list's ORDER
+   is a display decision; which figure is standard is a pricing fact, and the
+   two must not be the same expression. */
+const RETAINER_PRESETS = [1500, 2000, 3000];
 const RETAINER_STANDARD = 1500;
 
 /* Null means "not a usable amount", which is how the caller distinguishes an
@@ -7040,7 +7051,8 @@ function wizNonRefHtml(w){
   return `<label class="f" style="margin:8px 0 0"><span>Custom non-refundable amount ($)
       <span class="opt">(optional)</span></span>
     <input id="wiz_nr" inputmode="decimal" data-act-input="wizNrDirty"
-      placeholder="${esc(w.nrDefault != null ? String(w.nrDefault) : "")}"
+      placeholder="${esc(w.nrDefault != null ? String(w.nrDefault)
+        : SHEETS_NR_DEFAULT != null ? String(SHEETS_NR_DEFAULT) : "")}"
       value="${esc(w.nonRef || "")}">
     <span class="hint">Leave it blank and the sheet carries the standard non-refundable
       amount &mdash; it is never dropped for being empty. It can never be more than the
@@ -12870,6 +12882,7 @@ async function render(){
     })());
     jobs.push((async () => {
       try{ const d = await api("/sheets"); SHEETS = d.sheets; SHEETS_OK = true; SHEETS_ERR = "";
+           if(d.non_refundable_default != null) SHEETS_NR_DEFAULT = d.non_refundable_default;
         BILLCOM_READY = !!d.billcom_ready;
            LEGAL_SVCS = d.legal_services || []; }
       catch(e){ SHEETS = []; SHEETS_OK = false; SHEETS_ERR = e.message; }
