@@ -3588,6 +3588,53 @@ exactly one capture. Every preset seeded `""` until the suite caught it.
 **Adding `case_closeout_detail` and `user_pref` means a manual
 `portal-setup.yml` dispatch after merge.**
 
+## The CEO Bot is advice, and the Assistant is operations
+
+Owner brief 2026-09-06, wired 2026-09-06; design and findings in
+`case-portal/CEO-BOT.md`. **Two products, two doors, two colours.** The API
+Assistant is CASE OPERATIONS — navy/teal, the dock on the right, the ✨ pill
+bottom-right on a phone, and it can execute the three sends through the
+ordinary routes. The **CEO Bot** is PORTAL / WORKFLOW improvement — navy/GOLD,
+its own rail button, its own fab bottom-**LEFT**, and it executes nothing.
+
+**READ-ONLY / RECOMMENDATION-FIRST, structurally.** The block has exactly two
+routes: `GET /ceo/insights` and `POST /ceo/suggestion`, and the second writes
+one thing — this user's own suggestion state, inside the existing `user_pref`
+blob. **No new table, so this unit needed no portal-setup dispatch.** The panel
+carries no case-write control at all: the strongest verb in it is *Review*,
+which is a navigation into the ordinary portal where the ordinary confirmations
+still stand. A test counts the write-shaped verbs in the rendered drawer and
+requires zero.
+
+**THE GATE DETECTS, THE BOT DISPLAYS.** `CEO_GATE_SUMMARY` in `worker.js` is a
+literal the Health tab prints, and `portal/test-ceo-gate.mjs` **asserts its own
+fresh totals against it and fails on drift**, naming the numbers to paste.
+Without that the tab is a number somebody typed once, and it would go on reading
+*"0 critical dead ends in the last release gate"* through the release that
+introduced the first one.
+
+**THE SELF-CHECK MUST RUN BEFORE THE SUMMARY IS DERIVED.** Placed after
+`const fails = findings.filter(...)`, its own FAIL landed in `findings` while
+the summary counted a snapshot taken before it — the run printed `0 FAIL`, exited
+0, and the real failure sat in the JSON nobody reads. Anything that can fail has
+to fail into the count the run actually prints.
+
+**A RECOMMENDATION IS ONLY AS HONEST AS THE MEASUREMENT BEHIND IT.** Wiring the
+Bot exposed that `notePrefUse` refused every `qt:`-prefixed action with a 400 —
+the allow-list had no colon, and `noteUse` is fire-and-forget behind its own
+empty catch, so nothing ever said so. The counters that DID work would have made
+the quick actions look untouched, and the Unused Feature Watch would have
+recommended hiding controls the owner uses daily with *"you have not used this
+once"* as the stated evidence. The contract is pinned now — the four shapes the
+page really emits, and four hostile names still refused.
+
+**A GATE THAT CRIES WOLF IS WORSE THAN NO GATE.** Two of its first findings were
+its own: an invented intake selector, and a signature drawn without
+`scrollIntoViewIfNeeded()` — at a phone viewport the canvas is below the fold and
+the pointer event is lost, which `intake/test-intake.mjs` already recorded in its
+own helper. It reported the PRODUCT as failing to deliver an intake it had never
+managed to submit.
+
 ## A refund is its own event, and the original payment is never touched
 
 Owner brief 2026-09-06, derived decisions D1–D9 in

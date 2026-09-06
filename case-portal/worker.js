@@ -6235,7 +6235,7 @@ async function notePrefUse(request, env, user) {
    a gated fact, not a hope. Update it by running the gate and copying what it
    prints when it drifts. */
 const CEO_GATE_SUMMARY = {
-  ran: '2026-09-06', pass: 0, warn: 0, fail: 0,   // the gate overwrites-checks this
+  ran: '2026-09-06', pass: 43, warn: 0, fail: 0,
   notes: 'Run node portal/test-ceo-gate.mjs before a release; it fails if this drifts.',
 };
 

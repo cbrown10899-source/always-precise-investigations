@@ -283,7 +283,11 @@ for (const door of ['', '?assignment=private', '?assignment=legal', '?assignment
   await step();
   await pg.locator('[data-k="s_name"]').fill('Subject Person');
   await step();
-  await pg.locator('[data-k="objective"]').fill('Document activity overnight');
+  /* THE KEY IS `o_goal`. Probed against the real wizard rather than guessed:
+     the private door's steps are c_name/c_phone → the service picker →
+     s_name → o_goal → the agreement, and a gate that walks a form by
+     invented selectors is a gate that reports on a form nobody ships. */
+  await pg.locator('[data-k="o_goal"]').fill('Document activity overnight');
   await step();
   for (let i = 0; i < 3; i++) {
     const sig = pg.locator('#sig');
@@ -297,15 +301,32 @@ for (const door of ['', '?assignment=private', '?assignment=legal', '?assignment
     path: 'Private door, fill name+phone, pick first service, subject, objective, Continue.',
     fix: 'Walk the wizard and find the step that refused.', who: 'client' });
   if (await sig.count()) {
+    /* SCROLL THE CANVAS INTO VIEW FIRST. `intake/test-intake.mjs` already
+       carries the reason in its own helper — at a phone viewport the canvas
+       sits below the fold and a pointer event outside the viewport is simply
+       lost — and this gate did not inherit it. The strokes went nowhere, the
+       form said "Please sign in the box above", the submit never fired, and
+       the gate reported the PRODUCT as failing to deliver the intake.
+
+       A gate that cries wolf is worse than no gate: it is the one report the
+       owner is meant to trust about dead ends, and its first finding would
+       have been a dead end it caused itself. Both halves of the agreement are
+       filled by their own keys now rather than by "the first checkbox". */
+    await sig.scrollIntoViewIfNeeded();
+    await pg.waitForTimeout(60);
     const box = await sig.boundingBox();
-    await pg.mouse.move(box.x + 20, box.y + 20);
+    await pg.mouse.move(box.x + 30, box.y + 90);
     await pg.mouse.down();
-    await pg.mouse.move(box.x + 120, box.y + 60, { steps: 4 });
+    await pg.mouse.move(box.x + 120, box.y + 60);
+    await pg.mouse.move(box.x + 200, box.y + 100);
     await pg.mouse.up();
-    const agree = pg.locator('input[type=checkbox]').first();
+    await pg.waitForTimeout(60);
+    const agree = pg.locator('[data-k="a_consent"]');
     if (await agree.count()) await agree.check();
+    const typed = pg.locator('[data-k="a_typed"]');
+    if (await typed.count()) await typed.fill('Overnight Client');
     await pg.locator('.btn.primary').click();
-    await pg.waitForTimeout(900);
+    await pg.waitForTimeout(1200);
     const confirm = await pg.evaluate(() => document.body.innerText);
     gate('intake:confirmation', /request number|case/i.test(confirm)
       && /Return to Always Precise/i.test(confirm), 'FAIL', {
@@ -448,6 +469,44 @@ globalThis.fetch = realFetch;
 await browser.close();
 server.close();
 
+/* ==================== THE GATE ANSWERS FOR THE BOT =========================
+
+   The CEO Bot's Health tab prints `CEO_GATE_SUMMARY` from `case-portal/
+   worker.js`. That is a LITERAL, so on its own it is a number somebody typed
+   once — and the tab would go on reading "0 critical dead ends in the last
+   release gate" forever, including the release that introduced the first one.
+
+   So the gate is the writer's check: it compares its own fresh totals against
+   that literal and FAILS on drift, naming what to paste. "The gate detects,
+   the Bot displays" (brief §7) only means anything if this runs. */
+{
+  const wsrc = fs.readFileSync(path.join(ROOT, 'case-portal/worker.js'), 'utf8');
+  const m = wsrc.match(/const CEO_GATE_SUMMARY = \{\s*ran: '([^']+)',\s*pass: (\d+), warn: (\d+), fail: (\d+)/);
+  const claimed = m ? { pass: +m[2], warn: +m[3], fail: +m[4] } : null;
+  /* COUNTED FROM `findings` DIRECTLY, because this check runs BEFORE `fails`
+     and `warns` are derived — and it has to. Placed after them, its own FAIL
+     landed in `findings` while the summary counted a snapshot taken before it:
+     the run printed 0 FAIL and exited 0 with a real failure in the report.
+     A check whose result cannot reach the summary is a check that is not
+     running, and it took the JSON to see it.
+
+     `passes + 1` counts the pass this is about to record. */
+  const real = { pass: passes + 1,
+    warn: findings.filter(f => f.sev === 'WARN').length,
+    fail: findings.filter(f => f.sev === 'FAIL').length };
+  const agrees = !!claimed && claimed.pass === real.pass
+    && claimed.warn === real.warn && claimed.fail === real.fail;
+  gate('gate:bot-summary-current', agrees, 'FAIL', {
+    what: 'The CEO Bot Health tab states gate totals this run does not agree with'
+        + ` — it claims ${claimed ? JSON.stringify(claimed) : 'nothing readable'},`
+        + ` this run measured ${JSON.stringify(real)}.`,
+    why: 'The Bot would tell the owner the portal is healthier (or worse) than it is, '
+       + 'in the one panel written to answer that question.',
+    path: 'node portal/test-ceo-gate.mjs, then read CEO_GATE_SUMMARY in worker.js.',
+    fix: `Set CEO_GATE_SUMMARY to { pass: ${real.pass}, warn: ${real.warn}, fail: ${real.fail} }.`,
+    who: 'owner' });
+}
+
 const fails = findings.filter(f => f.sev === 'FAIL');
 const warns = findings.filter(f => f.sev === 'WARN');
 console.log('CEO UX GATE');
@@ -460,6 +519,7 @@ for (const f of findings) {
   console.log(`        fix:  ${f.fix}`);
   console.log(`        affects: ${f.who}`);
 }
+
 console.log(`\n${passes} PASS, ${warns.length} WARN, ${fails.length} FAIL`);
 /* The machine-readable copy, for the CEO Bot's Health tab. */
 fs.writeFileSync(path.join(HERE, 'ceo-gate-report.json'), JSON.stringify({
