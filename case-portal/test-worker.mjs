@@ -19647,6 +19647,162 @@ section('Assistant: sending is live for exactly three products, and for nothing 
   globalThis.fetch = realFetch;
 }
 
+/* ============================================================================
+   THE NON-REFUNDABLE PORTION OF A PRIVATE RETAINER (owner brief 2026-09-05).
+
+   The owner's own seven cases, asserted against the RENDERED EMAIL rather than
+   against the resolver, because what matters is the figure a client reads. The
+   rule has ONE implementation (`nonRefundableFor`) and these prove that the
+   send, the rehearsal and the screen all reach it.
+   ========================================================================= */
+section('The private rate sheet carries a non-refundable portion, from one source');
+{
+  const realFetch = globalThis.fetch;
+  let mailed = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) { mailed = JSON.parse(init.body); return new Response('{"id":"re_1"}', { status: 200 }); }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.INGEST_PER_MINUTE = '50';
+  env.MAIL_PER_MINUTE = '80';
+  env.RESEND_API_KEY = 'test-resend-key';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const send = body => call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin, body });
+  const prep = body => call(env, '/assistant/prepare-sheet',
+    { method: 'POST', cookie: admin, body });
+  /* The whole document, both parts, so a figure cannot hide in the half the
+     assertion did not look at. */
+  const both = () => `${mailed.text}\n${mailed.html}`;
+
+  /* ---- 1 & 2. A BLANK BOX IS NOT AN ABSENT FIGURE. The owner's rule in their
+     own words: it must never disappear because they forgot to type one. ---- */
+  mailed = null;
+  let r = await jsonOf(await send({ to: 'a@example.com', retainer_amount: 1000 }));
+  ok('a $1,000 retainer with a blank custom amount carries the standard $500',
+     r.non_refundable === 500 && /NON-REFUNDABLE PORTION: \$500/.test(both()),
+     JSON.stringify(r.non_refundable));
+  ok('and the retainer it is a portion of is stated beside it',
+     /Retainer: \$1,000/.test(both()));
+  mailed = null;
+  r = await jsonOf(await send({ to: 'b@example.com', retainer_amount: 1500 }));
+  ok('a $1,500 retainer with a blank custom amount carries the standard $500 too',
+     r.non_refundable === 500 && /NON-REFUNDABLE PORTION: \$500/.test(both()));
+
+  /* ---- 3. AN EXPLICIT AMOUNT IS USED EXACTLY. ---- */
+  mailed = null;
+  r = await jsonOf(await send({ to: 'c@example.com', retainer_amount: 1500, non_refundable: 750 }));
+  ok('a custom $750 on a $1,500 retainer carries $750, and the $500 default is nowhere on it',
+     r.non_refundable === 750 && /NON-REFUNDABLE PORTION: \$750/.test(both())
+     && !/\$500/.test(both()), both().slice(0, 0) || String(r.non_refundable));
+
+  /* ---- 4 & 5. A CUSTOM RETAINER KEEPS THE FIELD. ---- */
+  mailed = null;
+  r = await jsonOf(await send({ to: 'd@example.com', retainer_amount: 2000 }));
+  ok('a custom $2,000 retainer with a blank amount still carries $500',
+     r.non_refundable === 500 && /NON-REFUNDABLE PORTION: \$500/.test(both()));
+  mailed = null;
+  r = await jsonOf(await send({ to: 'e@example.com', retainer_amount: 2000, non_refundable: 900 }));
+  ok('a custom $2,000 retainer with a custom $900 carries $900',
+     r.non_refundable === 900 && /NON-REFUNDABLE PORTION: \$900/.test(both()));
+
+  /* ---- 6. THE CAP IS PART OF THE RULE. An amount larger than the retainer it
+     is a portion of is incoherent, so it is REFUSED BY NAME rather than
+     silently clamped — the office typed a figure and is owed the reason. ---- */
+  mailed = null;
+  let res = await send({ to: 'f@example.com', retainer_amount: 1500, non_refundable: 2000 });
+  let j = await jsonOf(res);
+  ok('a non-refundable amount larger than the retainer is refused, by name',
+     res.status === 400 && j.code === 'non_refundable_over_retainer'
+     && /larger than the/.test(j.error), JSON.stringify(j).slice(0, 160));
+  ok('and nothing was emailed on that attempt', mailed === null);
+  res = await send({ to: 'f@example.com', retainer_amount: 1500, non_refundable: -5 });
+  ok('a negative amount is refused too',
+     res.status === 400 && (await jsonOf(res)).code === 'bad_non_refundable');
+  ok('and still nothing was emailed', mailed === null);
+
+  /* ---- THE SMALL-RETAINER EDGE the owner named: blank defaults to $500
+     "unless the retainer itself is less than $500". ---- */
+  mailed = null;
+  r = await jsonOf(await send({ to: 'g@example.com', retainer_amount: 300 }));
+  ok('a retainer under the standard amount caps the portion at the retainer itself',
+     r.non_refundable === 300 && /NON-REFUNDABLE PORTION: \$300/.test(both()));
+  /* Zero is a deliberate act in a way an empty box is not, and the owner's own
+     validation says ">= 0" — so it is honoured and printed truthfully. */
+  mailed = null;
+  r = await jsonOf(await send({ to: 'h@example.com', retainer_amount: 1500, non_refundable: 0 }));
+  ok('an explicit zero is honoured — typing 0 is not the same as leaving it blank',
+     r.non_refundable === 0 && /NON-REFUNDABLE PORTION: \$0/.test(both()));
+
+  /* ---- 7. ONE FIGURE ACROSS EVERY PATH. There is no rate-sheet PDF in this
+     portal — the email IS the document — so the paths that exist are the
+     screen, the rehearsal and the send, and they are held together byte for
+     byte rather than by three assertions that each check a number. ---- */
+  mailed = null;
+  const previewed = await jsonOf(await prep({ id: 'private_retainer', to: 'i@example.com',
+    send_context: 'private', retainer_amount: 1500, non_refundable: 750 }));
+  ok('the Assistant rehearsal resolves the same figure', previewed.non_refundable === 750);
+  await send({ to: 'i@example.com', retainer_amount: 1500, non_refundable: 750 });
+  ok('and its body is byte-identical to what the send actually emailed',
+     previewed.body_text === mailed.text, previewed.subject);
+  const screen = await jsonOf(await call(env, '/sheets?retainer=1500&nr=750', { cookie: admin }));
+  const privCard = screen.sheets.find(c => c.key === 'private');
+  ok('the Rate Sheets screen resolves it through the same function',
+     screen.non_refundable === 750 && privCard.non_refundable === 750);
+  ok('and the card carries the exact client-facing statement the email carries',
+     privCard.engagement.lines.some(l => l.text === 'NON-REFUNDABLE PORTION: $750'
+       && l.tone === 'alert'),
+     JSON.stringify(privCard.engagement.lines));
+  ok('the screen also states what a blank box would mean, so the page holds no default',
+     screen.non_refundable_default === 500);
+  ok('the block says the minimum out loud, and marks it for the gold treatment',
+     privCard.engagement.lines.some(l => /4-HOUR MINIMUM REQUIRED/.test(l.text)
+       && l.tone === 'emphasis'));
+  ok('and it carries the owner\'s supporting sentence, with no percentage or formula',
+     /non-refundable upon engagement and reservation of investigative services/
+       .test(privCard.engagement.note)
+     && !/%/.test(JSON.stringify(privCard.engagement)));
+
+  /* ---- 8. PRIVATE ONLY. The legal card IS the private product wearing a
+     different label, so this is the one that could leak by inheritance. ---- */
+  const legalCard = screen.sheets.find(c => c.key === 'legal');
+  const insCard = screen.sheets.find(c => c.key === 'insurance');
+  ok('the LEGAL card has no engagement block at all — not an empty one, none',
+     legalCard && legalCard.engagement === undefined);
+  ok('nor does the insurance card', insCard && insCard.engagement === undefined);
+  ok('and no non-refundable wording reaches either of them',
+     !/NON-REFUNDABLE/i.test(JSON.stringify(legalCard))
+     && !/NON-REFUNDABLE/i.test(JSON.stringify(insCard)));
+  mailed = null;
+  await send({ to: 'firm@example.com', send_context: 'legal', retainer_amount: 1500 });
+  ok('a legal send emails no non-refundable portion',
+     mailed !== null && !/NON-REFUNDABLE/i.test(both()));
+  mailed = null;
+  await call(env, '/sheets/insurance_assignment/email',
+    { method: 'POST', cookie: admin, body: { to: 'adj@example.com' } });
+  ok('an insurance send emails none either',
+     mailed !== null && !/NON-REFUNDABLE/i.test(both()));
+  res = await send({ to: 'firm@example.com', send_context: 'legal',
+                     retainer_amount: 1500, non_refundable: 750 });
+  ok('and asking for one on a legal send is refused BY NAME, never quietly dropped',
+     res.status === 400 && (await jsonOf(res)).code === 'non_refundable_not_private',
+     JSON.stringify(await jsonOf(res)).slice(0, 140));
+
+  /* ---- WHAT MUST NOT HAVE MOVED. ---- */
+  ok('the 4-hour minimum is still on the private sheet\'s own lines',
+     privCard.lines.some(l => /4-hour minimum/i.test(`${l.sub} ${l.note}`)));
+  mailed = null;
+  r = await jsonOf(await send({ to: 'j@example.com', send_context: 'legal',
+    legal_service: 'process', flat_fee: 375 }));
+  ok('a legal FIXED-FEE send is untouched — its own document, its own figure',
+     r.flat_fee === 375 && /375/.test(both()) && !/NON-REFUNDABLE/i.test(both())
+     && !/retainer/i.test(mailed.text));
+
+  globalThis.fetch = realFetch;
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));
