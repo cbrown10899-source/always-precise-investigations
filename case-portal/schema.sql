@@ -537,6 +537,20 @@ CREATE INDEX IF NOT EXISTS idx_refund_case ON case_refund(case_no, id);
 --
 -- `emailed_at` is what makes a second send a deliberate act rather than a
 -- double tap: the route refuses to send again unless it is explicitly asked.
+-- The refund's STATE, in the owner's own vocabulary (CEO charter 2026-09-06,
+-- Mission 9: "requested" and "completed" are NOT interchangeable). A row in
+-- case_refund is the record of a refund COMPLETED outside the portal; this
+-- table carries the chosen word and the date for everything short of that.
+-- A side table rather than columns on case_closeout, because that table is
+-- already on the live database and CREATE TABLE IF NOT EXISTS cannot widen it.
+CREATE TABLE IF NOT EXISTS case_refund_status (
+  case_no     TEXT PRIMARY KEY,
+  status      TEXT,
+  refund_date TEXT,
+  set_by      INTEGER REFERENCES users(id),
+  set_at      TEXT
+);
+
 CREATE TABLE IF NOT EXISTS case_closeout (
   case_no      TEXT PRIMARY KEY,
   retained     REAL,
