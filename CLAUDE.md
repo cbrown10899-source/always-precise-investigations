@@ -3567,8 +3567,26 @@ charter's noise list), each returnable per user in Settings → My Portal; the
 Worker's counts and routes are untouched. Usage metrics count through
 `/me/prefs/use` — fire-and-forget, capped, the user's own.
 
-**Adding `case_refund_status` and `user_pref` means a manual `portal-setup.yml`
-dispatch after merge.**
+**THE PORTAL NEVER PROCESSES A REFUND** (the owner's superseding
+clarification): it documents what the owner did outside it. A `case_refund`
+row is only ever a refund *completed outside the portal*; `case_closeout_detail`
+carries the status word, the work-performed statement and the custom reason.
+The statement prints **"Refund completed outside portal"**, never "issued".
+
+**The work statement is SUGGESTED, never invented** — a case with no day and
+no activity opens the form on *No work performed*, said out loud as a
+suggestion; a case with a real day suggests nothing. `closeoutReasonLabel` is
+the one reader of the printed reason: the id's label, or for *Other* the
+owner's own typed words. The internal note never prints.
+
+**A PROGRAMMATIC SEED MUST SURVIVE THE RENDER-TIME CAPTURE.** The capture
+protects what a PERSON typed, but reads the OLD inputs — so a draft written by
+code (a preset, an Assistant prefill) followed by a paint was overwritten by
+the stale DOM it was about to replace. `fcSeed` writes the draft and skips
+exactly one capture. Every preset seeded `""` until the suite caught it.
+
+**Adding `case_closeout_detail` and `user_pref` means a manual
+`portal-setup.yml` dispatch after merge.**
 
 ## A refund is its own event, and the original payment is never touched
 
