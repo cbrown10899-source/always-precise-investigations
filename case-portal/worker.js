@@ -1577,7 +1577,9 @@ async function sendLeadIntake(request, env, user, caseNo) {
   await logSend(env, user, { case_no: caseNo, kind: 'intake', door: intake.url,
     recipient: to, ok: 1 });
   await stampLead(env, user, caseNo, 'intake_sent');
-  return json({ ok: true, sent_to: to, intake: intake.label, send_context: context,
+  const rec = await ownerRecordCopy(env, 'intake', {
+    to, case_no: caseNo, context, version: intake.label, intake_label: intake.label });
+  return json({ ok: true, sent_to: to, intake: intake.label, send_context: context, ...rec,
                 lead_status: (await env.DB.prepare(
                   'SELECT status FROM lead_status WHERE case_no = ?').bind(caseNo).first() || {}).status });
 }
@@ -1696,8 +1698,10 @@ async function sendPreCaseIntake(request, env, user) {
     recipient: to, ok: 1 });
   /* The context is returned so it is observable rather than merely believed —
      the tests assert on it, and it can never be a payment-carrying one here. */
+  const rec = await ownerRecordCopy(env, 'intake', {
+    to, context, version: intake.label, intake_label: intake.label });
   return json({ ok: true, sent_to: to, intake: intake.label, case_no: null,
-                send_context: context });
+                send_context: context, ...rec });
 }
 
 async function emailSheet(request, env, user, id) {
@@ -2087,8 +2091,30 @@ async function emailSheet(request, env, user, id) {
   /* §13 — the confirmation lists exactly what WENT. Read back from the record
      of the send rather than echoed from the request, and note that sending
      instructions says nothing whatever about the retainer being paid. */
+  /* THE OFFICE'S OWN COPY. After the client's document has gone and after
+     `send_log` has recorded it, so it can never cost the send; it does not
+     throw, and its outcome rides on the response rather than being swallowed.
+     Empty configuration means nothing is sent and this reports why. */
+  let recClient = '';
+  try { recClient = caseSub ? (JSON.parse(caseSub.payload || '{}').client_name || '') : ''; }
+  catch { recClient = ''; }
+  const rec = await ownerRecordCopy(env, 'rate_sheet', {
+    to, client: recClient, case_no: linkedCase || caseNo || '',
+    context: sendCtx, version: sheet.name,
+    /* PRIVATE ONLY, the boundary these three figures already live behind:
+       there is no retainer, no non-refundable portion and no hourly minimum
+       on a carrier or a law firm's send, and a record copy naming one would
+       be the office's own file asserting something untrue. */
+    retainer: sendCtx === SEND_CONTEXT.PRIVATE ? retainer : undefined,
+    non_refundable: sendCtx === SEND_CONTEXT.PRIVATE ? nonRef.amount : undefined,
+    minimum: sendCtx === SEND_CONTEXT.PRIVATE ? `${PERSONAL.minHours} hours` : undefined,
+    flat_fee: flatFee != null ? flatFee : undefined,
+    intake_included: includeIntake,
+    intake_label: intakeDoor ? intakeDoor.label : '',
+    payment: (npPicked.length ? npPicked : payment.map(x => x.id)).join(', '),
+  });
   return json({ ok: true, sent_to: to, sheet: sheet.id,
-    send_context: sendCtx,
+    send_context: sendCtx, ...rec,
     /* The figure the document actually carried, so the screen, the record and
        the client cannot quietly disagree — the `legal_service` / `flat_fee`
        rule applied to the third per-send figure. Absent on a non-private send,
@@ -2279,8 +2305,11 @@ async function emailPaymentOptions(request, env, user) {
 
   // RULE 2, said out loud in the answer the page shows. The context is stated
   // too: this route is PRIVATE by construction and can be nothing else.
+  const rec = await ownerRecordCopy(env, 'payment_options', {
+    to, case_no: linkedCase || '', context: SEND_CONTEXT.PRIVATE,
+    payment: payment.map(x => x.label).join(', ') });
   return json({ ok: true, sent_to: to, retainer_marked_paid: false,
-    send_context: SEND_CONTEXT.PRIVATE,
+    send_context: SEND_CONTEXT.PRIVATE, ...rec,
     included: { payment_methods: payment.map(x => ({ id: x.id, label: x.label })) } });
 }
 
@@ -9846,6 +9875,14 @@ const BILLING_DEFAULTS = {
      SNAPSHOTS the fee in force onto the case (snapshotFixedFee) and a stored
      figure always wins. */
   process_fee_default: '',
+  /* THE OWNER'S RECORD COPY (owner brief 2026-09-06). EMPTY ON PURPOSE, the
+     `remit_address` precedent: no personal address is hardcoded anywhere,
+     nothing seeds or derives one, and with this blank NOTHING IS SENT and
+     nothing anywhere changes. The owner types the business address in
+     Settings -> Billing and every rate sheet, intake request and set of
+     payment instructions the portal sends is copied to the office from then
+     on. See `ownerRecordCopy`. */
+  owner_record_email: '',
 };
 
 async function billingSettings(env) {
@@ -14845,6 +14882,99 @@ async function sendMail(env, { to, subject, text, html }) {
   } catch (e) {
     console.error('email failed', e && e.message ? e.message : e);
     return { sent: false, reason: 'unreachable' };
+  }
+}
+
+/* ===== THE OWNER'S RECORD COPY (owner brief 2026-09-06) ====================
+
+   "Whenever the portal sends a Rate Sheet, an Intake request or payment
+   instructions, automatically send the business a RECORD COPY. Corey should
+   not have to remember to CC himself."
+
+   FOUR DECISIONS THIS ENCODES.
+
+   1 — IT IS A SEPARATE MESSAGE, NOT A BCC. A blind copy would be byte for
+   byte what the client got, and the brief asks the record to identify the
+   amount, the non-refundable portion, the four-hour minimum, whether an
+   intake rode along and exactly which document version went. None of that is
+   in the client's copy, and some of it must not be. So the office gets an
+   internal summary that names the client's copy rather than duplicating it.
+
+   2 — THE ADDRESS IS CONFIGURATION AND STARTS EMPTY. `billing_owner_record_email`
+   in `app_config`, the `remit_address` precedent: no personal address is
+   hardcoded anywhere, nothing is seeded or derived, and with the box empty
+   NOTHING IS SENT AND NOTHING CHANGES. That is also why every existing
+   assertion counting one message after a send still counts one.
+
+   3 — IT CAN NEVER COST THE SEND. It runs after the client's copy has gone
+   and after `send_log` has recorded it; it cannot throw, and its failure is
+   REPORTED (`record_copy: false` with a reason) rather than swallowed or
+   allowed to turn a delivered document into an error. The `notifyAdmins`
+   rule, and the Unit 11 rule about a record that failed to write.
+
+   4 — IT IS NOT A SECOND SEND IN THE HISTORY. `send_log.kind` carries
+   `CHECK (kind IN ('rate_sheet','intake'))` and widening a CHECK is the
+   non-idempotent rebuild `schema.sql` cannot do — but the deeper reason is
+   that the office was not sent a rate sheet, the client was. One send, one
+   row, and the copy is observable on the response instead.
+
+   The recipient is the FIRM'S OWN address, so unlike the Web3Forms relay
+   there is no boundary here to widen: the office may be told everything
+   about its own send. */
+const RECORD_DOC = {
+  rate_sheet: 'Rate sheet',
+  intake: 'Intake request',
+  payment_options: 'Payment instructions',
+};
+
+async function ownerRecordCopy(env, kind, facts) {
+  try {
+    const cfg = await billingSettings(env);
+    const to = String(cfg.owner_record_email || '').trim();
+    if (!to) return { record_copy: false, record_reason: 'not_configured' };
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      return { record_copy: false, record_reason: 'invalid_address' };
+    }
+    const doc = RECORD_DOC[kind] || 'Document';
+    const f = facts || {};
+    /* Every line is a fact the send already resolved. A value that does not
+       apply is ABSENT rather than "N/A" — the intake form's own rule, applied
+       to the office's own paperwork. */
+    const rows = [
+      ['Document', doc],
+      ['Sent to', f.to || ''],
+      ['Client', f.client || ''],
+      ['Case', f.case_no || ''],
+      ['Business', f.context || ''],
+      ['Version', f.version || ''],
+      ['Retainer', f.retainer != null ? usd(f.retainer) : ''],
+      ['Non-refundable portion', f.non_refundable != null ? usd(f.non_refundable) : ''],
+      ['Minimum engagement', f.minimum || ''],
+      ['Flat fee', f.flat_fee != null ? usd(f.flat_fee) : ''],
+      ['Intake included', f.intake_included == null ? '' : (f.intake_included ? 'Yes' : 'No')],
+      ['Intake form', f.intake_label || ''],
+      ['Payment instructions', f.payment || ''],
+      ['Sent at', nowIso()],
+    ].filter(r => String(r[1] || '').trim() !== '');
+    const subject = `RECORD COPY — ${doc} sent to ${f.to || 'a client'}`;
+    const text = [`${doc.toUpperCase()} — RECORD COPY`, '',
+      'This is the office\'s own record of a document the portal sent. The client received',
+      'their own copy; this message is not a second send and is not in the send history.', '',
+      ...rows.map(([k, v]) => `${k}: ${v}`)].join('\n');
+    const html = `<div style="font-family:Segoe UI,system-ui,Arial,sans-serif;color:#1c2531">
+      <h2 style="margin:0 0 4px;font-size:17px">${escHtml(doc)} &mdash; record copy</h2>
+      <p style="margin:0 0 14px;color:#5c6775;font-size:13px">The office's own record of a
+        document the portal sent. Not a second send, and not in the send history.</p>
+      <table style="border-collapse:collapse;font-size:14px">${rows.map(([k, v]) =>
+        `<tr><td style="padding:3px 14px 3px 0;color:#5c6775">${escHtml(k)}</td>
+         <td style="padding:3px 0"><b>${escHtml(String(v))}</b></td></tr>`).join('')}</table></div>`;
+    const r = await sendMail(env, { to, subject, text, html });
+    return { record_copy: !!r.sent, record_reason: r.sent ? '' : (r.reason || 'failed') };
+  } catch (e) {
+    /* A record copy that fails is a courtesy that failed. It never becomes the
+       caller's problem, and it never reports success it did not have. */
+    console.error('record copy failed', e && e.message ? e.message : e);
+    return { record_copy: false, record_reason: 'failed' };
   }
 }
 

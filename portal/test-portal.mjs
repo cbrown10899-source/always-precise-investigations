@@ -4223,7 +4223,7 @@ section('The dashboard leads with case packages');
   ok('the ring speaks percent', /\d+%/.test(card));
 
   await page.locator('.pcard', { hasText: 'API-20260812-4001' })
-    .locator('.btn', { hasText: 'Continue case' }).click();
+    .locator('.btn, .uibtn', { hasText: 'Continue case' }).click();
   await page.waitForTimeout(700);
   ok('Continue case opens the case at its step', await page.locator('.casepage').count() === 1);
   await page.close();
@@ -6858,7 +6858,7 @@ section('A lead has its own life, and its sends live on the card');
 
   // Send intake, inline: prefilled from the lead, honest when mail is off.
   const card2 = page.locator('.pcard', { hasText: 'API-20260812-4005' });
-  await card2.locator('.btn', { hasText: 'Send intake' }).click();
+  await card2.locator('.btn, .uibtn', { hasText: 'Send intake' }).click();
   await page.waitForTimeout(400);
   ok('the address is prefilled from the lead',
      await page.locator('#ls_to').inputValue() === 'riley@example.test');
@@ -6866,12 +6866,12 @@ section('A lead has its own life, and its sends live on the card');
   await page.waitForTimeout(700);
   ok('with no mail key the card says exactly what is missing',
      has(await card2.innerText(), 'not configured'));
-  await card2.locator('.btn', { hasText: 'Cancel' }).click();
+  await card2.locator('.btn, .uibtn', { hasText: 'Cancel' }).click();
   await page.waitForTimeout(300);
 
   // Send rate sheet: the SAME wizard, opened from the lead, prefilled — and
   // the sheet picked by the lead's kind, never by the caller.
-  await card2.locator('.btn', { hasText: 'Send rate sheet' }).click();
+  await card2.locator('.btn, .uibtn', { hasText: 'Send rate sheet' }).click();
   await page.waitForTimeout(400);
   ok('the send wizard opens from the leads desk', await page.locator('.amsheet').count() === 1);
   ok('on the private sheet, because this is a private lead',
@@ -6910,7 +6910,7 @@ section('A lead has its own life, and its sends live on the card');
      real failure — and it has to be on the record as one. Done last, because
      opening the case leaves the leads desk behind. */
   await page.locator('.pcard', { hasText: 'API-20260812-4005' })
-    .locator('.btn', { hasText: 'View intake' }).click();
+    .locator('.btn, .uibtn', { hasText: 'View intake' }).click();
   await page.waitForTimeout(700);
   await wsTab(page, 'Comm log');
   await page.waitForTimeout(500);
@@ -21465,7 +21465,12 @@ section('The mockup card system: one geometry, measured at both widths');
   const readActs = () => page.evaluate(() => {
     const box = document.querySelector('.caseacts');
     if (!box) return null;
-    const btns = [...box.querySelectorAll('.uibtn')].filter(b => b.offsetParent !== null);
+    /* BUTTONS **AND** ROWS. The owner's brief ranks this screen: View intake,
+       Retainer paid, Close case and Send rate sheet are large controls, and
+       everything else became a one-line row with a chevron. Both are doors and
+       both are measured — a row that fell under the tap floor would be exactly
+       as broken as a button that did. */
+    const btns = [...box.querySelectorAll('.uibtn, .uirow')].filter(b => b.offsetParent !== null);
     const rects = btns.map(b => b.getBoundingClientRect());
     let overlap = false;
     for (let i = 0; i < rects.length; i++) {
@@ -21479,6 +21484,21 @@ section('The mockup card system: one geometry, measured at both widths');
       minH: Math.min(...rects.map(r => Math.round(r.height))),
       /* the doors this row is required to carry, whatever it looks like */
       acts: btns.map(b => b.dataset.act).sort().join('|'),
+      /* THE FOUR THE OWNER RANKED, and the functional colour each wears.
+         Measured against its own ground, never asserted as a hex: white on
+         teal is 4.71, on the green 6.54, on the red 5.16 — all clear of the
+         4.5 that applies at this size, and `--good` was rejected for the
+         green because it computes 4.38 and would have shipped a button
+         nobody could read under a comment saying it was greener. */
+      big: [...box.querySelectorAll('.uibtn')].map(b => {
+        const cs = getComputedStyle(b);
+        const lum = c => { const [r, g, bl] = c.match(/[\d.]+/g).slice(0, 3).map(Number)
+          .map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+          return 0.2126 * r + 0.7152 * g + 0.0722 * bl; };
+        const A = lum(cs.color), B = lum(cs.backgroundColor);
+        return { t: b.textContent.trim(), act: b.dataset.act,
+          ratio: +((Math.max(A, B) + 0.05) / (Math.min(A, B) + 0.05)).toFixed(2) };
+      }),
       addShown: !!box.querySelector('.addact') &&
         box.querySelector('.addact').offsetParent !== null };
   });
@@ -21487,6 +21507,15 @@ section('The mockup card system: one geometry, measured at both widths');
   ok('the case action block draws every door it carried before',
      !!d1200 && /asstOpen/.test(d1200.acts) && /ceoOpen/.test(d1200.acts)
        && /svEnter/.test(d1200.acts) && /actOpen/.test(d1200.acts), JSON.stringify(d1200));
+  /* §N, §O, §P — the four the owner named are BIG controls on this screen,
+     not chips in a wrapping row and not two screens in. */
+  ok("the owner's four ranked actions are the block's large controls",
+     ['View intake', 'Retainer paid', 'Close case', 'Send rate sheet']
+       .every(t => d1200.big.some(b => b.t === t)),
+     JSON.stringify(d1200.big.map(b => b.t)));
+  ok('and every one of them clears AA against its own ground',
+     d1200.big.every(b => b.ratio >= 4.5),
+     JSON.stringify(d1200.big.map(b => [b.t, b.ratio])));
   ok('and at 1200 nothing in it is squeezed or overlapping',
      d1200.minW >= 100 && d1200.minH >= 44 && d1200.overlap === false, JSON.stringify(d1200));
   ok('+ Add activity is the block primary at desktop width', d1200.addShown === true);
@@ -21503,6 +21532,90 @@ section('The mockup card system: one geometry, measured at both widths');
      d390.addShown === false, JSON.stringify(d390));
 
   await page.setViewportSize({ width: 1200, height: 900 });
+  await page.close();
+}
+
+
+/* ============================================================================
+   HOME'S OWN FIRST SCREEN (owner brief 2026-09-06 §E, §G, §AF).
+
+   The greeting, the signed-intake card, and the rule that governs both: a
+   card whose whole job is to be impossible to miss must never quietly say
+   all-clear about a list it could not read. That is the failure this page has
+   been bitten by twice — a failed read drawn as a clear desk — and it is
+   worth its own assertions on the one card built to dominate the screen.
+   ========================================================================= */
+section("Home says good morning, and a signed intake is impossible to miss");
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.evaluate(async () => { VIEW = 'app'; TAB = 'dashboard'; await render(); });
+  await page.waitForTimeout(900);
+
+  const g = await page.evaluate(() => {
+    const el = document.querySelector('.greet-h');
+    return { text: el ? el.textContent.trim() : null,
+      sub: (document.querySelector('.greet-s') || {}).textContent || '',
+      /* it is ABOVE the quick actions, which is the whole point of §E */
+      first: (() => { const q = document.querySelector('.qtools'), e = document.querySelector('.greet');
+        return !!(q && e) && (e.compareDocumentPosition(q) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0; })() };
+  });
+  ok('the owner is greeted by name, by time of day',
+     /^Good (morning|afternoon|evening), Trever$/.test(g.text || ''), String(g.text));
+  ok('and told it is meant to be simple', /keep it simple/i.test(g.sub), g.sub);
+  ok('the greeting comes before the quick actions', g.first === true);
+
+  /* ---- NOTHING SIGNED: THE CARD IS ABSENT, NOT REASSURING ---------------- */
+  const none = await page.evaluate(() => ({
+    card: !!document.querySelector('.uiwide'),
+    signed: CASES.filter(c => c.signed).length }));
+  ok('with nothing signed the card is simply not drawn',
+     none.signed === 0 ? none.card === false : true, JSON.stringify(none));
+
+  /* ---- A SIGNED INTAKE ARRIVES ------------------------------------------ */
+  await post('/ingest', { case_no: 'API-SIGNED-HOME', service: 'Surveillance',
+    client_name: 'Signed Client', subject_name: 'Signed Subject', signature: 'SC' },
+    { 'X-Ingest-Key': 'e2e-ingest-key' });
+  await page.evaluate(async () => { await render(); });
+  await page.waitForTimeout(900);
+  const one = await page.evaluate(() => {
+    const c = document.querySelector('.uiwide');
+    if (!c) return null;
+    const r = c.getBoundingClientRect();
+    return { text: c.innerText.replace(/\s+/g, ' ').trim(), h: Math.round(r.height),
+      act: c.dataset.act, tab: c.dataset.tab, case: c.dataset.case,
+      /* ABOVE the quick actions and above the queue — it is the first thing */
+      beforeTools: (() => { const q = document.querySelector('.qtools');
+        return !!q && (c.compareDocumentPosition(q) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0; })() };
+  });
+  ok('a signed intake draws the card', !!one, JSON.stringify(one));
+  ok('it names the client rather than the case number',
+     !!one && /Signed Client/.test(one.text) && !/API-SIGNED-HOME/.test(one.text), one && one.text);
+  ok('one tap goes to the submitted intake, not to the case overview',
+     !!one && one.act === 'openCaseTab' && one.tab === 'details'
+       && one.case === 'API-SIGNED-HOME', JSON.stringify(one));
+  ok('it is a large control, above the quick actions',
+     !!one && one.h >= 72 && one.beforeTools === true, JSON.stringify(one));
+
+  /* ---- AND A FAILED READ DRAWS NOTHING, WHICH IS THE POINT --------------- */
+  const failed = await page.evaluate(() => {
+    CASES_OK = false; paint();
+    return { card: !!document.querySelector('.uiwide') };
+  });
+  ok('a case list that did not load draws no card at all — never "none waiting"',
+     failed.card === false, JSON.stringify(failed));
+  await page.evaluate(async () => { CASES_OK = true; await render(); });
+
+  /* ---- §AF: THE ART SLOT IS BUILT AND EMPTY, AND SAYS SO ---------------- */
+  const art = await page.evaluate(() => ({
+    known: typeof CARD_ART !== 'undefined' ? CARD_ART.size : -1,
+    /* with no artwork the cards are the LIGHT placeholder, because ten dark
+       scrimmed slabs lose the family colour the brief asks them to carry */
+    dark: document.querySelectorAll('.qtapp.uiart').length,
+    slots: Object.values(QT).filter(t => t.art).length }));
+  ok('every quick-action door declares an art slot', art.slots >= 10, JSON.stringify(art));
+  ok('no artwork exists yet, so no card wears the dark art treatment',
+     art.known === 0 && art.dark === 0, JSON.stringify(art));
   await page.close();
 }
 

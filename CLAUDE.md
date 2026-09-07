@@ -4370,6 +4370,117 @@ in-flow content, not an overlay: `.pagebar .close` is static everywhere now.
   this portal deliberately does not have — Beta came off on 2026-09-05, and
   the Assistant's phone door is the pill, not a nav tab.
 
+## Home is the owner's own first screen, and a signed intake cannot be missed
+
+Owner brief 2026-09-06 (the mockup breakdown, §A–§AF). The instruction that
+governs the whole unit: *"Do NOT just keep the current layout and lightly
+recolor it."*
+
+**§E — IT OPENS WITH A GREETING, NOT A STATISTICS WALL.** *Good morning,
+Corey / Let's keep it simple.*, above the quick actions, on the dashboard
+only. It reads the VIEWER'S clock, which is the right one for a greeting and
+the only place on this page that derives a time locally — the timeline
+composes its wording in the Worker precisely because a laptop set to Pacific
+must not redate a Virginia entry.
+
+**§G — A SIGNED INTAKE IS A WIDE GREEN CARD ABOVE EVERYTHING**, naming the
+client, and one tap opens what they submitted and signed (`?tab=details`) —
+not Review, not the case Overview. It is derived from the case list the page
+already holds: `signed` is the Worker's own computed column (a signature
+exists in the payload), never inferred from a status.
+
+**THE HONESTY RULE MATTERS MOST ON THE CARD BUILT TO DOMINATE.** A failed
+case-list read draws NOTHING here — never "nothing waiting". `CASES_OK` is
+the flag that keeps the three states apart, and there is a test that turns it
+off and asserts the card disappears. A card whose whole job is to be
+impossible to miss must not be the one quietly saying all-clear about a list
+it could not read.
+
+**§B — FIVE FAMILIES, AND EACH ONE MEANS SOMETHING.** Green is positive and
+money received (intakes, Retainer paid, View intake); teal is the ordinary
+operational primary (Rate Sheet, Reports, Assistant); gold is the CEO Bot;
+navy is structure (Cases, Active Surveillance, the timestamp tools); red is
+destruction (Close case). There were six — a purple media family and a
+separate gold for money — and six families over ten cards is the rainbow §B
+forbids. The purple TOKENS stay where media chips use them; only the class
+went.
+
+**§M/§N/§O/§P — THE CASE SCREEN IS RANKED.** View intake (teal), Retainer
+paid (green) and Close case (red) are large controls at the top, Send rate
+sheet under them, and everything else became a one-line row with a chevron.
+**Nothing was added or rewired**: same `data-act`s, same conditions, same
+routes — `retQuick` still opens the Authorization panel's own Record Payment
+form and `fcQuick` the Billing panel's closeout, so every confirmation, ledger
+rule and refusal is untouched. A prominent button is still only a button.
+
+**The four fills are measured, not asserted as colours**: white on teal is
+4.71, on the green 6.54, on the red 5.16 — all clear of the 4.5 that applies
+at 14px bold. **`--good` was rejected for the green** because white on it
+computes 4.38 and would have shipped a button nobody could read under a
+comment saying it was greener; `--ok-ink` is what is used.
+
+### §AF — the art cards are built, and the placeholder is the light card
+
+`case-portal/ART-ASSET-MANIFEST.md` carries the fifteen specifications —
+filename, card shape, aspect, pixels, safe zone, family — plus the art
+direction and the mandatory `?v=` cache-bust.
+
+**THE FIRST BUILD EMITTED THE ART URL UNCONDITIONALLY AND MADE THE PORTAL
+WORSE.** The reasoning was sound and the result was not: a background-image
+that 404s does not paint, so the card falls back to its ground — but the art
+treatment IS a dark ground under a scrim, and with no photographs that is ten
+dark slabs in a grid, with the family colours §B asks them to carry crushed
+to near-black by the very scrim that makes white text safe. Rendered and
+compared side by side, the light card is the better placeholder, which is the
+entire point of a placeholder.
+
+So **`CARD_ART` names the files that actually exist**. It is empty, the cards
+draw light, and each card's artwork costs its name here plus the asset plus
+its line in `.github/deploy-manifest.txt` — the layout, the geometry and the
+text do not move, which is what the brief actually asked for. The ONE card
+that keeps the art treatment today is the wide signed-intake card: it is a
+single card, it is meant to dominate, and green-on-dark is legible where a
+grid of ten is not.
+
+## The office gets its own copy of what it sent
+
+Owner brief 2026-09-06: *"Corey should not have to remember to CC himself."*
+`ownerRecordCopy()` in `case-portal/worker.js`, called from the four send
+routes that already existed — the rate sheet, both intake senders and the
+standalone payment instructions.
+
+**IT IS A SEPARATE MESSAGE, NOT A BCC.** A blind copy would be byte for byte
+what the client got, and the brief asks the record to identify the amount, the
+non-refundable portion, the four-hour minimum, whether an intake rode along
+and which document version went. None of that is in the client's copy and
+some of it must not be, so the office gets an internal summary that NAMES the
+client's copy rather than duplicating it.
+
+**THE ADDRESS IS CONFIGURATION AND STARTS EMPTY** —
+`billing_owner_record_email` in `app_config`, the `remit_address` precedent.
+No personal address is hardcoded anywhere, nothing seeds or derives one, and
+with the box empty **nothing is sent and nothing changes**. That is also why
+every existing assertion counting one message after a send still counts one.
+**No schema change and no portal-setup dispatch.**
+
+**IT CAN NEVER COST THE SEND.** It runs after the client's copy has gone and
+after `send_log` has recorded it; it does not throw, and its outcome is
+REPORTED on the response (`record_copy` plus a reason) rather than swallowed
+or faked. There is a test where the provider accepts the client's message and
+rejects the copy: the client is still told their document went, and the
+failure is on the record.
+
+**IT IS NOT A SECOND ROW IN THE SEND HISTORY.** `send_log.kind` carries
+`CHECK (kind IN ('rate_sheet','intake'))` and widening a CHECK is the
+non-idempotent rebuild `schema.sql` cannot do — but the deeper reason is that
+the office was not sent a rate sheet, the client was. A test reads the send
+history back and asserts the office appears in it nowhere.
+
+**The three private-only figures stay private-only.** There is no retainer, no
+non-refundable portion and no hourly minimum on a carrier's or a law firm's
+send, and a record copy naming one would be the office's own file asserting
+something untrue.
+
 ## The /watch/ dashboard
 
 `watch/` is a private, passcode- and Face ID-gated dashboard showing live site

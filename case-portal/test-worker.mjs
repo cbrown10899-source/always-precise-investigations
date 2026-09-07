@@ -1156,6 +1156,108 @@ section('Rate sheets and the emailed quote');
    payment block and the preview alike, or they contradict each other in front
    of the client. Its own section because it needs its own send budget: the cap
    is three a minute and the sheets section spends all of them. */
+
+/* ============================================================================
+   THE OWNER'S RECORD COPY (owner brief 2026-09-06).
+
+   "Corey should not have to remember to CC himself." Four properties are
+   asserted, and the first is the one that makes the other three safe: with
+   the setting EMPTY nothing is sent, so this feature is inert until the owner
+   opts in and every existing expectation in this suite is unmoved.
+   ========================================================================= */
+section("The office's own record copy of what it sent");
+{
+  const realFetch = globalThis.fetch;
+  let mails = [];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      mails.push(JSON.parse(init.body));
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  /* ---- 1. EMPTY CONFIGURATION SENDS NOTHING ----------------------------- */
+  mails = [];
+  const off = await jsonOf(await call(env, '/sheets/private_retainer/email', {
+    method: 'POST', cookie: admin, body: { to: 'client@example.com' } }));
+  ok('the client is sent their rate sheet', off.ok === true, JSON.stringify(off));
+  ok('with no business address configured, exactly one message leaves',
+     mails.length === 1, JSON.stringify(mails.map(m => m.subject)));
+  ok('and the response says WHY there is no copy rather than claiming one',
+     off.record_copy === false && off.record_reason === 'not_configured',
+     JSON.stringify([off.record_copy, off.record_reason]));
+
+  /* ---- 2. CONFIGURED: A SECOND, INTERNAL MESSAGE ------------------------ */
+  /* The route takes a FLAT body and writes every key it recognises — not
+     `{settings:{...}}`, which is the READ's shape. Worth stating: posting the
+     read's shape saved nothing and reported success, which is how the first
+     run of this section measured a feature that had never been switched on. */
+  const saved = await jsonOf(await call(env, '/billing-settings', { method: 'POST', cookie: admin,
+    body: { owner_record_email: 'office@alwaysprecise.example' } }));
+  ok('the business address saves', saved.ok !== false, JSON.stringify(saved));
+  const back = await jsonOf(await call(env, '/billing-settings', { cookie: admin }));
+  ok('and reads back', back.settings.owner_record_email === 'office@alwaysprecise.example',
+     JSON.stringify(back.settings.owner_record_email));
+  mails = [];
+  const on = await jsonOf(await call(env, '/sheets/private_retainer/email', {
+    method: 'POST', cookie: admin, body: { to: 'client@example.com', retainer_amount: 2000 } }));
+  ok('the send still succeeds', on.ok === true, JSON.stringify(on));
+  ok('and the office is copied', on.record_copy === true, JSON.stringify(on));
+  ok('as a SECOND message, not a blind copy of the first',
+     mails.length === 2, JSON.stringify(mails.map(m => m.to)));
+  const copy = mails.find(m => String(m.to).includes('alwaysprecise.example'));
+  const client = mails.find(m => String(m.to).includes('client@example.com'));
+  ok('the client got theirs and the office got its own', !!copy && !!client);
+  /* A missing copy must fail as an assertion, not take the run down with a
+     TypeError — the suite would then report a crash where it means to report
+     a measurement. This section's first run did exactly that. */
+  ok('the copy is marked as a record, not as a second send to a client',
+     !!copy && /RECORD COPY/i.test(copy.subject), copy && copy.subject);
+  /* THE FIGURES THE BRIEF NAMES. A record that omits the amount is a record
+     of the fact that something was sent, which the send history already is. */
+  ok('it carries the retainer that document actually quoted',
+     !!copy && /\$2,000/.test(copy.text), copy ? copy.text.slice(0, 400) : 'no copy');
+  ok('and the non-refundable portion beside it',
+     !!copy && /Non-refundable portion/i.test(copy.text), copy ? copy.text.slice(0, 400) : 'no copy');
+  ok('and the minimum engagement', !!copy && /Minimum engagement/i.test(copy.text));
+  ok('and which document version went', !!copy && /Version:/.test(copy.text));
+
+  /* ---- 3. IT IS NOT A SECOND ROW IN THE HISTORY ------------------------- */
+  const hist = await jsonOf(await call(env, '/sends', { cookie: admin }));
+  const toOffice = (hist.sends || []).filter(r => String(r.recipient || '').includes('alwaysprecise.example'));
+  ok('the office is not recorded as having been sent a rate sheet',
+     toOffice.length === 0, JSON.stringify(toOffice));
+
+  /* ---- 4. A FAILED COPY NEVER COSTS THE SEND ---------------------------- */
+  mails = [];
+  let n = 0;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      n++;
+      /* the FIRST message is the client's and succeeds; the record copy is
+         the second and the provider rejects it */
+      if (n > 1) return new Response('{"message":"nope"}', { status: 422 });
+      mails.push(JSON.parse(init.body));
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const half = await jsonOf(await call(env, '/sheets/private_retainer/email', {
+    method: 'POST', cookie: admin, body: { to: 'client2@example.com' } }));
+  ok('the client is still told their document went', half.ok === true, JSON.stringify(half));
+  ok('and the failed copy is REPORTED, not swallowed and not faked',
+     half.record_copy === false && !!half.record_reason, JSON.stringify(half));
+
+  globalThis.fetch = realFetch;
+}
+
 section('A pre-case send is not blocked by a reference that matches nothing');
 {
   /* The owner reproduced this in production: the send screen labels the case
@@ -5045,13 +5147,18 @@ section('Invoice defaults: admin reads and writes them, and the prefix is bounde
 
   const read = await jsonOf(await call(env, '/billing-settings', { cookie: admin }));
   ok('an admin reads the defaults', read.settings && typeof read.settings === 'object');
-  ok('and they are the thirteen the backend supports, no more',
+  /* FOURTEEN NOW: `owner_record_email` joined them (owner brief 2026-09-06).
+     This pin fired on the addition, which is exactly its job — a settings
+     list that grows silently is how a field arrives with no home and no
+     validation. It is EMPTY by default like `remit_address`, so nothing is
+     sent and no other assertion in this suite moved. */
+  ok('and they are the fourteen the backend supports, no more',
      ['company_name', 'company_line', 'invoice_prefix', 'terms_insurance', 'terms_private',
       'payment_instructions', 'invoice_footer', 'remit_address',
       'billcom_enabled', 'billcom_payment_url', 'billcom_org_id', 'billcom_environment',
-      'process_fee_default']
+      'process_fee_default', 'owner_record_email']
        .every(k => k in read.settings)
-     && Object.keys(read.settings).length === 13, JSON.stringify(Object.keys(read.settings)));
+     && Object.keys(read.settings).length === 14, JSON.stringify(Object.keys(read.settings)));
   ok('the remittance address DEFAULTS TO EMPTY — nothing invents one (MAIL-CHECK.md D2)',
      read.settings.remit_address === '');
   ok('every Bill.com field DEFAULTS TO EMPTY — prepared, not connected (BILLCOM.md)',
