@@ -21620,6 +21620,47 @@ section('Client sent, owner copy failed — and the resend that fixes only that'
   ok('a document that was never delivered refuses a record copy, by name',
      dead.status === 409 && (await jsonOf(dead)).code === 'document_not_sent');
 
+  /* ==== RECORDING A RETAINER PAYMENT COPIES THE OFFICE TOO (§13) =========
+     The audit found the one act involving the client's money left no paperwork
+     in the office's inbox, while every send already did. */
+  await ingest(env, { case_no: 'API-PAY-1', client_name: 'Paying Client',
+    client_email: 'payer@example.com', objective: 'x' });
+  mails = [];
+  const paid = await jsonOf(await call(env, '/cases/API-PAY-1/retainer/payment', {
+    method: 'POST', cookie: admin,
+    body: { amount: 1500, method: 'check', paid_on: '2026-09-07',
+            reference: 'cheque 1041', client_token: 'pay-tok-1' } }));
+  ok('the payment is recorded', paid.ok === true, JSON.stringify(paid).slice(0, 160));
+  ok('and the office is copied', paid.record_copy === true, JSON.stringify(paid.record_reason));
+  const receipt = mails.find(m => String(m.to).includes('office@alwaysprecise.example'));
+  ok('the copy carries the amount, the method, the date and the reference',
+     !!receipt && /\$1,500/.test(receipt.text) && /Check/.test(receipt.text)
+     && /2026-09-07/.test(receipt.text) && /cheque 1041/.test(receipt.text),
+     receipt && receipt.text.slice(0, 400));
+  ok('and it is addressed to the office, never to the client',
+     mails.every(m => !String(m.to).includes('payer@example.com')),
+     JSON.stringify(mails.map(m => String(m.to))));
+
+  /* ONCE PER PAYMENT. The alert above already learned this the hard way: a
+     retry that produced no ledger row must produce no receipt either. */
+  const beforeDup = mails.length;
+  const dup = await jsonOf(await call(env, '/cases/API-PAY-1/retainer/payment', {
+    method: 'POST', cookie: admin,
+    body: { amount: 1500, method: 'check', paid_on: '2026-09-07',
+            reference: 'cheque 1041', client_token: 'pay-tok-1' } }));
+  ok('a repeat of the same payment token still answers ok', dup.ok === true);
+  ok('and sends NO second receipt', mails.length === beforeDup,
+     `${beforeDup} -> ${mails.length}`);
+
+  /* THE LEDGER IS UNTOUCHED BY ANY OF THIS — one row, the amount as recorded. */
+  const ledger = (await env.DB.prepare(
+    'SELECT amount, method, reference FROM retainer_payment WHERE case_no = ?')
+    .bind('API-PAY-1').all()).results || [];
+  ok('one payment on the ledger, exactly as it was recorded',
+     ledger.length === 1 && Number(ledger[0].amount) === 1500
+     && ledger[0].method === 'check' && ledger[0].reference === 'cheque 1041',
+     JSON.stringify(ledger));
+
   globalThis.fetch = realFetch;
 }
 

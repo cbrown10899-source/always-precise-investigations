@@ -15430,7 +15430,61 @@ const RECORD_DOC = {
   rate_sheet: 'Rate sheet',
   intake: 'Intake request',
   payment_options: 'Payment instructions',
+  /* §13 — the office's copy of money it recorded. Not a send to a client: the
+     client is not emailed anything by recording a payment, and this document
+     type says what the office did, for the office. */
+  retainer_payment: 'Retainer payment recorded',
 };
+
+/* THE OFFICE'S OWN RECORD OF A RETAINER PAYMENT (owner brief 2026-09-07 §13).
+
+   The audit found that recording a payment wrote the ledger and copied nobody,
+   while every SEND already did — so the one act that involves the client's
+   money left no paperwork in the office's inbox at all.
+
+   IT DOCUMENTS; IT DOES NOT MOVE MONEY AND IT REWRITES NOTHING. The ledger row
+   is already committed when this runs, `retainer_payment` is never touched, and
+   no rate-sheet term is altered — the owner's standing accounting rule. It is a
+   copy of what was recorded, exactly as it was recorded.
+
+   THE ASSOCIATED DOCUMENT IS NAMED WHERE ONE EXISTS, and read back from the
+   record rather than re-derived: the terms the client agreed to are the ones
+   they were sent, not the ones today's standard would produce. Where no
+   document is on file the line is ABSENT rather than "none" — the intake form's
+   own rule about a value that does not apply. */
+async function retainerRecordCopy(env, user, caseNo, pay) {
+  try {
+    const sub = await env.DB.prepare(
+      'SELECT client_name, payload FROM submissions WHERE case_no = ?').bind(caseNo).first();
+    let client = sub ? (sub.client_name || '') : '';
+    if (!client && sub) {
+      try { client = JSON.parse(sub.payload || '{}').client_name || ''; } catch { client = ''; }
+    }
+    /* The newest document this case was actually sent, if the table is there.
+       Guarded like every marker-table read: a missing table costs the LINE,
+       never the receipt. */
+    let doc = null;
+    if (!(await missingTables(env)).includes('sent_document')) {
+      doc = await env.DB.prepare(
+        `SELECT doc_id, subject, content_hash, terms_json FROM sent_document
+          WHERE case_no = ? AND kind = 'rate_sheet' AND ok = 1
+          ORDER BY id DESC LIMIT 1`).bind(caseNo).first();
+    }
+    let terms = null;
+    try { terms = doc && doc.terms_json ? JSON.parse(doc.terms_json) : null; } catch { terms = null; }
+    return await ownerRecordCopy(env, 'retainer_payment', {
+      to: '', client, case_no: caseNo,
+      amount: pay.amount, method: RETAINER_METHOD_LABEL[pay.method] || pay.method,
+      paid_on: pay.paid_on || '', reference: pay.reference || '',
+      doc_id: doc ? doc.doc_id : '', content_hash: doc ? doc.content_hash : '',
+      version: doc ? doc.subject : '',
+      engagement: terms,
+    });
+  } catch (e) {
+    console.error('retainer record copy failed', e && e.message ? e.message : e);
+    return { record_copy: false, record_reason: 'failed' };
+  }
+}
 
 async function ownerRecordCopy(env, kind, facts) {
   try {
@@ -15457,6 +15511,12 @@ async function ownerRecordCopy(env, kind, facts) {
       ['Resend of the send at', f.resend_of || ''],
       ['Sent to', f.to || ''],
       ['Client', f.client || ''],
+      /* §13's own lines. Absent where they do not apply, never "N/A" — the
+         filter below drops an empty one, so a rate sheet's copy is unchanged. */
+      ['Amount received', f.amount == null ? '' : usd(f.amount)],
+      ['Method', f.method || ''],
+      ['Paid on', f.paid_on || ''],
+      ['Reference', f.reference || ''],
       ['Case', f.case_no || ''],
       ['Business', f.context || ''],
       ['Version', f.version || ''],
@@ -20199,7 +20259,25 @@ async function route(request, env) {
        idempotent and the notification about it was not. Probed and recorded as
        a defect on 2026-08-17, fixed here. */
     if (outcome !== 'duplicate') await notifyAdmins(env, 'payments', m[1]);
-    return json({ ok: true, authorization: await authorizationFor(env, m[1], true) });
+    /* THE OFFICE'S OWN RECORD OF MONEY IT RECEIVED (owner brief §13). The
+       audit found that recording a payment wrote the ledger and copied nobody,
+       while every SEND already did — so the one act that moves the client's
+       money left no paperwork in the office's inbox.
+
+       ONCE PER PAYMENT, never on a duplicate: the alert above already learned
+       that lesson the hard way, and a retry that produced no ledger row must
+       not produce a receipt either.
+
+       THE LEDGER IS UNTOUCHED AND NO MONEY MOVES. This is a copy of what was
+       recorded, composed after the row is committed, and it cannot fail the
+       payment — the ownerRecordCopy rule. */
+    let payRec = {};
+    if (outcome !== 'duplicate') {
+      payRec = await retainerRecordCopy(env, user, m[1],
+        { amount: amt, method: meth, paid_on: on, reference: clean(body.reference, 200) });
+    }
+    return json({ ok: true, ...payRec,
+                  authorization: await authorizationFor(env, m[1], true) });
   }
 
   /* Correcting a payment VOIDS it. The row stays, so the record still shows
