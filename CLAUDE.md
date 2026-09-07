@@ -4274,6 +4274,102 @@ because building them would put an untruth on a staff screen:
   category would be inventing data.
 - **An avatar and an "On Duty" status.** There is no such record.
 
+## One card system, five families, and no new colour
+
+Owner brief 2026-09-06, against the approved **"Assistant — Case Command
+Center (V1)"** mockup: *"Do NOT just keep the current layout and lightly
+recolor it. Refactor the visible UI to resemble the mockup."*
+
+**What was taken from the mockup is its GRAMMAR, not its palette.** A boxed
+section with a heading and a one-line lede; an icon TILE beside a bold name
+over a quiet sub-line; facts as label/value rows; and an action block of one
+filled PRIMARY over a two-across grid of outlined secondaries. The mockup's
+blue is not taken — this portal is navy/teal/gold and the owner's restraint
+rule governs — so `.uibtn.pri` is `--navy-2`, which is what `.btn` already was.
+
+**`--r-card` / `--r-btn` / `--btn-h` / `--card-pad` / `--card-gap` are the whole
+geometry**, named once in `:root`. `--btn-h` is 48 so a large control clears
+the 44px tap floor **from the token** rather than from a padding sum nobody
+can read off a rule.
+
+**EVERY FAMILY IS COMPOSED FROM TOKENS THIS PALETTE ALREADY HAD.**
+`.fam-intake` is the `--ok-*` green, `.fam-money` the `--gold-*`, `.fam-asst`
+the `--info-*` teal, `.fam-ceo` navy, `.fam-tool` the `--media-*` purple,
+`.fam-case` neutral — each setting four locals (`--f-bg/-line/-ink/-tile`)
+that the components read. **Not one hex literal entered the page**, so the
+anti-drift budget had nothing to catch and a future palette edit moves these
+with everything else. The family says what KIND of work a card is for; the
+geometry never varies between families, which is what makes a row of them read
+as one system rather than five decorations.
+
+**Four surfaces, one vocabulary:** the phone Home strip, the case action row,
+the intake card, and the CEO Bot panel's cards. Nothing was added, removed or
+rewired on any of them — same doors, same `data-act`s, same conditions, same
+order — so this is a shape change and the suites that pin behaviour were
+untouched by it.
+
+**THE PHONE'S HOME STRIP STOPPED SWIPING, and that is the substantive win.**
+It was `overflow-x:auto` with 126px cards, so at 390px two and a half of the
+ten doors were visible and the other seven were reachable only by knowing to
+swipe — the sideways scroll the release gate exists to catch, on the portal's
+own first screen. It is a two-across `.uigrid` now: ten cards, all on screen,
+no gesture, no page overflow at 390 or 320. **`grid-auto-rows:1fr` is
+load-bearing** — without it the card whose name wraps to two lines
+("Insurance Intake") makes its row taller than the rest and the strip reads as
+several lists; measured, all ten are 122px.
+
+**The suite's own assertion was INVERTED rather than deleted.** It required the
+strip to scroll inside itself, which was the best the old shape could do; the
+property worth pinning now is the stronger one — nothing scrolls, the strip
+included. Two more moved from `.btn` to `.uibtn` because the intake card's
+action block changed size, and the properties they protect ("a primary action
+never shrinks below its own words", "the View intake door exists") are
+unchanged and still asserted.
+
+**THE DESKTOP QUICK-TOOLS ROW IS BYTE-WHAT-IT-WAS** — same six doors, same
+order, same `dlabel` wording, same markup — and the suite still pins it at
+1200 and 768. Only the phone surface moved, which is the standing rule.
+
+**`.uiact-lead`, NOT `.lead`.** `.lead` is this file's muted-prose class
+(`color:var(--muted); margin-bottom:18px`), so the short name would have
+greyed the flagged card's own text and pushed it 18px taller than its
+siblings. **The class-name contest again** — the same trap as `.qgrid`, `.dlg`,
+the burger base rule and `.opt`, though not the same mechanism: those five are
+counted above as SOURCE-ORDER casualties, where a later rule silently won.
+This one is a NAME collision, where a shorter class the file already owned
+leaked its properties into a new component. Caught by a grep for collisions
+before the first render rather than by a screenshot afterwards, which is the
+cheap way round and is why the grep is worth running on every new class. `.uibtn.ceo-casebtn` is the same
+lesson at the specificity layer: `.uibtn.sec` is a two-class selector and
+would have out-specified a bare `.ceo-casebtn`, painting the CEO door navy
+like its neighbours and losing the one thing that says which bot it opens.
+
+### The back-button audit found a bug two screens wide
+
+`.close` is the DIALOG X's rule — `position:absolute; right:14px; top:12px` —
+and three back buttons borrowed the class for its look and inherited that
+positioning with it. The case page's copy was pinned back into flow at 899px
+and below, which is where the burger sits and where it was covering the
+signed-in name. **The two Clients & Firms back buttons are not `.casepage`**,
+so they were absolutely positioned at EVERY width, floated out of their own
+bar and against whatever ancestor happened to be positioned. A back button is
+in-flow content, not an overlay: `.pagebar .close` is static everywhere now.
+
+### What was deliberately NOT done
+
+- **No new door was added to Home.** The staged version of this work added
+  Assistant, CEO Bot and Review Intakes cards to the phone strip. All three
+  are already one tap away — the two bots as the stacked pills on every
+  screen, Intakes in the bottom nav — so adding them would have been the
+  duplicate-entry creep this file already records the guard catching once.
+- **The CEO Bot panel's information architecture is untouched.** The owner
+  approved it in two briefs; it took the shared radius and a grid of
+  full-width actions, and nothing else.
+- **No mockup content was invented.** The mockup's Beta chip, its "Case
+  Command Center" subtitle and its bottom-nav Assistant tab describe a build
+  this portal deliberately does not have — Beta came off on 2026-09-05, and
+  the Assistant's phone door is the pill, not a nav tab.
+
 ## The /watch/ dashboard
 
 `watch/` is a private, passcode- and Face ID-gated dashboard showing live site

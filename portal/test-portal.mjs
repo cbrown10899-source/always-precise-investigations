@@ -11769,8 +11769,13 @@ section('Recent activity rows are doors, and stacked records read on a phone');
   await page.evaluate(() => { const b = [...document.querySelectorAll('[data-act="tab"]')]
     .find(x => x.dataset.tab === 'leads'); if (b) b.click(); });
   await page.waitForTimeout(700);
+  /* `.uibtn`, not `.btn`: the intake card's action block is the mockup's
+     large-button shape now (one filled primary over a two-across grid). The
+     PROPERTY is unchanged and is the one that matters — a primary action
+     never shrinks below its own words — so the selector moved and the
+     assertion did not. */
   const acc = await page.evaluate(() =>
-    [...document.querySelectorAll('.pc-next > .btn')].map(x => {
+    [...document.querySelectorAll('.pc-next > .uibtn')].map(x => {
       const r = x.getBoundingClientRect();
       return { w: Math.round(r.width), h: Math.round(r.height) }; }));
   ok('Accept is wider than it is tall, at tap height',
@@ -17420,7 +17425,8 @@ section('Intakes: tapping a submitted intake opens what the client signed');
       moreClosed: c.querySelector('.pc-more') ? !c.querySelector('.pc-more').open : null,
       /* NO CONTROL INSIDE A CONTROL — the Unit 40 nesting rule */
       nested: door ? door.querySelectorAll('button,a,select,input').length : -1,
-      viewBtn: !!c.querySelector('[data-tab="details"].btn'),
+      /* the same door, at the mockup's button size — see `.uibtn` above */
+      viewBtn: !!c.querySelector('[data-tab="details"].uibtn'),
       reviewGone: !/\bReview\b/.test(c.innerText),
     };
   });
@@ -19424,8 +19430,17 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
      JSON.stringify({ flagH: p390.flagH, heights: p390.heights }));
   ok('every card clears the 44px tap floor', p390.minH >= 44, `min ${p390.minH}`);
 
-  /* The strip scrolls INSIDE ITSELF; the page never scrolls sideways. */
-  ok('the strip swipes inside its own box', p390.stripScrolls === true);
+  /* THE STRIP STOPPED SWIPING (mockup refactor, 2026-09-06), and this
+     assertion was INVERTED rather than deleted. It used to require the strip
+     to scroll inside itself, which was true of the 126px horizontal row and
+     was the best that shape could do: at 390px two and a half of the ten
+     doors were visible and the rest were reachable only by knowing to swipe.
+
+     Two across in a real grid shows every door the role has with no gesture,
+     so the property worth pinning is now the stronger one — NOTHING scrolls,
+     the strip included. The page-overflow assertion below is unchanged and
+     still does the work it always did. */
+  ok('the strip needs no swipe — every door is on screen', p390.stripScrolls === false);
   ok('and the page does not scroll sideways at 390', p390.pageOverflow === false);
   const p320 = await read(320, 700);
   ok('nor at 320', p320.pageOverflow === false);
@@ -19455,6 +19470,7 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
   await page.setViewportSize({ width: 1200, height: 900 });
   await page.close();
 }
+
 
 section('Mobile Home: an investigator is offered no door the Worker would refuse');
 {
@@ -21341,6 +21357,152 @@ section('The two bots are two doors: stacked on the thumb side, one open at a ti
      JSON.stringify(rail));
   ok('and the phone chip does not clutter the desktop shell',
      rail.ceoPillOnDesktop === false, JSON.stringify(rail));
+  await page.close();
+}
+
+
+/* ============================================================================
+   THE MOCKUP CARD SYSTEM (owner brief 2026-09-06). One vocabulary over four
+   surfaces, and the assertions are GEOMETRY rather than class names, because
+   the whole failure mode of a shared component layer is a rule written for
+   one screen quietly breaking another.
+
+   THIS SECTION EXISTS BECAUSE OF A BUG A PHONE RENDER COULD NOT HAVE SHOWN.
+   `.pc-next` is a flex ROW shared by three card types, and it turns into a
+   column under 560px. Giving the intake card block-level children therefore
+   looked perfect at 390 and, at 1200, laid the primary and the two-across
+   grid out SIDEWAYS and wrapped "Send payment options" one letter per line —
+   the exact shape Unit 5 already fixed once, reintroduced from the other
+   side. Every existing assertion was green over it. So the pin here is: no
+   control in one of these blocks is ever narrower than a tap target, AT BOTH
+   WIDTHS, and no two of them overlap.
+   ========================================================================= */
+section('The mockup card system: one geometry, measured at both widths');
+{
+  /* ITS OWN FIXTURE. Every earlier section may have accepted, closed or
+     deleted the two intakes the suite seeds, and a card that is not there
+     would make this pass by measuring nothing. It runs last, so one more
+     case changes no count anything else asserts. */
+  await post('/ingest', { case_no: 'API-MOCKUP-CARD', service: 'Surveillance',
+    client_name: 'Mockup Client', client_phone: '4345550199',
+    subject_name: 'Mockup Subject', objective: 'Establish whereabouts' },
+    { 'X-Ingest-Key': 'e2e-ingest-key' });
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* ---- THE INTAKE CARD'S ACTION BLOCK ---------------------------------- */
+  await page.evaluate(async () => { VIEW = 'app'; TAB = 'leads'; await render(); });
+  await page.waitForTimeout(900);
+
+  const readCards = () => page.evaluate(() => {
+    const card = [...document.querySelectorAll('.pcard')]
+      .find(c => /Mockup Client/.test(c.innerText));
+    const box = card && card.querySelector('.pc-next.pc-block');
+    if (!box) return null;
+    /* `.uibtn` only. The destructive control is a 44px SQUARE icon and is
+       measured separately below — a single floor over every button would
+       have failed on correct code, which the probe that proved this
+       assertion caught before it was written down. */
+    const btns = [...box.querySelectorAll('.uibtn')];
+    const rects = btns.map(b => b.getBoundingClientRect());
+    const del = box.querySelector('.btn-del');
+    const dr = del ? del.getBoundingClientRect() : null;
+    /* Two controls overlap when their boxes intersect on BOTH axes. The
+       collapse this catches is not "a button looks wrong" — it is buttons
+       squeezed to min-content beside each other, so width is the tell. */
+    let overlap = false;
+    for (let i = 0; i < rects.length; i++) {
+      for (let j = i + 1; j < rects.length; j++) {
+        const a = rects[i], b = rects[j];
+        if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) overlap = true;
+      }
+    }
+    return {
+      n: btns.length,
+      minW: Math.min(...rects.map(r => Math.round(r.width))),
+      minH: Math.min(...rects.map(r => Math.round(r.height))),
+      overlap,
+      /* nothing may be drawn outside the card that owns it */
+      escapes: rects.some(r => r.right > card.getBoundingClientRect().right + 1),
+      /* the identity door still holds no control — the Unit 40 nesting rule */
+      nested: card.querySelector('.pc-open')
+        .querySelectorAll('button,a,select,input').length,
+      del: dr ? [Math.round(dr.width), Math.round(dr.height)] : null,
+      /* the facts are a table, not eleven lines of inline type */
+      facts: card.querySelectorAll('.uifacts .uifact').length,
+      tile: !!card.querySelector('.uihead .uiact-i'),
+    };
+  });
+
+  for (const [w, h] of [[1200, 900], [390, 844]]) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.waitForTimeout(400);
+    const c = await readCards();
+    ok(`at ${w}px the intake card draws its action block`, !!c && c.n >= 4, JSON.stringify(c));
+    /* A missing card must fail loudly rather than take every assertion below
+       it down with a TypeError — the suite would then report a crash where it
+       means to report a measurement. */
+    if (!c) continue;
+    /* MEASURED BOTH WAYS BEFORE THIS WAS WRITTEN: with the fix the narrowest
+       is 128px at 1200 and 135px at 390; with the shared flex row put back it
+       is 28px, one letter wide. 100 sits between them with room on each side. */
+    ok(`at ${w}px no control in it is squeezed below a tap target`,
+       c.minW >= 100 && c.minH >= 44, JSON.stringify(c));
+    ok(`at ${w}px the delete control is a square at the tap floor`,
+       c.del && c.del[0] >= 44 && c.del[1] >= 44, JSON.stringify(c.del));
+    ok(`at ${w}px none of them overlap or escape the card`,
+       c.overlap === false && c.escapes === false, JSON.stringify(c));
+    ok(`at ${w}px the identity door still contains no control`, c.nested === 0, String(c.nested));
+    ok(`at ${w}px the card states its facts as label/value rows under a tile`,
+       c.facts >= 2 && c.tile === true, JSON.stringify(c));
+  }
+
+  /* ---- THE CASE ACTION BLOCK ------------------------------------------- */
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.evaluate(() => openCase('API-MOCKUP-CARD'));
+  await page.waitForTimeout(1400);
+
+  const readActs = () => page.evaluate(() => {
+    const box = document.querySelector('.caseacts');
+    if (!box) return null;
+    const btns = [...box.querySelectorAll('.uibtn')].filter(b => b.offsetParent !== null);
+    const rects = btns.map(b => b.getBoundingClientRect());
+    let overlap = false;
+    for (let i = 0; i < rects.length; i++) {
+      for (let j = i + 1; j < rects.length; j++) {
+        const a = rects[i], b = rects[j];
+        if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) overlap = true;
+      }
+    }
+    return { n: btns.length, overlap,
+      minW: Math.min(...rects.map(r => Math.round(r.width))),
+      minH: Math.min(...rects.map(r => Math.round(r.height))),
+      /* the doors this row is required to carry, whatever it looks like */
+      acts: btns.map(b => b.dataset.act).sort().join('|'),
+      addShown: !!box.querySelector('.addact') &&
+        box.querySelector('.addact').offsetParent !== null };
+  });
+
+  const d1200 = await readActs();
+  ok('the case action block draws every door it carried before',
+     !!d1200 && /asstOpen/.test(d1200.acts) && /ceoOpen/.test(d1200.acts)
+       && /svEnter/.test(d1200.acts) && /actOpen/.test(d1200.acts), JSON.stringify(d1200));
+  ok('and at 1200 nothing in it is squeezed or overlapping',
+     d1200.minW >= 100 && d1200.minH >= 44 && d1200.overlap === false, JSON.stringify(d1200));
+  ok('+ Add activity is the block primary at desktop width', d1200.addShown === true);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(400);
+  const d390 = await readActs();
+  ok('at 390 the block is still whole and still at the tap floor',
+     d390.minW >= 100 && d390.minH >= 44 && d390.overlap === false, JSON.stringify(d390));
+  /* THE DUPLICATE-ENTRY RULE IS UNCHANGED: + Add lives in the thumb bar on a
+     phone, so the block's copy withdraws. It is the primary at desktop and
+     absent here, which is why the two widths are asserted separately. */
+  ok('and + Add activity withdraws, because the thumb bar carries it',
+     d390.addShown === false, JSON.stringify(d390));
+
+  await page.setViewportSize({ width: 1200, height: 900 });
   await page.close();
 }
 
