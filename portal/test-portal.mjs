@@ -8513,39 +8513,58 @@ section('Timestamp video is reachable without opening a case');
   /* Two tools now, not one — Timestamp Photo joined its sibling here after the
      owner could not find it anywhere in the live portal. Asserted by ACT and as
      a pair: the count alone would pass on two copies of the same door. */
+  /* `.qtapp`, NOT `.qtool` — THE CHIP ROW IS GONE (owner brief 2026-09-07 §9,
+     the HYBRID pass: "use the same visual language on desktop"). There were
+     two strips, chips on desktop and cards on the phone, one `display:none` at
+     every width; there is one card strip now at two proportions. The property
+     these assertions protect — which doors exist, in what order, with what
+     acts — is unchanged and still exactly pinned. */
+  /* `:not(.qtapps-more)` — the More disclosure's grid carries `.qtapps` too,
+     so the bare selector counted twelve doors and the creep guard reported
+     five it was never about. */
   const tools = await page.evaluate(() =>
-    [...document.querySelectorAll('.qtools .qtool')].map(b => b.dataset.act + ':' + (b.dataset.tab || '')));
+    [...document.querySelectorAll('.qtools .qtapps:not(.qtapps-more) > .qtapp')]
+      .map(b => b.dataset.act + ':' + (b.dataset.tab || '')));
   ok('the dashboard carries both timestamp tools',
      tools.some(t => t.startsWith('vstOpen')) && tools.some(t => t.startsWith('pstLaunch')),
      JSON.stringify(tools));
-  /* UNIT 5 (owner) widened the row into the day's launcher, so the creep guard
-     re-pins to the NEW set — still exact, still by act, so a duplicate door or
-     a stray addition fails rather than accumulating. */
-  ok('and the row is exactly the day\'s six doors, no creep',
+  /* THE CREEP GUARD SURVIVES, RE-PINNED. It has re-pinned three times now — the
+     day's six, the phone's seven, and now one strip carrying the owner's seven
+     at every width — and each time it stayed EXACT and by ACT, so a duplicate
+     door or a stray addition fails rather than accumulating. */
+  ok("and the row is exactly the owner's seven doors, no creep",
      JSON.stringify(tools) === JSON.stringify(
-       ['pstLaunch:', 'vstOpen:', 'surveillance:', 'tab:newlead', 'tab:cases', 'tab:delivery']),
+       ['sheetQuick:', 'tab:newlead', 'nlKind:', 'tab:leads',
+        'surveillance:', 'pstLaunch:', 'vstOpen:']),
      JSON.stringify(tools));
-  ok('labelled as tools, not cards', has(await text(page, '.qtools'), 'Quick tools')
-     && has(await text(page, '.qtools'), 'Timestamp video')
-     && has(await text(page, '.qtools'), 'Timestamp photo'));
-  /* COMPACT means dense per tool, not short overall — six doors are taller
-     than two were, and the owner asked for the six. What must not happen is a
-     TOOL swelling into a stat card, or the launcher adopting card chrome. */
+  ok('and it names both timestamp tools in words',
+     has(await text(page, '.qtools'), 'Timestamp Video')
+     && has(await text(page, '.qtools'), 'Timestamp Photo'));
+  /* THIS ASSERTION IS INVERTED, NOT DELETED, AND THE OWNER INVERTED IT. It read
+     "each tool stays a control, never a card" and held the desktop tool to
+     44-52px — which was the right pin for the chip row and is the exact
+     decision §9 overturns. What is worth pinning now is the property the new
+     shape has to keep: a CARD, tall enough to carry art, still landscape on
+     desktop rather than the phone's square, and the strip still a strip rather
+     than a wall of `.card`/`.stat` boxes. */
   const size = await page.evaluate(() => {
     const q = document.querySelector('.qtools');
-    const tool = document.querySelector('.qtool');
-    return { tool: Math.round(tool.getBoundingClientRect().height),
+    const card = q.querySelector('.qtapps > .qtapp');
+    const b = card.getBoundingClientRect();
+    return { h: Math.round(b.height), w: Math.round(b.width),
+             ratio: +(b.width / b.height).toFixed(2),
+             art: card.classList.contains('uiart'),
              cards: q.querySelectorAll('.card, .stat').length };
   });
-  ok('each tool stays a control, never a card',
-     size.cards === 0 && size.tool >= 44 && size.tool <= 52, JSON.stringify(size));
+  ok('each door is an art card on desktop, and a WIDER one than the phone draws',
+     size.cards === 0 && size.art === true && size.h >= 100 && size.ratio >= 1.4,
+     JSON.stringify(size));
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(400);
   const m = await page.evaluate(() => {
-    /* On a phone the tools are `.qtapp` cards and `.qtool` is display:none.
-       Measure whichever strip is actually drawn — the floor is about what a
-       thumb can hit, not about which class won. */
+    /* One card strip at every width now, so "whichever is drawn" is simply
+       the one there is. The floor is about what a thumb can hit. */
     const tool = [...document.querySelectorAll('.qtools button')].find(e => e.offsetParent);
     return { h: Math.round(tool.getBoundingClientRect().height),
       cls: String(tool.className).split(' ')[0],
@@ -8744,9 +8763,23 @@ section('The quick tool is discoverable, not merely present');
              bg: cs.backgroundColor, pageBg: page_,
              // How far the control's surface sits from the page behind it.
              contrast: Math.abs(lum(cs.backgroundColor) - lum(page_)),
+             innerH: innerHeight,
              sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth };
   });
-  ok('it is on the first screenful', m.onFirstScreen && m.y < 300, JSON.stringify(m));
+  /* `y < 300` WAS A PROXY FOR "near the top", and it was true only because
+     nothing sat above the strip when it was written. The owner has since put
+     two things there BY INSTRUCTION — the greeting (§E) and the signed-intake
+     alert that must be "impossible to miss" (§G/§5) — so the strip starts
+     lower by their own design, and pinning 300 would be this suite enforcing
+     a layout against the brief that replaced it.
+
+     The property it protects is discoverability: the tool went missing once,
+     and the fix was that it must be on screen without hunting. That is
+     asserted STRONGER here — the WHOLE control is visible without scrolling,
+     not merely its top edge — alongside the size, surface-contrast and
+     not-in-a-menu claims below, which are what actually make it findable. */
+  ok('it is fully on the first screenful, not merely started on it',
+     m.onFirstScreen && m.y + m.h <= m.innerH, JSON.stringify(m));
   ok('it is a 44px target', m.h >= 44, `${m.h}px`);
   /* THE ORIGINAL FAILURE WAS NOT ABSENCE — it was a white pill on a near-white
      page. Its surface has to be visibly different from what is behind it. */
@@ -8776,12 +8809,33 @@ section('The quick tool is discoverable, not merely present');
        could tell the difference. */
     const b = [...document.querySelectorAll('.qtools [data-act="vstOpen"]')]
       .find(e => e.offsetParent);
-    const r = b ? b.getBoundingClientRect() : null;
-    const hit = r ? document.elementFromPoint(Math.round(r.left + r.width / 2),
-                                              Math.round(r.top + r.height / 2)) : null;
     const ph = [...document.querySelectorAll('.qtools [data-act="pstLaunch"]')]
       .find(e => e.offsetParent);
+    /* WHERE THEY SIT is answered from the UNSCROLLED page — that is what "on
+       the first screen" means — and WHETHER THEY ARE PAINTED is answered with
+       the control scrolled to, because `elementFromPoint` only sees the
+       VIEWPORT. A control behind the fixed bottom navigation, which covers
+       the last ~67px of every screen at rest, answers null and reads as
+       unpressable when it is merely not scrolled to. This suite's own 320px
+       section already records the rule and the reason: "scrolled into view
+       first, which is also what a thumb does."
+
+       IT DOES NOT WEAKEN WHAT THIS WAS WRITTEN FOR. The defect it caught was
+       a collapsed `<details>` card that reported a real bounding box and was
+       never PAINTED; an unpainted element still fails after scrolling. What
+       scrolling removes is the artefact, not the guard.
+
+       Measured while deciding this: at 390 with a signed-intake card above
+       the strip, the PRE-EXISTING 122px card also answered unpressable here.
+       The old assertion passed on a fixture that happened not to have one. */
+    window.scrollTo(0, 0);
+    const r = b ? b.getBoundingClientRect() : null;
     const pr = ph ? ph.getBoundingClientRect() : null;
+    if (b) b.scrollIntoView({ block: 'center' });
+    const rp = b ? b.getBoundingClientRect() : null;
+    const hit = rp ? document.elementFromPoint(Math.round(rp.left + rp.width / 2),
+                                               Math.round(rp.top + rp.height / 2)) : null;
+    window.scrollTo(0, 0);
     const nav = document.querySelector('.tabs');
     return { h: r ? Math.round(r.height) : 0, y: r ? Math.round(r.y) : null,
              onFirstScreen: !!r && r.y >= 0 && r.y < innerHeight,
@@ -9817,7 +9871,7 @@ section('Timestamp Photo under the policy the site actually serves');
   });
   const [chooser] = await Promise.all([
     page.waitForEvent('filechooser'),
-    page.locator('.qtool[data-act="pstLaunch"]').click(),
+    page.locator('.qtapp[data-act="pstLaunch"]').click(),
   ]);
   await chooser.setFiles({ name: 'IMG_3533.jpeg', mimeType: 'image/jpeg',
     buffer: Buffer.from(b64, 'base64') });
@@ -9882,7 +9936,7 @@ section('Timestamp Photo decodes the operator’s own file, not a relabelled cop
   });
   const [chooser] = await Promise.all([
     page.waitForEvent('filechooser'),
-    page.locator('.qtool[data-act="pstLaunch"]').click(),
+    page.locator('.qtapp[data-act="pstLaunch"]').click(),
   ]);
   await chooser.setFiles({ name: 'IMG_3576.jpeg', mimeType: 'image/heic',
     buffer: Buffer.from(b64, 'base64') });
@@ -9911,7 +9965,7 @@ section('Timestamp Photo asks for a picture first, and for a case only to file i
      alone: the rule is that these two are siblings, and a door that exists for
      one and not the other is exactly what went wrong the first time. */
   const doors = await page.evaluate(() => ({
-    tools: [...document.querySelectorAll('.qtool')].map(b => b.dataset.act),
+    tools: [...document.querySelectorAll('.qtools .qtapp')].map(b => b.dataset.act),
     nav: [...document.querySelectorAll('.navfoot button')].map(b => b.dataset.act),
   }));
   ok('the dashboard quick tools offer the video utility', doors.tools.includes('vstOpen'),
@@ -9940,7 +9994,7 @@ section('Timestamp Photo asks for a picture first, and for a case only to file i
 
   const [chooser] = await Promise.all([
     page.waitForEvent('filechooser'),
-    page.locator('.qtool[data-act="pstLaunch"]').click(),
+    page.locator('.qtapp[data-act="pstLaunch"]').click(),
   ]);
   /* Reaching this line at all IS the assertion: `waitForEvent('filechooser')`
      resolved, so the door opened a picture picker. Before the owner's device
@@ -11816,11 +11870,10 @@ section('The mobile header is a control, not a glyph');
      what would catch a return to a scroller. */
   const qt = await page.evaluate(() => {
     const doc = document.documentElement;
-    /* WHICHEVER STRIP IS DRAWN AT THIS WIDTH. Mobile Unit B gave the phone its
-       own card strip and hides the desktop chip row; both are `.qtools`
-       children, and what this section is about — no tool unreachable, the page
-       never widening — is true of whichever one is on screen. */
-    const g = [...document.querySelectorAll('.qtgrid, .qtapps')].find(e => e.offsetParent);
+    /* ONE STRIP AT EVERY WIDTH since the 2026-09-07 HYBRID pass — the desktop
+       chip row is gone and the card strip is what draws everywhere, so there
+       is no longer a pair to choose between. */
+    const g = document.querySelector('.qtools .qtapps');
     const tools = [...g.children];
     const btns = tools.map(x =>
       ({ t: x.textContent.replace(/\s+/g, ' ').trim(), h: Math.round(x.getBoundingClientRect().height) }));
@@ -18487,10 +18540,8 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
 
   /* ---- the quick-tools strip ---- */
   const strip = await page.evaluate(() => {
-    /* WHICHEVER STRIP IS DRAWN. The phone has its own card strip since Mobile
-       Unit B and `.qtgrid` is display:none here, so measuring it reports
-       zeroes and says nothing about what is on screen. */
-    const g = [...document.querySelectorAll('.qtgrid, .qtapps')].find(e => e.offsetParent);
+    /* ONE STRIP — see the note in the 320px section. */
+    const g = document.querySelector('.qtools .qtapps');
     const tools = [...g.children];
     return { strip: String(g.className),
              rowH: Math.round(g.getBoundingClientRect().height),
@@ -18502,12 +18553,7 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
                 is what "strip, not stack" means, and it cannot be satisfied by
                 a wrapped grid however short the container happens to be. */
              tops: [...new Set(tools.map(b => Math.round(b.getBoundingClientRect().top)))].length,
-             acts: tools.map(b => b.dataset.act + ':' + (b.dataset.tab || b.dataset.k || '')),
-             /* The DESKTOP row is in the DOM here too, display:none. Reading
-                its composition is honest — this is about which doors exist in
-                which order, not about a hidden element's geometry. */
-             desk: [...document.querySelector('.qtgrid').children]
-               .map(b => b.dataset.act + ':' + (b.dataset.tab || b.dataset.k || '')) };
+             acts: tools.map(b => b.dataset.act + ':' + (b.dataset.tab || b.dataset.k || '')) };
   });
   /* A GRID, NOT A ROW, AND NOTHING SWIPES. Both of these described the
      126px horizontal scroller: "one row" and "it swipes inside its own
@@ -18521,21 +18567,15 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
      strip.sw <= strip.cw + 1, JSON.stringify(strip));
   ok('and the PAGE never scrolls sideways', strip.pageSw <= strip.pageCw + 1, JSON.stringify(strip));
   ok('every tool keeps the 44px floor', strip.toolH >= 44, String(strip.toolH));
-  /* TWO ORDERS NOW, AND THE ASSERTION FOLLOWS THE ONE IT PROTECTS.
-     This pinned the owner's 2026-09-02 phone order — six doors, most-used
-     first. The 2026-09-04 brief replaced the phone's with its own (Rate Sheet
-     first, then the four intake doors, then Reports & Packages, with the
-     timestamp tools moved down rather than away) and left the DESKTOP row
-     exactly as it was. So the original list is still exactly true — of the
-     desktop — and that is where it belongs, because "the desktop row did not
-     move" is the guarantee this whole brief rests on. The phone's own order
-     is asserted beside it, so the two are read together and neither can drift
-     into the other. */
-  ok('the desktop row is still the six doors, most-used first, acts untouched',
-     JSON.stringify(strip.desk) === JSON.stringify(
-       ['pstLaunch:', 'vstOpen:', 'surveillance:', 'tab:newlead', 'tab:cases', 'tab:delivery']),
-     JSON.stringify(strip.desk));
-  /* THE PHONE'S SEVEN (owner brief 2026-09-07 §14, superseding the nine of
+  /* ONE ORDER NOW, AND THAT IS THE CHANGE. A second assertion here pinned the
+     DESKTOP row as "the six doors, most-used first, acts untouched" — a
+     different six, in a separate strip, read out of a `display:none` element.
+     §9 of the 2026-09-07 HYBRID brief asks for the same card system on both
+     surfaces, so there is one strip and one order. The desktop's own
+     composition is asserted at desktop width in the Mobile Home section below,
+     where it can be MEASURED rather than inferred from a hidden node.
+
+     THE PHONE'S SEVEN (owner brief 2026-09-07 §14, superseding the nine of
      2026-09-07 and the six of 2026-09-06). Cases and the CEO Bot moved behind
      More: both were DUPLICATES — Cases is a bottom-nav destination on every
      screen and the CEO Bot has a fab on every screen — so two rows of primary
@@ -18555,11 +18595,11 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
      strip.acts.includes('pstLaunch:') && strip.acts.includes('vstOpen:'),
      JSON.stringify(strip.acts));
   const reach = await page.evaluate(() => {
-    const g = document.querySelector('.qtgrid');
+    const g = document.querySelector('.qtools .qtapps');
     const before = g.scrollLeft; g.scrollLeft = 9999;
     const moved = g.scrollLeft !== before;
     g.scrollLeft = before;
-    const last = [...g.querySelectorAll('.qtool')].pop().getBoundingClientRect();
+    const last = [...g.querySelectorAll('.qtapp')].pop().getBoundingClientRect();
     return { lastRight: Math.round(last.right), cw: document.documentElement.clientWidth, moved };
   });
   /* THE STRONGER PROPERTY: the last tool is on screen WITHOUT a gesture. The
@@ -18568,13 +18608,48 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
      and that is asserted rather than assumed. */
   ok('the last tool is reachable with no gesture at all',
      reach.lastRight <= reach.cw + 2 && reach.moved === false, JSON.stringify(reach));
+  /* THIS ASSERTION WAS DEAD, AND MAKING IT LIVE IS THE FIX.
+
+     It compared the Assistant pill against `.qtgrid` — the DESKTOP chip row,
+     which is `display:none` at 390, so its rect was all zeros and
+     `b.top > g.bottom` was trivially true. It could never fail, at any strip
+     height, for four months. Pointing it at the strip that is actually drawn
+     showed the pill and the strip overlapping immediately.
+
+     AND A Y-RANGE OVERLAP IS NOT THE DEFECT. Both launchers are `position:
+     fixed`; on any page longer than the viewport they sit over SOMETHING, and
+     that is what a floating action button is. Two properties are worth
+     pinning and neither is "these rectangles are disjoint":
+
+       1. the two launchers do not collide with EACH OTHER — §8's own words,
+          "CEO and Assistant launchers remain separate and safe";
+       2. neither of them makes a card permanently unreachable — every card is
+          pressable once scrolled to, which is what a thumb does. */
   const pill = await page.evaluate(() => {
-    const p = document.querySelector('.asst-pill'); if (!p) return { present: false };
-    const b = p.getBoundingClientRect(), g = document.querySelector('.qtgrid').getBoundingClientRect();
-    return { present: true, overlap: !(b.top > g.bottom || b.bottom < g.top) };
+    const p = document.querySelector('.asst-pill');
+    const c = document.querySelector('.ceo-fab');
+    if (!p || !c) return { present: false };
+    const a = p.getBoundingClientRect(), b = c.getBoundingClientRect();
+    const hit = e => {
+      e.scrollIntoView({ block: 'center' });
+      const r = e.getBoundingClientRect();
+      const t = document.elementFromPoint(Math.round(r.left + r.width / 2),
+                                          Math.round(r.top + r.height / 2));
+      return !!(t && (t === e || e.contains(t)));
+    };
+    const cards = [...document.querySelectorAll('.qtools .qtapps > .qtapp')]
+      .filter(e => e.offsetParent);
+    const blocked = cards.filter(e => !hit(e)).map(e => e.dataset.qt);
+    window.scrollTo(0, 0);
+    return { present: true,
+             launchersOverlap: !(a.right < b.left || b.right < a.left
+                                 || a.bottom < b.top || b.bottom < a.top),
+             cards: cards.length, blocked };
   });
-  ok('the Assistant pill does not collide with the strip', pill.present && !pill.overlap,
-     JSON.stringify(pill));
+  ok('the two launchers stay separate from each other',
+     pill.present && pill.launchersOverlap === false, JSON.stringify(pill));
+  ok('and neither leaves a single Home card unreachable',
+     pill.present && pill.cards >= 7 && pill.blocked.length === 0, JSON.stringify(pill));
 
   /* ---- search: same function, less ceremony ---- */
   ok('the idle explainer is the placeholder\'s job on a phone',
@@ -18677,7 +18752,9 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
   const d = await desk.evaluate(() => ({
     handle: getComputedStyle(document.querySelector('.navhandle')).display,
     rail: getComputedStyle(document.querySelector('.tabs')).position,
-    gridH: Math.round(document.querySelector('.qtgrid').getBoundingClientRect().height),
+    gridH: Math.round(document.querySelector('.qtools .qtapps').getBoundingClientRect().height),
+    gridCols: getComputedStyle(document.querySelector('.qtools .qtapps'))
+      .gridTemplateColumns.split(' ').length,
     srchH: Math.round(document.querySelector('.srchcard').getBoundingClientRect().height),
     hint: [...document.querySelectorAll('.srchcard .hint')]
       .map(e => ({ shown: getComputedStyle(e).display !== 'none',
@@ -18685,8 +18762,17 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
   }));
   ok('desktop: no handle, the fixed rail is exactly as it was',
      d.handle === 'none' && d.rail === 'fixed', JSON.stringify(d));
-  ok('desktop: quick tools sits in one compact row at 1280 (was two rows)',
-     d.gridH <= 50, JSON.stringify(d));
+  /* INVERTED BY THE OWNER, NOT RELAXED. This required the desktop strip to be
+     ONE COMPACT ROW of 50px or less, which is what a chip row is and exactly
+     what §9 of the HYBRID brief replaces. The seven cards land four across on
+     two rows at 1280. What is worth pinning instead is §9's own words — the
+     desktop must not be "a giant mobile grid" — so the column count is
+     asserted as WIDER than the phone's two, and the strip is still bounded
+     rather than becoming the page. */
+  ok('desktop: the card strip is four across, not the phone\'s two',
+     d.gridCols === 4, JSON.stringify(d));
+  ok('desktop: and it stays a strip, not the whole screen',
+     d.gridH <= 340, JSON.stringify(d));
   ok('desktop: the search card lost its billboard height (was 194px)',
      d.srchH <= 165, JSON.stringify(d));
   ok('desktop: the explainer survives as a small muted line',
@@ -19543,14 +19629,314 @@ section('Mobile shell: the bottom nav appears on a phone and nowhere else');
 /* ============================================================================
    MOBILE UNIT B — HOME'S QUICK ACTIONS, against the approved mockup.
 
-   Two halves, and the second is the one that can regress silently: the phone
-   draws the owner's order with Rate Sheet leading, AND the desktop row is
-   EXACTLY the six doors, in the order and with the wording it already had.
-   The first build of this unit renamed "Intake a Client" to "New Intake" on
-   the desktop as a side effect of sharing one table — a desktop change, which
-   the owner's standing rule forbids — and no phone assertion could have seen
-   it.
+   THIS HEADING USED TO SAY the desktop row is "EXACTLY the six doors, in the
+   order and with the wording it already had", and it recorded a real defect:
+   the first build of Unit B renamed "Intake a Client" to "New Intake" on the
+   desktop as a side effect of sharing one table, which no phone assertion
+   could have seen. That guarantee held until the 2026-09-07 HYBRID brief,
+   whose §9 asks for the same card system on both surfaces — so the desktop
+   now draws the owner's seven as wider cards, and `dlabel` is retired with
+   the row it existed for.
+
+   The lesson underneath it is NOT retired and is what the assertions below
+   still enforce: a change made for one surface must be asserted on the OTHER,
+   because the table is shared and the failure is silent. Both are measured at
+   their own widths now rather than one being read out of a hidden element.
    ========================================================================= */
+/* ==========================================================================
+   THE HYBRID VISUAL PASS (owner brief 2026-09-07, against the approved art
+   sheet of the same day).
+
+   "Add visual personality where it helps navigation while keeping forms and
+   operational screens clean." Seven primary Home actions become art cards;
+   everything else stays exactly as plain as it was.
+
+   WHAT THIS SECTION MEASURES, AND WHY EACH ONE IS HERE:
+
+   - CONTRAST AGAINST PAINTED PIXELS, not against a declared token. The card
+     is a coloured ground today and a photograph under a scrim tomorrow, and
+     no computed style can answer what is actually behind the text once the
+     art lands. It also catches a whole class this unit really produced: a
+     `background` SHORTHAND in a `:hover` rule erased the ground AND the art
+     on every desktop card, leaving white type at 1.06:1 under the pointer,
+     while every declared-colour check went on passing.
+
+   - SEPARATION AS A NUMBER. §4 puts FOUR of the seven in the navy/blue range,
+     which is how a set of "distinct" cards becomes one dark smear. A first
+     draft had its closest pair at 7.9 dE and read as one colour; these are
+     held apart at 12 or more, computed in CIE Lab rather than by luminance —
+     two different hues at the same lightness are invisible to a luminance
+     test and obvious to the eye.
+
+   - THE SCRIM ONLY EXISTS WHERE THERE IS ART. That is the correction the
+     whole pass rests on, and it is asserted structurally rather than by
+     colour: an art-less card carries no `has-art`, and a scrim painted over
+     nothing is what turned the previous build into ten dark slabs.
+   ========================================================================= */
+section('The hybrid pass: seven art cards on Home, and nothing else touched');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  /* OPEN HOME FIRST. The art treatment is scoped to the dashboard by design
+     (§1/§3), so a section that measures cards without landing there measures
+     the plain ones — which is exactly what the first run of this did: fifteen
+     assertions failed reporting a white painted ground, and one reported the
+     teal HOVER wash, which is what named the cause. */
+  await page.locator('.tabs button', { hasText: 'Dashboard' }).first().click();
+  await page.waitForTimeout(800);
+
+  /* THE INSTRUMENT. Photograph the card, decode it in the page, and take the
+     LIGHTEST pixel in the strip the text occupies — the one white text has
+     least contrast against. Averaging would hide exactly the bright spot a
+     scrim exists to prevent. */
+  const paintedGround = async (sel) => {
+    /* SCROLL IT IN FIRST. `screenshot({clip})` is VIEWPORT-relative, so a card
+       below the fold — which at 390px is four of the seven — raises "clipped
+       area is either empty or outside the resulting image" and the measurement
+       never happens. Proven both ways before this was written: the same clip
+       fails at y=954 in an 844-tall viewport and succeeds once the card is
+       centred. Same instrument-before-assertion lesson as `elementFromPoint`,
+       which also only sees the viewport. */
+    await page.evaluate(s => {
+      const el = document.querySelector(s);
+      if (el) el.scrollIntoView({ block: 'center' });
+    }, sel);
+    await page.waitForTimeout(220);
+    const box = await page.evaluate(s => {
+      const el = document.querySelector(s); if (!el) return null;
+      const b = el.getBoundingClientRect();
+      /* The lower-left cluster is where the title and subtitle sit. */
+      return { x: Math.round(b.left + 2), y: Math.round(b.top + b.height * 0.55),
+               width: Math.max(8, Math.round(b.width - 4)),
+               height: Math.max(8, Math.round(b.height * 0.4)) };
+    }, sel);
+    if (!box) return null;
+    /* Hide the text so what is photographed is the GROUND, then put it back.
+       This runs on its own page for the reason the public site's own version
+       does: `visibility:hidden` also removes an element from the
+       accessibility tree, so anything measuring names afterwards reads "". */
+    await page.evaluate(s => {
+      document.querySelectorAll(s + ' .uiact-n, ' + s + ' .uiact-s, ' + s + ' .uiact-i')
+        .forEach(e => { e.style.visibility = 'hidden'; });
+    }, sel);
+    const png = (await page.screenshot({ clip: box })).toString('base64');
+    await page.evaluate(s => {
+      document.querySelectorAll(s + ' .uiact-n, ' + s + ' .uiact-s, ' + s + ' .uiact-i')
+        .forEach(e => { e.style.visibility = ''; });
+    }, sel);
+    return page.evaluate(async b64 => {
+      const img = new Image();
+      await new Promise(r => { img.onload = r; img.src = 'data:image/png;base64,' + b64; });
+      const c = document.createElement('canvas');
+      c.width = img.width; c.height = img.height;
+      c.getContext('2d').drawImage(img, 0, 0);
+      const d = c.getContext('2d').getImageData(0, 0, img.width, img.height).data;
+      const rel = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+      let best = -1, px = null;
+      for (let i = 0; i < d.length; i += 4) {
+        const L = 0.2126 * rel(d[i]) + 0.7152 * rel(d[i + 1]) + 0.0722 * rel(d[i + 2]);
+        if (L > best) { best = L; px = [d[i], d[i + 1], d[i + 2]]; }
+      }
+      return { lum: best, px, whiteRatio: +((1.05) / (best + 0.05)).toFixed(2) };
+    }, png);
+  };
+
+  const GROUNDS = ['sheets', 'newlead', 'priv', 'leads', 'field', 'photo', 'video'];
+
+  for (const [w, h, label] of [[1280, 900, 'desktop'], [390, 844, 'phone']]) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.waitForTimeout(400);
+    for (const qt of GROUNDS) {
+      const g = await paintedGround(`.qtapp[data-qt="${qt}"]`);
+      /* 4.5:1 is the bar that applies: the title is .88rem bold, which is
+         under the 18.66px where the large-text 3:1 rule begins. */
+      ok(`${label}: white type on the ${qt} card clears AA against its PAINTED ground`,
+         g && g.whiteRatio >= 4.5, JSON.stringify(g));
+    }
+  }
+
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.waitForTimeout(300);
+
+  /* ---- the seven are told apart, measured in Lab ------------------------ */
+  const sep = await page.evaluate(() => {
+    const lab = h => {
+      const f = c => { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+      const [r, g, b] = h.map(f);
+      const X = (r * .4124 + g * .3576 + b * .1805) / .95047;
+      const Y = r * .2126 + g * .7152 + b * .0722;
+      const Z = (r * .0193 + g * .1192 + b * .9505) / 1.08883;
+      const t = v => v > 0.008856 ? Math.cbrt(v) : 7.787 * v + 16 / 116;
+      const fx = t(X), fy = t(Y), fz = t(Z);
+      return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+    };
+    const cards = [...document.querySelectorAll('.qtools .qtapps:not(.qtapps-more) > .qtapp.uiart')];
+    const bg = c => (getComputedStyle(c).backgroundColor.match(/\d+/g) || []).slice(0, 3).map(Number);
+    let worst = { d: 999, pair: null };
+    for (let i = 0; i < cards.length; i++) for (let j = i + 1; j < cards.length; j++) {
+      const a = lab(bg(cards[i])), b = lab(bg(cards[j]));
+      const d = Math.sqrt(a.reduce((s, v, k) => s + (v - b[k]) * (v - b[k]), 0));
+      if (d < worst.d) worst = { d: +d.toFixed(1), pair: [cards[i].dataset.qt, cards[j].dataset.qt] };
+    }
+    return { n: cards.length, worst };
+  });
+  ok('all seven grounds are present', sep.n === 7, JSON.stringify(sep));
+  ok('and no two of them read as the same colour (CIE76 dE >= 12)',
+     sep.n === 7 && sep.worst.d >= 12, JSON.stringify(sep.worst));
+
+  /* ---- §2: DO NOT ART-CARD EVERYTHING ----------------------------------- */
+  const more = await page.evaluate(() => {
+    const open = document.querySelector('.qtmore'); if (open) open.open = true;
+    return [...document.querySelectorAll('.qtapps-more .qtapp')]
+      .map(c => ({ qt: c.dataset.qt, art: c.classList.contains('uiart') }));
+  });
+  ok('the five doors under More carry NO art treatment — §2, by data not by rule',
+     more.length === 5 && more.every(m => m.art === false), JSON.stringify(more));
+  /* AND THEY DO NOT INHERIT THE ART CARD'S SHAPE EITHER. The phone rule was
+     written against `.qtapp` and forced the five plain doors into 155px
+     squares with an empty bottom half — the square exists to hold a
+     photograph, and a light card has nothing to put in it. Measured on a
+     phone, where the square applies at all. */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(400);
+  const shape = await page.evaluate(() => {
+    const open = document.querySelector('.qtmore'); if (open) open.open = true;
+    const box = e => { const b = e.getBoundingClientRect();
+      return { h: Math.round(b.height), w: Math.round(b.width) }; };
+    const art = [...document.querySelectorAll('.qtools .qtapps:not(.qtapps-more) > .qtapp')].map(box);
+    const plain = [...document.querySelectorAll('.qtapps-more > .qtapp')].map(box);
+    return { art, plain };
+  });
+  /* NEAR-SQUARE, NOT SQUARE — and the difference is the cap, which exists for
+     a measured reason rather than a stylistic one. A true 1:1 card is 155 at
+     390px and puts Timestamp Video's TOP at 869 on an 844-tall screen when a
+     signed intake sits above the strip, which is off the first screen and
+     against the owner's 2026-09-07 lock. 155x142 is 1.09:1 and still reads as
+     square; a letterbox would not, which is what the upper bound catches. */
+  ok('an art card is near-square on a phone, within the 142px cap',
+     shape.art.length === 7
+       && shape.art.every(c => c.w / c.h >= 1.0 && c.w / c.h <= 1.15),
+     JSON.stringify(shape.art[0]));
+  ok('and a plain card is SHORTER, because it has no photograph to hold',
+     shape.plain.length === 5 && shape.plain.every(c => c.h < shape.art[0].h),
+     JSON.stringify({ art: shape.art[0], plain: shape.plain[0] }));
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.waitForTimeout(300);
+
+  /* ---- §7: the art SLOT, and the cache-bust that is not optional -------- */
+  const slot = await page.evaluate(() => ({
+    /* No asset has landed yet, so nothing may claim one. `has-art` is what
+       turns the scrim on, and a scrim over no photograph is the previous
+       build's whole failure. */
+    hasArt: [...document.querySelectorAll('.uiart.has-art')].length,
+    inlineArt: [...document.querySelectorAll('.uiart')].filter(e => e.style.getPropertyValue('--art')).length,
+    scrim: [...document.querySelectorAll('.uiart')]
+      .every(e => getComputedStyle(e).backgroundImage.includes('rgba(0, 0, 0, 0)')),
+  }));
+  ok('with no artwork installed no card claims any, and no scrim is painted',
+     slot.hasArt === 0 && slot.inlineArt === 0 && slot.scrim === true, JSON.stringify(slot));
+  /* The cache-bust is REQUIRED — `_headers` caches these seven days and the
+     files are replaced in place. The public site paid a full round for this. */
+  const src = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
+  const urls = [...src.matchAll(/url\('cards\/[^']+'\)/g)].map(m => m[0]);
+  ok('every card art URL carries a version token',
+     urls.length >= 2 && urls.every(u => /\?v=\$\{CARD_ART_V\}/.test(u)), JSON.stringify(urls));
+  ok('and the version is named in exactly one place',
+     (src.match(/const CARD_ART_V\s*=/g) || []).length === 1);
+
+  /* ---- the hover regression: a shorthand must not eat the ground -------- */
+  const hov = await page.evaluate(() => {
+    const c = document.querySelector('.qtapp[data-qt="sheets"]');
+    const before = getComputedStyle(c).backgroundColor;
+    /* `:hover` cannot be forced from script, so read the RULE that would
+        apply — the defect was a `background` shorthand reaching art cards. */
+    const rules = [...document.styleSheets].flatMap(sh => { try { return [...sh.cssRules]; } catch { return []; } });
+    const bad = rules.filter(r => r.selectorText && /\.uiact:hover/.test(r.selectorText)
+      && !/:not\(\.uiart\)/.test(r.selectorText));
+    return { before, offenders: bad.map(r => r.selectorText) };
+  });
+  ok('no hover rule repaints an art card\'s background out from under its text',
+     hov.offenders.length === 0, JSON.stringify(hov));
+
+  /* ---- §5: the signed-intake card --------------------------------------- */
+  await page.evaluate(() => { VIEW = 'list'; TAB = 'dashboard'; paint(); });
+  await page.waitForTimeout(500);
+  const wide = await page.evaluate(() => {
+    const c = document.querySelector('.uiwide'); if (!c) return null;
+    const go = c.querySelector('.uiwide-go');
+    const rgb = s => (s.match(/\d+/g) || []).slice(0, 3).map(Number);
+    const rel = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    const lum = p => 0.2126 * rel(p[0]) + 0.7152 * rel(p[1]) + 0.0722 * rel(p[2]);
+    const ratio = (a, b) => { const A = lum(a), B = lum(b);
+      return +((Math.max(A, B) + 0.05) / (Math.min(A, B) + 0.05)).toFixed(2); };
+    const gs = getComputedStyle(go), cs = getComputedStyle(c);
+    return { green: c.classList.contains('art-signed'),
+             art: c.classList.contains('uiart'),
+             go: go.textContent.trim(),
+             goInk: ratio(rgb(gs.color), rgb(gs.backgroundColor)),
+             goVsCard: ratio(rgb(gs.backgroundColor), rgb(cs.backgroundColor)),
+             h: Math.round(c.getBoundingClientRect().height) };
+  });
+  ok('the signed-intake alert is the green family and the one art card that dominates',
+     wide && wide.green && wide.art && wide.h >= 84, JSON.stringify(wide));
+  /* §5 — "one obvious action, VIEW INTAKE". It used to be hidden below 480px
+     because it competed with the client's name for one line; on its own row
+     it fits at 320 and is never dropped. */
+  ok('and it carries the action in words, not a bare arrow',
+     wide && /view intake/i.test(wide.go), wide && wide.go);
+  /* The sheet draws a bright-green pill with white type; measured, that is
+     2.28:1. It inverts instead, which is also what the count badge does. */
+  ok('its action pill is legible on itself AND against the card it sits on',
+     wide && wide.goInk >= 4.5 && wide.goVsCard >= 3, JSON.stringify(wide));
+
+  /* ---- §3/§11: NOT ONE ART CARD ON AN OPERATIONAL SCREEN ---------------- */
+  /* The strip renders from `shell()` on EVERY top-level screen — a 2026-09-04
+     decision that exists because the timestamp tools went missing once, so it
+     cannot simply be withdrawn. The TREATMENT is what is withdrawn: off Home
+     the same seven cards draw exactly as they did before this unit. Measured
+     rather than assumed, because the first build of this pass put seven dark
+     cards on Cases, Intakes, Rate Sheets, the Delivery Center and Settings —
+     which is precisely the "image-heavy" §3 forbids. */
+  const walk = {};
+  for (const [label, go] of [
+    ['rate sheets', () => { VIEW = 'list'; TAB = 'sheets'; paint(); }],
+    ['cases', () => { VIEW = 'list'; TAB = 'cases'; paint(); }],
+    ['intakes', () => { VIEW = 'list'; TAB = 'leads'; paint(); }],
+    ['reports & packages', () => { VIEW = 'list'; TAB = 'delivery'; paint(); }],
+    ['settings', () => { VIEW = 'list'; TAB = 'settings'; paint(); }],
+    ['tasks', () => { VIEW = 'list'; TAB = 'tasks'; paint(); }],
+  ]) {
+    await page.evaluate(go);
+    await page.waitForTimeout(450);
+    walk[label] = await page.evaluate(() =>
+      [...document.querySelectorAll('.uiart')].filter(e => e.offsetParent).length);
+  }
+  ok('no operational screen carries a single art card',
+     Object.values(walk).every(n => n === 0), JSON.stringify(walk));
+  /* AND THE DOORS ARE STILL THERE — withdrawing the treatment must not
+     withdraw the strip, or the 2026-09-04 "could not find the tool" incident
+     comes straight back. */
+  const stillThere = await page.evaluate(() =>
+    [...document.querySelectorAll('.qtools .qtapps:not(.qtapps-more) > .qtapp')].map(c => c.dataset.qt));
+  ok('and every door is still on the screen, just plain',
+     stillThere.length === 7 && stillThere.includes('photo') && stillThere.includes('video'),
+     JSON.stringify(stillThere));
+
+  /* ---- the case screen never had one, and must not gain one ------------- */
+  await page.evaluate(() => openCase('API-20260812-4002'));
+  await page.waitForTimeout(1200);
+  for (const [label, tab] of [['overview', 'overview'], ['intake detail', 'details'],
+                              ['billing', 'billing'], ['activity', 'activity']]) {
+    await page.evaluate(t => { WS_TAB = t; paint(); }, tab);
+    await page.waitForTimeout(400);
+    ok(`the case ${label} stays a clean operational surface`,
+       await page.evaluate(() => [...document.querySelectorAll('.uiart')]
+         .filter(e => e.offsetParent).length) === 0);
+  }
+
+  await page.close();
+}
+
 section("Mobile Home: the owner's quick actions, and a desktop row that did not move");
 {
   const page = await newPage();
@@ -19560,8 +19946,7 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
     await page.setViewportSize({ width: w, height: h });
     await page.waitForTimeout(320);
     return page.evaluate(() => {
-      const grid = document.querySelector('.qtgrid');
-      const apps = document.querySelector('.qtapps');
+      const apps = document.querySelector('.qtools .qtapps');
       const cards = apps ? [...apps.querySelectorAll('.qtapp')] : [];
       const lead = apps ? apps.querySelector('.qtapp-lead') : null;
       const flag = lead ? lead.querySelector('.qtapp-flag') : null;
@@ -19577,12 +19962,14 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
         return +((Math.max(A, B) + 0.05) / (Math.min(A, B) + 0.05)).toFixed(2); };
       const fcs = flag ? getComputedStyle(flag) : null;
       return {
-        gridShown: grid ? getComputedStyle(grid).display !== 'none' : null,
         appsShown: apps ? getComputedStyle(apps).display !== 'none' : null,
-        desk: grid ? [...grid.querySelectorAll('.qtool')]
-          .map(b => b.textContent.replace(/\s+/g, ' ').trim()) : [],
-        deskActs: grid ? [...grid.querySelectorAll('.qtool')]
-          .map(b => b.dataset.act + (b.dataset.tab ? ':' + b.dataset.tab : '')) : [],
+        /* THE PROPORTION IS THE SURFACE DIFFERENCE NOW, not the markup. One
+           strip draws at every width; what changes is how many across and how
+           the card is shaped, so that is what gets measured. */
+        cols: apps ? getComputedStyle(apps).gridTemplateColumns.split(' ').length : null,
+        ratio: cards.length
+          ? +(cards[0].getBoundingClientRect().width
+              / cards[0].getBoundingClientRect().height).toFixed(2) : null,
         phone: cards.map(c => c.querySelector('.qtapp-n').textContent.trim()),
         phoneActs: cards.map(c => c.dataset.act + (c.dataset.tab ? ':' + c.dataset.tab : '')
           + (c.dataset.k ? ':' + c.dataset.k : '')),
@@ -19598,19 +19985,42 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
     });
   };
 
-  /* ---- THE DESKTOP ROW IS WHAT IT WAS ---------------------------------- */
-  const DESK = ['Timestamp Photo', 'Timestamp Video', 'Active Surveillance',
-                'Intake a Client', 'Cases', 'Reports & Packages'];
-  for (const [w, h] of [[1200, 900], [768, 1024]]) {
+  /* ---- THE DESKTOP DRAWS THE SAME CARDS, WIDER (owner brief 2026-09-07 §9)
+     This block asserted the opposite for four months and it was right to: the
+     desktop was a `.qtool` chip row of six doors, and "the desktop row is what
+     it was" was the guarantee every mobile brief rested on. §9 overturns it in
+     the owner's own words — "use the same visual language on desktop ... allow
+     wider card proportions, more breathing room, cleaner grouping" — so the
+     assertions are INVERTED rather than deleted, and what they now pin is the
+     part that could still go wrong.
+
+     THE DOORS ARE THE SAME SEVEN AS THE PHONE'S. That is the change worth
+     stating: `QT_DESK` named a different six from before Home had a card
+     system, and Cases and Reports & Packages moved to More on this surface
+     exactly as they had on the phone — each keeping a permanent rail door, so
+     nothing became harder to reach. It also makes Settings -> My Portal true
+     here for the first time, since that screen has always ordered `QT_PHONE`.
+
+     AND IT MUST NOT BE "A GIANT MOBILE GRID", which is §9's own phrase and the
+     one thing a shared card system can get wrong. Four across against the
+     phone's two, and a LANDSCAPE card against the phone's square. */
+  /* The `read()` helper appends `:tab` AND `:k`, so the private-intake door
+     reads `nlKind:consumer` — the creep guard above uses a different reader
+     that appends only `:tab`. Two readers, two shapes, and each assertion
+     spells out the one it uses rather than sharing a constant that is wrong
+     for one of them. */
+  const DESK_ORDER = 'sheetQuick|tab:newlead|nlKind:consumer|tab:leads|surveillance|pstLaunch|vstOpen';
+  for (const [w, h, cols] of [[1200, 900, 4], [768, 1024, 3]]) {
     const d = await read(w, h);
-    ok(`at ${w}px the desktop quick-tools row is the six doors it always was`,
-       d.desk.length === 6 && DESK.every((n, i) => d.desk[i].endsWith(n)),
-       JSON.stringify(d.desk));
-    ok(`at ${w}px their destinations are unchanged`,
-       d.deskActs.join('|') === 'pstLaunch|vstOpen|surveillance|tab:newlead|tab:cases|tab:delivery',
-       d.deskActs.join('|'));
-    ok(`at ${w}px the phone card strip is not drawn at all`, d.appsShown === false);
-    ok(`at ${w}px the desktop row is`, d.gridShown === true);
+    ok(`at ${w}px the desktop strip carries the owner's seven, same order as the phone`,
+       d.phoneActs.join('|') === DESK_ORDER, d.phoneActs.join('|'));
+    ok(`at ${w}px it is ${cols} across, not the phone's two`, d.cols === cols,
+       JSON.stringify({ cols: d.cols, want: cols }));
+    ok(`at ${w}px the card is landscape, not the phone's square`, d.ratio >= 1.4,
+       `ratio ${d.ratio}`);
+    ok(`at ${w}px the strip is drawn`, d.appsShown === true);
+    ok(`at ${w}px nothing scrolls sideways`,
+       d.stripScrolls === false && d.pageOverflow === false, JSON.stringify(d));
   }
 
   /* ---- AND THE PHONE DRAWS THE OWNER'S ORDER --------------------------- */
@@ -19624,8 +20034,15 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
   const PHONE_MORE = ['Cases', 'Insurance Intake', 'Law Firm Intake',
                       'Reports & Packages', 'CEO Bot'];
   const p390 = await read(390, 844);
-  ok('on a phone the quick actions are cards, not the desktop chip row',
-     p390.appsShown === true && p390.gridShown === false, JSON.stringify(p390).slice(0, 200));
+  /* TWO ACROSS, AND NOTHING ABOUT THE ART HERE. This section does not open
+     the dashboard, so the cards it measures are the PLAIN ones the strip
+     draws on every other screen — 155x121, not the art card's 155x142. The
+     proportion claim belongs to the hybrid section, which lands on Home
+     first and says so; asserting it here measured a card this section never
+     had. Two-across is true on either, and is what this section is about. */
+  ok('on a phone the quick actions are a two-across grid',
+     p390.appsShown === true && p390.cols === 2,
+     JSON.stringify({ cols: p390.cols, ratio: p390.ratio }));
   ok("and they are in the owner's order, Rate Sheet first",
      p390.phone.join('|') === PHONE.join('|'), p390.phone.join('|'));
   /* §4 — RATE SHEET OPENS THE FORM, NOT THE SCREEN. "First in the list" and
@@ -21904,17 +22321,33 @@ section("Home says good morning, and a signed intake is impossible to miss");
      failed.card === false, JSON.stringify(failed));
   await page.evaluate(async () => { CASES_OK = true; await render(); });
 
-  /* ---- §AF: THE ART SLOT IS BUILT AND EMPTY, AND SAYS SO ---------------- */
+  /* ---- §AF: THE ART SLOT IS BUILT AND EMPTY, AND SAYS SO ----------------
+
+     INVERTED BY THE 2026-09-07 HYBRID BRIEF, NOT RELAXED. This required that
+     with no artwork installed NO card wears the dark treatment, and it was
+     right for the build it was written against: that build painted a scrim
+     unconditionally, so an art-less card was a near-black slab and the light
+     placeholder genuinely was better.
+
+     The hybrid pass removes the cause rather than the symptom — the scrim is
+     a property of the ART now, so an art-less card is its family GROUND at
+     full strength rather than a slab, and the owner has asked for exactly
+     that. What is still worth pinning is the half that has not changed and
+     could regress silently: no artwork exists, so no card may claim a file or
+     paint a scrim over nothing. Those are asserted in the hybrid section
+     above, which owns this property now; here it is enough to state that the
+     ground IS the placeholder and that the treatment is Home's alone. */
   const art = await page.evaluate(() => ({
     known: typeof CARD_ART !== 'undefined' ? CARD_ART.size : -1,
-    /* with no artwork the cards are the LIGHT placeholder, because a grid of
-       dark scrimmed slabs loses the family colour the brief asks them to
-       carry */
+    /* Every ground-bearing card carries the treatment; none claims a file. */
     dark: document.querySelectorAll('.qtapp.uiart').length,
+    withFile: document.querySelectorAll('.qtapp.uiart.has-art').length,
+    grounds: Object.values(QT).filter(t => t.ground).length,
     slots: Object.values(QT).filter(t => t.art).length }));
   ok('every quick-action door declares an art slot', art.slots >= 10, JSON.stringify(art));
-  ok('no artwork exists yet, so no card wears the dark art treatment',
-     art.known === 0 && art.dark === 0, JSON.stringify(art));
+  ok('the seven ground-bearing doors wear the treatment, and no file is claimed',
+     art.known === 0 && art.grounds === 7 && art.dark === 7 && art.withFile === 0,
+     JSON.stringify(art));
   await page.close();
 }
 

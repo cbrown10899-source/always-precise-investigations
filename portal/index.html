@@ -69,6 +69,33 @@
        drift apart. `--btn-h` is 48 so a large control clears the project's
        44px tap floor from the token, not from a padding sum nobody can read. */
     --r-card:14px; --r-btn:10px; --btn-h:48px; --card-pad:16px; --card-gap:12px;
+    /* THE ART-CARD GROUNDS (owner brief 2026-09-07 §4, the HYBRID pass).
+
+       A GROUND IS NOT AN INK, and conflating the two is what made the first
+       art build worse than the light cards it replaced. `.uiart` painted
+       `--f-ink` — a TEXT colour — and then a dark scrim over it, so every
+       card landed at near-black and the family colours §4 asks them to carry
+       were crushed by the very scrim that makes white text safe. These seven
+       are grounds: deep enough to carry white type on their own, distinct
+       enough to navigate by, and restrained enough that seven of them in a
+       grid is a work portal rather than a gallery (§9).
+
+       MEASURED, not chosen by eye. White on each: 6.88 / 8.67 / 8.74 / 8.99 /
+       10.18 / 11.29 / 15.23 — every one clear of 4.5:1, which is the bar that
+       applies because the title is .88rem bold and therefore normal text. The
+       .88-alpha subtitle composites to 5.74 at worst. And because §4 puts FOUR
+       cards in the navy/blue range, they are also held apart by a measured
+       CIE76 distance: the closest pair is 13.6 dE (private/field), against a
+       first draft whose closest pair was 7.9 and read as one colour. Do not
+       nudge one of these without re-running both measurements — the suite
+       asserts the contrast against painted pixels and the separation as dE. */
+    --art-sheet:#10505f;   /* navy / teal        — Rate Sheet */
+    --art-intake:#0f5544;  /* green / teal       — New Intake */
+    --art-private:#39424e; /* muted navy / charcoal — Private Intake */
+    --art-signed:#15682f;  /* green              — View Intakes, signed alert */
+    --art-field:#152738;   /* dark navy / slate  — Active Surveillance */
+    --art-photo:#1d4e7a;   /* blue / charcoal    — Timestamp Photo */
+    --art-video:#33307d;   /* deep blue / indigo — Timestamp Video */
   }
   *{margin:0;padding:0;box-sizing:border-box;}
   body{font-family:'Segoe UI',system-ui,-apple-system,Arial,sans-serif;background:var(--paper);color:var(--ink);line-height:1.6;-webkit-text-size-adjust:100%;}
@@ -288,53 +315,65 @@
      visual language as .alsoline so the dashboard gains a shortcut and not a
      fifth equal-weight box. 44px minimum stands at every width. */
   .qtools{margin:0 0 10px;padding:0 2px;}
-  /* .qtgrid, not .qgrid — that name was already taken by the field view's
-     84px action grid at the other end of this stylesheet, and the later rule
-     was silently winning. The third source-order casualty this project has
-     records for; a distinct name ends the contest instead of refereeing it.
+  /* ONE CARD STRIP AT EVERY WIDTH (owner brief 2026-09-07 §9), and the
+     proportion is the only thing that changes.
 
-     A FLEX ROW NOW, NOT A GRID (owner, 2026-09-02: "one compact row", and the
-     grid was the height problem it replaced — auto-fill at minmax(200px,1fr)
-     resolved to ONE COLUMN on a 390px phone, so six 44px buttons stacked into
-     336px of the first screen). Desktop wraps only when it genuinely runs out
-     of room; the phone rule at the end of the stylesheet makes it a
-     swipeable strip instead of wrapping at all. */
-  .qtgrid{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
-  /* The Timestamp pair reads as a pair: same accent edge on both, and the row
-     keeps them adjacent because they are declared adjacent. */
-  .qtgrid .qtool{flex:0 0 auto;justify-content:flex-start;white-space:nowrap;}
-  .qtool.qt-pair{border-left:3px solid var(--teal);}
-  /* THE PHONE'S HOME QUICK ACTIONS ARE CARDS, NOT CHIPS (owner brief
-     2026-09-04, built against the approved Home mockup). Hidden at every width
-     but the phone's, where .qtgrid is hidden instead — one strip in the
-     accessibility tree at a time, never two. The rules that draw it live at
-     the END of this stylesheet with the rest of the phone overrides. */
-  /* `.qtools .qtapps`, TWO CLASSES, NOT ONE. The strip carries `.uigrid`
-     now, whose `display:grid` sits LATER in this stylesheet than a bare
-     `.qtapps{display:none}` and silently won it — so the phone strip computed
-     as drawn at every width. The sixth source-order casualty this project has
-     recorded, and the first one caused by adding a shared component class to
-     an element that already had a display rule. Specificity settles it rather
-     than position, because this rule has to hold wherever `.uigrid` moves to. */
-  .qtools .qtapps, .qtbox{display:none;}
-  .qtools-l{font-size:.76rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
-    color:var(--muted);}
-  /* IT HAS TO READ AS AN ACTION, and the first two attempts did not.
+     WHAT WENT: `.qtgrid`, the flex row of filled-navy `.qtool` chips, and
+     `.qtools-l` its "Quick tools" label. They were the desktop half of a
+     two-strip arrangement that existed because the surfaces drew different
+     things — chips there, cards on the phone, one `display:none` at every
+     width. They draw the same cards now, so the second strip is gone rather
+     than restyled, and with it the whole class of bug the arrangement kept
+     producing: this file records `.qtgrid` itself as a renamed source-order
+     casualty, and `.qtools .qtapps` as a sixth one caused by that very
+     display-toggling. Neither can recur against a strip with no twin.
 
-     White on a near-white page behind a hairline border is technically visible
-     and practically invisible — the owner looked at the live dashboard and did
-     not see it. The tint that replaced it was barely better: measured, `var(--info-bg)`
-     sits THREE luminance points from the page's own `#f4f5f7`, which is no
-     separation at all. There is a test that fails below 8, and it caught this.
+     THE DESKTOP PROPORTION IS WIDER, WHICH IS §9's OWN WORD. A phone card is
+     near-square, two across; a desktop card is landscape, four across, with
+     more padding — "wider card proportions, more breathing room, cleaner
+     grouping". Four rather than six or seven across is what keeps it
+     operational rather than gallery-like at 1200px: seven cards land 4 + 3,
+     the titles never wrap, and the strip stays one boxed group instead of
+     becoming the page. */
+  .qtools .qtapps{display:grid;}
+  .qtbox{display:block;}
+  /* Desktop: landscape cards, four across, more air inside each. The phone
+     rules that make them near-square and two across live at the END of the
+     stylesheet, after everything they override — the seventh time this file
+     has had to say so. */
+  @media(min-width:641px){
+    .qtools .qtapps{grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;}
+    .qtools .qtapp{min-height:132px;padding:14px 15px;}
+    .qtools .qtapp .uiact-n{font-size:.95rem;}
+    .qtools .qtapp .uiact-s{font-size:.8rem;}
+    .qtools .qtapp .uiact-i{width:38px;height:38px;font-size:1.15rem;}
+  }
+  /* A tablet in portrait has no room for four landscape cards without the
+     titles wrapping, so it takes three. Measured rather than assumed: at
+     768px four columns give 168px of card, and "Active Surveillance" needs
+     more than that on one line. */
+  @media(min-width:641px) and (max-width:900px){
+    .qtools .qtapps{grid-template-columns:repeat(3,minmax(0,1fr));}
+  }
+  /* §2 — More is a disclosure, not a second strip. Closed it costs one row.
 
-     Filled navy: unmistakable against a light page, and deliberately NOT the
-     teal the bands' own actions use, so a utility does not compete with the
-     work queue. Still one 44px row, still not a card. */
-  .qtool{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 10px;
-    border:1px solid var(--navy);border-radius:9px;background:var(--navy);color:#fff;
-    font:inherit;font-size:.82rem;font-weight:700;cursor:pointer;}
-  .qtool b{font-weight:400;font-size:1rem;line-height:1;}
-  .qtool:hover{background:var(--navy-2);border-color:var(--navy-2);}
+     `.qtmore:not([open]) .qtapps{display:none}` IS LOAD-BEARING, and it is at
+     the BASE now rather than inside the phone query, because the disclosure
+     exists at every width from this unit on. Leaving it phone-only would have
+     reproduced the original defect on desktop exactly: `.qtools .qtapps{
+     display:grid}` out-specifies the browser's own hiding of closed
+     `<details>` content, so the collapsed cards lay out below the summary,
+     report `visibility:visible` and a real bounding box — and
+     `elementFromPoint` at their own centre returns NOTHING, because they were
+     never painted. Controls that measure as visible and cannot be pressed:
+     the Timestamp Video visibility incident in a new costume, and a
+     Playwright click on one times out, which is exactly what a thumb does. */
+  .qtmore:not([open]) .qtapps{display:none;}
+  .qtmore{margin-top:10px;}
+  .qtmore summary{min-height:44px;display:flex;align-items:center;cursor:pointer;
+    font-weight:800;font-size:.84rem;color:var(--navy-2);}
+  .qtmore summary:focus-visible{outline:3px solid var(--gold);outline-offset:2px;}
+  .qtmore .qtapps{margin-top:8px;}
   .chip{display:inline-flex;align-items:center;gap:6px;background:var(--info-bg);border:1px solid var(--info-line);
     color:var(--navy);border-radius:999px;padding:3px 6px 3px 11px;font-size:.8rem;font-weight:700;}
   .chip button{border:0;background:none;font:inherit;font-size:1rem;cursor:pointer;color:var(--teal-ink,var(--info-ink));line-height:1;}
@@ -816,7 +855,15 @@
     font-size:1.05rem;line-height:1;margin-bottom:5px;}
   .uiact-n{font-weight:800;font-size:.88rem;line-height:1.2;}
   .uiact-s{font-size:.74rem;color:var(--muted);line-height:1.25;}
-  .uiact:hover{background:var(--f-bg,var(--paper));}
+  /* `:not(.uiart)` IS LOAD-BEARING, and the measurement is what found it.
+     This is the `background` SHORTHAND, so it resets `background-image` to
+     none as well as repainting the ground — on an art card that erased both
+     the family ground AND the photograph, leaving white type on the light
+     hover tint at 1.06:1. Every one of the seven was unreadable while the
+     pointer sat on it, on desktop only, and a screenshot taken with the mouse
+     parked elsewhere would have looked perfect. The art card's own hover is
+     the brightness filter below. */
+  .uiact:not(.uiart):hover{background:var(--f-bg,var(--paper));}
   .uiact:focus-visible{outline:3px solid var(--gold);outline-offset:2px;}
   /* The flagged card is the one the owner reaches for first. It says so in
      words as well as in weight — a border alone is not a label.
@@ -892,54 +939,134 @@
      not move when `--art` is set. Specifications, per card, with safe zones
      and dimensions: `case-portal/ART-ASSET-MANIFEST.md`.
 
-     THE PLACEHOLDER IS A SOLID FAMILY TONE, NOT A GRADIENT. A gradient that
-     looks finished is how a placeholder stops being replaced; a flat colour
-     reads as deliberately unfinished. And because the SCRIM is painted either
-     way, the title's contrast is identical with art and without — so nothing
-     about the type has to be re-measured when the photographs land.
+     THE SCRIM IS A PROPERTY OF THE ART, NOT OF THE CARD (owner brief
+     2026-09-07 §1: "a restrained dark scrim ONLY WHERE NEEDED for text
+     readability"). This is the correction that makes the hybrid pass work,
+     and it is the whole reason the earlier build had to fall back to light
+     cards. A scrim exists to stop a PHOTOGRAPH from fighting white type. With
+     no photograph there is nothing to scrim, so painting one anyway only darkened
+     a colour that was already chosen to carry the type — seven cards crushed
+     to the same near-black, which is exactly the "ten dark slabs" finding.
+
+     So `--c-scrim` is transparent by default and is set only by `.has-art`.
+     Without art the card is its `--c-art` ground at full strength, which is
+     what makes the seven READ AS SEVEN. With art it is the same ground under
+     the photograph under the scrim.
+
+     THE GEOMETRY DOES NOT MOVE BETWEEN THE TWO STATES, which is the brief's
+     §6 requirement in one sentence: same box, same padding, same tile, same
+     `margin-top:auto` text block in the same lower-left safe zone, same badge
+     corner. Dropping a photograph in costs its name in `CARD_ART`, the asset,
+     and one line in `.github/deploy-manifest.txt` — never a layout change.
 
      One element, two background layers, no pseudo-element and no stacking
-     context: the scrim is the first layer and the art the second, with a
-     transparent gradient standing in for `none` because `none` is not a legal
-     member of a background-image list. */
-  .uiart{color:#fff;border-color:transparent;
-    background-color:var(--f-ink,var(--navy-2));
-    background-image:linear-gradient(180deg,rgba(12,22,38,.18) 0%,rgba(12,22,38,.80) 84%),
+     context, with a transparent gradient standing in for `none` because
+     `none` is not a legal member of a background-image list. */
+  .uiart{--c-scrim:linear-gradient(rgba(0,0,0,0),rgba(0,0,0,0));
+    color:#fff;border-color:transparent;position:relative;
+    background-color:var(--c-art,var(--navy-2));
+    background-image:var(--c-scrim),
       var(--art,linear-gradient(rgba(0,0,0,0),rgba(0,0,0,0)));
     background-size:cover;background-position:var(--art-pos,center);}
+  .uiart.has-art{--c-scrim:linear-gradient(180deg,rgba(10,18,30,.28) 0%,rgba(10,18,30,.82) 84%);}
   .uiart .uiact-n,.uiart .uiwide-n{color:#fff;}
   .uiart .uiact-s,.uiart .uiwide-s{color:rgba(255,255,255,.88);}
-  .uiart .uiact-i{background:rgba(255,255,255,.18);}
-  .uiart:hover{background-color:var(--f-ink,var(--navy-2));filter:brightness(1.12);}
-  /* The text sits in the LOWER portion, which is the safe zone the manifest
-     tells the artist to keep quiet. `margin-top:auto` is what puts it there
-     whatever the card's height, so a taller card does not float its title. */
-  .uiart .uiact-n{margin-top:auto;}
+  /* A NEAR-WHITE TILE, BECAUSE THE ICONS ARE COLOUR EMOJI. The reference
+     sheet draws white line glyphs; this portal has no icon font and uses the
+     system emoji, several of which are DARK — the detective, the camera, the
+     clapperboard and the plus all rendered nearly invisible on a .18 white
+     wash over a dark ground. Looking at it is what found this; every contrast
+     number on the card was already passing, because the numbers measure the
+     TEXT. A light tile is the same "light thing on a dark card" treatment the
+     badge and the action pill already use, so it reads as one system. */
+  .uiart .uiact-i{background:rgba(255,255,255,.93);}
+  .uiart:hover{filter:brightness(1.14);}
+
+  /* THE SEVEN GROUNDS (§4). Each class sets ONE property, so a card's colour
+     is one lookup and the anti-drift budget has nothing to catch — every
+     value lives in `:root` and is referenced exactly once here.
+
+     `.art-*` is deliberately NOT `.fam-*`. The family classes dress the LIGHT
+     surfaces — intake cards, the CEO panel, case rows — and §3 requires the
+     operational screens to stay exactly that. Giving the art ground its own
+     name is what makes "the art treatment cannot leak onto Prepare & Send"
+     structural rather than remembered: only `.uiart` reads `--c-art`, and a
+     test fails if `.uiart` appears on any screen but Home. */
+  .art-sheet  {--c-art:var(--art-sheet);}
+  .art-intake {--c-art:var(--art-intake);}
+  .art-private{--c-art:var(--art-private);}
+  .art-signed {--c-art:var(--art-signed);}
+  .art-field  {--c-art:var(--art-field);}
+  .art-photo  {--c-art:var(--art-photo);}
+  .art-video  {--c-art:var(--art-video);}
+
+  /* §1 — "optional small count/status badge". Its own element in the corner
+     the manifest already reserves, ABSOLUTELY POSITIONED so it costs the card
+     no height: §7 forbids Home growing, and a badge that pushed the grid down
+     a row would have broken that with the owner's queue below it.
+
+     It is an addition, not a replacement. The count used to be written INTO
+     the subtitle — "3 waiting" standing where "Signed & waiting" belongs — so
+     the card lost the line that says what it is at exactly the moment it had
+     something to report. Both are on screen now. */
+  .uiact-badge{position:absolute;top:8px;right:9px;min-width:22px;height:22px;
+    border-radius:11px;display:inline-flex;align-items:center;justify-content:center;
+    padding:0 7px;background:rgba(255,255,255,.94);color:var(--c-art,var(--navy-2));
+    font-weight:800;font-size:.74rem;line-height:1;}
+  /* THE WHOLE CLUSTER SITS IN THE LOWER-LEFT, ICON INCLUDED — which is the
+     approved sheet's own composition and the safe zone the manifest tells the
+     artist to keep quiet.
+
+     `margin-top:auto` used to be on the TITLE, which pinned the icon to the
+     top and the words to the bottom and left a void across the middle of the
+     card. That was invisible on the old squat card and obvious the moment the
+     phone card became square: 40% of the card was a gap between two halves of
+     one label. Moving it to the ICON bottom-aligns the group, so the empty
+     region is a single quiet area ABOVE the text — which is exactly where the
+     photograph goes, and why the card reads as waiting for art rather than as
+     art that failed to load. */
+  .uiart .uiact-i{margin-top:auto;}
 
   /* ---- THE WIDE ACTION CARD (§AF: "wide action card") --------------------
      For the two or three actions that must be impossible to miss — a signed
      intake waiting, the open case list. Art-ready on the same terms. */
-  .uiwide{display:flex;align-items:center;gap:13px;width:100%;min-height:84px;
+  /* THE ACTION SITS UNDER THE TEXT, WHICH IS THE APPROVED SHEET'S OWN SHAPE
+     (2026-09-07) — icon and title above, the action as a pill beneath. It is
+     also the fix for a workaround: the label and the client's name used to
+     compete for one line at 390px, so the word "View intake" was hidden below
+     480px and the card showed a bare arrow on exactly the phone the owner
+     uses. §5 asks for one obvious action reading VIEW INTAKE; on its own row
+     it fits at 320px with room to spare, so the word is never dropped now. */
+  .uiwide{display:flex;flex-direction:column;align-items:stretch;gap:11px;
+    width:100%;min-height:84px;
     border:1px solid var(--f-line,var(--line));border-radius:var(--r-card);
     padding:14px 16px;text-align:left;font:inherit;color:var(--ink);
     cursor:pointer;margin:0 0 var(--card-gap);}
+  .uiwide-top{display:flex;align-items:center;gap:13px;min-width:0;}
   .uiwide-b{min-width:0;flex:1 1 auto;}
   .uiwide-n{font-weight:800;font-size:1.02rem;line-height:1.25;}
   .uiwide-s{font-size:.82rem;color:var(--muted);line-height:1.3;}
-  /* MEASURED AT 390: the words "View intake →" and the client's name were
-     competing for the same line, so the name wrapped THROUGH the label. The
-     label never shrinks and never wraps; below 480px it becomes the arrow
-     alone, because the whole card is the button and the words were only ever
-     telling you what tapping it does. */
-  .uiwide-go{flex:0 0 auto;font-weight:800;font-size:.9rem;white-space:nowrap;}
-  .uiwide-go .uiwide-goword{display:inline;}
-  @media(max-width:480px){
-    .uiwide-go .uiwide-goword{display:none;}
-    .uiwide-go{font-size:1.3rem;line-height:1;}
-  }
+  /* THE PILL IS WHITE WITH THE CARD'S OWN GREEN, AND THAT WAS MEASURED. The
+     sheet draws a bright-green pill with white type; white on that green is
+     2.28:1, which is not a near miss but a control nobody can read. Every
+     variant was computed against the card it actually sits on:
+
+       white pill / card-green text   6.88 on the pill, 6.88 against the card
+       --good pill / white text       4.38  FAIL
+       bright green / white text      2.28  FAIL
+       bright green / navy text       7.66, but it is a bright colour this
+                                      palette does not have, and §4 says not
+                                      to introduce one
+
+     So it inverts, which is also what `.uiact-badge` already does — one
+     treatment for "the light thing on the dark card", not two. */
+  .uiwide-go{align-self:flex-start;display:inline-flex;align-items:center;gap:7px;
+    min-height:40px;padding:0 16px;border-radius:20px;background:#fff;
+    color:var(--c-art,var(--navy-2));font-weight:800;font-size:.8rem;
+    letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;}
   .uiwide .uiact-i{flex:0 0 auto;width:42px;height:42px;font-size:1.25rem;margin:0;}
   .uiwide:focus-visible{outline:3px solid var(--gold);outline-offset:2px;}
-  /* A count, top corner, as the manifest reserves it. */
+  /* A count, beside the title, as the manifest reserves the corner. */
   .uiwide-badge{flex:0 0 auto;min-width:30px;height:30px;border-radius:15px;
     display:inline-flex;align-items:center;justify-content:center;
     background:rgba(255,255,255,.22);color:#fff;font-weight:800;font-size:.92rem;
@@ -1919,7 +2046,7 @@
   /* UNIT 5 — the keyboard has to be able to SEE where it is. One visible
      focus treatment for every interactive control, never removed, and distinct
      from hover so a tab-through reads as a tab-through. */
-  .btn:focus-visible,.qtool:focus-visible,.tabs button:focus-visible,
+  .btn:focus-visible,.tabs button:focus-visible,
   /* --------------------------------------- UNIT 9: report templates */
   .tmplgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(210px,100%),1fr));gap:10px;}
   .tmplcard{text-align:left;font:inherit;padding:12px 14px;border:1px solid var(--line);
@@ -2276,9 +2403,6 @@
        scrolls horizontally (the suite pins that) — with the most-used tools
        first, which is the order the row already declares. Targets keep the
        44px floor; only the geometry changed, every data-act untouched. */
-    .qtgrid{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;
-      scrollbar-width:none;margin-top:4px;padding-bottom:2px;}
-    .qtgrid::-webkit-scrollbar{display:none;}
     .qtools{margin:0 0 8px;}
     /* The search explainer is the placeholder's job on a phone — the idle
        paragraph is dropped (owner option b), and the .bar's category line
@@ -2716,31 +2840,37 @@
      must read as one list, which is why `min-height` is on the base class and
      not varied per card. LAST IN THE FILE, like every other phone override. */
   @media(max-width:640px){
-    .qtgrid{display:none;}
-    /* The box carries its own heading, so the row's label above it would be
-       the same thing said twice. It is the DESKTOP row's label and stays
-       there; only the phone withdraws it. */
-    .qtools-l{display:none;}
-    .qtbox{display:block;margin-top:0;}
-    .qtools .qtapps{display:grid;}
-    /* §Z — More is a disclosure, not a second strip. Closed it costs one row.
+    .qtbox{margin-top:0;}
+    /* NEAR-SQUARE ON A PHONE, which is the approved art sheet's own primary
+       proportion (its assets are 1024x1024) and what gives a photograph room
+       to be a photograph rather than a letterbox. It is a MEASURED
+       compromise, not the sheet's 1:1: at 390px a true square card is 178px,
+       which adds 224px to the strip and pushes the owner's queue that far
+       down the first screen — and §8 says the cards must not make Home
+       excessively tall, while the 2026-09-02 decision says the queue belongs
+       on the first screen. 150px is the figure that buys most of the art
+       presence for a quarter of the height. Re-measure both if it changes. */
+    /* THE SQUARE IS THE ART'S, AND ONLY AN ART CARD HAS ANYTHING TO FILL IT.
+       Applied to every card it forced the five plain doors under More into
+       155px squares with their content in the top half and an empty bottom
+       half — three rows of 155 for five secondary controls, which is the
+       "excessively tall" §8 forbids and the decoration §11 says loses to
+       clarity. `.uiart` is the whole difference: a photograph needs the room,
+       an icon and two lines do not, and the size gap is now the hierarchy. */
+    /* SQUARE, BUT CAPPED — AND THE CAP IS AN OWNER DECISION, NOT A TASTE.
+       A true 1:1 card is 155px at 390, which pushes Timestamp Video's TOP to
+       869 on a 844-tall screen whenever a signed intake sits above the strip:
+       off the first screen entirely. The owner's 2026-09-07 lock says both
+       timestamp tools stay "primary visible cards on Home", and the incident
+       behind it is that the door went missing once. Matching an asset's
+       aspect ratio does not outrank that — and the manifest already says a
+       1024x1024 source is CROPPED to whatever shape the card is.
 
-       `.qtmore:not([open]) .qtapps{display:none}` IS LOAD-BEARING, and it is
-       here because leaving it out produced a real defect rather than an
-       untidy one. `.qtools .qtapps{display:grid}` out-specifies the browser's
-       own hiding of closed `<details>` content, so the collapsed cards laid
-       out below the summary, reported `visibility:visible` and a real
-       bounding box at y=924 — and `elementFromPoint` at their own centre
-       returned NOTHING, because they were never painted. Controls that
-       measure as visible and cannot be pressed: the Timestamp Video
-       visibility incident in a new costume, and a Playwright click on one
-       times out, which is exactly what a thumb would do. */
-    .qtmore:not([open]) .qtapps{display:none;}
-    .qtmore{margin-top:10px;}
-    .qtmore summary{min-height:44px;display:flex;align-items:center;cursor:pointer;
-      font-weight:800;font-size:.84rem;color:var(--navy-2);}
-    .qtmore summary:focus-visible{outline:3px solid var(--gold);outline-offset:2px;}
-    .qtmore .qtapps{margin-top:8px;}
+       Measured, worst case (a signed-intake card above the strip): 155 -> top
+       869, off screen; 148 -> 848, off screen; 142 -> 830, ON. So 142, which
+       is 1.09:1 at 390 and still reads as square. At 320 the width is 120, so
+       the aspect wins and the floor holds it at 122 — square there too. */
+    .qtools .qtapp.uiart{aspect-ratio:1/1;min-height:122px;max-height:142px;}
   }
 
   /* ===== HOME'S BANDS AND STATS AT PHONE DENSITY (owner mockup, 2026-09-04)
@@ -5938,6 +6068,23 @@ function prefOrder(defaults){
   return out.filter(id => !prefHidden("qt:" + id));
 }
 
+/* `ground` IS WHAT MAKES A CARD AN ART CARD, and only seven entries carry one
+   (owner brief 2026-09-07 §1/§2). §1 names exactly these seven as the primary
+   Home actions; §2 names the rest — Cases, the CEO Bot, the Assistant, Reports
+   & Packages, Insurance and Law Firm intake — under the heading "DO NOT
+   ART-CARD EVERYTHING", each with the plain door it already has.
+
+   So the distinction is carried by the DATA rather than by a rule someone has
+   to remember when adding a card: an entry with no `ground` draws the light
+   `.uiact` it always drew. That also gives the strip its hierarchy for free —
+   the seven the owner reaches for are the rich cards, the five behind More are
+   quiet ones — which is §8's "obvious hierarchy" and §9's guard against Home
+   reading as a gallery, without a single extra rule.
+
+   `art` is a SEPARATE gate and stays separate: `ground` is the colour the card
+   is today, `art` is the photograph it will wear when one exists. A card can
+   have a ground and no art (all seven, today); none may have art with no
+   ground, because the scrim needs something underneath it. */
 const QT = {
   /* ONE TAP TO PREPARE & SEND (owner brief 2026-09-07 §4). It was Home to the
      Rate Sheets screen to a card to "Send this sheet" — three taps to reach the
@@ -5946,17 +6093,23 @@ const QT = {
      product no longer means backing out. The Rate Sheets SCREEN is unchanged
      and still reachable from the rail: this adds a shortcut to the form, it
      does not remove the place the products are read. */
-  sheets:  {fam:"asst", art:"rate-sheet", act:"sheetQuick", icon:"&#128179;", label:"Rate Sheet",
+  sheets:  {fam:"asst", ground:"sheet", art:"rate-sheet", act:"sheetQuick", icon:"&#128179;", label:"Rate Sheet",
             sub:"Prepare &amp; send", admin:true, lead:true},
-  /* dlabel: the ONE place the two surfaces are allowed to differ in words, and
-     it exists so the desktop row keeps the wording it already had. Renaming a
-     desktop control is a desktop change, and the owner's standing rule forbids
-     one. Every other door reads the same on both. */
-  newlead: {fam:"intake", art:"new-intake", act:"tab", tab:"newlead",  icon:"&#10133;",  label:"New Intake",
-            dlabel:"Intake a Client", sub:"Choose the type", admin:true},
+  /* `dlabel` IS RETIRED, AND IT IS THE ONE WORDING THIS UNIT CHANGES. It let
+     the desktop say "Intake a Client" while the phone said "New Intake",
+     because the two surfaces drew different controls and the standing rule was
+     that a desktop control is not renamed for a mobile brief. They draw the
+     same card now, and the owner has named this door "New Intake" three times
+     in one day — §1 of both HYBRID briefs and the approved art sheet, which
+     labels the asset `new-intake.webp` under the title "New Intake". Keeping a
+     desktop-only second name would be preserving a workaround its own reason
+     has outlived, against this file's rule that a control has ONE wording.
+     Restoring it is one field and one ternary if the owner prefers it. */
+  newlead: {fam:"intake", ground:"intake", art:"new-intake", act:"tab", tab:"newlead",  icon:"&#10133;",  label:"New Intake",
+            sub:"Choose the type", admin:true},
   /* The three kinds are the same door one step in: nlKind is the button
      newLeadView() already draws, so nothing new decides what an intake is. */
-  priv:    {fam:"intake", art:"private-intake", act:"nlKind", k:"consumer", icon:"&#128100;", label:"Private Intake",
+  priv:    {fam:"intake", ground:"private", art:"private-intake", act:"nlKind", k:"consumer", icon:"&#128100;", label:"Private Intake",
             sub:"Client matter", admin:true},
   claims:  {fam:"intake", art:"insurance-intake", act:"nlKind", k:"claims",   icon:"&#127974;", label:"Insurance Intake",
             sub:"Carrier matter", admin:true},
@@ -5964,11 +6117,11 @@ const QT = {
             sub:"Legal matter", admin:true},
   delivery:{fam:"asst", art:"reports", act:"tab", tab:"delivery", icon:"&#128230;", label:"Reports &amp; Packages",
             sub:"View all", admin:true},
-  photo:   {fam:"case", art:"timestamp-photo", act:"pstLaunch", caseless:true, pair:true, icon:"&#128247;",
+  photo:   {fam:"case", ground:"photo", art:"timestamp-photo", act:"pstLaunch", caseless:true, pair:true, icon:"&#128247;",
             label:"Timestamp Photo", sub:"Burn the moment"},
-  video:   {fam:"case", art:"timestamp-video", act:"vstOpen",   caseless:true, pair:true, icon:"&#127909;",
+  video:   {fam:"case", ground:"video", art:"timestamp-video", act:"vstOpen",   caseless:true, pair:true, icon:"&#127909;",
             label:"Timestamp Video", sub:"Burn the moment"},
-  field:   {fam:"case", art:"surveillance", act:"surveillance", icon:"&#128373;", label:"Active Surveillance",
+  field:   {fam:"case", ground:"field", art:"surveillance", act:"surveillance", icon:"&#128373;", label:"Active Surveillance",
             sub:"Start or resume"},
   cases:   {fam:"case", art:"cases", act:"tab", tab:"cases", icon:"&#128193;", label:"Cases",
             sub:"All open work"},
@@ -5979,7 +6132,7 @@ const QT = {
      (it also has a pill, a rail button and a case-screen row); the owner
      named it twice in the same brief, in §F and again in §L, which is a
      specification rather than an oversight. */
-  leads:   {fam:"intake", art:"signed-intakes", act:"tab", tab:"leads", icon:"&#128234;",
+  leads:   {fam:"intake", ground:"signed", art:"signed-intakes", act:"tab", tab:"leads", icon:"&#128234;",
             label:"View Intakes", sub:"Signed &amp; waiting", admin:true},
   ceo:     {fam:"ceo", art:"ceo-bot", act:"ceoOpen", icon:"&#9733;", label:"CEO Bot",
             sub:"Improve the portal"},
@@ -5989,9 +6142,13 @@ const QT = {
    name here without `portal/cards/<name>.webp` beside it draws a dark card
    with no picture, so the two are added together. */
 const CARD_ART = new Set([]);
+/* THE CACHE-BUST, IN ONE PLACE. `_headers` caches these seven days and the
+   files will be replaced IN PLACE at stable URLs — the public site paid a full
+   round for exactly this, where every deploy was green and the browser went on
+   serving the first image it had cached. Bump this when any card asset
+   changes; a test fails if a card URL is emitted without it. */
+const CARD_ART_V = 1;
 
-/* EXACTLY WHAT THE DESKTOP ROW WAS: same doors, same order, same markup. */
-const QT_DESK = ["photo", "video", "field", "newlead", "cases", "delivery"];
 /* THE PHONE'S SIX, AND THE REST UNDER MORE (owner brief 2026-09-06 §F/§L/§Z).
 
    §F and §L both name the same six primary cards, in this order, and §Z says
@@ -6093,17 +6250,36 @@ function signedIntakeHtml(){
   const one = waiting.length === 1 ? waiting[0] : null;
   const who = one ? (one.legal ? (one.legal_firm || one.client_name)
     : one.kind === "claims" ? (one.carrier || one.client_name) : one.client_name) : "";
-  return `<button class="uiwide uiart fam-intake" data-act="${one ? "openCaseTab" : "tab"}"${
-      one ? ` data-case="${esc(one.case_no)}" data-tab="details"` : ` data-tab="leads"`}>
-    <span class="uiact-i" aria-hidden="true">&#9989;</span>
-    <span class="uiwide-b">
-      <span class="uiwide-n">${one ? "New signed intake" : "New signed intakes"}</span>
-      <span class="uiwide-s">${one
-        ? `${esc(who || one.case_no)}${one.subject_name ? ` &middot; ${esc(one.subject_name)}` : ""}`
-        : `${waiting.length} waiting to be read`}</span>
+  /* THE ONE CARD ALLOWED TO STAND OUT MORE (§5), and it is the only place on
+     Home that keeps the art treatment when a photograph lands: a single wide
+     card in the green family, dominant by size rather than by shouting. Its
+     asset is `signed-intake-wide.webp` on the approved sheet — a DIFFERENT
+     file from the square `signed-intakes.webp` the View Intakes card uses,
+     because 2.4:1 and 1:1 are different crops of a different composition. */
+  const wideArt = CARD_ART.has("signed-intake-wide")
+    ? ` style="--art:url('cards/signed-intake-wide.webp?v=${CARD_ART_V}')"` : "";
+  return `<button class="uiwide uiart art-signed fam-intake${
+      CARD_ART.has("signed-intake-wide") ? " has-art" : ""}" data-act="${
+      one ? "openCaseTab" : "tab"}"${
+      one ? ` data-case="${esc(one.case_no)}" data-tab="details"` : ` data-tab="leads"`}${wideArt}>
+    <span class="uiwide-top">
+      <span class="uiact-i" aria-hidden="true">&#9989;</span>
+      <span class="uiwide-b">
+        <span class="uiwide-n">${one ? "New signed intake" : "New signed intakes"}</span>
+        <span class="uiwide-s">${one
+          ? `${esc(who || one.case_no)}${one.subject_name ? ` &middot; ${esc(one.subject_name)}` : ""}`
+          : `${waiting.length} waiting to be read`}</span>
+      </span>
+      ${/* §5 — "clear count if multiple". The badge is the count at a glance;
+            the subtitle says what the number means. Neither stands in for the
+            other, and with one waiting there is nothing to count. */""}
+      ${one ? "" : `<span class="uiwide-badge">${waiting.length}</span>`}
     </span>
-    ${one ? `<span class="uiwide-go"><span class="uiwide-goword">View intake </span>&rarr;</span>`
-          : `<span class="uiwide-badge">${waiting.length}</span>`}
+    ${/* ONE OBVIOUS ACTION (§5), and it names its own destination truthfully:
+          with one waiting it opens that intake, with several it opens the desk
+          where all of them are. Saying "VIEW INTAKE" over a tap that lands on
+          a list would be the card asserting something untrue. */""}
+    <span class="uiwide-go">${one ? "View intake" : "View intakes"} &rarr;</span>
   </button>`;
 }
 
@@ -6127,8 +6303,6 @@ function quickToolsHtml(){
   const ok = id => admin || !QT[id].admin;
   const attrs = t => `data-act="${t.act}"${t.tab ? ` data-tab="${t.tab}"` : ""}${
     t.k ? ` data-k="${t.k}"` : ""}${t.caseless ? ` data-case=""` : ""}`;
-  const deskBtn = id => { const t = QT[id];
-    return `<button class="qtool${t.pair ? " qt-pair" : ""}" data-qt="${id}" ${attrs(t)}><b>${t.icon}</b> ${t.dlabel || t.label}</button>`; };
   /* THE MOCKUP CARD (owner brief 2026-09-06). Same doors, same ids, same
      destinations — a different SHAPE. The card carries the mockup's icon
      tile, its bold name over a quiet purpose line, and the family colour of
@@ -6164,15 +6338,52 @@ function quickToolsHtml(){
      over a failed load is the reassuring lie this page has been bitten by. */
   const waitingIntakes = () => CASES_OK
     ? CASES.filter(c => ["new", "awaiting_client"].includes(c.stage || c.status)).length : null;
+  /* THE ART IS HOME'S, THE DOORS ARE EVERY SCREEN'S (owner brief §1 "use art
+     ONLY for primary Home actions", §3 "keep operational screens clean", §11
+     "if operational screens become harder to scan, remove art from them").
+
+     `quickToolsHtml()` is called from `shell()` — a 2026-09-04 decision, and a
+     load-bearing one: the timestamp tools went missing once, and the fix was
+     one row, one writer, every top-level screen, both roles. So the strip
+     cannot simply be withdrawn from Cases or Settings without undoing that.
+
+     What CAN be withdrawn is the TREATMENT. Off Home the same seven cards
+     draw exactly as they did before this unit — light `.uiact`, same label,
+     same icon, same position, same destination — so every door is where it
+     was and no operational screen gained a wall of dark cards. Measured: the
+     strip was rendering seven art cards on Cases, Intakes, Rate Sheets, the
+     Delivery Center and Settings, which is precisely the "image-heavy" §3
+     forbids. Only the ground changes; nothing about reachability does. */
+  const onHome = TAB === "dashboard";
   const appCard = id => { const t = QT[id];
     const n = id === "leads" ? waitingIntakes() : null;
+    /* TWO INDEPENDENT GATES. `ground` decides whether this is an art card at
+       all (§1/§2 — only the seven primaries carry one); `CARD_ART` decides
+       whether a PHOTOGRAPH exists for it yet. A card with a ground and no
+       photograph is the restrained placeholder §7 asks for: the same box, the
+       same safe zone, the same badge corner, waiting for one file. */
     const hasArt = t.art && CARD_ART.has(t.art);
-    const art = hasArt ? ` style="--art:url('cards/${t.art}.webp?v=1')"` : "";
-    return `<button class="qtapp uiact${hasArt ? " uiart" : ""} fam-${t.fam || "case"}${t.lead ? " qtapp-lead uiact-lead" : ""}" data-qt="${id}" ${attrs(t)}${art}>${
+    const art = hasArt && onHome
+      ? ` style="--art:url('cards/${t.art}.webp?v=${CARD_ART_V}')"` : "";
+    const cls = ["qtapp", "uiact", `fam-${t.fam || "case"}`];
+    if(t.ground && onHome) cls.push("uiart", `art-${t.ground}`);
+    if(hasArt && onHome) cls.push("has-art");
+    if(t.lead) cls.push("qtapp-lead", "uiact-lead");
+    return `<button class="${cls.join(" ")}" data-qt="${id}" ${attrs(t)}${art}>${
       t.lead ? `<span class="qtapp-flag uiact-flag">Fastest action</span>` : ""}
       <span class="qtapp-i uiact-i" aria-hidden="true">${t.icon}</span>
       <span class="qtapp-n uiact-n">${t.label}</span>
-      <span class="qtapp-s uiact-s">${n != null && n > 0 ? `${n} waiting` : t.sub}</span></button>`; };
+      <span class="qtapp-s uiact-s">${t.sub}</span>${
+      /* §6 — THE BADGE IS AN ADDITION, NOT A REPLACEMENT. The count used to be
+         written over the subtitle, so the card lost the line saying what it is
+         at exactly the moment it had something to report. It is absolutely
+         positioned, so it costs the card no height and §8's "cards not
+         excessively tall" is unaffected. Drawn only when there is genuinely
+         something to count: `waitingIntakes()` returns null on a FAILED read,
+         and a zero drawn over a failed load is the reassuring lie this page
+         has been bitten by before. */
+      n != null && n > 0
+        ? `<span class="uiact-badge">${n}<span class="vh"> intakes waiting</span></span>` : ""}</button>`; };
   /* THE USER'S OWN ORDER over each surface's default — stored ids first, new
      doors appended, hidden ones withdrawn. With nothing stored, both rows are
      byte-what-they-were. */
@@ -6183,23 +6394,44 @@ function quickToolsHtml(){
      door the role has without a swipe, and the box gives the strip the
      heading the mockup puts over every group.
 
-     THE DESKTOP ROW IS UNTOUCHED — same markup, same six doors, same
-     wording via `dlabel`. The owner's standing rule is that desktop does not
-     move for a mobile brief, and `.qtools-l` stays its label. */
+     AND THE DESKTOP DRAWS THE SAME CARDS (§9), wider, in the same box. The
+     standing "desktop does not move for a mobile brief" rule held until this
+     brief, which asks for the visual language on both surfaces in its own
+     words; what has not moved is any DESTINATION. */
+  /* ONE STRIP, TWO PROPORTIONS (owner brief 2026-09-07 §9: "Use the same
+     visual language on desktop ... Allow wider card proportions, more
+     breathing room, cleaner grouping").
+
+     It was TWO strips — a flex row of `.qtool` chips for desktop and a grid of
+     `.qtapp` cards for the phone, one `display:none` at every width. That
+     shape existed because the two surfaces drew different THINGS; they draw
+     the same thing now, so the duplicate is gone and the proportion is a
+     media query. One strip is also strictly better for the reason the two
+     were justified by: there is exactly one set of tab stops at any width,
+     and now that is true by construction rather than by remembering to hide
+     one of them.
+
+     THE DESKTOP SET IS THE OWNER'S SEVEN. `QT_DESK` named a different six —
+     photo, video, field, newlead, cases, delivery — from before Home had a
+     card system, and §1 of both briefs names the seven primary Home actions
+     without qualifying a surface. Cases and Reports & Packages leave the
+     primary row into More exactly as they did on the phone, and on desktop
+     the navigation RAIL carries both permanently, so nothing became harder to
+     reach. It also makes Settings → My Portal true on desktop for the first
+     time: "the order of the Home quick-action cards, yours alone" reads
+     `QT_PHONE`, so a reordering had silently done nothing on this surface. */
   return `<div class="qtools">
-    <span class="qtools-l">Quick tools</span>
-    <div class="qtgrid">${prefOrder(QT_DESK).filter(ok).map(deskBtn).join("")}</div>
     <div class="qtbox uibox">
       <div class="uibox-h"><span class="uibox-t">Start something</span>
         <span class="uibox-s">Every door you use most, one tap away.</span></div>
-      <div class="qtapps uigrid">${prefOrder(QT_PHONE).filter(ok).map(appCard).join("")}</div>
+      <div class="qtapps uigrid">${prefOrder(QT_PHONE).filter(ok).map(id => appCard(id)).join("")}</div>
       ${/* §Z — the lower-frequency doors, one tap away, in the same box so
            they are plainly the same kind of thing rather than hidden
            somewhere else. `<details>` because it needs no state, no handler
            and no repaint: the browser already knows how to do this. */""}
       ${prefOrder(QT_PHONE_MORE).filter(ok).length ? `<details class="qtmore">
         <summary>More actions</summary>
-        <div class="qtapps uigrid">${prefOrder(QT_PHONE_MORE).filter(ok).map(appCard).join("")}</div>
+        <div class="qtapps uigrid qtapps-more">${prefOrder(QT_PHONE_MORE).filter(ok).map(id => appCard(id)).join("")}</div>
       </details>` : ""}
     </div>
   </div>`;

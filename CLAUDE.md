@@ -901,6 +901,131 @@ there, and so does a rehearsal that starts inventing one.
 merge.** Until it runs, sends work exactly as before and every new route
 degrades by name.
 
+## The hybrid visual pass — a scrim is a property of the ART, not of the card
+
+Owner brief 2026-09-07, against an approved art sheet sent the same day.
+*"The portal is now functionally in good shape, but visually too bland."*
+Seven primary Home actions become art cards; every other screen stays exactly
+as plain as it was. Specifications in `case-portal/ART-ASSET-MANIFEST.md`.
+
+**THE CORRECTION THE WHOLE PASS RESTS ON.** `.uiart` painted `--f-ink` — a
+TEXT colour — and then a dark scrim over it, always. That is why the art system
+had previously been switched OFF: with no photographs it produced ten
+near-black slabs, and the family colours the brief asks them to carry were
+crushed by the very scrim that makes white text safe. The scrim exists to stop
+a PHOTOGRAPH fighting white type; with no photograph there is nothing to scrim.
+So `--c-scrim` is transparent by default and set only by `.has-art`, and the
+card is its own `--c-art` ground at full strength until an asset lands. That one
+change is what makes seven cards read as seven.
+
+**SEVEN GROUNDS, MEASURED TWICE.** White on each: **6.88 / 8.67 / 8.74 / 8.99 /
+10.18 / 11.29 / 15.23**, the .88-alpha subtitle composites to **5.74** at worst,
+and the bar is 4.5 because the title is .88rem bold and therefore normal text.
+But §4 puts FOUR of the seven in the navy/blue range, and contrast says nothing
+about whether two cards look alike — so they are ALSO held apart by **CIE76 dE,
+closest pair 13.6**, against a first draft whose closest pair was 7.9 and read
+as one colour. Luminance could not have caught that: two hues at one lightness
+are identical to it. **Do not nudge one of these without re-running both.**
+
+**`ground` IS DATA, NOT A RULE TO REMEMBER.** Only the seven `QT` entries the
+owner named carry one, so §2's "do not art-card everything" is a property of
+the table: an entry with no `ground` draws the light `.uiact` it always drew.
+That also gives the strip its hierarchy for free — the seven are rich, the five
+behind More are quiet. `art` is a separate gate: `ground` is the colour today,
+`art` the photograph tomorrow, and a card may have a ground with no art.
+
+**THE ART BELONGS TO HOME, THE DOORS BELONG TO EVERY SCREEN.**
+`quickToolsHtml()` renders from `shell()` — the 2026-09-04 decision that exists
+because the timestamp tools went missing once — so the strip cannot be
+withdrawn from Cases or Settings. What is withdrawn is the TREATMENT: off Home
+the same seven draw exactly as before this unit. **Measured, not assumed** — the
+first build put seven dark cards on Cases, Intakes, Rate Sheets, the Delivery
+Center and Settings, which is precisely the "image-heavy" §3 forbids. A test
+walks six screens and requires zero, and a second requires the seven doors to
+still be there.
+
+**ONE STRIP NOW, NOT TWO.** The desktop `.qtool` chip row is gone; the card
+system draws at every width, four across and landscape on desktop, two across
+and square on a phone. §9 asked for it in the owner's own words. The desktop set
+is the owner's SEVEN — `QT_DESK` named a different six from before Home had a
+card system — and Cases and Reports & Packages moved to More there exactly as
+they had on the phone, each keeping a permanent rail door. It also makes
+Settings → My Portal true on desktop for the first time: that screen has always
+ordered `QT_PHONE`, so a reordering had silently done nothing on this surface.
+**`dlabel` is retired with it** — the one wording this unit changes — because
+the owner has now named that door "New Intake" in §1 of both briefs and on the
+art sheet, and a desktop-only second name was a workaround its own reason had
+outlived.
+
+**`.qtmore:not([open]) .qtapps{display:none}` MOVED TO THE BASE**, because the
+disclosure now exists at every width. Left phone-only it would have reproduced
+the original defect on desktop exactly: `.qtools .qtapps{display:grid}`
+out-specifies the browser's own hiding of closed `<details>`, so the collapsed
+cards lay out, report `visibility:visible` and a real box, and
+`elementFromPoint` at their centre returns nothing.
+
+**TWO DEFECTS THIS UNIT PRODUCED, AND WHAT FOUND THEM.**
+
+- **`.uiact:hover` used the `background` SHORTHAND**, which resets
+  `background-image` as well as the ground — so hovering an art card erased
+  both and left white type on the light hover tint at **1.06:1**. Every desktop
+  card, unreadable under the pointer, and a screenshot with the mouse parked
+  elsewhere looks perfect. `:not(.uiart)` is load-bearing, and the painted-pixel
+  measurement is what caught it while every declared-colour check passed.
+- **The icon was pinned top and the title bottom**, which was invisible on a
+  squat card and opened a void across the middle of a square one — 40% of the
+  card a gap between two halves of one label. `margin-top:auto` moved to the
+  ICON, so the cluster bottom-aligns and the empty region is one quiet area
+  ABOVE the text, which is where the photograph goes. **Looking at it is what
+  found this**, and the same look found the colour emoji rendering nearly
+  invisible on a `.18` white wash; the tile is `.93` now, the same "light thing
+  on a dark card" treatment as the badge and the action pill.
+
+**THE ACTION PILL INVERTS, AND THE SHEET'S VERSION WAS REFUSED ON A NUMBER.**
+The sheet draws a bright-green pill with white type; white on that green is
+**2.28:1**. Every variant was computed against the card it actually sits on —
+`--good` with white 4.38, bright green with navy 7.66 but a colour this palette
+does not have — so it is a white pill with the card's own green at **6.88 both
+ways**. §5's "one obvious action, VIEW INTAKE" also fixed a workaround: the
+label used to be hidden below 480px because it competed with the client's name
+for one line, and on its own row it fits at 320.
+
+**THE SHEET'S SUBTITLES WERE NOT TAKEN, under §1's own "do not copy sample text
+if the real portal already has better wording".** Five were judgement calls;
+one was not. *"Capture & verify"* / *"Record & verify"* put VERIFY on the two
+timestamp tools, and `EVIDENCE-INTEGRITY.md`'s rule is *"Hash recorded / Not yet
+recorded … never 'verified' as a legal claim"*, with the manifest printing that
+this is *"an integrity record kept by this portal, not a third-party
+authentication."* A subtitle promising verification is the product asserting in
+two words what the document underneath it refuses to assert.
+
+**HEIGHT IS THE TRADE, AND BOTH NUMBERS WERE MEASURED** — master's tree and
+this one, same fixture, served and rendered side by side. At 390 the strip goes
+**667 → 749 (+82)**; at **320 it goes 747 → 689, fifty-eight pixels SHORTER**,
+because a square card at 120px wide is shorter than the old fixed height.
+Desktop goes 76 → 402, which is what a card system costs and what §9 asked for.
+Nothing clips at any width and nothing scrolls sideways at 320.
+
+**THE PHONE CARD IS SQUARE BUT CAPPED AT 142px, AND THE CAP IS AN OWNER
+DECISION.** A true 1:1 card is 155 at 390, which puts Timestamp Video's TOP at
+869 on an 844-tall screen whenever a signed intake sits above the strip — off
+the first screen entirely, against the 2026-09-07 lock that both timestamp
+tools stay primary visible cards, and against the incident behind it. Matching
+an asset's aspect ratio does not outrank that, and the manifest already says a
+1024×1024 source is CROPPED to whatever shape the card is. Measured worst case:
+155 → top 869 off; 148 → 848 off; **142 → 830 ON**. At 320 the width is 120 so
+the aspect wins and the floor holds it at 122 — square there. **And the square
+is the ART'S**: applied to every card it forced the five plain doors under More
+into squares with an empty bottom half, so it is scoped to `.uiart`, and the
+size gap between the two is now the hierarchy.
+
+**What stayed plain on purpose:** every screen in §3's list — Prepare & Send,
+the preview, intake detail, the Client Record, Retainer Paid, Close Case,
+Reports and the whole case screen. Retainer Paid and Close Case had art slots
+specified before this brief; those are **retired in the manifest**, because §3
+names them as clean operational surfaces and they are `.uibtn` controls on the
+case action row.
+
 ## Home is seven cards, and Rate Sheet opens the form
 
 Owner brief 2026-09-07 §4/§14. **Home to Rate Sheet was three taps to the form**
