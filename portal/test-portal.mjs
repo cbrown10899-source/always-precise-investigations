@@ -7098,18 +7098,18 @@ section('A returned private intake shows the retainer pending and the way to act
   ok('the returned intake is named as received', has(t1, 'Private intake received'));
   ok('and the retainer is named as pending', has(t1, 'Retainer pending'));
   ok('§10: Record payment is offered right there',
-     await c1.locator('.btn', { hasText: 'Record payment' }).count() === 1);
+     await c1.locator('.btn, .uibtn', { hasText: 'Record payment' }).count() === 1);
   ok('§10: so is Send payment options',
-     await c1.locator('.btn', { hasText: 'Send payment options' }).count() === 1);
+     await c1.locator('.btn, .uibtn', { hasText: 'Send payment options' }).count() === 1);
   ok('§10: and the way into the submitted intake, which is the third named action',
-     await c1.locator('.btn', { hasText: 'View intake' }).count() === 1);
+     await c1.locator('.btn, .uibtn', { hasText: 'View intake' }).count() === 1);
 
   /* The condition is BOTH halves. A retainer that has arrived is not pending,
      and saying so anyway would send the office chasing money it already has. */
   const t2 = await c2.innerText();
   ok('a retainer already received is NOT reported pending', !has(t2, 'Retainer pending'), t2);
   ok('and that card offers no Record payment, having nothing to record',
-     await c2.locator('.btn', { hasText: 'Record payment' }).count() === 0);
+     await c2.locator('.btn, .uibtn', { hasText: 'Record payment' }).count() === 0);
 
   /* The private/insurance boundary, on the same desk as always. A claim
      assignment has no retainer and must never be shown one. */
@@ -7117,8 +7117,8 @@ section('A returned private intake shows the retainer pending and the way to act
   ok('an insurance card never says Retainer pending', !has(t3, 'Retainer pending'), t3);
   ok('nor Private intake received', !has(t3, 'Private intake received'));
   ok('nor offers Record payment or payment options',
-     await c3.locator('.btn', { hasText: 'Record payment' }).count() === 0
-     && await c3.locator('.btn', { hasText: 'payment options' }).count() === 0);
+     await c3.locator('.btn, .uibtn', { hasText: 'Record payment' }).count() === 0
+     && await c3.locator('.btn, .uibtn', { hasText: 'payment options' }).count() === 0);
 
   /* Instructions already sent — §10's second half. */
   const t4 = await c4.innerText();
@@ -7127,7 +7127,7 @@ section('A returned private intake shows the retainer pending and the way to act
   ok('naming the methods that went, read back from the send',
      has(t4, 'Cash App') && has(t4, 'Venmo'), t4);
   ok('and its button reads Resend, so nobody sends a first-time email twice',
-     await c4.locator('.btn', { hasText: 'Resend payment options' }).count() === 1);
+     await c4.locator('.btn, .uibtn', { hasText: 'Resend payment options' }).count() === 1);
   ok('the card that was never asked does not claim instructions went',
      !has(t1, 'Payment instructions sent'), t1);
 
@@ -7140,21 +7140,28 @@ section('A returned private intake shows the retainer pending and the way to act
     const card = [...document.querySelectorAll('.pcard')]
       .find(el => el.textContent.includes('API-RP-1'));
     if (!card) return { found: false };
-    const small = [...card.querySelectorAll('.btn')]
-      .filter(b => b.getBoundingClientRect().height < 44)
+    /* `.btn, .uibtn`, AND THE COUNT IS ASSERTED. The card's actions became
+       `.uibtn` in the mockup refactor, so looking only for `.btn` finds an
+       EMPTY list — and "every element is at least 44px" is TRUE of an empty
+       list. This assertion would have gone on passing while measuring
+       nothing, which is the exact `[].every()` failure recorded against the
+       Unit 40 card artwork. Counting is what makes it a measurement. */
+    const acts = [...card.querySelectorAll('.btn, .uibtn')];
+    const small = acts.filter(b => b.getBoundingClientRect().height < 44)
       .map(b => b.textContent.trim().slice(0, 20));
-    return { found: true, right: Math.round(card.getBoundingClientRect().right), small };
+    return { found: true, right: Math.round(card.getBoundingClientRect().right),
+             n: acts.length, small };
   });
   ok('the card still fits a 390px screen with the block on it',
      phone.found && phone.right <= 391, JSON.stringify(phone));
   ok('and every action on it is still a 44px target',
-     phone.found && phone.small.length === 0, JSON.stringify(phone));
+     phone.found && phone.n >= 4 && phone.small.length === 0, JSON.stringify(phone));
   await page.setViewportSize({ width: 1200, height: 900 });
   await page.waitForTimeout(400);
 
   /* Record payment must reach the ONE writer, not a second one: the case's own
      retainer form, with its idempotency token and its route. */
-  await c1.locator('.btn', { hasText: 'Record payment' }).click();
+  await c1.locator('.btn, .uibtn', { hasText: 'Record payment' }).click();
   await page.waitForTimeout(900);
   ok('Record payment lands on the case it was pressed for',
      has(await text(page, 'body'), 'API-RP-1'));
