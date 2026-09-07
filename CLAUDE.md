@@ -102,6 +102,18 @@ What actually works:
 
 Do not "fix" this by adding `per_page` back. It was tried and it does nothing.
 
+**AND THERE IS A CALL WITH NO BLOB AT ALL: `list_workflow_jobs`.** A run object
+carries `head_commit.message`, and this repository's squash commits are
+enormous — a ten-commit merge is a 30 KB message, so even `perPage: 1` costs
+about 12,000 tokens. `list_workflow_jobs` takes a RUN ID and returns the jobs
+with their per-step conclusions and **no commit blob**: roughly 1,500 tokens,
+and it answers the actual question ("did every step pass?") in more detail.
+
+So the cheap pattern for "did my merge deploy?" is: ONE `list_workflow_runs`
+with `resource_id` + `perPage: 1` to learn the run id, then `list_workflow_jobs`
+for that id — and for a workflow you dispatched yourself, poll the JOBS call
+only. Measured 2026-09-07 verifying #299 across three workflows.
+
 The same caution applies to `get_job_logs` on this repo: `site-health.yml`
 emits a long step summary.
 
