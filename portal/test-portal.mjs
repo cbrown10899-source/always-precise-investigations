@@ -18304,10 +18304,29 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
      eating the first screen — the 336px it replaced. A stack of ten cards is
      over 1000px, so the ceiling still catches one, and the no-wrap check
      below is the property itself rather than a proxy for it. */
-  ok('Quick Tools is a strip, not a stack (was 336px)', fs.qtoolsH <= 170, JSON.stringify(fs));
+  /* SUPERSEDED, AND THE NUMBER IS STILL A MEASUREMENT (owner brief
+     2026-09-06 §E/§F/§L). The 170px bound came from the 2026-09-02
+     compaction, when Quick Tools was one scrolling row of small cards and the
+     point was to get the queue onto the first screen. The newer brief says
+     Home should NOT open on statistics — it opens on the greeting and the
+     actions the owner actually uses, and §H says those should be easier to
+     see than dashboard figures. Six large cards in two columns cannot be
+     170px, and pretending otherwise would mean shipping small cards under a
+     brief asking for large ones.
+
+     WHAT IS STILL ASSERTED IS THE THING THAT WENT WRONG: the ten-card version
+     measured 744px and pushed Today past the fold. Six cards plus the More
+     disclosure is ~500px, so the bound is 560 — tight enough that a seventh
+     card added later fails here rather than quietly burying the queue. */
+  ok('Quick Tools stays a compact block, not a wall (six cards + More)',
+     fs.qtoolsH <= 560, JSON.stringify(fs));
   ok('the Search card is a box, not a billboard (was 245px)', fs.srchH <= 140, JSON.stringify(fs));
-  ok('Today / next actions is ON the first screen (was 682px down)',
-     fs.todayTop !== null && fs.todayTop <= 420, JSON.stringify(fs));
+  /* Same supersession. It is no longer on the FIRST screen and is not meant
+     to be — the owner's new first screen is the greeting, the signed-intake
+     card and the six actions. What is still asserted is that it is not
+     buried: one short scroll, not three. */
+  ok('Today / next actions is one short scroll away, not buried',
+     fs.todayTop !== null && fs.todayTop <= 900, JSON.stringify(fs));
 
   /* ---- the quick-tools strip ---- */
   const strip = await page.evaluate(() => {
@@ -18333,8 +18352,16 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
              desk: [...document.querySelector('.qtgrid').children]
                .map(b => b.dataset.act + ':' + (b.dataset.tab || b.dataset.k || '')) };
   });
-  ok('one row on a phone', strip.tops === 1 && strip.rowH <= 150, JSON.stringify(strip));
-  ok('it swipes inside its own container', strip.sw > strip.cw + 40, JSON.stringify(strip));
+  /* A GRID, NOT A ROW, AND NOTHING SWIPES. Both of these described the
+     126px horizontal scroller: "one row" and "it swipes inside its own
+     container" were the best that shape could do, and at 390px they meant
+     two and a half of the doors were visible and the rest were reachable
+     only by knowing to swipe. Two across shows all six with no gesture, so
+     the properties worth pinning are the stronger ones — a small number of
+     rows, and no sideways scroll anywhere, the strip included. */
+  ok('the phone strip is a short grid, not a wall', strip.tops <= 3, JSON.stringify(strip));
+  ok('and nothing swipes — every primary door is on screen',
+     strip.sw <= strip.cw + 1, JSON.stringify(strip));
   ok('and the PAGE never scrolls sideways', strip.pageSw <= strip.pageCw + 1, JSON.stringify(strip));
   ok('every tool keeps the 44px floor', strip.toolH >= 44, String(strip.toolH));
   /* TWO ORDERS NOW, AND THE ASSERTION FOLLOWS THE ONE IT PROTECTS.
@@ -19408,21 +19435,31 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
   }
 
   /* ---- AND THE PHONE DRAWS THE OWNER'S ORDER --------------------------- */
-  const PHONE = ['Rate Sheet', 'New Intake', 'Private Intake', 'Insurance Intake',
-                 'Law Firm Intake', 'Reports & Packages', 'Timestamp Photo',
-                 'Timestamp Video', 'Active Surveillance', 'Cases'];
+  /* SIX PRIMARY, SIX UNDER MORE (owner brief 2026-09-06 §F/§L/§Z, which name
+     these six in this order twice). The ten-card version measured 744px and
+     pushed the queue past the fold; the other six are one tap behind More in
+     the same box, and each also keeps the door it already had elsewhere. */
+  const PHONE = ['Rate Sheet', 'New Intake', 'Private Intake', 'View Intakes',
+                 'Cases', 'CEO Bot'];
+  const PHONE_MORE = ['Insurance Intake', 'Law Firm Intake', 'Reports & Packages',
+                      'Timestamp Photo', 'Timestamp Video', 'Active Surveillance'];
   const p390 = await read(390, 844);
   ok('on a phone the quick actions are cards, not the desktop chip row',
      p390.appsShown === true && p390.gridShown === false, JSON.stringify(p390).slice(0, 200));
   ok("and they are in the owner's order, Rate Sheet first",
      p390.phone.join('|') === PHONE.join('|'), p390.phone.join('|'));
-  ok('the three intake kinds go straight to their own kind of intake',
-     p390.phoneActs.slice(2, 5).join('|') === 'nlKind:consumer|nlKind:claims|nlKind:legal',
-     p390.phoneActs.join('|'));
+  ok('the private intake card goes straight to a private intake',
+     p390.phoneActs[2] === 'nlKind:consumer', p390.phoneActs.join('|'));
   ok('Rate Sheet is the one card wearing the accent',
      p390.leadName === 'Rate Sheet' && parseFloat(p390.leadBorder) >= 2, JSON.stringify(p390.leadBorder));
-  ok('the timestamp tools kept their door — they moved down the row, not away',
-     p390.phone.includes('Timestamp Photo') && p390.phone.includes('Timestamp Video'));
+  /* NOTHING WAS TAKEN AWAY — the six that are not primary are in the same box
+     behind More, and this reads them out of the DOM to prove it. */
+  const more = await page.evaluate(() => [...document.querySelectorAll('.qtmore .qtapp-n')]
+    .map(n => n.textContent.trim()));
+  ok('the six lower-frequency doors are one tap behind More, not gone',
+     PHONE_MORE.every(n => more.includes(n)), JSON.stringify(more));
+  ok('the timestamp tools among them, with their nav-foot door untouched',
+     more.includes('Timestamp Photo') && more.includes('Timestamp Video'), JSON.stringify(more));
 
   /* THE FLAG'S CONTRAST IS THE MEASUREMENT, NOT THE COLOUR NAME. At ~10px the
      bar that applies is the normal-text 4.5:1. Against the PORTAL's tokens —
@@ -21340,15 +21377,34 @@ section('The two bots are two doors: stacked on the thumb side, one open at a ti
     const cb = ceoBtn ? ceoBtn.getBoundingClientRect() : null;
     return { ceoDoor: !!ceoBtn, asstDoor: !!asstBtn,
       noFloating: !document.querySelector('.ceo-fab') && !document.querySelector('.asst-pill'),
-      /* Neither door sits over the section bar. */
-      clearOfBar: (cb && bar) ? cb.bottom <= bar.top : null,
+      /* NOT PERMANENTLY COVERED — which is the property, and is not the same
+         as "above the bar at scroll offset zero". The action block grew when
+         the owner's four ranked actions became large controls, so the CEO row
+         now starts below the fold on a phone; the page scrolls and
+         `.casepage` carries 100px of bottom padding so the last control
+         clears the fixed bar. Scroll it into view, THEN ask. The old form
+         passed only because the row happened to be short. */
+      clearOfBar: null,
       ceoBtnH: cb ? Math.round(cb.height) : null,
       hOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth };
   });
   ok('the case view carries both doors as in-content buttons, not floating pills',
      c.ceoDoor && c.asstDoor && c.noFloating === true, JSON.stringify(c));
-  ok('and the CEO door sits clear of the section bar, at the tap floor',
-     c.clearOfBar === true && c.ceoBtnH >= 44, JSON.stringify(c));
+  const reach = await page.evaluate(async () => {
+    const el = document.querySelector('.ceo-casebtn');
+    el.scrollIntoView({ block: 'center' });
+    await new Promise(r => setTimeout(r, 250));
+    const bar = document.querySelector('.wsbar');
+    const cb = el.getBoundingClientRect();
+    return { h: Math.round(cb.height), top: Math.round(cb.top),
+      clear: !bar || cb.bottom <= bar.getBoundingClientRect().top + 1,
+      /* and the thing a person actually taps is the row itself */
+      onTop: (() => { const hit = document.elementFromPoint(
+        Math.round(cb.left + cb.width / 2), Math.round(cb.top + cb.height / 2));
+        return !!hit && (hit === el || el.contains(hit)); })() };
+  });
+  ok('and the CEO door can be reached and pressed, at the tap floor',
+     reach.h >= 44 && reach.clear === true && reach.onTop === true, JSON.stringify(reach));
   ok('with no sideways scroll on the case screen', c.hOverflow === false);
 
   /* ---- THE DRAWER KEEPS ITS SECONDARY ROUTE. ---- */
@@ -21596,11 +21652,28 @@ section("Home says good morning, and a signed intake is impossible to miss");
         return !!q && (c.compareDocumentPosition(q) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0; })() };
   });
   ok('a signed intake draws the card', !!one, JSON.stringify(one));
-  ok('it names the client rather than the case number',
-     !!one && /Signed Client/.test(one.text) && !/API-SIGNED-HOME/.test(one.text), one && one.text);
-  ok('one tap goes to the submitted intake, not to the case overview',
-     !!one && one.act === 'openCaseTab' && one.tab === 'details'
-       && one.case === 'API-SIGNED-HOME', JSON.stringify(one));
+  /* THE CARD HAS TWO HONEST SHAPES AND THE SUITE MUST NOT ASSUME ONE. This
+     section runs last, so earlier sections' fixtures may have left signed
+     intakes on the desk — the first version of this assertion required the
+     singular branch and failed against correct output when a second signed
+     intake existed. Count first, then assert the branch that count implies. */
+  const waiting = await page.evaluate(() => CASES.filter(c => c.signed
+    && ['new', 'awaiting_client'].includes(c.stage || c.status)
+    && (c.lead_status || 'lead') !== 'converted').length);
+  if (waiting === 1) {
+    ok('with one waiting it names the client, not the case number',
+       !!one && /Signed Client/.test(one.text) && !/API-SIGNED-HOME/.test(one.text),
+       one && one.text);
+    ok('and one tap goes to the submitted intake, not the case overview',
+       !!one && one.act === 'openCaseTab' && one.tab === 'details'
+         && one.case === 'API-SIGNED-HOME', JSON.stringify(one));
+  } else {
+    ok(`with ${waiting} waiting it counts them rather than naming one`,
+       !!one && one.text.includes(String(waiting)) && /waiting/i.test(one.text),
+       one && one.text);
+    ok('and one tap goes to the intakes desk, where all of them are',
+       !!one && one.act === 'tab' && one.tab === 'leads', JSON.stringify(one));
+  }
   ok('it is a large control, above the quick actions',
      !!one && one.h >= 72 && one.beforeTools === true, JSON.stringify(one));
 

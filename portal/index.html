@@ -309,7 +309,14 @@
      but the phone's, where .qtgrid is hidden instead — one strip in the
      accessibility tree at a time, never two. The rules that draw it live at
      the END of this stylesheet with the rest of the phone overrides. */
-  .qtapps, .qtbox{display:none;}
+  /* `.qtools .qtapps`, TWO CLASSES, NOT ONE. The strip carries `.uigrid`
+     now, whose `display:grid` sits LATER in this stylesheet than a bare
+     `.qtapps{display:none}` and silently won it — so the phone strip computed
+     as drawn at every width. The sixth source-order casualty this project has
+     recorded, and the first one caused by adding a shared component class to
+     an element that already had a display rule. Specificity settles it rather
+     than position, because this rule has to hold wherever `.uigrid` moves to. */
+  .qtools .qtapps, .qtbox{display:none;}
   .qtools-l{font-size:.76rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
     color:var(--muted);}
   /* IT HAS TO READ AS AN ACTION, and the first two attempts did not.
@@ -1771,8 +1778,15 @@
      case redundant — it is left in place because it additionally sets the
      44px floor, and removing it is a separate edit with nothing to gain. */
   .pagebar{margin-bottom:12px;}
-  .pagebar .close{position:static;right:auto;top:auto;min-height:44px;
-    display:inline-flex;align-items:center;}
+  /* `:not(.casepage) .pagebar`, NOT every `.pagebar`. The bug was the two
+     Clients & Firms back buttons; the case page's own copy is already pinned
+     into flow at 899px and below, and at desktop widths it sits in the header
+     corner where a passing assertion says it belongs — measured there, it
+     covers nothing and Sign out is still the element at its own centre. The
+     first fix made every pagebar static and broke that on the strength of a
+     bug that was somewhere else. Fix what is broken. */
+  :not(.casepage) > .pagebar .close{position:static;right:auto;top:auto;
+    min-height:44px;display:inline-flex;align-items:center;}
   .xrev{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:.8rem;}
   .xrev label{display:flex;gap:4px;align-items:center;white-space:nowrap;}
   .tag.xr{background:var(--ok-bg);color:var(--ok-ink);} .tag.xb{background:var(--info-bg-2);color:var(--info-ink);}
@@ -2658,7 +2672,13 @@
        there; only the phone withdraws it. */
     .qtools-l{display:none;}
     .qtbox{display:block;margin-top:0;}
-    .qtapps{display:grid;}
+    .qtools .qtapps{display:grid;}
+    /* §Z — More is a disclosure, not a second strip. Closed it costs one row. */
+    .qtmore{margin-top:10px;}
+    .qtmore summary{min-height:44px;display:flex;align-items:center;cursor:pointer;
+      font-weight:800;font-size:.84rem;color:var(--navy-2);}
+    .qtmore summary:focus-visible{outline:3px solid var(--gold);outline-offset:2px;}
+    .qtmore .qtapps{margin-top:8px;}
   }
 
   /* ===== HOME'S BANDS AND STATS AT PHONE DENSITY (owner mockup, 2026-09-04)
@@ -5875,6 +5895,17 @@ const QT = {
             sub:"Start or resume"},
   cases:   {fam:"case", art:"cases", act:"tab", tab:"cases", icon:"&#128193;", label:"Cases",
             sub:"All open work"},
+  /* §F and §L name six primary phone cards, and two of them had no entry
+     here: View Intakes and the CEO Bot. Both are DOORS THAT ALREADY EXIST —
+     the Intakes tab and the panel opener — so this adds a card, never a
+     destination. I flagged the CEO Bot as a possible duplicate entry point
+     (it also has a pill, a rail button and a case-screen row); the owner
+     named it twice in the same brief, in §F and again in §L, which is a
+     specification rather than an oversight. */
+  leads:   {fam:"intake", art:"signed-intakes", act:"tab", tab:"leads", icon:"&#128234;",
+            label:"View Intakes", sub:"Signed &amp; waiting", admin:true},
+  ceo:     {fam:"ceo", art:"ceo-bot", act:"ceoOpen", icon:"&#9733;", label:"CEO Bot",
+            sub:"Improve the portal"},
 };
 /* THE ARTWORK THAT EXISTS. Empty until the owner's own card art is made —
    see case-portal/ART-ASSET-MANIFEST.md for the fifteen specifications. A
@@ -5884,13 +5915,23 @@ const CARD_ART = new Set([]);
 
 /* EXACTLY WHAT THE DESKTOP ROW WAS: same doors, same order, same markup. */
 const QT_DESK = ["photo", "video", "field", "newlead", "cases", "delivery"];
-/* The phone's order is the owner's own: Rate Sheet first and the only card
-   wearing the accent, then the four intake doors, then Reports & Packages.
-   The timestamp tools MOVED DOWN THE ROW — they were not taken away, and
-   their nav-foot door is untouched either way. Cases is last because the
-   bottom bar carries it on every screen at this width. */
-const QT_PHONE = ["sheets", "newlead", "priv", "claims", "legal", "delivery",
-                  "photo", "video", "field", "cases"];
+/* THE PHONE'S SIX, AND THE REST UNDER MORE (owner brief 2026-09-06 §F/§L/§Z).
+
+   §F and §L both name the same six primary cards, in this order, and §Z says
+   low-frequency items go behind More rather than competing for the first
+   screen. The first build of the grid kept all ten, and that was a REAL
+   REGRESSION rather than a matter of taste: the strip measured 744px on a
+   phone, which pushed Today / next actions to 1082px — past the fold, against
+   the owner's own 2026-09-02 decision that the queue must be on the first
+   screen. Six cards is what reconciles the two briefs, and it is what the
+   newer one asked for.
+
+   NOTHING WAS TAKEN AWAY. The other six are one tap behind More, in the same
+   box, and every one of them also keeps the door it already had — the
+   timestamp tools and Active Surveillance in the navigation foot, Reports &
+   Packages and the two intake kinds in the rail. */
+const QT_PHONE = ["sheets", "newlead", "priv", "leads", "cases", "ceo"];
+const QT_PHONE_MORE = ["claims", "legal", "delivery", "photo", "video", "field"];
 
 /* ============ HOME: THE OWNER'S OWN FIRST SCREEN (owner brief 2026-09-06) ===
 
@@ -6002,14 +6043,20 @@ function quickToolsHtml(){
      for seven days and they will be replaced in place, the stale-asset round
      the public site already paid for once.
      Per-card dimensions, safe zones and crops: case-portal/ART-ASSET-MANIFEST.md */
+  /* §F: "small count if applicable". Derived from the case list the page
+     already holds, and only when the read SUCCEEDED — a count of zero drawn
+     over a failed load is the reassuring lie this page has been bitten by. */
+  const waitingIntakes = () => CASES_OK
+    ? CASES.filter(c => ["new", "awaiting_client"].includes(c.stage || c.status)).length : null;
   const appCard = id => { const t = QT[id];
+    const n = id === "leads" ? waitingIntakes() : null;
     const hasArt = t.art && CARD_ART.has(t.art);
     const art = hasArt ? ` style="--art:url('cards/${t.art}.webp?v=1')"` : "";
     return `<button class="qtapp uiact${hasArt ? " uiart" : ""} fam-${t.fam || "case"}${t.lead ? " qtapp-lead uiact-lead" : ""}" data-qt="${id}" ${attrs(t)}${art}>${
       t.lead ? `<span class="qtapp-flag uiact-flag">Fastest action</span>` : ""}
       <span class="qtapp-i uiact-i" aria-hidden="true">${t.icon}</span>
       <span class="qtapp-n uiact-n">${t.label}</span>
-      <span class="qtapp-s uiact-s">${t.sub}</span></button>`; };
+      <span class="qtapp-s uiact-s">${n != null && n > 0 ? `${n} waiting` : t.sub}</span></button>`; };
   /* THE USER'S OWN ORDER over each surface's default — stored ids first, new
      doors appended, hidden ones withdrawn. With nothing stored, both rows are
      byte-what-they-were. */
@@ -6030,6 +6077,14 @@ function quickToolsHtml(){
       <div class="uibox-h"><span class="uibox-t">Start something</span>
         <span class="uibox-s">Every door you use most, one tap away.</span></div>
       <div class="qtapps uigrid">${prefOrder(QT_PHONE).filter(ok).map(appCard).join("")}</div>
+      ${/* §Z — the lower-frequency doors, one tap away, in the same box so
+           they are plainly the same kind of thing rather than hidden
+           somewhere else. `<details>` because it needs no state, no handler
+           and no repaint: the browser already knows how to do this. */""}
+      ${prefOrder(QT_PHONE_MORE).filter(ok).length ? `<details class="qtmore">
+        <summary>More actions</summary>
+        <div class="qtapps uigrid">${prefOrder(QT_PHONE_MORE).filter(ok).map(appCard).join("")}</div>
+      </details>` : ""}
     </div>
   </div>`;
 }

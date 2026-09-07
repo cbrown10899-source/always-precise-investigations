@@ -6320,6 +6320,14 @@ const CEO_CAPS = [
   { id: 'qt:video',    label: 'Timestamp Video',     core: false, nav: false, alt: 'the More menu' },
   { id: 'qt:field',    label: 'Active Surveillance', core: true,  nav: true,  alt: 'the bottom navigation' },
   { id: 'qt:cases',    label: 'Cases',               core: true,  nav: true,  alt: 'the bottom navigation' },
+  /* The two cards §F and §L added to the phone's six. Both are DUPLICATE
+     shortcuts by the rule this table exists to encode — Intakes is in the
+     bottom navigation and the CEO Bot has a pill on every screen — so the
+     strongest thing the Bot can ever propose for either is removing the Home
+     card, never the capability. `core` on View Intakes because reading a
+     signed intake is one of the eight acts the business runs on. */
+  { id: 'qt:leads',    label: 'View Intakes',        core: true,  nav: true,  alt: 'the bottom navigation' },
+  { id: 'qt:ceo',      label: 'CEO Bot',             core: false, nav: true,  alt: 'the CEO Bot button on every screen' },
   /* Not quick actions — dashboard furniture the owner's noise list already
      names, hideable per user and reachable nowhere else, so they are REVIEW
      candidates at most. */
