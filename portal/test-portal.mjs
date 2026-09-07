@@ -1044,7 +1044,7 @@ section('Rate sheets');
   ok('it states the three things the owner asked for, in that order',
      eng.lines.length === 3 && /^Retainer: \$1,500$/.test(eng.lines[0])
      && /^NON-REFUNDABLE PORTION: \$500$/.test(eng.lines[1])
-     && /^4-HOUR MINIMUM REQUIRED$/.test(eng.lines[2]), JSON.stringify(eng.lines));
+     && /^4-HOUR MINIMUM PER SURVEILLANCE DAY$/.test(eng.lines[2]), JSON.stringify(eng.lines));
   ok('the non-refundable portion is red and bold',
      eng.alertColor === 'rgb(193, 65, 51)' && Number(eng.alertWeight) >= 700,
      `${eng.alertColor} / ${eng.alertWeight}`);
@@ -17576,7 +17576,7 @@ section('The send wizard offers the non-refundable amount, on Private only');
   ok('the wizard preview carries the typed figure, resolved by the Worker',
      /NON-REFUNDABLE PORTION: \$750/.test(prevTxt) && !/\$500/.test(prevTxt), prevTxt);
   ok('and it still states the retainer and the minimum beside it',
-     /Retainer: \$1,500/.test(prevTxt) && /4-HOUR MINIMUM REQUIRED/.test(prevTxt), prevTxt);
+     /Retainer: \$1,500/.test(prevTxt) && /4-HOUR MINIMUM PER SURVEILLANCE DAY/.test(prevTxt), prevTxt);
   await closeWiz();
 
   /* THE LEGAL WIZARD TAKES THE SAME SHEET AND MUST NOT OFFER THIS. It is also
@@ -18358,15 +18358,22 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
 
      The bound is 700 so a NINTH card fails here rather than quietly growing
      the wall; it is not a target to shrink toward. */
-  ok('Quick Tools stays a block, not a wall (eight cards + More)',
-     fs.qtoolsH <= 700, JSON.stringify(fs));
+  ok('Quick Tools stays a block, not a wall (nine cards + More)',
+     fs.qtoolsH <= 840, JSON.stringify(fs));
   ok('the Search card is a box, not a billboard (was 245px)', fs.srchH <= 140, JSON.stringify(fs));
   /* Same supersession. It is no longer on the FIRST screen and is not meant
      to be — the owner's new first screen is the greeting, the signed-intake
      card and the six actions. What is still asserted is that it is not
      buried: one short scroll, not three. */
-  ok('Today / next actions is one short scroll away, not buried',
-     fs.todayTop !== null && fs.todayTop <= 960, JSON.stringify(fs));
+  /* WHAT THIS NUMBER NOW PROTECTS, said plainly. It is no longer "on the
+     first screen" — nine primary cards cannot be, and the owner chose direct
+     access over compactness knowing that. Measured at 390: 1040 with no
+     signed intake waiting and ~1136 with the green banner above, which the
+     suite's own fixtures produce. The bound catches a TENTH card, which would
+     add another row to both figures, and nothing else. If it ever needs
+     raising again, that is the creep it exists to make visible. */
+  ok('Today / next actions is still within a flick, not buried',
+     fs.todayTop !== null && fs.todayTop <= 1250, JSON.stringify(fs));
 
   /* ---- the quick-tools strip ---- */
   const strip = await page.evaluate(() => {
@@ -18399,7 +18406,7 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
      only by knowing to swipe. Two across shows all six with no gesture, so
      the properties worth pinning are the stronger ones — a small number of
      rows, and no sideways scroll anywhere, the strip included. */
-  ok('the phone strip is a short grid, not a wall', strip.tops <= 4, JSON.stringify(strip));
+  ok('the phone strip is a short grid, not a wall', strip.tops <= 5, JSON.stringify(strip));
   ok('and nothing swipes — every primary door is on screen',
      strip.sw <= strip.cw + 1, JSON.stringify(strip));
   ok('and the PAGE never scrolls sideways', strip.pageSw <= strip.pageCw + 1, JSON.stringify(strip));
@@ -18421,10 +18428,10 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
   /* THE PHONE'S SIX (owner brief 2026-09-06 §F/§L, superseding the ten of
      2026-09-04). Rate Sheet still leads; the other six moved behind More in
      the same box, which the section above reads out of the DOM to prove. */
-  ok("and the phone strip is the owner's eight, Rate Sheet first",
+  ok("and the phone strip is the owner's nine, Rate Sheet first",
      JSON.stringify(strip.acts) === JSON.stringify(
        ['tab:sheets', 'tab:newlead', 'nlKind:consumer', 'tab:leads',
-        'tab:cases', 'ceoOpen:', 'pstLaunch:', 'vstOpen:']),
+        'tab:cases', 'ceoOpen:', 'pstLaunch:', 'vstOpen:', 'surveillance:']),
      JSON.stringify(strip.acts));
   const reach = await page.evaluate(() => {
     const g = document.querySelector('.qtgrid'); g.scrollLeft = 9999;
@@ -19483,9 +19490,9 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
      pushed the queue past the fold; the other six are one tap behind More in
      the same box, and each also keeps the door it already had elsewhere. */
   const PHONE = ['Rate Sheet', 'New Intake', 'Private Intake', 'View Intakes',
-                 'Cases', 'CEO Bot', 'Timestamp Photo', 'Timestamp Video'];
-  const PHONE_MORE = ['Insurance Intake', 'Law Firm Intake', 'Reports & Packages',
-                      'Active Surveillance'];
+                 'Cases', 'CEO Bot', 'Timestamp Photo', 'Timestamp Video',
+                 'Active Surveillance'];
+  const PHONE_MORE = ['Insurance Intake', 'Law Firm Intake', 'Reports & Packages'];
   const p390 = await read(390, 844);
   ok('on a phone the quick actions are cards, not the desktop chip row',
      p390.appsShown === true && p390.gridShown === false, JSON.stringify(p390).slice(0, 200));
@@ -19499,8 +19506,15 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
      behind More, and this reads them out of the DOM to prove it. */
   const more = await page.evaluate(() => [...document.querySelectorAll('.qtmore .qtapp-n')]
     .map(n => n.textContent.trim()));
-  ok('the four lower-frequency doors are one tap behind More, not gone',
+  ok('the three lower-frequency doors are one tap behind More, not gone',
      PHONE_MORE.every(n => more.includes(n)), JSON.stringify(more));
+  /* AND NOTHING WHOSE ONLY TOP-LEVEL DOOR THIS IS. Active Surveillance joined
+     the timestamp tools as primary because two assertions refused it behind
+     More and both were right: it is the field view's only top-level entrance,
+     and on an investigator's phone the rail holding the other copy is behind
+     the burger. The three that remain are each reachable another way. */
+  ok('and Active Surveillance is not among them either',
+     !more.includes('Active Surveillance'), JSON.stringify(more));
   /* OWNER DECISION, 2026-09-07 — LOCKED. Neither timestamp tool may be in
      that menu; both are primary cards. Asserted from the OTHER side as well,
      because "is in the six" and "is not in More" are different claims and a

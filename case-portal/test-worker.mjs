@@ -1226,7 +1226,12 @@ section("The office's own record copy of what it sent");
      !!copy && /\$2,000/.test(copy.text), copy ? copy.text.slice(0, 400) : 'no copy');
   ok('and the non-refundable portion beside it',
      !!copy && /Non-refundable portion/i.test(copy.text), copy ? copy.text.slice(0, 400) : 'no copy');
-  ok('and the minimum engagement', !!copy && /Minimum engagement/i.test(copy.text));
+  /* The record copy carries the DOCUMENT'S OWN engagement block now, not a
+     re-composed "Minimum engagement" row — so this looks for the term the
+     client was actually sent, which is the point of the change. */
+  ok('and the minimum, worded exactly as the client sees it',
+     !!copy && /4-HOUR MINIMUM PER SURVEILLANCE DAY/.test(copy.text),
+     copy && copy.text.slice(0, 500));
   ok('and which document version went', !!copy && /Version:/.test(copy.text));
 
   /* ---- 3. IT IS NOT A SECOND ROW IN THE HISTORY ------------------------- */
@@ -1254,6 +1259,134 @@ section("The office's own record copy of what it sent");
   ok('the client is still told their document went', half.ok === true, JSON.stringify(half));
   ok('and the failed copy is REPORTED, not swallowed and not faked',
      half.record_copy === false && !!half.record_reason, JSON.stringify(half));
+
+  globalThis.fetch = realFetch;
+}
+
+
+/* ============================================================================
+   THE PRIVATE RATE SHEET'S TWO HIGHLIGHTED TERMS (owner, 2026-09-07).
+
+   "Visually highlight these two terms: 4-HOUR MINIMUM PER SURVEILLANCE DAY /
+   NON-REFUNDABLE PORTION: $X ... The final sent/signed document must preserve
+   the exact custom amount selected ... Owner record copy must show the exact
+   same highlighted terms and amount."
+
+   The wording correction is substantive, not cosmetic: "4-hour minimum" alone
+   let a client read ONE four-hour minimum across a three-day case. It is per
+   DAY of surveillance.
+   ========================================================================= */
+section('The private sheet states its minimum per surveillance day, and the office is told the same');
+{
+  const realFetch = globalThis.fetch;
+  let mails = [];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      mails.push(JSON.parse(init.body));
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  /* ---- THE WORDING, AT ITS ONE WRITER ----------------------------------- */
+  const d = await jsonOf(await call(env, '/sheets', { cookie: admin }));
+  const priv = d.sheets.find(x => x.key === 'private');
+  const ins = d.sheets.find(x => x.key === 'insurance');
+  const legal = d.sheets.find(x => x.key === 'legal');
+  ok('the private engagement block states the minimum PER SURVEILLANCE DAY',
+     priv.engagement.lines.some(l => l.text === '4-HOUR MINIMUM PER SURVEILLANCE DAY'),
+     JSON.stringify(priv.engagement.lines.map(l => l.text)));
+  ok('and no generic "minimum required" wording survives on it',
+     !/MINIMUM REQUIRED/i.test(JSON.stringify(priv)),
+     JSON.stringify(priv.engagement.lines.map(l => l.text)));
+  ok('the sheet body says it the same way',
+     /minimum per surveillance day/i.test(JSON.stringify(priv.lines)),
+     JSON.stringify(priv.lines.map(l => l.sub)));
+  /* THE TWO HIGHLIGHTED TERMS ARE TONED, and the tones are the owner's: red
+     on the money, gold on the minimum. The colours themselves are measured in
+     the page suite against their painted ground; here it is the MARKER. */
+  const nrLine = priv.engagement.lines.find(l => /NON-REFUNDABLE PORTION/.test(l.text));
+  const minLine = priv.engagement.lines.find(l => /MINIMUM PER SURVEILLANCE DAY/.test(l.text));
+  ok('both terms carry a highlight tone, and they are not the same one',
+     nrLine.tone === 'alert' && minLine.tone === 'emphasis',
+     JSON.stringify([nrLine.tone, minLine.tone]));
+
+  /* ---- LEGAL AND INSURANCE ARE UNTOUCHED, WHICH THE BRIEF REQUIRES ------ */
+  ok('the insurance sheet gains no per-day private wording',
+     !/minimum per surveillance day/i.test(JSON.stringify(ins)), 'insurance');
+  /* THIS ASSERTION WAS WRONG WHEN FIRST WRITTEN, AND THE SUITE SAID SO. The
+     legal RETAINER card is the private pricing VERBATIM plus one price-free
+     Mail Check line — one pricing source, which CLAUDE.md records and another
+     pin already holds. So it inherits the corrected wording, and that is the
+     inheritance working rather than a change to a legal rule: the alternative
+     is a law firm reading the OLD, wrong "4-hour minimum" while the private
+     client reads the right one, which forks the source the design exists to
+     keep single.
+
+     What must carry no minimum is the legal FIXED sheet — the flat-fee
+     services, where "retainer", "hourly" and "minimum" are all forbidden and
+     a separate grep already enforces the vocabulary. Asserted here as the
+     pair, so neither half can drift alone. */
+  ok('the legal retainer card inherits the private wording, one pricing source',
+     /minimum per surveillance day/i.test(JSON.stringify(legal.lines)),
+     JSON.stringify(legal.lines.map(l => l.sub)));
+  const fixed = await jsonOf(await call(env, '/sheets', { cookie: admin }));
+  const fixedCard = (fixed.sheets || []).find(x => x.type === 'fixed');
+  ok('and a fixed legal service still states no minimum of any kind',
+     !fixedCard || !/minimum/i.test(JSON.stringify(fixedCard)),
+     fixedCard ? JSON.stringify(fixedCard.lines || []).slice(0, 200) : 'no fixed card on /sheets');
+
+  /* ---- A CUSTOM AMOUNT REACHES THE CLIENT AND THE OFFICE UNCHANGED ------ */
+  await call(env, '/billing-settings', { method: 'POST', cookie: admin,
+    body: { owner_record_email: 'office@alwaysprecise.example' } });
+  mails = [];
+  const sent = await jsonOf(await call(env, '/sheets/private_retainer/email', {
+    method: 'POST', cookie: admin,
+    body: { to: 'client@example.com', retainer_amount: 2000, non_refundable: 750 } }));
+  ok('the send succeeds with a custom non-refundable amount', sent.ok === true, JSON.stringify(sent));
+  ok('and the response reports the figure the document carried',
+     sent.non_refundable === 750, JSON.stringify(sent.non_refundable));
+  const toClient = mails.find(m => String(m.to).includes('client@example.com'));
+  const toOffice = mails.find(m => String(m.to).includes('alwaysprecise.example'));
+  ok('the client document states the custom amount, not the $500 default',
+     /NON-REFUNDABLE PORTION: \$750/.test(toClient.text) && !/\$500/.test(toClient.text),
+     toClient.text.slice(0, 500));
+  ok('and states the minimum per surveillance day',
+     /4-HOUR MINIMUM PER SURVEILLANCE DAY/.test(toClient.text), toClient.text.slice(0, 500));
+  /* THE SAME TERMS, NOT MERELY THE SAME FIGURES. The record copy is handed
+     the document's own engagement block, so this compares STRINGS. */
+  ok('the office copy carries the identical highlighted terms',
+     !!toOffice && /NON-REFUNDABLE PORTION: \$750/.test(toOffice.text)
+       && /4-HOUR MINIMUM PER SURVEILLANCE DAY/.test(toOffice.text),
+     toOffice && toOffice.text.slice(0, 600));
+  ok('and never a stale default beside them',
+     !!toOffice && !/\$500/.test(toOffice.text), toOffice && toOffice.text.slice(0, 600));
+
+  /* ---- A BLANK BOX IS NOT AN ABSENT FIGURE ----------------------------- */
+  mails = [];
+  const dflt = await jsonOf(await call(env, '/sheets/private_retainer/email', {
+    method: 'POST', cookie: admin, body: { to: 'client2@example.com' } }));
+  const c2 = mails.find(m => String(m.to).includes('client2@example.com'));
+  const o2 = mails.find(m => String(m.to).includes('alwaysprecise.example'));
+  ok('with nothing typed the standard portion is stated, never omitted',
+     dflt.non_refundable === 500 && /NON-REFUNDABLE PORTION: \$500/.test(c2.text),
+     JSON.stringify(dflt.non_refundable));
+  ok('and the office copy agrees with it',
+     !!o2 && /NON-REFUNDABLE PORTION: \$500/.test(o2.text), o2 && o2.text.slice(0, 600));
+
+  /* ---- NEITHER TERM REACHES A CARRIER OR A LAW FIRM'S RECORD COPY ------- */
+  mails = [];
+  await call(env, '/sheets/insurance_assignment/email', {
+    method: 'POST', cookie: admin, body: { to: 'adjuster@example.com' } });
+  const insOffice = mails.find(m => String(m.to).includes('alwaysprecise.example'));
+  ok('an insurance record copy states no retainer terms at all',
+     !!insOffice && !/NON-REFUNDABLE|MINIMUM PER SURVEILLANCE/i.test(insOffice.text),
+     insOffice && insOffice.text.slice(0, 500));
 
   globalThis.fetch = realFetch;
 }
@@ -19868,7 +20001,7 @@ section('The private rate sheet carries a non-refundable portion, from one sourc
   ok('the screen also states what a blank box would mean, so the page holds no default',
      screen.non_refundable_default === 500);
   ok('the block says the minimum out loud, and marks it for the gold treatment',
-     privCard.engagement.lines.some(l => /4-HOUR MINIMUM REQUIRED/.test(l.text)
+     privCard.engagement.lines.some(l => /4-HOUR MINIMUM PER SURVEILLANCE DAY/.test(l.text)
        && l.tone === 'emphasis'));
   ok('and it carries the owner\'s supporting sentence, with no percentage or formula',
      /non-refundable upon engagement and reservation of investigative services/

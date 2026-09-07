@@ -658,10 +658,36 @@ Three things this found, which is the point of auditing rather than assuming:
 
 ## The private retainer has a non-refundable portion, and one function knows it
 
-Owner brief 2026-09-05. The private rate sheet now states three things to the
-client — the retainer, the **NON-REFUNDABLE PORTION** in red, and the
-**4-HOUR MINIMUM REQUIRED** in gold — plus one supporting sentence. **No
-percentage and no formula**, by the owner's own display rule.
+Owner brief 2026-09-05, wording corrected by the owner 2026-09-07. The private
+rate sheet states three things to the client — the retainer, the
+**NON-REFUNDABLE PORTION** in red, and the **4-HOUR MINIMUM PER SURVEILLANCE
+DAY** in gold — plus one supporting sentence. **No percentage and no formula**,
+by the owner's own display rule.
+
+**"PER SURVEILLANCE DAY" IS SUBSTANTIVE, NOT COSMETIC.** The old wording —
+*4-HOUR MINIMUM REQUIRED* — let a client read ONE four-hour minimum across a
+three-day case. The minimum is per DAY of surveillance. Because
+`engagementBlock` is the one writer of the three statements, correcting it
+moved the sheet, the wizard preview, the email, the Assistant rehearsal, the
+Rate Sheets screen and the owner's record copy together; the private card's
+own `sub` and `note` were corrected beside it. **The legal retainer card
+inherits it**, which is the one-pricing-source design working rather than a
+change to a legal rule — the alternative is a law firm reading the old wrong
+wording while the private client reads the right one. The legal FIXED sheets
+still carry no minimum of any kind, and Insurance keeps its own separate
+8-hour-day figure. A test asserted the opposite of all this when first written
+and the suite refused it: the legal card is the private pricing verbatim, and
+a test may not assert something false about the product to make a change look
+tidier.
+
+**THE OWNER'S RECORD COPY CARRIES THE DOCUMENT'S OWN BLOCK, VERBATIM** (owner,
+2026-09-07: *"Owner record copy must show the exact same highlighted terms and
+amount"*). It is handed `sheet.engagement`'s rendered lines rather than
+re-composing the figures, so "the same terms" is structural: the office
+receives the strings the client received, and the amount that reaches it is by
+construction the amount that was sent — custom or default. **No acknowledgement
+checkbox was added**; the client's signature already covers the whole sheet,
+and the owner's brief says not to add one.
 
 **`nonRefundableFor(retainer, offered)` in `case-portal/worker.js` is the ONE
 source of truth**, and it is the only thing in the codebase that knows the

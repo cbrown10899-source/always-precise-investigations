@@ -5942,7 +5942,8 @@ const QT_DESK = ["photo", "video", "field", "newlead", "cases", "delivery"];
    box, and every one of them also keeps the door it already had — the
    timestamp tools and Active Surveillance in the navigation foot, Reports &
    Packages and the two intake kinds in the rail. */
-const QT_PHONE = ["sheets", "newlead", "priv", "leads", "cases", "ceo", "photo", "video"];
+const QT_PHONE = ["sheets", "newlead", "priv", "leads", "cases", "ceo", "photo", "video",
+                  "field"];
 /* OWNER DECISION, 2026-09-07 — LOCKED: "Keep BOTH Timestamp Photo and
    Timestamp Video as primary visible cards on Home. Do not move either behind
    More. Preserve their direct one-tap access."
@@ -5955,7 +5956,22 @@ const QT_PHONE = ["sheets", "newlead", "priv", "leads", "cases", "ceo", "photo",
    already went missing once, and the owner has decided that costs more than
    the two rows it saves. Eight primary cards, four under More. Do not move
    these two again without asking. */
-const QT_PHONE_MORE = ["claims", "legal", "delivery", "field"];
+/* ACTIVE SURVEILLANCE IS PRIMARY TOO, and the suite is why. Two assertions
+   refused it behind More and both were right: it is the FIELD VIEW'S ONLY
+   TOP-LEVEL DOOR — the same "could not find it" incident that produced the
+   timestamp door produced this one — and on an investigator's phone the
+   navigation rail that holds the other copy is behind the burger. It is also
+   pure loss there: every admin-only card is filtered out for that role, so
+   their strip is four cards and concealing a fifth compacts nothing.
+
+   WHAT IS LEFT UNDER MORE IS THE HONEST SET. Insurance and Law Firm intake
+   are one step inside New Intake's own kind picker, which is what "Choose the
+   type" means; Reports & Packages has a rail door and its own Home band. None
+   of the three is anyone's only way in. An investigator sees NONE of them —
+   all three are admin-only — so the disclosure is not drawn for that role at
+   all, which is why it is guarded on the filtered length rather than on the
+   list. */
+const QT_PHONE_MORE = ["claims", "legal", "delivery"];
 
 /* ============ HOME: THE OWNER'S OWN FIRST SCREEN (owner brief 2026-09-06) ===
 
@@ -8319,7 +8335,8 @@ async function wizFeeSave(){
    The figure is a property of the CASE, not of this email — the owner's wording
    is "becomes the AGREED RETAINER for that specific private client/case" — so
    it is written to `case_retainer` and everything downstream re-reads it. The
-   hourly rate and the 4-hour minimum are untouched and must stay that way.
+   hourly rate and the per-surveillance-day minimum are untouched and must stay
+   that way.
 
    The standard figure is only the STARTING point, never a reset: a case that
    agreed a higher one opens this selector on that higher one, and an amount
@@ -8434,7 +8451,7 @@ function wizRetainerHtml(w){
         ? `Preview reads back what <b>${esc(w.caseNo)}</b> has already agreed. Change this only to
            agree a different figure &mdash; leaving it alone keeps whatever the case holds.`
         : `This becomes the agreed retainer for <b>${esc(w.caseNo)}</b>, and is what the sheet, the
-           subject line and the payment block all carry. The hourly rate and the four-hour minimum
+           subject line and the payment block all carry. The hourly rate and the per-day minimum
            do not change.`}</p>
   </div>`;
 }

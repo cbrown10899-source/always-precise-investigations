@@ -593,7 +593,14 @@ function engagementBlock(retainer, nonRefundable) {
     lines: [
       { text: `Retainer: ${nrMoney(retainer)}` },
       { text: `NON-REFUNDABLE PORTION: ${nrMoney(nonRefundable)}`, tone: 'alert' },
-      { text: `${PERSONAL.minHours}-HOUR MINIMUM REQUIRED`, tone: 'emphasis' },
+      /* "PER SURVEILLANCE DAY" is the owner's correction of 2026-09-07:
+         "Replace any generic 4-hour minimum wording with 4-hour minimum per
+         surveillance day everywhere in the Private rate-sheet flow." The
+         minimum is per DAY of surveillance, not per engagement, and the old
+         wording let a client read one four-hour minimum across a three-day
+         case. One writer, so the sheet, the preview, the email, the Assistant
+         rehearsal and the owner's record copy cannot say different things. */
+      { text: `${PERSONAL.minHours}-HOUR MINIMUM PER SURVEILLANCE DAY`, tone: 'emphasis' },
     ],
     note: 'A minimum portion of the retainer is non-refundable upon engagement and '
         + 'reservation of investigative services. Additional terms are governed by the '
@@ -700,8 +707,8 @@ function rateSheets(retainer) {
           note: 'Applied in full toward authorized investigative services. It is not a '
               + 'separate fee — your retainer funds the work performed on your case.' },
         { label: 'Investigative rate', value: `${money(PERSONAL.hourly)}/hr`, big: true,
-          sub: `${PERSONAL.minHours}-hour minimum`,
-          note: `${PERSONAL.minHours}-hour minimum engagement. Investigative time is deducted `
+          sub: `${PERSONAL.minHours}-hour minimum per surveillance day`,
+          note: `${PERSONAL.minHours}-hour minimum per surveillance day. Investigative time is deducted `
               + `from the retainer at the same ${money(PERSONAL.hourly)}-per-hour rate. Field `
               + 'investigation, necessary video review, case documentation and report '
               + 'preparation are handled at this rate and applied against your authorized '
@@ -2101,13 +2108,19 @@ async function emailSheet(request, env, user, id) {
   const rec = await ownerRecordCopy(env, 'rate_sheet', {
     to, client: recClient, case_no: linkedCase || caseNo || '',
     context: sendCtx, version: sheet.name,
-    /* PRIVATE ONLY, the boundary these three figures already live behind:
-       there is no retainer, no non-refundable portion and no hourly minimum
-       on a carrier or a law firm's send, and a record copy naming one would
-       be the office's own file asserting something untrue. */
-    retainer: sendCtx === SEND_CONTEXT.PRIVATE ? retainer : undefined,
-    non_refundable: sendCtx === SEND_CONTEXT.PRIVATE ? nonRef.amount : undefined,
-    minimum: sendCtx === SEND_CONTEXT.PRIVATE ? `${PERSONAL.minHours} hours` : undefined,
+    /* THE HIGHLIGHTED TERMS, VERBATIM FROM THE DOCUMENT'S OWN BLOCK (owner,
+       2026-09-07: "Owner record copy must show the exact same highlighted
+       terms and amount"). NOT re-composed from the figures: `engagementBlock`
+       is the one writer of those three statements, so passing the rendered
+       lines makes "the same terms" structural instead of two lists kept in
+       step by hand — and the amount that reaches the office is by
+       construction the amount the client was sent, custom or default.
+
+       PRIVATE ONLY, the boundary these figures already live behind: there is
+       no retainer, no non-refundable portion and no per-day minimum on a
+       carrier's or a law firm's send, and a record copy naming one would be
+       the office's own file asserting something untrue. */
+    engagement: sendCtx === SEND_CONTEXT.PRIVATE ? sheet.engagement : null,
     flat_fee: flatFee != null ? flatFee : undefined,
     intake_included: includeIntake,
     intake_label: intakeDoor ? intakeDoor.label : '',
@@ -14955,27 +14968,34 @@ async function ownerRecordCopy(env, kind, facts) {
       ['Case', f.case_no || ''],
       ['Business', f.context || ''],
       ['Version', f.version || ''],
-      ['Retainer', f.retainer != null ? usd(f.retainer) : ''],
-      ['Non-refundable portion', f.non_refundable != null ? usd(f.non_refundable) : ''],
-      ['Minimum engagement', f.minimum || ''],
       ['Flat fee', f.flat_fee != null ? usd(f.flat_fee) : ''],
       ['Intake included', f.intake_included == null ? '' : (f.intake_included ? 'Yes' : 'No')],
       ['Intake form', f.intake_label || ''],
       ['Payment instructions', f.payment || ''],
       ['Sent at', nowIso()],
     ].filter(r => String(r[1] || '').trim() !== '');
+    /* The highlighted terms exactly as the client's document states them —
+       same strings, same order, same amount. */
+    const terms = (f.engagement && Array.isArray(f.engagement.lines))
+      ? f.engagement.lines.map(l => String(l.text)) : [];
     const subject = `RECORD COPY — ${doc} sent to ${f.to || 'a client'}`;
     const text = [`${doc.toUpperCase()} — RECORD COPY`, '',
       'This is the office\'s own record of a document the portal sent. The client received',
       'their own copy; this message is not a second send and is not in the send history.', '',
-      ...rows.map(([k, v]) => `${k}: ${v}`)].join('\n');
+      ...rows.map(([k, v]) => `${k}: ${v}`),
+      ...(terms.length ? ['', 'ENGAGEMENT TERMS AS SENT', ...terms.map(t => `  ${t}`)] : []),
+    ].join('\n');
     const html = `<div style="font-family:Segoe UI,system-ui,Arial,sans-serif;color:#1c2531">
       <h2 style="margin:0 0 4px;font-size:17px">${escHtml(doc)} &mdash; record copy</h2>
       <p style="margin:0 0 14px;color:#5c6775;font-size:13px">The office's own record of a
         document the portal sent. Not a second send, and not in the send history.</p>
       <table style="border-collapse:collapse;font-size:14px">${rows.map(([k, v]) =>
         `<tr><td style="padding:3px 14px 3px 0;color:#5c6775">${escHtml(k)}</td>
-         <td style="padding:3px 0"><b>${escHtml(String(v))}</b></td></tr>`).join('')}</table></div>`;
+         <td style="padding:3px 0"><b>${escHtml(String(v))}</b></td></tr>`).join('')}</table>
+      ${terms.length ? `<div style="margin-top:14px;padding:11px 13px;background:#f4f5f7;border-radius:8px">
+        <div style="font-size:11px;letter-spacing:.06em;color:#5c6775">ENGAGEMENT TERMS AS SENT</div>
+        ${terms.map(t => `<div style="font-weight:800;margin-top:4px">${escHtml(t)}</div>`).join('')}
+      </div>` : ''}</div>`;
     const r = await sendMail(env, { to, subject, text, html });
     return { record_copy: !!r.sent, record_reason: r.sent ? '' : (r.reason || 'failed') };
   } catch (e) {
