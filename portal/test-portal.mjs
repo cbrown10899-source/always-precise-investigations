@@ -8675,46 +8675,43 @@ section('The quick tool is discoverable, not merely present');
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(400);
-  const p = await page.evaluate(async () => {
+  const p = await page.evaluate(() => {
     /* THE VISIBLE ONE. querySelector returns the desktop chip, which is
        display:none here — measuring it reports 0px and says nothing about
        what a thumb can reach.
 
-       WHAT CHANGED, AND IT RELAXES A RULE THIS INCIDENT PRODUCED. Owner brief
-       2026-09-06 §F/§L name six primary phone cards and §Z sends
-       low-frequency items behind More; the timestamp tools are in neither the
-       six nor §AD's list of the eight acts the business runs on, so they are
-       one tap behind a labelled disclosure ON THIS SCREEN rather than on it.
-       The 2026-09-04 rule this section enforces was that the door must not
-       live in a MENU — the hamburger, on another screen — and it still does
-       not. But it is a relaxation, it is flagged to the owner, and it is one
-       they can overturn by moving the tools back into the six.
+       OWNER DECISION, 2026-09-07 — LOCKED. Both timestamp tools are PRIMARY
+       cards on Home; neither may be moved behind More. I had put them there
+       under §Z's "use More for low-frequency items" and the owner overturned
+       it, settling a conflict with the 2026-09-04 rule this very section
+       enforces: the door must not be concealed, because it went missing once.
+       A labelled disclosure on the same screen is not the hamburger, and the
+       owner has decided it is still one tap of concealment too many.
 
-       So the property asserted is the one that survives: the control that
-       reveals it is itself on the first screen at the tap floor, one tap
-       opens it, and the door is then genuinely PRESSABLE — measured with
-       elementFromPoint, because the first build of this laid the collapsed
-       cards out with `visibility:visible` and a real bounding box that
-       nothing painted, which is a control that renders and cannot be seen. */
-    const det = document.querySelector('.qtmore');
-    const sum = det ? det.querySelector('summary') : null;
-    const sr = sum ? sum.getBoundingClientRect() : null;
-    const before = [...document.querySelectorAll('.qtools [data-act="vstOpen"]')]
-      .find(e => e.offsetParent);
-    if (sum) { sum.click(); await new Promise(r => setTimeout(r, 300)); }
+       So this asserts what it always meant, directly — on the first screen,
+       at the tap floor — plus the half the previous build proved was worth
+       measuring separately: that the control is PRESSABLE and not merely
+       laid out. A collapsed `<details>` card reported `visibility:visible`
+       with a real bounding box that nothing painted, and only elementFromPoint
+       could tell the difference. */
     const b = [...document.querySelectorAll('.qtools [data-act="vstOpen"]')]
       .find(e => e.offsetParent);
-    if (b) { b.scrollIntoView({ block: 'center' }); await new Promise(r => setTimeout(r, 250)); }
     const r = b ? b.getBoundingClientRect() : null;
     const hit = r ? document.elementFromPoint(Math.round(r.left + r.width / 2),
                                               Math.round(r.top + r.height / 2)) : null;
+    const ph = [...document.querySelectorAll('.qtools [data-act="pstLaunch"]')]
+      .find(e => e.offsetParent);
+    const pr = ph ? ph.getBoundingClientRect() : null;
     const nav = document.querySelector('.tabs');
-    return { h: r ? Math.round(r.height) : 0,
-             /* COLLAPSED IT IS GENUINELY ABSENT, not fake-visible */
-             hiddenWhenClosed: !before,
-             revealOnFirstScreen: !!sr && sr.top >= 0 && sr.bottom <= innerHeight,
-             revealH: sr ? Math.round(sr.height) : 0,
+    return { h: r ? Math.round(r.height) : 0, y: r ? Math.round(r.y) : null,
+             onFirstScreen: !!r && r.y >= 0 && r.y < innerHeight,
              pressable: !!hit && !!b && (hit === b || b.contains(hit)),
+             /* ITS SIBLING TOO. The owner's decision names both, and a rule
+                that holds for one of a pair is how the other quietly moves. */
+             photoOnFirstScreen: !!pr && pr.y >= 0 && pr.y < innerHeight,
+             photoH: pr ? Math.round(pr.height) : 0,
+             /* and neither is inside the More disclosure */
+             inMore: !!(b && b.closest('.qtmore')) || !!(ph && ph.closest('.qtmore')),
              navHidden: getComputedStyle(nav).display === 'none',
              sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth };
   });
@@ -8722,12 +8719,13 @@ section('The quick tool is discoverable, not merely present');
      burger — so if the only copy lived there, the door would be in a menu,
      which the owner ruled out by name. */
   ok('on a phone the navigation rail really is behind the burger', p.navHidden);
-  ok('the way to it is on the first screen, at the tap floor',
-     p.revealOnFirstScreen && p.revealH >= 44, JSON.stringify(p));
-  ok('and one tap gets a real, pressable control — not one that merely renders',
-     p.h >= 44 && p.pressable === true, JSON.stringify(p));
-  ok('while closed it is genuinely absent rather than invisibly present',
-     p.hiddenWhenClosed === true, JSON.stringify(p));
+  ok('and the quick tool is still on the screen, not in that menu',
+     p.onFirstScreen && p.h >= 44, JSON.stringify(p));
+  ok('it is pressable, not merely laid out', p.pressable === true, JSON.stringify(p));
+  ok('Timestamp Photo is on the screen beside it, as the owner requires',
+     p.photoOnFirstScreen && p.photoH >= 44, JSON.stringify(p));
+  ok('and NEITHER of the pair is behind the More disclosure',
+     p.inMore === false, JSON.stringify(p));
   ok('with nothing scrolling sideways at 390px', p.sw <= p.cw + 1, `${p.sw} vs ${p.cw}`);
 
   // It reaches the workflow that already shipped — not a second one.
@@ -18352,15 +18350,23 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
      measured 744px and pushed Today past the fold. Six cards plus the More
      disclosure is ~500px, so the bound is 560 — tight enough that a seventh
      card added later fails here rather than quietly burying the queue. */
-  ok('Quick Tools stays a compact block, not a wall (six cards + More)',
-     fs.qtoolsH <= 560, JSON.stringify(fs));
+  /* EIGHT CARDS, BY THE OWNER'S DECISION OF 2026-09-07: both timestamp tools
+     stay primary and visible, and their two rows cost 132px more than the six
+     did. Measured at 390: 667px, with Today at 909 — just under the fold
+     rather than on the first screen, which is the trade the owner made
+     knowingly when they chose direct access over compactness.
+
+     The bound is 700 so a NINTH card fails here rather than quietly growing
+     the wall; it is not a target to shrink toward. */
+  ok('Quick Tools stays a block, not a wall (eight cards + More)',
+     fs.qtoolsH <= 700, JSON.stringify(fs));
   ok('the Search card is a box, not a billboard (was 245px)', fs.srchH <= 140, JSON.stringify(fs));
   /* Same supersession. It is no longer on the FIRST screen and is not meant
      to be — the owner's new first screen is the greeting, the signed-intake
      card and the six actions. What is still asserted is that it is not
      buried: one short scroll, not three. */
   ok('Today / next actions is one short scroll away, not buried',
-     fs.todayTop !== null && fs.todayTop <= 900, JSON.stringify(fs));
+     fs.todayTop !== null && fs.todayTop <= 960, JSON.stringify(fs));
 
   /* ---- the quick-tools strip ---- */
   const strip = await page.evaluate(() => {
@@ -18393,7 +18399,7 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
      only by knowing to swipe. Two across shows all six with no gesture, so
      the properties worth pinning are the stronger ones — a small number of
      rows, and no sideways scroll anywhere, the strip included. */
-  ok('the phone strip is a short grid, not a wall', strip.tops <= 3, JSON.stringify(strip));
+  ok('the phone strip is a short grid, not a wall', strip.tops <= 4, JSON.stringify(strip));
   ok('and nothing swipes — every primary door is on screen',
      strip.sw <= strip.cw + 1, JSON.stringify(strip));
   ok('and the PAGE never scrolls sideways', strip.pageSw <= strip.pageCw + 1, JSON.stringify(strip));
@@ -18415,10 +18421,10 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
   /* THE PHONE'S SIX (owner brief 2026-09-06 §F/§L, superseding the ten of
      2026-09-04). Rate Sheet still leads; the other six moved behind More in
      the same box, which the section above reads out of the DOM to prove. */
-  ok("and the phone strip is the owner's six, Rate Sheet first",
+  ok("and the phone strip is the owner's eight, Rate Sheet first",
      JSON.stringify(strip.acts) === JSON.stringify(
        ['tab:sheets', 'tab:newlead', 'nlKind:consumer', 'tab:leads',
-        'tab:cases', 'ceoOpen:']),
+        'tab:cases', 'ceoOpen:', 'pstLaunch:', 'vstOpen:']),
      JSON.stringify(strip.acts));
   const reach = await page.evaluate(() => {
     const g = document.querySelector('.qtgrid'); g.scrollLeft = 9999;
@@ -19477,9 +19483,9 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
      pushed the queue past the fold; the other six are one tap behind More in
      the same box, and each also keeps the door it already had elsewhere. */
   const PHONE = ['Rate Sheet', 'New Intake', 'Private Intake', 'View Intakes',
-                 'Cases', 'CEO Bot'];
+                 'Cases', 'CEO Bot', 'Timestamp Photo', 'Timestamp Video'];
   const PHONE_MORE = ['Insurance Intake', 'Law Firm Intake', 'Reports & Packages',
-                      'Timestamp Photo', 'Timestamp Video', 'Active Surveillance'];
+                      'Active Surveillance'];
   const p390 = await read(390, 844);
   ok('on a phone the quick actions are cards, not the desktop chip row',
      p390.appsShown === true && p390.gridShown === false, JSON.stringify(p390).slice(0, 200));
@@ -19493,10 +19499,15 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
      behind More, and this reads them out of the DOM to prove it. */
   const more = await page.evaluate(() => [...document.querySelectorAll('.qtmore .qtapp-n')]
     .map(n => n.textContent.trim()));
-  ok('the six lower-frequency doors are one tap behind More, not gone',
+  ok('the four lower-frequency doors are one tap behind More, not gone',
      PHONE_MORE.every(n => more.includes(n)), JSON.stringify(more));
-  ok('the timestamp tools among them, with their nav-foot door untouched',
-     more.includes('Timestamp Photo') && more.includes('Timestamp Video'), JSON.stringify(more));
+  /* OWNER DECISION, 2026-09-07 — LOCKED. Neither timestamp tool may be in
+     that menu; both are primary cards. Asserted from the OTHER side as well,
+     because "is in the six" and "is not in More" are different claims and a
+     future edit could satisfy one while breaking the other. */
+  ok('and NEITHER timestamp tool is among them — the owner keeps both primary',
+     !more.includes('Timestamp Photo') && !more.includes('Timestamp Video'),
+     JSON.stringify(more));
 
   /* THE FLAG'S CONTRAST IS THE MEASUREMENT, NOT THE COLOUR NAME. At ~10px the
      bar that applies is the normal-text 4.5:1. Against the PORTAL's tokens —

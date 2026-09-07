@@ -4396,6 +4396,24 @@ off and asserts the card disappears. A card whose whole job is to be
 impossible to miss must not be the one quietly saying all-clear about a list
 it could not read.
 
+**OWNER DECISION, 2026-09-07 — LOCKED: BOTH TIMESTAMP TOOLS STAY PRIMARY.**
+*"Keep BOTH Timestamp Photo and Timestamp Video as primary visible cards on
+Home. Do not move either behind More. Preserve their direct one-tap access."*
+
+I had put them behind the More disclosure under §Z's *"use More / Advanced for
+low-frequency items"* — they are in neither §F's six nor §AD's eight — and
+flagged it as a relaxation of the 2026-09-04 rule that the timestamp door must
+not live in a menu. The owner overturned it. A labelled disclosure on the same
+screen is not the hamburger, and it is still one tap of concealment on a
+control that already went missing once; that costs more than the two rows it
+saves. **Eight primary cards, four under More** (Insurance Intake, Law Firm
+Intake, Reports & Packages, Active Surveillance — each of which keeps a rail
+door). Measured at 390: the strip is 667px, both tools are on the first screen
+at 122px and pressable, and Today / next actions sits at 909 — just under the
+fold, which is the trade the owner made knowingly. **Do not move these two
+again without asking**, and the suite asserts it from both sides: they are in
+the eight, AND neither is inside `.qtmore`.
+
 **§B — FIVE FAMILIES, AND EACH ONE MEANS SOMETHING.** Green is positive and
 money received (intakes, Retainer paid, View intake); teal is the ordinary
 operational primary (Rate Sheet, Reports, Assistant); gold is the CEO Bot;

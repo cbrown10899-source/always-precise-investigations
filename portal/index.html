@@ -5942,8 +5942,20 @@ const QT_DESK = ["photo", "video", "field", "newlead", "cases", "delivery"];
    box, and every one of them also keeps the door it already had — the
    timestamp tools and Active Surveillance in the navigation foot, Reports &
    Packages and the two intake kinds in the rail. */
-const QT_PHONE = ["sheets", "newlead", "priv", "leads", "cases", "ceo"];
-const QT_PHONE_MORE = ["claims", "legal", "delivery", "photo", "video", "field"];
+const QT_PHONE = ["sheets", "newlead", "priv", "leads", "cases", "ceo", "photo", "video"];
+/* OWNER DECISION, 2026-09-07 — LOCKED: "Keep BOTH Timestamp Photo and
+   Timestamp Video as primary visible cards on Home. Do not move either behind
+   More. Preserve their direct one-tap access."
+
+   This overturns my reading of §Z, and it settles a conflict between two of
+   the owner's own decisions rather than changing their mind: the 2026-09-04
+   rule that produced the timestamp door says it must not live in a menu,
+   because they could not find it. A labelled disclosure on the same screen is
+   not the hamburger, but it is still one tap of concealment on a control that
+   already went missing once, and the owner has decided that costs more than
+   the two rows it saves. Eight primary cards, four under More. Do not move
+   these two again without asking. */
+const QT_PHONE_MORE = ["claims", "legal", "delivery", "field"];
 
 /* ============ HOME: THE OWNER'S OWN FIRST SCREEN (owner brief 2026-09-06) ===
 
