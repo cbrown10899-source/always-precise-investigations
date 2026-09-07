@@ -284,6 +284,27 @@ const LEGAL_SVCS = [
 const legalSvcById = id => LEGAL_SVCS.find(s => s.id === String(id || "").toLowerCase()) || null;
 const LEGAL_SVC_PARAM = (legalSvcById(new URLSearchParams(location.search).get("service")) || {}).id || null;
 
+/* THE DOCUMENT THIS FORM WAS OPENED FROM (owner brief 2026-09-07 §3).
+
+   A Start Assignment link the office emails carries `?ref=DOC-…`, and this
+   rides back with the submission so the portal can say WHICH EXACT DOCUMENT
+   the client signed — not which template it would render today.
+
+   THE WORDING HERE IS DELIBERATE AND THE BUILD GUARD ENFORCES IT. This file is
+   public source; naming the internal product a client was quoted from would be
+   a pointer for anyone who reads View Source, which is the same rule that took
+   an internal path out of these comments once already. The guard failed this
+   comment when it first named that product, and it was right to.
+
+   IT IS PINNED TO ITS OWN SHAPE and never trusted as text. Whatever is in the
+   URL, only `DOC-` plus 32 hex characters is carried; anything else becomes
+   null and the submission simply links to nothing, which is the honest state
+   for someone who typed the address themselves. It reaches the portal ONLY —
+   `buildNotice()` is the relay boundary and this is not in it, because a
+   third party has no business knowing which document a client was quoted. */
+const DOC_REF = (r => /^DOC-[0-9a-f]{32}$/.test(r) ? r : null)(
+  String(new URLSearchParams(location.search).get("ref") || "").trim());
+
 const S = { step:0, svc:CARRIER_ONLY ? "claims" : LEGAL_ONLY ? "legal" : null,
             lsvc:LEGAL_ONLY ? LEGAL_SVC_PARAM : null, sig:null, files:[] };
 
@@ -1026,6 +1047,7 @@ function buildPayload(){
     signed_name:val.a_typed||"", signature:S.sig||"",
     submitted_at:new Date().toLocaleString()
   };
+  if(DOC_REF) p.doc_ref = DOC_REF;
   if(isLegal()){
     /* The legal payload (LEGAL-INTAKE.md). Two identities are deliberately
        kept apart: `client_name` is the FIRM'S CLIENT — the party the matter is

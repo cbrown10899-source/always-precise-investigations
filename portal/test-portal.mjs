@@ -1937,10 +1937,24 @@ section('A private retainer is chosen before the sheet goes, and never reset by 
   ok('the private wizard offers the retainer selector',
      await page.locator('#wiz_ret').count() === 1);
   const opts = await page.locator('#wiz_ret option').allInnerTexts();
-  ok('with the owner\'s four choices, standard first',
-     opts.length === 4 && has(opts[0], '$1,500') && has(opts[0], 'Standard')
-     && has(opts[1], '$2,000') && has(opts[2], '$3,000') && has(opts[3], 'Custom'),
+  /* OWNER, 2026-09-07 — the list itself changed: two presets plus Custom.
+     THIS ASSERTION ONCE CORRECTLY REFUSED $1,000 when I added it on my own
+     inference, and it is being changed now for the opposite reason — the owner
+     asked for that figure by name, twice. The decision it encodes moved; the
+     assertion follows the decision, not the other way round.
+
+     WHAT IT STILL PROTECTS, and what the shorter list did not weaken: the
+     STANDARD is still named on its own option. `RETAINER_STANDARD` is a
+     pricing fact kept apart from the list's ORDER, and that separation is
+     precisely what let the smaller figure go first without moving which figure
+     the office is told is standard. */
+  ok('with the owner\'s two presets and Custom, the smaller figure first',
+     opts.length === 3 && has(opts[0], '$1,000')
+     && has(opts[1], '$1,500') && has(opts[1], 'Standard')
+     && has(opts[2], 'Custom'),
      JSON.stringify(opts));
+  ok('and exactly one of them is named as the standard',
+     opts.filter(o => /standard/i.test(o)).length === 1, JSON.stringify(opts));
   ok('and opens on the standard figure', await page.locator('#wiz_ret').inputValue() === '1500');
   ok('the custom box stays out of the way until it is wanted',
      await page.locator('#wiz_retc').count() === 0);
@@ -1966,17 +1980,36 @@ section('A private retainer is chosen before the sheet goes, and never reset by 
   await page.waitForTimeout(500);
   ok('and so is a zero one', has(await text(page, '.amsheet'), 'above zero'));
 
-  // A real preset, carried all the way into the preview.
-  await page.locator('#wiz_ret').selectOption('3000');
-  await page.waitForTimeout(400);
-  ok('picking a preset hides the custom box again',
-     await page.locator('#wiz_retc').count() === 0);
+  /* A REAL AGREED FIGURE, CARRIED ALL THE WAY INTO THE PREVIEW — and it is a
+     CUSTOM one now. $3,000 was a preset until the owner shortened the visible
+     list on 2026-09-07; Custom is how any owner-approved figure is reached, and
+     the brief is explicit that it must keep taking one. So this walk exercises
+     the path that actually matters after the change, and it still proves the
+     same property: the figure the office agreed reaches the document, and the
+     standard does not overwrite it. */
+  await page.locator('#wiz_retc').fill('3000');
+  await page.waitForTimeout(200);
+  ok('a custom figure is what the selector now holds',
+     await page.locator('#wiz_ret').inputValue() === 'custom');
   await page.locator('.btn', { hasText: 'Preview' }).click();
   await page.waitForTimeout(900);
   const prev = await text(page, '.amsheet');
   ok('the preview states the agreed retainer', has(prev, 'Agreed retainer') && has(prev, '$3,000'), prev);
   ok('and the sheet it names is the $3,000 one, not the standard',
      has(prev, '$3,000 Retainer') && !has(prev, '$1,500'), prev);
+  /* AND A PRESET STILL HIDES THE CUSTOM BOX — the control's own behaviour,
+     which the switch to Custom above would otherwise have stopped covering. */
+  await page.locator('.amx').click();
+  await page.waitForTimeout(300);
+  await page.locator('.btn', { hasText: 'Send this sheet' }).click();
+  await page.waitForTimeout(700);
+  await page.locator('#wiz_ret').selectOption('custom');
+  await page.waitForTimeout(300);
+  ok('Custom reveals the amount field', await page.locator('#wiz_retc').count() === 1);
+  await page.locator('#wiz_ret').selectOption('1000');
+  await page.waitForTimeout(300);
+  ok('and picking a preset hides it again',
+     await page.locator('#wiz_retc').count() === 0);
   await page.locator('.amx').click();
   await page.waitForTimeout(400);
 
@@ -2000,12 +2033,21 @@ section('A private retainer is chosen before the sheet goes, and never reset by 
      has(untouched, 'Agreed retainer') && has(untouched, '$3,000'));
 
   /* And the selector then shows the truth, so the next admin to open it is not
-     misled by the default they arrived on. */
+     misled by the default they arrived on.
+
+     THE AGREED FIGURE IS A CUSTOM ONE NOW — $3,000 stopped being a preset when
+     the owner shortened the visible list — so "caught up" means the selector
+     sits on Custom with that amount in the box, rather than on a preset. The
+     property is unchanged and BOTH halves are asserted, because a selector
+     reading Custom over an empty box would be no better than the default. */
   await page.locator('.btn', { hasText: 'Back' }).click();
   await page.waitForTimeout(600);
+  const caught = await page.evaluate(() => ({
+    pick: (document.getElementById('wiz_ret') || {}).value,
+    amount: (document.getElementById('wiz_retc') || {}).value }));
   ok('the selector has caught up to the case it is now pointed at',
-     await page.locator('#wiz_ret').inputValue() === '3000',
-     await page.locator('#wiz_ret').inputValue());
+     caught.pick === 'custom' && String(caught.amount).replace(/[$,\s]/g, '') === '3000',
+     JSON.stringify(caught));
   await page.close();
 }
 
@@ -2133,7 +2175,12 @@ section('An unmatched case reference does not block Preview');
 
   await page.locator('#wiz_to').fill('marinerecon016@example.test');
   await page.locator('#wiz_case').fill('Test123');
-  await page.locator('#wiz_ret').selectOption('2000');
+  /* CUSTOM, for the same reason as above: $2,000 left the visible list on
+     2026-09-07 and the property under test is about a figure that is NOT the
+     standard, which Custom is now the way to reach. */
+  await page.locator('#wiz_ret').selectOption('custom');
+  await page.waitForTimeout(300);
+  await page.locator('#wiz_retc').fill('2000');
   await page.waitForTimeout(400);
   /* The "not stored" notice can only appear AFTER the attempt — until Preview
      tries the write, nothing knows the reference resolves to nothing. */
@@ -7830,7 +7877,7 @@ section('The dashboard has a hierarchy: real numbers lead, zeros stay but recede
     return c;
   });
   ok('its cards keep a usable width when stacked',
-     stacked.every(w => w >= 140), JSON.stringify(stacked));
+     stacked.length >= 1 && stacked.every(w => w >= 140), JSON.stringify(stacked));
   await page.setViewportSize({ width: 1200, height: 900 });
   await page.waitForTimeout(300);
   await page.close();
@@ -10109,7 +10156,8 @@ section('Nothing about the video is persisted anywhere');
     return { before, alive, closed: VST === null };
   });
   ok('closing the generator lets go of the video', revoked.closed
-     && revoked.alive.every(a => a === false), JSON.stringify(revoked));
+     && revoked.alive.length >= 1 && revoked.alive.every(a => a === false),
+     JSON.stringify(revoked));
   await page.close();
 }
 
@@ -11669,7 +11717,13 @@ section('The report screen fits a phone — measured, not eyeballed');
 
   const acts = await page.evaluate(() =>
     [...document.querySelectorAll('.ractions .btn')].map(b => Math.round(b.getBoundingClientRect().height)));
-  ok('the action buttons are tap targets too', acts.every(h => h >= 44), JSON.stringify(acts));
+  /* COUNT WHAT YOU MEASURE. `[].every()` is TRUE, so an empty selector passed
+     this while measuring nothing at all — the exact defect this project has now
+     recorded three times (the Unit 40 card artwork, the lead-card tap targets,
+     and this). Its sibling one line above was already guarded; a rule applied
+     to one of a pair is how the other quietly stops testing anything. */
+  ok('the action buttons are tap targets too',
+     acts.length >= 1 && acts.every(h => h >= 44), JSON.stringify(acts));
 
   if (await page.locator('[data-act="repView"][data-v="edit"]').count()) {
     await page.locator('[data-act="repView"][data-v="edit"]').click();
@@ -11751,11 +11805,15 @@ section('The mobile header is a control, not a glyph');
   ok('tapping outside closes the drawer',
      await page.evaluate(() => !document.body.classList.contains('navopen')));
 
-  /* Quick tools: the day's launcher, at tap size. It is a SWIPE STRIP on a
-     phone now (owner, 2026-09-02) — six doors cannot simultaneously fit a
-     320px screen and never could as targets; what the old "fits" assertion
-     was really protecting is that no tool is unreachable and the page never
-     widens. Both are pinned directly. */
+  /* Quick tools: the day's launcher, at tap size.
+
+     IT IS NOT A SWIPE STRIP ANY MORE, and this comment said it was. Mobile
+     Unit B replaced the horizontally-scrolling row with a two-across grid
+     precisely because a gesture nobody is told about is not access — so the
+     property being protected is now the STRONGER one: every named tool is
+     present, at tap size, and the page never widens. `lastReachable` is kept
+     because it still holds (a wrapped grid ends inside the viewport) and it is
+     what would catch a return to a scroller. */
   const qt = await page.evaluate(() => {
     const doc = document.documentElement;
     /* WHICHEVER STRIP IS DRAWN AT THIS WIDTH. Mobile Unit B gave the phone its
@@ -11775,11 +11833,19 @@ section('The mobile header is a control, not a glyph');
              btns, firstFits, lastReachable };
   });
   ok('the page does not scroll sideways at 320px', qt.overflowX === 0, String(qt.overflowX));
+  /* CASES LEFT THIS LIST BY OWNER DECISION (2026-09-07 §14): it is a
+     bottom-navigation destination on every screen, so a Home card for it was a
+     duplicate. The tools that have no other door on a phone are what this
+     assertion is for, and all three are still named. */
   ok('quick tools reach the day\'s doors',
-     ['Timestamp Photo', 'Timestamp Video', 'Active Surveillance', 'Cases']
+     ['Timestamp Photo', 'Timestamp Video', 'Active Surveillance']
        .every(name => qt.btns.some(x => x.t.includes(name))), JSON.stringify(qt.btns));
-  ok('every tool is a 44px target on a strip that swipes to reach them all',
-     qt.btns.every(x => x.h >= 44) && qt.firstFits && qt.lastReachable, JSON.stringify(qt));
+  ok('and Cases is still reachable, from the bottom navigation it moved to',
+     await page.evaluate(() => [...document.querySelectorAll('.mnav button')]
+       .some(b => b.dataset.tab === 'cases')));
+  ok('every tool is a 44px target and all of them are reachable without a gesture',
+     qt.btns.length >= 4 && qt.btns.every(x => x.h >= 44) && qt.firstFits && qt.lastReachable,
+     JSON.stringify(qt));
 
   /* The dashboard's operational panels render. */
   const dash = await page.evaluate(() => ({
@@ -12571,8 +12637,8 @@ section('Needs attention: rows that say why, and go where the work is');
     await kindChip.first().click();
     await page.waitForTimeout(500);
     const kinds = await card.locator('.qwhat').allInnerTexts();
-    ok('filtering to Intakes leaves only intakes',
-       kinds.every(t => /intake/i.test(t)), JSON.stringify(kinds));
+    ok('filtering to Intakes leaves only intakes, and leaves some',
+       kinds.length >= 1 && kinds.every(t => /intake/i.test(t)), JSON.stringify(kinds));
     await card.locator('.attnlenses .lens', { hasText: 'All' }).first().click();
     await page.waitForTimeout(500);
   } else {
@@ -18397,8 +18463,11 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
      rather than on the first screen, which is the trade the owner made
      knowingly when they chose direct access over compactness.
 
-     The bound is 700 so a NINTH card fails here rather than quietly growing
-     the wall; it is not a target to shrink toward. */
+     THE BOUND IS THE NUMBER BELOW, NOT THE ONE THIS COMMENT USED TO NAME. It
+     said 700 while the assertion read 840 — a comment contradicting its own
+     assertion, which is how the next reader concludes the wrong thing about
+     what is being protected. It exists to catch a card being ADDED, and it
+     moves when the owner changes the primary list, not otherwise. */
   ok('Quick Tools stays a block, not a wall (nine cards + More)',
      fs.qtoolsH <= 840, JSON.stringify(fs));
   ok('the Search card is a box, not a billboard (was 245px)', fs.srchH <= 140, JSON.stringify(fs));
@@ -18466,20 +18535,39 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
      JSON.stringify(strip.desk) === JSON.stringify(
        ['pstLaunch:', 'vstOpen:', 'surveillance:', 'tab:newlead', 'tab:cases', 'tab:delivery']),
      JSON.stringify(strip.desk));
-  /* THE PHONE'S SIX (owner brief 2026-09-06 §F/§L, superseding the ten of
-     2026-09-04). Rate Sheet still leads; the other six moved behind More in
-     the same box, which the section above reads out of the DOM to prove. */
-  ok("and the phone strip is the owner's nine, Rate Sheet first",
+  /* THE PHONE'S SEVEN (owner brief 2026-09-07 §14, superseding the nine of
+     2026-09-07 and the six of 2026-09-06). Cases and the CEO Bot moved behind
+     More: both were DUPLICATES — Cases is a bottom-nav destination on every
+     screen and the CEO Bot has a fab on every screen — so two rows of primary
+     height came back and neither became harder to reach.
+
+     RATE SHEET STILL LEADS, and its act changed: it opens Prepare & Send
+     itself now (§4) instead of the Rate Sheets screen, which is the one-tap
+     the owner asked for. Both facts are pinned, because "first in the list"
+     and "opens the form" are different claims and an edit could satisfy one
+     while breaking the other. */
+  ok("and the phone strip is the owner's seven, Rate Sheet first",
      JSON.stringify(strip.acts) === JSON.stringify(
-       ['tab:sheets', 'tab:newlead', 'nlKind:consumer', 'tab:leads',
-        'tab:cases', 'ceoOpen:', 'pstLaunch:', 'vstOpen:', 'surveillance:']),
+       ['sheetQuick:', 'tab:newlead', 'nlKind:consumer', 'tab:leads',
+        'surveillance:', 'pstLaunch:', 'vstOpen:']),
+     JSON.stringify(strip.acts));
+  ok('BOTH timestamp tools are still primary — the standing owner lock',
+     strip.acts.includes('pstLaunch:') && strip.acts.includes('vstOpen:'),
      JSON.stringify(strip.acts));
   const reach = await page.evaluate(() => {
-    const g = document.querySelector('.qtgrid'); g.scrollLeft = 9999;
+    const g = document.querySelector('.qtgrid');
+    const before = g.scrollLeft; g.scrollLeft = 9999;
+    const moved = g.scrollLeft !== before;
+    g.scrollLeft = before;
     const last = [...g.querySelectorAll('.qtool')].pop().getBoundingClientRect();
-    return { lastRight: Math.round(last.right), cw: document.documentElement.clientWidth };
+    return { lastRight: Math.round(last.right), cw: document.documentElement.clientWidth, moved };
   });
-  ok('the last tool is reachable by swiping', reach.lastRight <= reach.cw + 2, JSON.stringify(reach));
+  /* THE STRONGER PROPERTY: the last tool is on screen WITHOUT a gesture. The
+     assertion this replaced scrolled the strip first and then checked, which
+     was the best the old swipe row could do; the grid does not scroll at all,
+     and that is asserted rather than assumed. */
+  ok('the last tool is reachable with no gesture at all',
+     reach.lastRight <= reach.cw + 2 && reach.moved === false, JSON.stringify(reach));
   const pill = await page.evaluate(() => {
     const p = document.querySelector('.asst-pill'); if (!p) return { present: false };
     const b = p.getBoundingClientRect(), g = document.querySelector('.qtgrid').getBoundingClientRect();
@@ -19526,19 +19614,25 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
   }
 
   /* ---- AND THE PHONE DRAWS THE OWNER'S ORDER --------------------------- */
-  /* SIX PRIMARY, SIX UNDER MORE (owner brief 2026-09-06 §F/§L/§Z, which name
-     these six in this order twice). The ten-card version measured 744px and
-     pushed the queue past the fold; the other six are one tap behind More in
-     the same box, and each also keeps the door it already had elsewhere. */
+  /* SEVEN PRIMARY, FIVE UNDER MORE (owner brief 2026-09-07 §14, which names
+     these seven). Cases and the CEO Bot moved behind More because both were
+     DUPLICATES of a door on every screen — the bottom navigation and the CEO
+     fab respectively — so the height they cost bought nothing. Each of the five
+     keeps the door it already had elsewhere; nothing was taken away. */
   const PHONE = ['Rate Sheet', 'New Intake', 'Private Intake', 'View Intakes',
-                 'Cases', 'CEO Bot', 'Timestamp Photo', 'Timestamp Video',
-                 'Active Surveillance'];
-  const PHONE_MORE = ['Insurance Intake', 'Law Firm Intake', 'Reports & Packages'];
+                 'Active Surveillance', 'Timestamp Photo', 'Timestamp Video'];
+  const PHONE_MORE = ['Cases', 'Insurance Intake', 'Law Firm Intake',
+                      'Reports & Packages', 'CEO Bot'];
   const p390 = await read(390, 844);
   ok('on a phone the quick actions are cards, not the desktop chip row',
      p390.appsShown === true && p390.gridShown === false, JSON.stringify(p390).slice(0, 200));
   ok("and they are in the owner's order, Rate Sheet first",
      p390.phone.join('|') === PHONE.join('|'), p390.phone.join('|'));
+  /* §4 — RATE SHEET OPENS THE FORM, NOT THE SCREEN. "First in the list" and
+     "opens Prepare & Send" are different claims; pinning only the first is how
+     the card could keep its place and quietly lose the one tap. */
+  ok('and the Rate Sheet card opens Prepare & Send itself, in one tap',
+     p390.phoneActs[0] === 'sheetQuick', p390.phoneActs.join('|'));
   ok('the private intake card goes straight to a private intake',
      p390.phoneActs[2] === 'nlKind:consumer', p390.phoneActs.join('|'));
   ok('Rate Sheet is the one card wearing the accent',
@@ -19547,8 +19641,16 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
      behind More, and this reads them out of the DOM to prove it. */
   const more = await page.evaluate(() => [...document.querySelectorAll('.qtmore .qtapp-n')]
     .map(n => n.textContent.trim()));
-  ok('the three lower-frequency doors are one tap behind More, not gone',
-     PHONE_MORE.every(n => more.includes(n)), JSON.stringify(more));
+  ok('the five lower-frequency doors are one tap behind More, not gone',
+     PHONE_MORE.length >= 5 && PHONE_MORE.every(n => more.includes(n)), JSON.stringify(more));
+  /* THE TWO THAT MOVED KEEP A DOOR ON EVERY SCREEN, which is the whole reason
+     moving them was safe. Asserted rather than assumed: if either lost its
+     other entrance, More would be its only one and this would be a dead end. */
+  ok('Cases is still a bottom-navigation destination',
+     await page.evaluate(() => [...document.querySelectorAll('.mnav button')]
+       .some(b => b.dataset.tab === 'cases')));
+  ok('and the CEO Bot still has its own launcher on the screen',
+     await page.evaluate(() => !!document.querySelector('[data-act="ceoOpen"]')));
   /* AND NOTHING WHOSE ONLY TOP-LEVEL DOOR THIS IS. Active Surveillance joined
      the timestamp tools as primary because two assertions refused it behind
      More and both were right: it is the field view's only top-level entrance,
@@ -19645,9 +19747,15 @@ section('Mobile Home: an investigator is offered no door the Worker would refuse
                       'Law Firm Intake', 'Reports & Packages']) {
     ok(`an investigator is not offered ${gone}`, !inv.names.includes(gone), inv.names.join('|'));
   }
+  /* SAME OWNER DECISION. Cases is in their bottom navigation, so its Home card
+     went with the admin's; what an investigator must keep on Home are the
+     doors that exist nowhere else for them. */
   ok('and they keep the tools that are theirs',
-     inv.names.includes('Timestamp Photo') && inv.names.includes('Active Surveillance')
-     && inv.names.includes('Cases'), inv.names.join('|'));
+     inv.names.includes('Timestamp Photo') && inv.names.includes('Timestamp Video')
+     && inv.names.includes('Active Surveillance'), inv.names.join('|'));
+  ok('and Cases is still one press away, in their bottom navigation',
+     await page.evaluate(() => [...document.querySelectorAll('.mnav button')]
+       .some(b => b.dataset.tab === 'cases')));
   ok('with no accent card, because the door it belongs to is not on their desk',
      inv.lead === false);
   await page.setViewportSize({ width: 1200, height: 900 });
@@ -21271,7 +21379,8 @@ section('CEO Bot refinement: priority, protection and a plan, at both widths');
   ok('"What should I fix first?" answers with why, benefit and a stated risk',
      !!fix && fix.why && fix.benefit && fix.risk, JSON.stringify(fix));
   ok('and its strongest control is a review, never an act',
-     fix.verbs.every(v => /review|close/i.test(v)), JSON.stringify(fix.verbs));
+     fix.verbs.length >= 1 && fix.verbs.every(v => /review|close/i.test(v)),
+     JSON.stringify(fix.verbs));
 
   /* ---- §7/§8 — the card shows its parts, and Why? expands EVIDENCE. ---- */
   await page.evaluate(() => { CEO_TAB = 'suggestions'; paint(); });
@@ -21798,13 +21907,400 @@ section("Home says good morning, and a signed intake is impossible to miss");
   /* ---- §AF: THE ART SLOT IS BUILT AND EMPTY, AND SAYS SO ---------------- */
   const art = await page.evaluate(() => ({
     known: typeof CARD_ART !== 'undefined' ? CARD_ART.size : -1,
-    /* with no artwork the cards are the LIGHT placeholder, because ten dark
-       scrimmed slabs lose the family colour the brief asks them to carry */
+    /* with no artwork the cards are the LIGHT placeholder, because a grid of
+       dark scrimmed slabs loses the family colour the brief asks them to
+       carry */
     dark: document.querySelectorAll('.qtapp.uiart').length,
     slots: Object.values(QT).filter(t => t.art).length }));
   ok('every quick-action door declares an art slot', art.slots >= 10, JSON.stringify(art));
   ok('no artwork exists yet, so no card wears the dark art treatment',
      art.known === 0 && art.dark === 0, JSON.stringify(art));
+  await page.close();
+}
+
+/* ==== ONE TAP TO PREPARE & SEND, AND THE TYPE CONTROL (owner brief §4/§5/§6)
+
+   The audit measured Home to the Rate Sheets screen to a card to "Send this
+   sheet" — three taps to the form on the door the owner uses most. What is
+   asserted here is the ENDPOINT: a form with a recipient field in it, reached
+   in one press, not merely that some screen opened. */
+section('Home opens Prepare & Send in one tap, and the type changes on the screen');
+{
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(250);
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(1100);
+
+  const card = page.locator('.qtapp[data-qt="sheets"]');
+  ok('the Rate Sheet card is on the first screen', await card.count() === 1);
+  await card.click();
+  await page.waitForTimeout(800);
+  const one = await page.evaluate(() => ({
+    wizard: !!document.querySelector('.amsheet'),
+    to: !!document.getElementById('wiz_to'),
+    name: !!document.getElementById('wiz_cname'),
+    phone: !!document.getElementById('wiz_cphone'),
+    type: !!document.getElementById('wiz_type'),
+  }));
+  /* THE MEASUREMENT IS THE FORM, NOT THE SCREEN. A card that opened the Rate
+     Sheets list would satisfy "one tap" and fail the thing the brief asked
+     for. */
+  ok('ONE TAP lands on the Prepare & Send form itself', one.wizard && one.to === true,
+     JSON.stringify(one));
+  ok('with the client NAME and PHONE on it (§5)', one.name && one.phone, JSON.stringify(one));
+  ok('and the type control on the same screen (§4)', one.type === true, JSON.stringify(one));
+
+  /* ---- §6: the owner's two presets plus Custom, and nothing else -------- */
+  const opts = await page.evaluate(() => {
+    const sel = document.getElementById('wiz_ret');
+    return sel ? [...sel.options].map(o => o.value) : null;
+  });
+  ok('the private retainer offers exactly two presets and Custom',
+     Array.isArray(opts) && opts.length === 3 && opts[2] === 'custom',
+     JSON.stringify(opts));
+  /* THE FIGURES ARE READ OFF THE CONTROL, never typed into this file — the
+     no-dollar-figure rule governs the page and the same reasoning governs a
+     test that would otherwise become a second place they are written down. */
+  ok('and both presets are real positive amounts, the smaller first',
+     Number(opts[0]) > 0 && Number(opts[1]) > Number(opts[0]), JSON.stringify(opts));
+  /* THE STANDARD IS STILL NAMED. `RETAINER_STANDARD` is a pricing fact kept
+     apart from the list's ORDER, and that separation is what let the smaller
+     figure go first — so exactly one option must still say so. */
+  const stdCount = await page.evaluate(() =>
+    [...document.getElementById('wiz_ret').options].filter(o => /standard/i.test(o.textContent)).length);
+  ok('exactly one option is still named as the standard', stdCount === 1, String(stdCount));
+
+  /* ---- §4: changing type does NOT mean backing out -------------------- */
+  await page.selectOption('#wiz_type', 'insurance');
+  await page.waitForTimeout(600);
+  const ins = await page.evaluate(() => ({
+    wizard: !!document.querySelector('.amsheet'),
+    type: (document.getElementById('wiz_type') || {}).value,
+    nr: !!document.getElementById('wiz_nr'),
+    ret: !!document.getElementById('wiz_ret'),
+  }));
+  ok('switching to the carrier type keeps you on the same screen',
+     ins.wizard === true && ins.type === 'insurance', JSON.stringify(ins));
+  /* THE PRIVATE-ONLY CONTROLS GO WITH IT. A non-refundable box on a carrier
+     send is the boundary this portal refuses server-side; drawing it would be
+     offering what the Worker would refuse. */
+  ok('and the private-only controls are withdrawn with it',
+     ins.nr === false && ins.ret === false, JSON.stringify(ins));
+  await page.selectOption('#wiz_type', 'legal');
+  await page.waitForTimeout(600);
+  const lg = await page.evaluate(() => ({
+    type: (document.getElementById('wiz_type') || {}).value,
+    lsvc: !!document.getElementById('wiz_lsvc'),
+    nr: !!document.getElementById('wiz_nr'),
+  }));
+  ok('a law firm gets its own service selector', lg.type === 'legal' && lg.lsvc === true,
+     JSON.stringify(lg));
+  ok('and still no non-refundable box — that stays private-only', lg.nr === false,
+     JSON.stringify(lg));
+  await page.selectOption('#wiz_type', 'private');
+  await page.waitForTimeout(600);
+  ok('and coming back to private restores its own controls',
+     await page.evaluate(() => !!document.getElementById('wiz_nr')));
+
+  await page.close();
+}
+
+/* ==== THE CLIENT RECORD AND THE DOCUMENT AS SENT (§11/§12/§18) ============ */
+section('The Client Record strip, and opening the document exactly as it was sent');
+{
+  const page = await (await browser.newContext({ viewport: { width: 1200, height: 900 } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  /* `signIn` fills the form; it does NOT navigate. A fresh page has to be sent
+     to the portal first or it waits 30s for a field that was never loaded. */
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(250);
+  await signIn(page, 'trever', 'AdminPassword1x');
+  /* `openCase` BY NAME, which is what the rest of this suite does. I reached
+     for a `.caserow` selector that exists nowhere in the page — an invented
+     locator waits its full 30s and then reads as a product failure, which is
+     the same "the gate cried wolf" shape this project has recorded before. */
+  await page.evaluate(() => openCase('API-20260812-4002'));
+  await page.waitForTimeout(1400);
+
+  const cr = await page.evaluate(() => {
+    const box = document.querySelector('.clrec');
+    if (!box) return null;
+    const rows = [...box.querySelectorAll('.clrec-row')];
+    return { present: true, count: rows.length,
+             labels: rows.map(r => (r.querySelector('.clrec-l') || {}).textContent || ''),
+             heights: rows.map(r => Math.round(r.getBoundingClientRect().height)),
+             /* A row that opens nothing must not be drawn as a button. */
+             buttons: rows.filter(r => r.tagName === 'BUTTON').length,
+             flat: rows.filter(r => r.classList.contains('clrec-flat')).length };
+  });
+  ok('the case carries a Client Record strip', cr && cr.present === true);
+  ok('with the owner\'s four rows, in order',
+     cr.labels.join('|') === 'Rate Sheet|Intake|Retainer|Acceptance', cr.labels.join('|'));
+  ok('every row clears the tap floor',
+     cr.heights.length === 4 && cr.heights.every(h => h >= 44), JSON.stringify(cr.heights));
+  /* THE HONESTY RULE, MEASURED: a row that can open nothing is a plain row,
+     never a live-looking control. */
+  ok('a row that opens nothing is not drawn as a button',
+     cr.buttons + cr.flat === cr.count, JSON.stringify(cr));
+  /* AND IT SAYS WHAT IS MISSING RATHER THAN TICKING IT. This fixture case has
+     had no rate sheet sent from the portal, so the strip must say so. */
+  const detail = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.clrec-row')];
+    const f = n => { const r = rows.find(x => (x.querySelector('.clrec-l') || {}).textContent === n);
+      return r ? (r.querySelector('.clrec-d') || {}).textContent.trim() : null; };
+    return { sheet: f('Rate Sheet'), acc: f('Acceptance') };
+  });
+  ok('an item with no record says so instead of wearing a tick',
+     /none|not|no /i.test(detail.sheet || ''), JSON.stringify(detail));
+
+  /* ---- §11: the intake screen's five sections, in the brief's order ----- */
+  /* DRIVEN THROUGH THE REAL CONTROL, not by poking state: `wsTab` is a
+     delegated `data-act` and not a function, and a test that set the variable
+     itself would stop exercising the door the owner presses. */
+  await page.evaluate(() => { WS_TAB = 'details'; paint(); });
+  await page.waitForTimeout(900);
+  const secs = await page.evaluate(() =>
+    [...document.querySelectorAll('.sec-h')].map(h => h.textContent.trim()));
+  ok('the intake screen leads with a SUMMARY', secs[0] === 'SUMMARY', JSON.stringify(secs));
+  ok('then what WAS provided, before what was not',
+     secs.indexOf('PROVIDED INFORMATION') === 1
+     && (secs.indexOf('NOT AVAILABLE YET') === -1
+         || secs.indexOf('NOT AVAILABLE YET') > secs.indexOf('PROVIDED INFORMATION')),
+     JSON.stringify(secs));
+  ok('the signature has its own section', secs.includes('CLIENT SIGNATURE / ACCEPTANCE'),
+     JSON.stringify(secs));
+  ok('and the associated rate sheet is the last of them',
+     secs[secs.length - 1] === 'ASSOCIATED RATE SHEET', JSON.stringify(secs));
+  const sum = await page.evaluate(() =>
+    [...document.querySelectorAll('.isum-k')].map(k => k.textContent.trim()));
+  ok('the summary answers who, what, when, signed, sheet and retainer',
+     ['Received', 'Signed', 'Rate sheet', 'Retainer'].every(k => sum.includes(k)),
+     JSON.stringify(sum));
+
+  await page.close();
+}
+
+/* ==== 320px: THE SCREENS THE AUDIT FOUND UNMEASURED (§15) ================
+   The reconciliation found ONE 320px section in this suite, covering the
+   header, the drawer, the quick tools and the dashboard — so the Prepare
+   screen, the intake detail, the case actions, the Client Record and both bots
+   were never rendered at the narrowest width the owner's phone can be. */
+section('320px: the rate sheet, the intake, the case actions and both bots');
+{
+  const page = await (await browser.newContext({ viewport: { width: 320, height: 568 } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(250);
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(1200);
+
+  const overflow = () => page.evaluate(() =>
+    document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  /* PRESSABLE, NOT MERELY LAID OUT. `elementFromPoint` is the only way to tell
+     the two apart — the collapsed-card defect reported `visibility:visible`
+     with a real box and painted nothing. */
+  /* `elementFromPoint` ONLY SEES THE VIEWPORT, so anything below the fold on a
+     568px-tall screen answers null and reads as unpressable when it is merely
+     off screen. Scrolled into view first — which is also what a thumb does. */
+  const pressable = async sel => {
+    await page.evaluate(s => {
+      const el = document.querySelector(s);
+      if (el) el.scrollIntoView({ block: 'center' });
+    }, sel);
+    await page.waitForTimeout(250);
+    return page.evaluate(s => {
+      const el = document.querySelector(s); if (!el) return null;
+      const b = el.getBoundingClientRect();
+      if (b.width < 1 || b.height < 1) return { h: 0, hit: false };
+      const hit = document.elementFromPoint(b.left + b.width / 2, b.top + Math.min(b.height / 2, 20));
+      return { h: Math.round(b.height), hit: !!(hit && (hit === el || el.contains(hit))) };
+    }, sel);
+  };
+
+  ok('the dashboard does not scroll sideways at 320', await overflow() === 0,
+     String(await overflow()));
+
+  /* ---- Prepare Rate Sheet ---- */
+  await page.locator('.qtapp[data-qt="sheets"]').click();
+  await page.waitForTimeout(900);
+  const wiz320 = await page.evaluate(() => {
+    const ids = ['wiz_type', 'wiz_cname', 'wiz_cphone', 'wiz_to'];
+    const els = ids.map(i => document.getElementById(i)).filter(Boolean);
+    return { found: els.length,
+             fonts: els.map(e => parseFloat(getComputedStyle(e).fontSize)),
+             heights: els.map(e => Math.round(e.getBoundingClientRect().height)),
+             overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth };
+  });
+  ok('the Prepare form renders all four identity controls at 320', wiz320.found === 4,
+     JSON.stringify(wiz320));
+  /* 16px or iOS zooms the page on focus; 44px is this portal's own tap floor. */
+  ok('each is at least 16px so iOS does not zoom',
+     wiz320.fonts.length === 4 && wiz320.fonts.every(f => f >= 16),
+     JSON.stringify(wiz320.fonts));
+  ok('and each clears the 44px tap floor',
+     wiz320.heights.length === 4 && wiz320.heights.every(h => h >= 44),
+     JSON.stringify(wiz320.heights));
+  ok('the Prepare form does not scroll sideways at 320', wiz320.overflow === 0,
+     String(wiz320.overflow));
+
+  /* ---- the preview, which is the document the client will read ---- */
+  await page.locator('#wiz_to').fill('threetwenty@example.com');
+  await page.locator('.amsheet .btn', { hasText: 'Preview' }).click();
+  await page.waitForTimeout(900);
+  ok('the preview does not scroll sideways at 320', await overflow() === 0,
+     String(await overflow()));
+  /* EVERY control in the sheet, not "the first .btn" — which on the preview
+     step is Back, so an assertion headed "its primary control" would have been
+     measuring the wrong button and saying so. */
+  const send320 = await page.evaluate(() => {
+    const bs = [...document.querySelectorAll('.amsheet .btn')];
+    return { n: bs.length, min: bs.length ? Math.min(...bs.map(b =>
+      Math.round(b.getBoundingClientRect().height))) : 0,
+      inside: bs.every(b => b.getBoundingClientRect().right
+        <= document.documentElement.clientWidth + 1) };
+  });
+  ok('and every control on the preview is pressable and inside the screen at 320',
+     send320.n >= 2 && send320.min >= 44 && send320.inside === true,
+     JSON.stringify(send320));
+  await page.evaluate(() => { SHEET_WIZ = null; paint(); });
+  await page.waitForTimeout(400);
+
+  /* ---- the case: primary actions, the Client Record, the intake ---- */
+  await page.evaluate(() => openCase('API-20260812-4002'));
+  await page.waitForTimeout(1600);
+  ok('the case overview does not scroll sideways at 320', await overflow() === 0,
+     String(await overflow()));
+  /* ONLY WHAT IS ACTUALLY DRAWN. The selector also catches controls this width
+     hides — a zero-height element is not a tap target that fails the floor, it
+     is not on the screen at all, and measuring it would report a defect that
+     does not exist. `offsetParent` is the cheap test for rendered. */
+  const acts320 = await page.evaluate(() => {
+    const bs = [...document.querySelectorAll('.uibtn, .uirow')].filter(b => b.offsetParent);
+    return { n: bs.length, min: bs.length ? Math.min(...bs.map(b =>
+      Math.round(b.getBoundingClientRect().height))) : 0 };
+  });
+  ok('every case action clears the tap floor at 320',
+     acts320.n >= 1 && acts320.min >= 44, JSON.stringify(acts320));
+  const cr320 = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.clrec-row')];
+    return { n: rows.length, min: rows.length ? Math.min(...rows.map(r =>
+      Math.round(r.getBoundingClientRect().height))) : 0,
+      inside: rows.every(r => r.getBoundingClientRect().right <= document.documentElement.clientWidth + 1) };
+  });
+  ok('the Client Record fits and is pressable at 320',
+     cr320.n === 4 && cr320.min >= 44 && cr320.inside === true, JSON.stringify(cr320));
+  await page.evaluate(() => { WS_TAB = 'details'; paint(); });
+  await page.waitForTimeout(900);
+  ok('the intake detail does not scroll sideways at 320', await overflow() === 0,
+     String(await overflow()));
+
+  /* ---- both bots, and the More disclosure ---- */
+  /* `VIEW` is "list" or "case" — there is no "shell". Setting a value the page
+     does not have would have left the case screen up while this section
+     measured the dashboard's More disclosure, and every assertion after it
+     would have been about the wrong screen. */
+  await page.evaluate(() => { DOC_VIEW = null; VIEW = 'list'; TAB = 'dashboard'; paint(); });
+  await page.waitForTimeout(700);
+  const moreSum = await pressable('.qtmore summary');
+  ok('the More disclosure is pressable at 320',
+     moreSum && moreSum.h >= 44 && moreSum.hit === true, JSON.stringify(moreSum));
+  await page.locator('.qtmore summary').click();
+  await page.waitForTimeout(400);
+  const moreCard = await pressable('.qtmore .qtapp');
+  ok('and its content is genuinely clickable once open, not merely laid out',
+     moreCard && moreCard.h >= 44 && moreCard.hit === true, JSON.stringify(moreCard));
+  ok('opening More does not widen the page at 320', await overflow() === 0,
+     String(await overflow()));
+
+  await page.evaluate(() => ceoOpen());
+  await page.waitForTimeout(1000);
+  ok('the CEO Bot opens at 320 without a sideways scroll', await overflow() === 0,
+     String(await overflow()));
+  const ceoTabs = await page.evaluate(() => {
+    const t = [...document.querySelectorAll('.ceo-tabs button')];
+    return { n: t.length, min: t.length ? Math.min(...t.map(b =>
+      Math.round(b.getBoundingClientRect().height))) : 0 };
+  });
+  ok('and its tabs are real tap targets there', ceoTabs.n === 4 && ceoTabs.min >= 44,
+     JSON.stringify(ceoTabs));
+  await page.evaluate(() => { ceoClose(); });
+  await page.waitForTimeout(500);
+  await page.evaluate(() => asstOpen());
+  await page.waitForTimeout(1000);
+  ok('the Assistant opens at 320 without a sideways scroll', await overflow() === 0,
+     String(await overflow()));
+
+  await page.close();
+}
+
+/* ==== CLIENT SENT / OWNER COPY FAILED, AND THE RESEND (§8/§9) =============
+
+   The provider cannot be made to refuse one message and accept another from
+   inside this suite, so what is exercised here is the RENDERER against each of
+   the three states the Worker can answer with — which is the half that was
+   missing: the Worker always knew, and the page never said. The split itself,
+   at the transport, is pinned in the Worker suite. */
+section('The office copy says when it failed, and offers to send only itself');
+{
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(250);
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(1100);
+  await page.evaluate(() => { TAB = 'sheets'; paint(); });
+  await page.waitForTimeout(700);
+
+  const draw = (st) => page.evaluate(s => { LAST_SEND = s; paint(); return true; }, st);
+  const read = () => page.evaluate(() => {
+    const ok_ = document.querySelector('.note');
+    const bad = document.querySelector('.lastsend-split');
+    const btn = document.querySelector('[data-act="resendCopy"]');
+    return { text: document.querySelector('#app').innerText,
+             split: !!bad, resend: !!btn,
+             resendH: btn ? Math.round(btn.getBoundingClientRect().height) : 0 };
+  });
+
+  await draw({ sent_to: 'a@example.com', doc_id: 'DOC-' + 'a'.repeat(32),
+               record_copy: true, record_reason: '' });
+  await page.waitForTimeout(300);
+  let r = await read();
+  ok('a filed copy is a quiet line with nothing to do',
+     !r.split && !r.resend && /copy is filed/i.test(r.text), r.text.slice(0, 160));
+
+  await draw({ sent_to: 'b@example.com', doc_id: 'DOC-' + 'b'.repeat(32),
+               record_copy: false, record_reason: 'not_configured' });
+  await page.waitForTimeout(300);
+  r = await read();
+  /* NOT CONFIGURED IS NOT A FAILURE. Reporting it as one trains the office to
+     ignore the strip that matters. */
+  ok('an unconfigured address says what to do, and is not reported as a failure',
+     !r.split && /no business email/i.test(r.text), r.text.slice(0, 220));
+
+  await draw({ sent_to: 'c@example.com', doc_id: 'DOC-' + 'c'.repeat(32),
+               record_copy: false, record_reason: 'refused' });
+  await page.waitForTimeout(300);
+  r = await read();
+  ok('a real failure says CLIENT SENT and OWNER COPY FAILED, both',
+     r.split && /CLIENT SENT/.test(r.text) && /OWNER COPY FAILED/.test(r.text),
+     r.text.slice(0, 260));
+  /* THE WORDING IS THE POINT. "Sent failed" would be untrue: the client has
+     the document. */
+  ok('and never implies the send itself failed',
+     /client is unaffected/i.test(r.text), r.text.slice(0, 260));
+  ok('the remedy is offered beside it, at tap size',
+     r.resend === true && r.resendH >= 44, JSON.stringify(r));
+  ok('and it says plainly that the client is not emailed again',
+     /client is not emailed again/i.test(r.text), r.text.slice(0, 400));
+
   await page.close();
 }
 

@@ -1982,3 +1982,129 @@ CREATE TABLE IF NOT EXISTS assistant_log (
   done_at   TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_asstlog_case ON assistant_log(case_no, id DESC);
+
+-- ---------------------------------------------------------------------------
+-- THE EXACT DOCUMENT THAT WAS SENT (owner brief 2026-09-07 §1).
+--
+-- `send_log` records that a send HAPPENED — who, when, which product, whether
+-- the provider took it. It was never a record of WHAT WENT, and the owner's
+-- question is the second one: "which exact rate sheet and terms did this
+-- client receive and sign?" That cannot be answered by re-rendering today's
+-- template, because the template is the thing that changes.
+--
+-- SO THIS TABLE STORES THE RENDERED BYTES, not a recipe for them. `subject`,
+-- `body_text` and `body_html` are the exact strings handed to the mail
+-- provider, and `content_hash` is their SHA-256 — an identifier of the
+-- CONTENT rather than of the product. The sheet's display name ("Private
+-- Client — $1,500") is deliberately NOT the version: two documents with
+-- different non-refundable amounts wear that same name.
+--
+-- `send_log` IS UNTOUCHED AND STAYS THE SEND LOG. Nothing here replaces it,
+-- its CHECK is not widened, and no existing row is rewritten — the two are
+-- joinable through `case_no` and `sent_at` and neither needs the other to
+-- exist. That is what makes this a safe addition rather than a migration.
+--
+-- `kind` carries NO CHECK (the Unit 7 rule): a fourth document type is an
+-- ordinary Worker edit, not the non-idempotent table rebuild `schema.sql`
+-- cannot perform.
+--
+-- `case_no` follows the send_log rule exactly: NULL unless the office's typed
+-- reference actually resolved to a case, so a pre-case send can never be
+-- adopted by a later case of the same name. `case_ref` keeps what was typed.
+CREATE TABLE IF NOT EXISTS sent_document (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  doc_id          TEXT    NOT NULL UNIQUE,  -- stable public id, 128-bit random
+  kind            TEXT    NOT NULL,         -- rate_sheet | intake | payment_options
+  sheet_id        TEXT,                     -- private_retainer | insurance_assignment | …
+  send_context    TEXT,                     -- private | insurance | legal
+  legal_service   TEXT,                     -- the fixed/retainer service, when named
+  case_no         TEXT,                     -- NULL unless it resolved to a real case
+  case_ref        TEXT,                     -- what the office typed, verbatim
+  client_name     TEXT,                     -- survives a PRE-CASE send: §5
+  client_email    TEXT,
+  client_phone    TEXT,
+  recipient       TEXT    NOT NULL,         -- where it actually went
+  retainer_amount REAL,                     -- the agreed figure this document carried
+  non_refundable  REAL,                     -- the owner-selected portion, exactly
+  flat_fee        REAL,                     -- the legal fixed fee, when that is the model
+  terms_json      TEXT,                     -- the engagement lines as rendered, verbatim
+  intake_included INTEGER NOT NULL DEFAULT 0,
+  intake_kind     TEXT,                     -- private | legal | insurance
+  intake_label    TEXT,
+  intake_door     TEXT,                     -- the URL that was actually sent
+  subject         TEXT    NOT NULL,
+  body_text       TEXT    NOT NULL,
+  body_html       TEXT    NOT NULL,
+  content_hash    TEXT    NOT NULL,         -- SHA-256 of subject + text + html
+  ok              INTEGER NOT NULL DEFAULT 0,
+  detail          TEXT,                     -- the provider's reason, when it refused
+  record_copy     INTEGER NOT NULL DEFAULT 0,
+  record_reason   TEXT,
+  record_at       TEXT,
+  sent_by         INTEGER REFERENCES users(id),
+  sent_at         TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sentdoc_case ON sent_document(case_no, id DESC);
+CREATE INDEX IF NOT EXISTS idx_sentdoc_kind ON sent_document(kind, id DESC);
+
+-- ONE ATTEMPT KEY PER SEND (§10). The page mints a key per attempt, reuses it
+-- across a failure and mints a new one for a deliberate new send — the shape
+-- `retainer_payment_token` already has, and for the same reason: a dropped
+-- response is indistinguishable from a lost request, and emailing a client
+-- twice because the first answer never arrived is the failure that costs the
+-- firm its credibility rather than a row.
+--
+-- THE KEY IS CLAIMED BEFORE THE PROVIDER IS CALLED. A repeat key whose
+-- document row exists returns that record and sends nothing. A repeat key with
+-- NO document row means the previous attempt died between the claim and the
+-- record — genuinely indeterminate, and the honest answer is to say so and
+-- point at the send history, never to send again and hope.
+CREATE TABLE IF NOT EXISTS document_send_attempt (
+  attempt_key TEXT PRIMARY KEY,
+  doc_id      TEXT,               -- filled in once the document it guards exists
+  kind        TEXT,
+  claimed_at  TEXT    NOT NULL
+);
+
+-- WHICH EXACT DOCUMENT A CLIENT SIGNED (§2).
+--
+-- No acknowledgement checkbox was added and none may be: the owner's decision
+-- is that the client's existing signature covers the whole document. What was
+-- missing is not consent, it is the LINK — the intake carried no reference to
+-- the rate sheet that produced it, so "which terms did they sign?" could only
+-- be answered by re-rendering today's template over yesterday's send.
+--
+-- The link is written when a submission arrives carrying the token its own
+-- intake door was issued with. Nothing is inferred: no name matching, no email
+-- matching, no nearest-in-time guess — the `recipientIsCarrier` lesson, which
+-- this project has already paid for four times. A submission with no token
+-- links to nothing and says so.
+CREATE TABLE IF NOT EXISTS document_acceptance (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  doc_id        TEXT    NOT NULL,
+  case_no       TEXT,               -- the submission's own case number
+  submission_id INTEGER,            -- submissions.id
+  signed_name   TEXT,               -- what they typed, verbatim
+  signed        INTEGER NOT NULL DEFAULT 0,  -- a signature image is present
+  accepted_at   TEXT,               -- the submission's own instant
+  linked_at     TEXT    NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_docaccept_pair
+  ON document_acceptance(doc_id, submission_id);
+CREATE INDEX IF NOT EXISTS idx_docaccept_case ON document_acceptance(case_no, id DESC);
+
+-- EVERY ATTEMPT TO PUT THE OFFICE'S RECORD COPY IN ITS INBOX (§8/§9).
+-- Append-only, and it keeps FAILURES: "the client was sent this and the office
+-- copy did not arrive" is exactly the state the owner asked to be able to see
+-- and act on, and a table that only kept successes could not show it.
+CREATE TABLE IF NOT EXISTS document_record_copy (
+  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  doc_id  TEXT    NOT NULL,
+  ok      INTEGER NOT NULL,
+  reason  TEXT,
+  sent_to TEXT,
+  resend  INTEGER NOT NULL DEFAULT 0,   -- 0 = rode with the send, 1 = asked for later
+  sent_by INTEGER REFERENCES users(id),
+  sent_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_doccopy_doc ON document_record_copy(doc_id, id DESC);

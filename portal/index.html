@@ -461,6 +461,46 @@
      still wrong, because how loud a term should be is a product decision and
      not a contrast one. Do not reintroduce a tone here to tell the money from
      the minimum: they are two stated terms and the client reads both. */
+  /* THE CLIENT RECORD (owner brief 2026-09-07 §12) — four rows, no figures.
+     Composed from tokens this palette already has, so the anti-drift budget has
+     nothing to catch: the tick is `--ok-ink`, the pending dot `--warn`, the
+     absent dash `--muted`, and the row is the neutral surface every list here
+     uses. `--btn-h` is the tap floor, taken from the token rather than from a
+     padding sum — a row that opens a record is a control. */
+  /* §11 — the intake screen's section headings and its summary grid. Named
+     `.sec-h` and `.isum-` after a collision grep; every colour is a token. */
+  .sec-h{margin:18px 0 8px;font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--muted);font-weight:800;}
+  .sec-h:first-child{margin-top:0;}
+  .isum{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px 16px;
+    padding:12px 14px;background:var(--paper);border-radius:var(--r-card);}
+  .isum-c{min-width:0;}
+  .isum-k{display:block;font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);}
+  .isum-v{display:block;font-weight:700;overflow-wrap:anywhere;}
+  .clrec{margin:0 0 14px;}
+  .clrec-row{display:flex;align-items:center;gap:10px;width:100%;
+    min-height:var(--btn-h);padding:0 12px;border:0;border-bottom:1px solid var(--line);
+    background:transparent;font:inherit;text-align:left;color:var(--ink);cursor:pointer;}
+  .clrec-row:last-child{border-bottom:0;}
+  .clrec-flat{cursor:default;}
+  .clrec-row:not(.clrec-flat):hover{background:var(--neutral-bg);}
+  .clrec-row:focus-visible{outline:2px solid var(--focus);outline-offset:-2px;}
+  .clrec-l{font-weight:700;min-width:104px;}
+  .clrec-mk{font-weight:800;}
+  .clrec-mk.ok{color:var(--ok-ink);}
+  .clrec-mk.warn{color:var(--warn);}
+  .clrec-mk.muted{color:var(--muted);}
+  .clrec-d{flex:1;min-width:0;font-size:.86rem;color:var(--muted);}
+  .clrec-go{color:var(--muted);font-size:1.1rem;}
+  /* THE PRESERVED DOCUMENT renders in a sandboxed frame, so it needs a real
+     height of its own — a frame with none collapses to nothing and reads as a
+     document that failed to load. */
+  .docframe{display:block;width:100%;min-height:420px;margin-top:12px;
+    border:1px solid var(--line);border-radius:10px;background:#fff;}
+  /* CLIENT SENT / OWNER COPY FAILED (§8): two statements, not one sentence,
+     because they are two different outcomes and running them together is how
+     the office reads the whole send as failed. */
+  .lastsend-split div + div{margin-top:4px;}
   .rs-eng{margin:0 0 16px;}
   .rs-eng .eng-l{margin-bottom:5px;}
   .rs-eng .eng-term{font-weight:700;}
@@ -3287,6 +3327,10 @@ function retainerEnter(caseNo){
 let PAY_MSG = "";
 let PAY_ERR = false;
 let SUMMARY = null, SHEETS = [], SHEET_MAIL = "", OPEN_SHEET = null, SHEET_MSG = "";
+/* What the LAST send answered about the office's own copy (§8). Held apart
+   from SHEET_MSG because they say different things: one is what the client
+   got, the other is whether the office was filed a copy of it. */
+let LAST_SEND = null;
 /* WHAT A BLANK NON-REFUNDABLE BOX MEANS, as the Worker reports it. Held beside
    SHEETS because the wizard's placeholder needs it the moment it opens, and
    `wizSheetLoad` returns early on a send with no case and no chosen retainer —
@@ -5242,7 +5286,11 @@ function ceoBodyHtml(){
         const tone = f.status === "EXCELLENT" ? "exc" : f.status === "GOOD" ? "ok"
                    : f.status === "WATCH" ? "warn" : "bad";
         return `<div class="ceo-card"><div class="ceo-t">${esc(f.label)}</div>
-        <div class="ceo-flow"><b>${f.taps} tap${f.taps === 1 ? "" : "s"}</b>
+        ${/* §17 — the number says WHAT IT COUNTS. A bare "2 taps" under a card
+              headed "Prepare & send" reads as the whole send; naming the
+              endpoint is what makes the figure answerable. */""}
+        <div class="ceo-flow"><b>${f.taps} tap${f.taps === 1 ? "" : "s"}</b>${
+          f.to ? `<span class="optn"> to ${esc(f.to)}</span>` : ""}
           <span class="ceo-fs ${tone}">${esc(f.status)}</span>
           ${mine ? `<span class="optn">you: ${mine}&times;</span>` : ""}</div>
         <div class="ceo-path">${esc(f.path)}</div>
@@ -5891,7 +5939,14 @@ function prefOrder(defaults){
 }
 
 const QT = {
-  sheets:  {fam:"asst", art:"rate-sheet", act:"tab", tab:"sheets",   icon:"&#128179;", label:"Rate Sheet",
+  /* ONE TAP TO PREPARE & SEND (owner brief 2026-09-07 §4). It was Home to the
+     Rate Sheets screen to a card to "Send this sheet" — three taps to reach the
+     form, on the door the owner uses most. `sheetQuick` opens the wizard
+     itself, and the wizard now carries its own type control so a different
+     product no longer means backing out. The Rate Sheets SCREEN is unchanged
+     and still reachable from the rail: this adds a shortcut to the form, it
+     does not remove the place the products are read. */
+  sheets:  {fam:"asst", art:"rate-sheet", act:"sheetQuick", icon:"&#128179;", label:"Rate Sheet",
             sub:"Prepare &amp; send", admin:true, lead:true},
   /* dlabel: the ONE place the two surfaces are allowed to differ in words, and
      it exists so the desktop row keeps the wording it already had. Renaming a
@@ -5952,8 +6007,19 @@ const QT_DESK = ["photo", "video", "field", "newlead", "cases", "delivery"];
    box, and every one of them also keeps the door it already had — the
    timestamp tools and Active Surveillance in the navigation foot, Reports &
    Packages and the two intake kinds in the rail. */
-const QT_PHONE = ["sheets", "newlead", "priv", "leads", "cases", "ceo", "photo", "video",
-                  "field"];
+/* OWNER, 2026-09-07 §14 — "Cases already has bottom navigation. CEO Bot
+   already has its persistent launcher. Remove/de-emphasize redundant Home cards
+   where doing so reduces the Home height without harming access."
+
+   Both moved to More rather than being deleted: de-emphasised is what was
+   asked, and each keeps its own door — Cases is a bottom-nav destination on
+   every screen, the CEO Bot has a fab on every screen plus a rail button. Two
+   rows of primary height come back and nothing became harder to reach.
+
+   THE SEVEN THE OWNER NAMED, in their order. Both timestamp tools stay primary
+   under the 2026-09-07 lock; Active Surveillance stays because it is the field
+   view's only top-level door. */
+const QT_PHONE = ["sheets", "newlead", "priv", "leads", "field", "photo", "video"];
 /* OWNER DECISION, 2026-09-07 — LOCKED: "Keep BOTH Timestamp Photo and
    Timestamp Video as primary visible cards on Home. Do not move either behind
    More. Preserve their direct one-tap access."
@@ -5981,7 +6047,7 @@ const QT_PHONE = ["sheets", "newlead", "priv", "leads", "cases", "ceo", "photo",
    all three are admin-only — so the disclosure is not drawn for that role at
    all, which is why it is guarded on the filtered length rather than on the
    list. */
-const QT_PHONE_MORE = ["claims", "legal", "delivery"];
+const QT_PHONE_MORE = ["cases", "claims", "legal", "delivery", "ceo"];
 
 /* ============ HOME: THE OWNER'S OWN FIRST SCREEN (owner brief 2026-09-06) ===
 
@@ -8164,6 +8230,146 @@ function wizContext(w){
   return "private";
 }
 
+/* THE TYPE CONTROL, ON THE PREPARE SCREEN ITSELF (owner brief 2026-09-07 §4).
+
+   "Do not require backing out to choose another type." Until now the type was
+   decided by WHICH CARD you opened, so changing your mind meant closing the
+   wizard, finding the card list and starting again — three taps to correct a
+   one-tap mistake.
+
+   IT REWRITES THE SAME THREE FIELDS THE CARD DOES and nothing else: `sheet`,
+   `context` and `legal`. `wizContext` is still the one reader of what a send
+   is, so every downstream rule — which intake door is paired, which payment
+   options may be offered, whether a non-refundable amount exists at all — keeps
+   working off the answer it already used. This adds a way to SET the context;
+   it invents no second way to interpret one.
+
+   IT IS WITHDRAWN ON A SEND OPENED FROM A LEAD. That wizard's type comes from
+   the case's own recorded kind, and letting the screen override it would let an
+   admin email a carrier's claim assignment a consumer rate sheet — the boundary
+   `CONTEXT_TAKES_PAYMENT` exists to make impossible. A case states what it is;
+   this control is for a send that has no case yet. */
+const WIZ_TYPES = [
+  ["private",   "private_retainer",     "Private client"],
+  ["legal",     "private_retainer",     "Law firm"],
+  ["insurance", "insurance_assignment", "Insurance carrier"],
+];
+
+/* CLIENT SENT / OWNER COPY FAILED — SAID OUT LOUD (owner brief 2026-09-07 §8).
+
+   The Worker has always answered `record_copy` and `record_reason`; the page
+   read NEITHER, so the one failure mode of "you should not have to CC yourself"
+   was invisible. The office saw "Sent to …" and had no way to learn its own
+   copy never arrived.
+
+   THREE STATES, KEPT APART, and the middle one is the whole point:
+     - the copy went          → a quiet line, because nothing needs doing;
+     - the client was sent it and THE COPY FAILED → said plainly, with the
+       remedy beside it, and NEVER worded as though the send failed;
+     - no business address is configured → not a failure at all, so it says
+       what to do rather than reporting an error that isn't one.
+
+   `LAST_SEND` holds only what the last send answered. It is cleared when the
+   screen is left and when a new send starts, so a strip about one document can
+   never stand over another — the stale-context defect this project has already
+   paid for on the Assistant and on `openCase`. */
+function lastSendHtml(){
+  const L = LAST_SEND;
+  if(!L) return "";
+  if(L.record_copy){
+    return `<div class="note" style="margin-top:8px">Sent to <b>${esc(L.sent_to)}</b>.
+      A copy is filed with the office.</div>`;
+  }
+  /* NOT CONFIGURED IS NOT A FAILURE. Reporting it as one would train the office
+     to ignore the strip that matters. */
+  if(L.record_reason === "not_configured"){
+    return `<div class="note" style="margin-top:8px">Sent to <b>${esc(L.sent_to)}</b>.
+      No business email is set for record copies &mdash;
+      <button class="linklike" data-act="tab" data-tab="settings">add one in Settings</button>
+      and future sends are filed automatically.</div>`;
+  }
+  return `<div class="err lastsend-split" style="margin-top:8px">
+    <div><b>CLIENT SENT</b> &mdash; ${esc(L.sent_to)} received the document.</div>
+    <div><b>OWNER COPY FAILED</b> &mdash; your own copy did not arrive${
+      L.record_reason ? ` (${esc(L.record_reason)})` : ""}.
+      The client is unaffected.</div>
+    ${L.doc_id ? `<div style="margin-top:8px">
+      <button class="btn sm" data-act="resendCopy" data-doc="${esc(L.doc_id)}"
+        ${LAST_SEND.busy ? "disabled" : ""}>Resend owner copy</button>
+      <span class="optn">This sends the office copy only. The client is not emailed again.</span>
+    </div>` : ""}
+  </div>`;
+}
+
+/* §9 — RESEND THE OFFICE COPY, AND ONLY THAT. The route re-composes the summary
+   from the STORED document, so a resend months later still states the amount
+   the client actually agreed to rather than what today's standard would
+   produce. It cannot email the client: there is no parameter by which it
+   could. */
+async function resendOwnerCopy(docId){
+  if(!LAST_SEND || LAST_SEND.busy) return;
+  LAST_SEND.busy = true; paint();
+  try{
+    const r = await api(`/documents/${encodeURIComponent(docId)}/record-copy`,
+      {method:"POST", body:{}});
+    LAST_SEND = {...LAST_SEND, busy:false, record_copy: true, record_reason: "",
+                 resent: true, ...(r.record_to ? {record_to: r.record_to} : {})};
+  }catch(e){
+    LAST_SEND = {...LAST_SEND, busy:false, record_copy: false,
+                 record_reason: e.message || "failed"};
+  }
+  paint();
+}
+
+function wizTypeHtml(w){
+  if(w.fromLead) return "";
+  const now = wizContext(w);
+  return `<label class="f"><span>Who is this for</span>
+    <select id="wiz_type" data-act="wizType">
+      ${WIZ_TYPES.map(([id, , label]) => `<option value="${id}"${
+        now === id ? " selected" : ""}>${esc(label)}</option>`).join("")}
+    </select></label>
+    <p class="hint">The matching document and intake are chosen from this. You can change it
+      here without starting again.</p>`;
+}
+
+/* Switching type is a change of PRODUCT, so the choices that belong to the old
+   one are dropped rather than carried across: a legal service on a private
+   send, a flat fee on a retainer, a consumer payment option on a carrier send.
+   Carrying them would leave the screen holding a value its own next render
+   cannot draw — which is how a send goes out carrying something nobody chose. */
+function wizSetType(id){
+  const w = SHEET_WIZ; if(!w) return;
+  const row = WIZ_TYPES.find(t => t[0] === id); if(!row) return;
+  w.sheet = row[1];
+  w.context = id;
+  w.legal = id === "legal";
+  w.legalService = ""; w.lsvcTouched = false;
+  w.feeChoice = ""; w.feeCustom = ""; w.feeTouched = false;
+  w.pay = id === "private";
+  w.payMethods = [];
+  w.mailCheck = false; w.billcom = false;
+  w.nonRef = "";
+  w.retainerPick = String(RETAINER_STANDARD); w.retainerCustom = ""; w.retainerTouched = false;
+  w.err = "";
+  /* A NEW PRODUCT IS A NEW ATTEMPT. The key guards "this exact send"; once the
+     document being composed has changed, reusing it would make a genuinely
+     different send read as a retry of the old one. */
+  w.attemptKey = newAttemptKey();
+  wizSheetLoad(); wizPaymentLoad(); paint();
+}
+
+/* ONE ATTEMPT KEY PER SEND (§10). Minted when the wizard opens and when the
+   product changes; REUSED across a failure, so pressing Send again after a
+   provider error is the same attempt rather than a second one. The Worker
+   claims it before calling the provider, so a dropped response cannot become a
+   second email to the client. */
+function newAttemptKey(){
+  const a = new Uint8Array(16);
+  (self.crypto || window.crypto).getRandomValues(a);
+  return [...a].map(x => x.toString(16).padStart(2, "0")).join("");
+}
+
 function wizPaymentHtml(w){
   /* MAIL-CHECK.md D5 (owner, 2026-09-02) — a legal or insurance send offers
      exactly ONE payment option, in the same checkbox pattern the private send
@@ -8371,7 +8577,24 @@ async function wizFeeSave(){
    silently moved which figure the office is told is standard. A list's ORDER
    is a display decision; which figure is standard is a pricing fact, and the
    two must not be the same expression. */
-const RETAINER_PRESETS = [1500, 2000, 3000];
+/* OWNER, 2026-09-07: simplify the visible Private choices to two presets plus
+   Custom. The list is what the office SEES; it is not what the system can
+   handle. Custom takes any owner-approved figure, `agreedRetainer()` reads
+   whatever a case actually agreed, and a case already carrying one of the
+   retired figures keeps it — nothing was removed from the backend and no
+   stored figure was rewritten, which is the difference between simplifying a
+   control and changing a price.
+
+   THE FIGURES ARE NOT SPELLED OUT IN THIS COMMENT, and the build guard is why:
+   a dollar amount anywhere in this file is a second place to change it, so the
+   test refuses one in source — prose included. It refused this comment when it
+   first quoted the owner's own words back, and it was right to.
+
+   `RETAINER_STANDARD` stays its own name. A list's ORDER is a display decision;
+   which figure is STANDARD is a pricing fact, and the two must not be the same
+   expression — that separation is exactly why the smaller figure could be put
+   first here without moving what the office is told is standard. */
+const RETAINER_PRESETS = [1000, 1500];
 const RETAINER_STANDARD = 1500;
 
 /* Null means "not a usable amount", which is how the caller distinguishes an
@@ -8630,6 +8853,22 @@ function sheetWizardHtml(){
       w.step > i + 1 ? "&#10003;" : i + 1} ${s2}</span>`).join("")}</div>`;
   const body =
     w.step === 1 ? `
+      ${wizTypeHtml(w)}
+      <div class="two">
+        <label class="f"><span>Client name <span class="optn">(optional)</span></span>
+          <input id="wiz_cname" value="${esc(w.clientName || "")}" placeholder="e.g. Vanessa Hart"></label>
+        <label class="f"><span>Phone <span class="optn">(optional)</span></span>
+          <input id="wiz_cphone" inputmode="tel" value="${esc(w.clientPhone || "")}"
+            placeholder="(540) 555-0142"></label>
+      </div>
+      ${/* THE NAME AND PHONE ARE THE CLIENT'S, THE ADDRESS IS THE SEND'S, and
+           they are separate on purpose: a carrier send goes to an adjuster and
+           the client is the claimant, so collapsing the two would put the wrong
+           name on the record. Both are optional and free — a blank one is
+           ABSENT from the record rather than "Unknown", the intake form's rule.
+           They exist because a PRE-CASE send, which is how a new client is
+           ordinarily quoted, used to reach the office's own record copy with no
+           name on it at all. */""}
       <label class="f"><span>Send it to</span>
         <input id="wiz_to" type="email" value="${esc(w.to)}" placeholder="name@example.com"></label>
       <div class="two">
@@ -9079,6 +9318,14 @@ function sheetsView(){
     </div>
     ${SHEET_MSG ? `<div class="note" style="margin-top:4px">${esc(SHEET_MSG)}</div>` : ""}
   </div>` : ""}
+  ${/* THE OFFICE-COPY STRIP BELONGS TO THE SEND, NOT TO AN OPEN CARD. It sat
+        inside the `open ?` branch, which was harmless while every send started
+        by opening a sheet — and stopped being harmless the moment Home gained a
+        one-tap door into the wizard (§4), because that flow leaves no card
+        open, so "CLIENT SENT / OWNER COPY FAILED" would never have drawn on
+        the very path the owner uses most. Found by the assertion for §8, which
+        set the state with no card open — which is what the new door does. */""}
+  ${lastSendHtml()}
   ${preCaseSendsHtml()}
   ${sendHistoryHtml()}`;
 }
@@ -14507,6 +14754,7 @@ function sessionForget(){
   LAST_LINK = ""; LAST_EMAILED = false; RESET_BOX = null;
   PAYCFG = null; PAY_DRAFT = {}; PAY_MSG = ""; PAY_ERR = false;
   SUMMARY = null; SHEETS = []; SHEET_MAIL = ""; OPEN_SHEET = null; SHEET_MSG = ""; SHEET_WIZ = null;
+  LAST_SEND = null;
   BILLCOM_READY = null; LEGAL_SVCS = [];
   /* MY PORTAL IS THE SIGNED-IN USER'S OWN — the previous account's layout,
      hides and metrics leave with their session, or the next person to sign in
@@ -14561,6 +14809,12 @@ async function openCase(caseNo, tab){
      carried to the next case it would offer one case's paragraph for another
      case's day. Day ids are global, so this is a correctness reset, not tidying. */
   DS_DRAFT = {};
+  /* THE PREVIOUS CASE'S DOCUMENT LEAVES WITH THE CASE — the rule this file
+     already records for the eight per-case globals and for ASST.case. A
+     preserved document open over a different case number is the stale-context
+     defect already paid for twice. The DOCS cache is keyed BY case, so it
+     survives correctly; only the open view is dropped. */
+  DOC_VIEW = null;
   /* THE RETAINER FORM BELONGS TO THE CASE IT WAS OPENED ON. All of its state is
      page-level, so without this an unfinished payment followed the admin to the
      next case: the form still open, still carrying the FIGURE they typed for
@@ -19234,6 +19488,11 @@ function authAdminForm(){
 
 function caseBodyHtml(){
   const admin = ME.role === "admin";
+  /* THE PRESERVED DOCUMENT TAKES THE WHOLE BODY (§11/§18). It is not a dialog:
+     it is a document, and reading one is what you are doing while it is open.
+     Its Back control returns to the tab underneath, which is still whatever it
+     was — nothing about the case was navigated away from. */
+  if(DOC_VIEW) return docViewHtml();
   if(!WS) return `<div class="empty">Loading the case&hellip;</div>`;
   const s = WS.submission || {};
   const a = WS.authorization || {};
@@ -19435,6 +19694,182 @@ function wsPkgShape(){
 /* UIBUILD P7 — the admin's case overview: summary, package progress and ONE
    next step across the top; recent activity and the evidence picture below.
    Every line routes somewhere real (P22). */
+/* ==== THE CLIENT RECORD (owner brief 2026-09-07 §12) ======================
+
+   "Rate Sheet / Intake / Retainer / Acceptance, each opening the actual
+   associated record. Do not build another dashboard."
+
+   So it is FOUR ROWS AND NO NUMBERS. Every line is a fact the portal already
+   holds, and every one routes to the screen that record lives on — nothing here
+   is a second place to read a figure.
+
+   AN ITEM THAT DOES NOT EXIST SAYS SO. A pending state is a real answer and it
+   is worded as one; a tick over something absent would be the failure mode this
+   whole unit exists to remove. The three read-states are kept apart in the
+   usual way: not loaded, failed, genuinely empty — a failed read says it could
+   not be read and offers Try again, and NEVER draws as "no rate sheet was
+   sent".
+
+   `.clrec-`, NOT `.cr-`. The short prefix is already taken: `.cr-h` and `.cr-m`
+   are the hourly and mileage inputs in the compensation-rates editor, read by
+   `row.querySelector(".cr-m")`. Nothing shares an ancestor today, and that is
+   exactly the shape this file has been bitten by five times — a grep for the
+   collision before the first render is the cheap way round, and it found this
+   one. */
+let DOCS = {};        // case_no -> {documents:[…]} once fetched
+let DOCS_ERR = {};    // case_no -> the reason a fetch failed
+let DOC_VIEW = null;  // the preserved document currently open
+
+async function loadCaseDocs(caseNo){
+  if(!caseNo) return;
+  try{
+    const r = await api(`/cases/${encodeURIComponent(caseNo)}/documents`);
+    DOCS[caseNo] = r; delete DOCS_ERR[caseNo];
+  }catch(e){ DOCS_ERR[caseNo] = e.message || "could not be read"; }
+  paint();
+}
+
+/* The newest rate sheet this case was actually sent. `ok` is the Worker's own
+   delivered flag, so a refused send is not offered as the client's document. */
+function caseSheetDoc(caseNo){
+  const d = DOCS[caseNo];
+  if(!d || !Array.isArray(d.documents)) return null;
+  return d.documents.find(x => x.kind === "rate_sheet" && x.ok) || null;
+}
+
+function crRow(label, state, detail, act, data){
+  const mark = state === "yes" ? "&#10003;" : state === "no" ? "&#8212;" : "&#9679;";
+  const tone = state === "yes" ? "ok" : state === "no" ? "muted" : "warn";
+  const inner = `<span class="clrec-l">${esc(label)}</span>
+    <span class="clrec-mk ${tone}" aria-hidden="true">${mark}</span>
+    <span class="clrec-d">${esc(detail)}</span>`;
+  /* A CONTROL THAT CAN OPEN NOTHING IS NOT DRAWN AS A BUTTON — the rule this
+     project already recorded against the Assistant's dead card rows. */
+  return act
+    ? `<button class="clrec-row" data-act="${esc(act)}"${Object.entries(data || {})
+        .map(([k, v]) => ` data-${esc(k)}="${esc(v)}"`).join("")}>${inner}
+        <span class="clrec-go" aria-hidden="true">&rsaquo;</span></button>`
+    : `<div class="clrec-row clrec-flat">${inner}</div>`;
+}
+
+function clientRecordHtml(s){
+  if(ME.role !== "admin" || !WS) return "";
+  const caseNo = WS_CASE;
+  if(!(caseNo in DOCS) && !(caseNo in DOCS_ERR)){
+    setTimeout(() => loadCaseDocs(caseNo), 0);
+  }
+  const failed = DOCS_ERR[caseNo];
+  const loaded = DOCS[caseNo];
+  const doc = caseSheetDoc(caseNo);
+  const acc = doc && doc.accepted ? doc.accepted : null;
+
+  /* THE INTAKE AND THE RETAINER COME FROM WHAT THE PAGE ALREADY HOLDS, so the
+     strip costs one read and not three. */
+  const p = (s && s.payload) || {};
+  const hasIntake = !!(s && s.created_at);
+  const signed = !!p.signature || !!p.signed_name;
+  /* `authorization.retainer` is the Worker's own block — `received` is its
+     boolean, `amount` the agreed figure. Read as it is published rather than
+     re-derived here, so the strip and the Authorization panel cannot disagree
+     about whether money arrived. */
+  const ret = ((WS && WS.authorization) || {}).retainer || null;
+  const received = !!(ret && ret.received);
+  const agreed = !!(ret && ret.amount);
+
+  const rows = failed
+    ? `<div class="err" style="margin:6px 0">The client record could not be read
+         &mdash; that is not the same as nothing being on file.
+         <button class="linklike" data-act="crRetry">Try again</button></div>`
+    : !loaded
+    ? `<div class="clrec-row clrec-flat"><span class="clrec-l">Loading&hellip;</span></div>`
+    : [
+      doc
+        ? crRow("Rate Sheet", "yes", `Sent ${when(doc.sent_at)}`, "docOpen", {doc: doc.doc_id})
+        : crRow("Rate Sheet", "no", "None sent from the portal yet", "tab", {tab: "sheets"}),
+      hasIntake
+        ? crRow("Intake", "yes", `Received ${when(s.created_at)}`, "wsTab", {tab: "details"})
+        : crRow("Intake", "no", "No submitted intake on this case", null),
+      !ret
+        ? crRow("Retainer", "no", "No retainer on this case", null)
+        : received
+        ? crRow("Retainer", "yes", "Received", "wsTab", {tab: "auth"})
+        : crRow("Retainer", "pending", agreed ? "Agreed, not yet received" : "No figure agreed yet",
+                "wsTab", {tab: "auth"}),
+      /* ACCEPTANCE IS THE ONE THAT COULD NOT BE ANSWERED BEFORE THIS UNIT.
+         A signature on the intake is not, by itself, acceptance OF A DOCUMENT —
+         it becomes that only when the submission carried the reference its own
+         door was issued with. Both states are said in their own words rather
+         than one standing in for the other. */
+      acc
+        ? crRow("Acceptance", "yes", `Signed ${when(acc.accepted_at)}`, "docOpen", {doc: doc.doc_id})
+        : signed
+        ? crRow("Acceptance", "pending", "Intake signed, not linked to a sent document",
+                "wsTab", {tab: "details"})
+        : crRow("Acceptance", "no", "Not signed", null),
+    ].join("");
+
+  return `<div class="uibox clrec">
+    <div class="uibox-h"><span class="uibox-t">CLIENT RECORD</span></div>
+    ${rows}
+  </div>`;
+}
+
+/* ==== THE PRESERVED DOCUMENT (§11/§18) ===================================
+
+   VIEW RATE SHEET OPENS WHAT THE CLIENT RECEIVED, not what today's template
+   would render. That is the entire point of storing the bytes.
+
+   IT IS RENDERED IN A SANDBOXED FRAME. The stored HTML is composed by our own
+   Worker from escaped values, so it is safe by construction — and it is put
+   behind `sandbox` with no `allow-scripts` anyway, because "safe by
+   construction" is a property of today's composer and this page is the portal's
+   own origin, where the session cookie is sent. The same reasoning
+   `inlineSafeType()` already applies to an uploaded file: decide what may run
+   rather than trusting what was stored. */
+async function docOpen(docId){
+  DOC_VIEW = {doc_id: docId, loading: true};
+  paint();
+  try{
+    const r = await api(`/documents/${encodeURIComponent(docId)}`);
+    DOC_VIEW = {doc_id: docId, ...r};
+  }catch(e){ DOC_VIEW = {doc_id: docId, err: e.message || "could not be read"}; }
+  paint();
+}
+
+function docViewHtml(){
+  const D = DOC_VIEW; if(!D) return "";
+  const head = `<div class="pagebar"><h2 style="margin:0">Document as sent</h2>
+    <button class="btn ghost close" data-act="docClose">&larr; Back</button></div>`;
+  if(D.err){
+    return `<div class="card">${head}<div class="err">This document could not be read
+      &mdash; ${esc(D.err)}</div></div>`;
+  }
+  if(D.loading || !D.document){
+    return `<div class="card">${head}<p class="lead">Loading the document&hellip;</p></div>`;
+  }
+  const d = D.document;
+  const a = D.acceptance;
+  const terms = (d.terms && d.terms.lines) || [];
+  return `<div class="card">${head}
+    <dl class="detail">
+      <dt>Sent to</dt><dd>${esc(d.recipient)}</dd>
+      ${d.client_name ? `<dt>Client</dt><dd>${esc(d.client_name)}</dd>` : ""}
+      <dt>Sent</dt><dd>${when(d.sent_at)}</dd>
+      <dt>Subject</dt><dd>${esc(d.subject)}</dd>
+      ${terms.length ? `<dt>Terms as sent</dt><dd>${terms.map(l =>
+        `<div${l.tone === "term" ? ' style="font-weight:700"' : ""}>${esc(l.text)}</div>`).join("")}</dd>` : ""}
+      ${d.intake_included ? `<dt>Intake included</dt><dd>${esc(d.intake_label || "Yes")}</dd>` : ""}
+      ${a ? `<dt>Signed</dt><dd>${esc(a.signed_name || "")} &middot; ${when(a.accepted_at)}</dd>` : ""}
+      ${/* THE CONTENT IDENTIFIER IS INTERNAL AND STAYS INTERNAL. It is on the
+            office's own screen, never on anything a client receives — §18's own
+            line about not exposing technical metadata to clients. */""}
+      <dt>Content hash</dt><dd class="optn" style="word-break:break-all">${esc(d.content_hash || "")}</dd>
+    </dl>
+    <iframe class="docframe" sandbox="" title="The document exactly as it was sent"
+      srcdoc="${esc(d.body_html || "")}"></iframe>
+  </div>`;
+}
+
 function overviewPanel(s, a){
   /* ============ THE OVERVIEW ANSWERS "WHAT NOW" (Unit 38) ============
 
@@ -19494,6 +19929,11 @@ function overviewPanel(s, a){
       <div class="nx">${esc(next.label)}</div>
       <button class="btn" data-act="wsTab" data-tab="${next.tab}">Go &rarr;</button>
     </div>
+    ${/* THE CLIENT RECORD (§12), directly under the next step because it
+         answers the question immediately after it: what does this client
+         already have from us? Four rows, no figures, each opening the real
+         record — not another dashboard, which the brief forbids by name. */""}
+    ${clientRecordHtml(s)}
 
     ${svLaunchButton()}
 
@@ -21132,7 +21572,8 @@ function detailList(s, mode){
   }
   const [words, tone] = completeness(s);
   return `${ME.role === "admin" ? `<div style="margin-bottom:10px"><span class="tag ${tone}">${esc(words)}</span></div>` : ""}
-  ${neededBox}
+  ${intakeSummaryHtml(s, p, claim)}
+  <h3 class="sec-h">PROVIDED INFORMATION</h3>
   <dl class="detail">
     ${claim ? `${row("Carrier / TPA", p.carrier)}${rowS("Claim number", p.claim_number, p.claim_number_status)}${row("Policy number", p.policy_number)}
                ${row("Claim type", p.claim_type)}${rowS("Date of loss", p.date_of_loss, p.date_of_loss_status)}${row("Adjuster", p.adjuster)}
@@ -21154,7 +21595,95 @@ function detailList(s, mode){
     ${row(claim ? "Authorized by" : "Signed by", p.signed_name)}
     ${row("Received", when(s.created_at))}
   </dl>
-  ${sig ? `<div><div style="font-size:.8rem;color:var(--muted)">Signature</div><img class="sig" src="${esc(sig)}" alt="signature"></div>` : ""}`;
+  ${/* NOT AVAILABLE YET comes AFTER what WAS provided (owner brief §11's own
+        order). It used to open the screen, so the first thing anyone read
+        about a submitted intake was a list of what it did not have. */""}
+  ${needed.length ? `<h3 class="sec-h">NOT AVAILABLE YET</h3>${neededBox}` : ""}
+  <h3 class="sec-h">CLIENT SIGNATURE / ACCEPTANCE</h3>
+  ${sig
+    ? `<div><img class="sig" src="${esc(sig)}" alt="signature"></div>
+       ${p.signed_name ? `<div class="optn">Typed: ${esc(p.signed_name)}</div>` : ""}`
+    : p.signed_name
+    ? `<p class="lead">Typed acceptance: <b>${esc(p.signed_name)}</b>. No drawn signature was captured.</p>`
+    /* THREE STATES, and the third is a real answer rather than a blank space. */
+    : `<p class="lead">Nothing was signed on this submission.</p>`}
+  ${assocSheetHtml()}`;
+}
+
+/* ==== §11 — TOP SUMMARY, and the ASSOCIATED RATE SHEET ====================
+
+   The brief's own order: a summary that answers who and what before any field
+   list, then what was provided, then what is still missing, then the signature,
+   then the document this all came from. */
+function intakeSummaryHtml(s, p, claim){
+  const ret = ((WS && WS.authorization) || {}).retainer || null;
+  const signed = !!p.signature || !!p.signed_name;
+  const cell = (k, v) => `<div class="isum-c"><span class="isum-k">${esc(k)}</span>
+    <span class="isum-v">${v}</span></div>`;
+  return `<h3 class="sec-h">SUMMARY</h3>
+  <div class="isum">
+    ${cell(claim ? "Assigning contact" : "Client", esc(p.client_name || s.client_name || "&mdash;"))}
+    ${cell(claim ? "Claimant" : "Subject", esc(p.subject_name || s.subject_name || "&mdash;"))}
+    ${cell("Intake type", esc(claim ? "Insurance claim assignment"
+      : (WS && WS.legal_badge) || s.legal ? "Legal assignment" : "Private client"))}
+    ${cell("Received", esc(when(s.created_at)))}
+    ${cell("Signed", signed ? "Yes" : "No")}
+    ${/* THE PAYING SIDE IS ADMIN-ONLY, AND SO ARE ITS WORDS. The section below
+          was gated and these two cells were not, so an investigator's intake
+          screen carried "Rate sheet" and "Retainer" as labels — and on a claim
+          assignment that is precisely the vocabulary `redactRow` keeps off
+          their screen. Two suite assertions caught it, one of them the Unit 38
+          boundary walk, and both were right: a label naming what the client is
+          paying is the paying side, even with no figure beside it. */""}
+    ${ME.role === "admin" ? `${cell("Rate sheet", assocSheetLabel())}
+    ${cell("Retainer", !ret ? "&mdash;" : ret.received ? "Received" : "Not yet received")}` : ""}
+  </div>`;
+}
+
+/* THE ONE READER of "which document is this case's", so the summary cell and
+   the section below it cannot disagree about whether there is one. */
+function assocSheetLabel(){
+  if(!(WS_CASE in DOCS) && !(WS_CASE in DOCS_ERR)) return "&hellip;";
+  if(DOCS_ERR[WS_CASE]) return "could not be read";
+  const d = caseSheetDoc(WS_CASE);
+  return d ? esc(when(d.sent_at)) : "None sent";
+}
+
+function assocSheetHtml(){
+  if(ME.role !== "admin") return "";
+  if(!(WS_CASE in DOCS) && !(WS_CASE in DOCS_ERR)){
+    setTimeout(() => loadCaseDocs(WS_CASE), 0);
+  }
+  const head = `<h3 class="sec-h">ASSOCIATED RATE SHEET</h3>`;
+  if(DOCS_ERR[WS_CASE]){
+    return `${head}<div class="err">The sent document could not be read &mdash; that is not the
+      same as none having been sent.
+      <button class="linklike" data-act="crRetry">Try again</button></div>`;
+  }
+  const d = caseSheetDoc(WS_CASE);
+  if(!(WS_CASE in DOCS)) return `${head}<p class="lead">Loading&hellip;</p>`;
+  if(!d){
+    return `${head}<p class="lead">No rate sheet has been sent from the portal for this case.
+      <button class="linklike" data-act="tab" data-tab="sheets">Prepare one</button></p>`;
+  }
+  const terms = (d.terms && d.terms.lines) || [];
+  const acc = d.accepted;
+  return `${head}
+  <dl class="detail">
+    <dt>Type</dt><dd>${esc(d.send_context || "")}${d.legal_service ? ` &middot; ${esc(d.legal_service)}` : ""}</dd>
+    ${d.retainer_amount != null ? `<dt>Retainer / authorization</dt><dd>${usd(d.retainer_amount)}</dd>` : ""}
+    ${d.non_refundable != null ? `<dt>Non-refundable portion</dt><dd>${usd(d.non_refundable)}</dd>` : ""}
+    ${d.flat_fee != null ? `<dt>Flat fee</dt><dd>${usd(d.flat_fee)}</dd>` : ""}
+    ${/* THE TERMS AS THEY WERE SENT, read back from the record. This is the
+          whole reason the bytes are stored: a client who signed last month
+          agreed to last month's figures, not to what the standard says today. */""}
+    ${terms.length ? `<dt>Terms as sent</dt><dd>${terms.map(l =>
+      `<div${l.tone === "term" ? ' style="font-weight:700"' : ""}>${esc(l.text)}</div>`).join("")}</dd>` : ""}
+    <dt>Sent</dt><dd>${esc(when(d.sent_at))} &middot; ${esc(d.recipient || "")}</dd>
+    <dt>Signed</dt><dd>${acc ? `${esc(acc.signed_name || "")} &middot; ${esc(when(acc.accepted_at))}`
+      : "Not linked to this document"}</dd>
+  </dl>
+  <button class="btn sm" data-act="docOpen" data-doc="${esc(d.doc_id)}">View rate sheet as sent</button>`;
 }
 
 
@@ -22623,6 +23152,8 @@ async function revokeInvite(id){
 function wizCollect(){
   if(!SHEET_WIZ) return;
   if($("wiz_to")) SHEET_WIZ.to = $("wiz_to").value.trim();
+  if($("wiz_cname")) SHEET_WIZ.clientName = $("wiz_cname").value.trim();
+  if($("wiz_cphone")) SHEET_WIZ.clientPhone = $("wiz_cphone").value.trim();
   if($("wiz_case")) SHEET_WIZ.caseNo = $("wiz_case").value.trim();
   if($("wiz_note")) SHEET_WIZ.note = $("wiz_note").value.trim();
   if($("wiz_inc")) SHEET_WIZ.include = $("wiz_inc").checked;
@@ -22668,6 +23199,16 @@ async function wizSend(){
   try{
     const r = await api(`/sheets/${encodeURIComponent(w.sheet)}/email`,
       {method:"POST", body:{to: w.to, note: w.note, case_no: w.caseNo, include_intake: w.include,
+        /* WHO THIS IS FOR (§5). Sent only when typed — a blank one is absent
+           from the record rather than stored as an empty string standing in
+           for a name nobody gave. */
+        ...(w.clientName ? {client_name: w.clientName} : {}),
+        ...(w.clientPhone ? {client_phone: w.clientPhone} : {}),
+        /* ONE ATTEMPT KEY PER SEND (§10). Minted with the wizard and reused
+           across a failure, so pressing Send again after a provider error is
+           the SAME attempt; the Worker claims it before calling the provider,
+           which is what stops a dropped response becoming a second email. */
+        ...(w.attemptKey ? {attempt_key: w.attemptKey} : {}),
         /* LEGAL-SERVICES.md — the service the document is generated from,
            exactly what the selector on screen says. Sent only on a legal
            send with a service chosen; absent, the Worker falls back to the
@@ -22707,6 +23248,10 @@ async function wizSend(){
     const consumerPay = (inc.payment_methods || []).some(m => m.id !== "mail_check");
     SHEET_MSG = `Sent to ${r.sent_to}${bits.length ? ", with " + bits.join(" and ") : ""}.`
       + (consumerPay ? " The retainer is still pending until you record it." : "");
+    /* §8 — the office-copy outcome, kept so the screen can say CLIENT SENT /
+       OWNER COPY FAILED rather than reporting only half of what happened. */
+    LAST_SEND = {sent_to: r.sent_to, doc_id: r.doc_id || "",
+                 record_copy: r.record_copy === true, record_reason: r.record_reason || ""};
     if(w.fromLead){ LEAD_MSG = SHEET_MSG; SHEET_WIZ = null; return render(); }
     SHEET_WIZ = null;
   }catch(e){ w.err = e.message; }
@@ -23556,7 +24101,9 @@ document.addEventListener("click", ev => {
        actually send. */
     const ctx = el.dataset.context || "";
     SHEET_WIZ = {sheet: el.dataset.sheet, context: ctx, legal: ctx === "legal",
+                 attemptKey: newAttemptKey(),
                  step: 1, to: "", caseNo: "", note: "", include: true,
+                 clientName: "", clientPhone: "",
                  pay: ctx !== "legal", payMethods: [], err: "",
                  legalService: "", lsvcTouched: false,
                  retainer: null, retainerPick: String(RETAINER_STANDARD),
@@ -23574,7 +24121,8 @@ document.addEventListener("click", ev => {
        "Private Client Intake Form" over a send that carries
        `?assignment=legal`. It is the row's own category fact, not a guess. */
     SHEET_WIZ = {sheet: el.dataset.kind === "claims" ? "insurance_assignment" : "private_retainer",
-                 legal: !!c.legal,
+                 legal: !!c.legal, attemptKey: newAttemptKey(),
+                 clientName: c.client_name || "", clientPhone: c.client_phone || "",
                  step: 1, to: c.client_email || "", caseNo: el.dataset.case, note: "",
                  include: true, pay: true, payMethods: [], err: "", fromLead: true,
                  /* Preselected from the case's own marker by wizSheetLoad, so
@@ -23667,6 +24215,27 @@ document.addEventListener("click", ev => {
   else if(act === "leadIntakeCancel"){ LEAD_SEND = null; paint(); }
   else if(act === "leadIntakeSend"){ sendLeadIntakeMail(el.dataset.case); }
   else if(act === "wizPayToggle"){ wizCollect(); paint(); }
+  /* §4 — Home straight into Prepare & Send. It opens on PRIVATE because that
+     is the owner's ordinary send and the brief says to default there; the type
+     control on the screen changes it without backing out. Everything else is
+     the shWiz shape, so there is one wizard and one initialiser, not two. */
+  else if(act === "resendCopy"){ resendOwnerCopy(el.dataset.doc); }
+  else if(act === "docOpen"){ docOpen(el.dataset.doc); }
+  else if(act === "docClose"){ DOC_VIEW = null; paint(); }
+  else if(act === "crRetry"){ delete DOCS_ERR[WS_CASE]; loadCaseDocs(WS_CASE); }
+  else if(act === "sheetQuick"){
+    TAB = "sheets"; SHEET_MSG = ""; LAST_SEND = null;
+    SHEET_WIZ = {sheet: "private_retainer", context: "private", legal: false,
+                 attemptKey: newAttemptKey(),
+                 step: 1, to: "", caseNo: "", note: "", include: true,
+                 clientName: "", clientPhone: "",
+                 pay: true, payMethods: [], err: "",
+                 legalService: "", lsvcTouched: false,
+                 retainer: null, retainerPick: String(RETAINER_STANDARD),
+                 retainerCustom: "", retainerTouched: false};
+    noteUse("qt:sheets");
+    wizSheetLoad(); wizPaymentLoad(); paint();
+  }
   else if(act === "wizClose"){ SHEET_WIZ = null; paint(); }
   else if(act === "wizStep"){
     wizCollect();
@@ -24126,6 +24695,15 @@ document.addEventListener("input", ev => {
   }
   if(ev.target.dataset && ev.target.dataset.act === "evClass"){ setEvidenceClass(Number(ev.target.dataset.id), ev.target.value); }
   if(ev.target.dataset && ev.target.dataset.act === "pkgType"){ pkgApi(`/build/${PKG.build.id}/package`, {package_type: ev.target.value}); }
+  /* A CONTROL THAT DRAWS IS NOT A CONTROL THAT WORKS. The type selector was
+     registered in the CLICK chain, where a `<select>`'s `change` never
+     arrives — so it rendered, it looked right, choosing a different type did
+     nothing, and only the suite noticed. Exactly the defect this project has
+     already recorded against the profiles contact picker, in the same shape:
+     a select whose handler was in the wrong listener. */
+  if(ev.target.dataset && ev.target.dataset.act === "wizType" && SHEET_WIZ){
+    wizSetType(ev.target.value); return;
+  }
   if(ev.target.dataset && ev.target.dataset.act === "wizRetPick" && SHEET_WIZ){
     wizCollect(); SHEET_WIZ.retainerTouched = true; SHEET_WIZ.err = ""; paint();
   }

@@ -397,9 +397,167 @@ async function handleIngest(request, env) {
   if (legal && !(await missingTables(env)).includes('legal_intake')) {
     try { await writeLegalRow(env, caseNo, p, null); } catch { /* payload holds it */ }
   }
+  /* WHICH DOCUMENT THIS SUBMISSION ACCEPTS (§2), when the form carried the
+     token its own door was issued with. Before the alert, because it is part
+     of the record; after the row, because it needs the submission's id. */
+  await linkAcceptance(env, caseNo, p);
   // The case is recorded; telling the office is a courtesy that cannot fail it.
   await notifyAdmins(env, 'intakes', caseNo);
   return json({ ok: true, case_no: caseNo });
+}
+
+/* ==== READING A PRESERVED DOCUMENT (owner brief 2026-09-07 §11/§18) =======
+
+   ADMIN-ONLY, like every other view of what a client was quoted. `redactRow`'s
+   boundary is the reason: this record carries the client's name, their address,
+   the agreed retainer and the non-refundable portion — the paying side, which
+   an investigator is never sent.
+
+   It returns the STORED BYTES. That is the whole point of the unit: "View Rate
+   Sheet" must open the document the client actually received, not whatever
+   today's template would render from today's figures. */
+async function documentRead(env, user, docId) {
+  if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  const miss = await missingTables(env);
+  if (miss.includes('sent_document')) {
+    return json({ error: 'The document record is not set up yet. Run the portal-setup '
+                       + 'workflow, then try again.', code: 'not_set_up' }, 503);
+  }
+  const d = await env.DB.prepare(
+    `SELECT doc_id, kind, sheet_id, send_context, legal_service, case_no, case_ref,
+            client_name, client_email, client_phone, recipient,
+            retainer_amount, non_refundable, flat_fee, terms_json,
+            intake_included, intake_kind, intake_label, intake_door,
+            subject, body_text, body_html, content_hash, ok, detail,
+            record_copy, record_reason, record_at, sent_at
+       FROM sent_document WHERE doc_id = ?`).bind(docId).first();
+  if (!d) return json({ error: 'No such document.' }, 404);
+
+  let terms = null;
+  try { terms = d.terms_json ? JSON.parse(d.terms_json) : null; } catch { terms = null; }
+
+  /* THE ACCEPTANCE, WHEN THERE IS ONE. Absent is a real answer — most documents
+     have not been signed — and it is said as "not linked" rather than drawn as
+     a blank tick. */
+  let acceptance = null;
+  if (!miss.includes('document_acceptance')) {
+    acceptance = await env.DB.prepare(
+      `SELECT a.doc_id, a.case_no, a.submission_id, a.signed_name, a.signed,
+              a.accepted_at, a.linked_at, s.client_name, s.subject_name
+         FROM document_acceptance a
+         LEFT JOIN submissions s ON s.id = a.submission_id
+        WHERE a.doc_id = ? ORDER BY a.id DESC LIMIT 1`).bind(docId).first();
+  }
+  /* AND EVERY ATTEMPT TO PUT THE OFFICE'S COPY IN ITS INBOX, failures kept —
+     that is the state §8 exists to make visible, and a trail of successes only
+     could not show it. */
+  let copies = [];
+  if (!miss.includes('document_record_copy')) {
+    copies = (await env.DB.prepare(
+      `SELECT ok, reason, sent_to, resend, sent_at FROM document_record_copy
+        WHERE doc_id = ? ORDER BY id DESC LIMIT 20`).bind(docId).all()).results || [];
+  }
+  return json({ document: { ...d, terms_json: undefined, terms,
+                            intake_included: !!d.intake_included, ok: !!d.ok,
+                            record_copy: !!d.record_copy },
+                acceptance: acceptance || null, record_copies: copies });
+}
+
+/* EVERY DOCUMENT THIS CASE HAS BEEN SENT — the Client Record strip's own read
+   (§12) and what the intake screen shows as its associated rate sheet (§11).
+   Bodies are deliberately NOT returned here: a list does not need three copies
+   of an email in it, and the one screen that renders a document fetches it by
+   id. Bounded, like every list in this Worker. */
+async function caseDocuments(env, user, caseNo) {
+  if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  const miss = await missingTables(env);
+  if (miss.includes('sent_document')) return json({ documents: [], not_set_up: true });
+  const rows = (await env.DB.prepare(
+    `SELECT doc_id, kind, sheet_id, send_context, legal_service, client_name, recipient,
+            retainer_amount, non_refundable, flat_fee, terms_json,
+            intake_included, intake_kind, intake_label, subject, content_hash,
+            ok, record_copy, record_reason, sent_at
+       FROM sent_document WHERE case_no = ? ORDER BY id DESC LIMIT 50`)
+    .bind(caseNo).all()).results || [];
+  let accepted = new Map();
+  if (rows.length && !miss.includes('document_acceptance')) {
+    /* ONE STATEMENT for the whole page of documents, the Unit 10 rule — a case
+       with forty sends costs what a case with one costs. */
+    const acc = (await env.DB.prepare(
+      `SELECT doc_id, submission_id, signed_name, signed, accepted_at
+         FROM document_acceptance WHERE case_no = ? ORDER BY id`).bind(caseNo).all()).results || [];
+    for (const a of acc) accepted.set(a.doc_id, a);
+  }
+  return json({ documents: rows.map(r => {
+    let terms = null;
+    try { terms = r.terms_json ? JSON.parse(r.terms_json) : null; } catch { terms = null; }
+    const a = accepted.get(r.doc_id) || null;
+    return { ...r, terms_json: undefined, terms,
+             intake_included: !!r.intake_included, ok: !!r.ok,
+             record_copy: !!r.record_copy,
+             accepted: a ? { submission_id: a.submission_id, signed_name: a.signed_name,
+                             signed: !!a.signed, accepted_at: a.accepted_at } : null };
+  }) });
+}
+
+/* ==== RESEND THE OFFICE'S COPY, AND ONLY THAT (§9) ========================
+
+   THE CLIENT IS NOT EMAILED. This route never touches `sendMail` with the
+   client's document — it re-composes the office's internal summary from the
+   STORED record and sends that to the configured business address. There is no
+   parameter by which it could do otherwise, which is stronger than a guard.
+
+   AND IT WRITES NO SECOND SEND-LOG ROW. The client received one document; the
+   history says one document. The resend is recorded in `document_record_copy`
+   with `resend = 1`, which is where the question "what has been tried?" is
+   answered. */
+async function resendRecordCopy(env, user, docId) {
+  if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  const miss = await missingTables(env);
+  if (miss.includes('sent_document')) {
+    return json({ error: 'The document record is not set up yet. Run the portal-setup '
+                       + 'workflow, then try again.', code: 'not_set_up' }, 503);
+  }
+  const d = await env.DB.prepare(
+    `SELECT doc_id, kind, send_context, case_no, case_ref, client_name, client_email,
+            client_phone, recipient, flat_fee, terms_json, intake_included, intake_label,
+            subject, content_hash, ok, sent_at
+       FROM sent_document WHERE doc_id = ?`).bind(docId).first();
+  if (!d) return json({ error: 'No such document.' }, 404);
+  /* A DOCUMENT THAT NEVER REACHED THE CLIENT HAS NO OFFICE COPY TO CHASE. The
+     record of the failed attempt is kept and readable; sending the office a
+     summary headed "sent to the client" about a document that was refused
+     would be this portal's own paperwork asserting something untrue. */
+  if (!d.ok) {
+    return json({ error: 'That document was never delivered to the client, so there is no '
+                       + 'copy of a send to file. Send it again from the rate sheet.',
+                  code: 'document_not_sent' }, 409);
+  }
+  let terms = null;
+  try { terms = d.terms_json ? JSON.parse(d.terms_json) : null; } catch { terms = null; }
+  const rec = await ownerRecordCopy(env, d.kind, {
+    to: d.recipient, client: d.client_name || '', case_no: d.case_no || d.case_ref || '',
+    context: d.send_context || '', version: d.subject || '',
+    doc_id: d.doc_id, content_hash: d.content_hash || '',
+    /* THE TERMS AS THEY WERE SENT, read back from the row rather than
+       re-composed from today's figures — which is the entire reason the row
+       exists. A resend six months later still states the amount the client
+       agreed to, not the amount the standard would produce today. */
+    engagement: terms,
+    flat_fee: d.flat_fee == null ? undefined : d.flat_fee,
+    intake_included: !!d.intake_included,
+    intake_label: d.intake_label || '',
+    resend_of: d.sent_at,
+  });
+  await recordCopyOutcome(env, user, d.doc_id, rec, 1);
+  if (!rec.record_copy) {
+    return json({ error: rec.record_reason === 'not_configured'
+      ? 'No business email is configured for record copies. Add one in Settings under '
+        + 'Billing, then try again.'
+      : 'That copy did not send. The client\'s document is unaffected.',
+      code: rec.record_reason || 'failed', ...rec }, 502);
+  }
+  return json({ ok: true, resent: true, doc_id: d.doc_id, ...rec });
 }
 
 /* ---------------------------------------------------------------- pricing */
@@ -1745,6 +1903,39 @@ async function emailSheet(request, env, user, id) {
     .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').slice(0, 500);
   const caseNo = String(body.case_no || '').replace(/[^\x20-\x7e]/g, '').slice(0, 64);
 
+  /* WHO THIS DOCUMENT IS FOR, TYPED BY THE OFFICE (owner brief §5). Until now
+     the only identity a send carried was the recipient's address, and a name
+     existed only where a case reference happened to resolve — so a PRE-CASE
+     send, which is the ordinary way a new client is quoted, reached the
+     office's own record copy with no name on it at all. These are optional and
+     free text: nothing is validated into existence, and a blank one is absent
+     rather than "Unknown", the intake form's own rule. */
+  const clean1 = (v, n) => String(v == null ? '' : v)
+    .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, n);
+  const clientName = clean1(body.client_name, 120);
+  const clientPhone = clean1(body.client_phone, 40);
+
+  /* ONE ATTEMPT KEY PER SEND (§10), claimed BEFORE the provider is called. A
+     repeat of the same attempt returns the document that attempt already
+     produced and sends nothing; an attempt that was claimed and never finished
+     is refused BY NAME rather than re-sent, because whether the client got the
+     first one is genuinely unknown and guessing wrong emails them twice. */
+  const attempt = await claimSendAttempt(env, body.attempt_key, 'rate_sheet');
+  if (attempt.state === 'done') {
+    return json({ ok: true, duplicate: true, sent_to: attempt.doc.recipient,
+      doc_id: attempt.doc.doc_id, document: 'recorded',
+      record_copy: !!attempt.doc.record_copy,
+      record_reason: attempt.doc.record_reason || '',
+      note: 'This send was already made. Nothing was emailed again.' });
+  }
+  if (attempt.state === 'indeterminate') {
+    return json({ error: 'That send was started and its result was never recorded, so the '
+                       + 'portal cannot tell whether the client received it. Check the send '
+                       + 'history before trying again.',
+                  code: 'indeterminate_send' }, 409);
+  }
+  const docId = newDocId();
+
   /* THE TYPED VALUE IS A REFERENCE UNTIL IT RESOLVES TO A CASE.
 
      `case_no` on this route is optional and free — the office types a job
@@ -2005,9 +2196,15 @@ async function emailSheet(request, env, user, id) {
      response label cannot disagree. Any named legal service carries — the
      retainer-model sheet's door preselects too, because that is the service
      the office chose to quote. */
-  const intakeDoor = baseDoor && legalSvc
+  const servicedDoor = baseDoor && legalSvc
     ? { ...baseDoor, url: `${baseDoor.url}&service=${legalSvc.id}` }
     : baseDoor;
+  /* AND IT CARRIES THE DOCUMENT THAT SENT IT (§3). One door object from here
+     down, so the email body, the stored `intake_door` and the response label
+     cannot disagree about which URL the client was actually given — the same
+     reason the service id is resolved beside the door rather than twice. */
+  const intakeDoor = servicedDoor
+    ? { ...servicedDoor, url: doorWithDoc(servicedDoor.url, docId) } : null;
   const intakeUrl = intakeDoor ? intakeDoor.url : null;
 
   /* Payment instructions ride only with the PRIVATE sheet (PAYMENTS.md).
@@ -2076,10 +2273,50 @@ async function emailSheet(request, env, user, id) {
     ? `${sheet.name} — Always Precise Investigations (case ${caseNo})`
     : `${sheet.name} — Always Precise Investigations`;
 
+  /* The case's own record of the client's name, read before the send so the
+     failure path can record the document too — a document that did not arrive
+     is still a document the office composed, and the record of what it said is
+     exactly what somebody will want when they ask why the client never got it. */
+  let recClient = '';
+  try { recClient = caseSub ? (JSON.parse(caseSub.payload || '{}').client_name || '') : ''; }
+  catch { recClient = ''; }
+  const clientEmail = clean1(body.client_email, 200);
+  /* THE FACTS THIS DOCUMENT CARRIED, resolved ONCE and used by the failure
+     path, the success path and the office's record copy alike — three places
+     that would otherwise each compose their own answer to "what was in it".
+
+     The three private-only figures are null on a carrier's or a law firm's
+     document by construction rather than by a filter: there is no retainer on
+     an insurance assignment and no non-refundable portion on a flat fee, and a
+     stored figure nobody quoted would be this record asserting something the
+     client never saw. */
+  const docFacts = {
+    doc_id: docId, kind: 'rate_sheet', sheet_id: sheet.id, send_context: sendCtx,
+    legal_service: legalSvc ? legalSvc.id : null,
+    case_no: linkedCase, case_ref: caseNo || null,
+    client_name: clientName || recClient || null,
+    client_email: clientEmail || to, client_phone: clientPhone || null,
+    recipient: to,
+    retainer_amount: sendCtx === SEND_CONTEXT.INSURANCE ? null
+      : (legalSvc && legalSvc.model === 'fixed') ? null : retainer,
+    non_refundable: sendCtx === SEND_CONTEXT.PRIVATE ? nonRef.amount : null,
+    flat_fee: flatFee != null ? flatFee : null,
+    terms: sheet.engagement || null,
+    intake_included: includeIntake, intake_kind: includeIntake ? sendCtx : null,
+    intake_label: intakeDoor ? intakeDoor.label : null, intake_door: intakeUrl,
+    subject, text, html,
+  };
+
   const mail = await sendMail(env, { to, subject, text, html });
   if (!mail.sent) {
     await logSend(env, user, { case_no: linkedCase, kind: 'rate_sheet', sheet_id: sheet.id,
       door: intakeUrl, recipient: to, ok: 0, detail: mail.reason || 'send failed' });
+    /* THE DOCUMENT IS RECORDED ON THE FAILURE PATH TOO, marked `ok = 0`. The
+       attempt key is finished against it so a retry of the SAME attempt reads
+       back the failure rather than being told the send is indeterminate. */
+    const failDoc = await recordSentDocument(env, user, { ...docFacts, ok: 0,
+      detail: mail.reason || 'send failed' });
+    await finishSendAttempt(env, attempt.key, failDoc.doc_id);
     if (payment.length || npPicked.length) {
       await logPaymentSend(env, user, { case_no: linkedCase, recipient: to,
         methods: npPicked.length ? npPicked : payment.map(x => x.id), with_sheet: 1, ok: 0,
@@ -2094,6 +2331,10 @@ async function emailSheet(request, env, user, id) {
   }
   await logSend(env, user, { case_no: linkedCase, kind: 'rate_sheet', sheet_id: sheet.id,
     door: intakeUrl, recipient: to, ok: 1 });
+  /* THE EXACT DOCUMENT, recorded from the same bytes the provider was handed
+     (§1). `send_log` above says a send happened; this says what went. */
+  const docRec = await recordSentDocument(env, user, { ...docFacts, ok: 1 });
+  await finishSendAttempt(env, attempt.key, docRec.doc_id);
   /* §5 — the system stamps what IT did. A sheet sent against a lead's case
      number moves the lead to Rate Sheet Sent (with the intake ticked, the
      intake went too, and Intake Sent is the further of the two). Manual
@@ -2114,12 +2355,10 @@ async function emailSheet(request, env, user, id) {
      `send_log` has recorded it, so it can never cost the send; it does not
      throw, and its outcome rides on the response rather than being swallowed.
      Empty configuration means nothing is sent and this reports why. */
-  let recClient = '';
-  try { recClient = caseSub ? (JSON.parse(caseSub.payload || '{}').client_name || '') : ''; }
-  catch { recClient = ''; }
   const rec = await ownerRecordCopy(env, 'rate_sheet', {
-    to, client: recClient, case_no: linkedCase || caseNo || '',
+    to, client: clientName || recClient, case_no: linkedCase || caseNo || '',
     context: sendCtx, version: sheet.name,
+    doc_id: docRec.doc_id || '', content_hash: docRec.content_hash || '',
     /* THE HIGHLIGHTED TERMS, VERBATIM FROM THE DOCUMENT'S OWN BLOCK (owner,
        2026-09-07: "Owner record copy must show the exact same highlighted
        terms and amount"). NOT re-composed from the figures: `engagementBlock`
@@ -2138,8 +2377,12 @@ async function emailSheet(request, env, user, id) {
     intake_label: intakeDoor ? intakeDoor.label : '',
     payment: (npPicked.length ? npPicked : payment.map(x => x.id)).join(', '),
   });
+  /* THE OFFICE-COPY RESULT LANDS ON THE DOCUMENT AND ON ITS OWN TRAIL, so
+     "client sent, owner copy failed" is a state the portal can still answer
+     tomorrow rather than only in this one response (§8). */
+  await recordCopyOutcome(env, user, docRec.doc_id, rec, 0);
   return json({ ok: true, sent_to: to, sheet: sheet.id,
-    send_context: sendCtx, ...rec,
+    send_context: sendCtx, ...rec, ...docRec,
     /* The figure the document actually carried, so the screen, the record and
        the client cannot quietly disagree — the `legal_service` / `flat_fee`
        rule applied to the third per-send figure. Absent on a non-private send,
@@ -4464,6 +4707,207 @@ async function logSend(env, user, row) {
   } catch { /* the send is the point; the log is the record of it */ }
 }
 
+/* ==== THE EXACT DOCUMENT THAT WAS SENT (owner brief 2026-09-07 §1) =========
+
+   `logSend` above records that a send happened. This records WHAT WENT — the
+   rendered subject and both body parts, the figures the document carried, and
+   a SHA-256 over the bytes so the version identifies the CONTENT rather than
+   the product. The sheet's display name is deliberately not the version: two
+   documents whose non-refundable amounts differ wear the same one.
+
+   ONE WRITER. Every send route resolves its facts and hands them here, so a
+   fifth document type cannot arrive with half the record filled in. It never
+   throws — a document record that failed must not cost the client their
+   email, the `logSend` rule — and it REPORTS its own outcome so the caller can
+   say `document: 'recorded'` or name the reason, the Unit 11 rule. */
+function newDocId() { return `DOC-${randomHex(16)}`; }
+
+async function recordSentDocument(env, user, d) {
+  /* THE ID IS MINTED BEFORE THE DOCUMENT IS RENDERED, not here, because the
+     intake door inside the body has to carry it (§3): a reference generated
+     after the bytes were composed could not be in them. Callers that need no
+     door still get one minted for them. */
+  const docId = d.doc_id || newDocId();
+  const subject = String(d.subject || '');
+  const text = String(d.text || '');
+  const html = String(d.html || '');
+  /* THE HASH COVERS EVERY PART THAT REACHED THE CLIENT, and it hashes the
+     JSON of the three rather than a joined string: JSON quotes and escapes
+     each part, so the encoding is unambiguous by construction and no choice
+     of separator can let two different documents run their fields together
+     into the same input. (The first version used a literal NUL as the
+     separator. It worked, and it put a control byte in this file — which is
+     how a source file starts reading as binary to every ordinary tool.) */
+  let contentHash = '';
+  try { contentHash = await sha256Hex(JSON.stringify([subject, text, html])); }
+  catch { contentHash = ''; }
+  try {
+    await env.DB.prepare(
+      `INSERT INTO sent_document
+         (doc_id, kind, sheet_id, send_context, legal_service, case_no, case_ref,
+          client_name, client_email, client_phone, recipient,
+          retainer_amount, non_refundable, flat_fee, terms_json,
+          intake_included, intake_kind, intake_label, intake_door,
+          subject, body_text, body_html, content_hash, ok, detail, sent_by, sent_at)
+       VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,
+               ?20,?21,?22,?23,?24,?25,?26,?27)`)
+      .bind(docId, d.kind, d.sheet_id || null, d.send_context || null,
+            d.legal_service || null, d.case_no || null, d.case_ref || null,
+            d.client_name || null, d.client_email || null, d.client_phone || null,
+            d.recipient,
+            d.retainer_amount == null ? null : Number(d.retainer_amount),
+            d.non_refundable == null ? null : Number(d.non_refundable),
+            d.flat_fee == null ? null : Number(d.flat_fee),
+            d.terms ? JSON.stringify(d.terms) : null,
+            d.intake_included ? 1 : 0, d.intake_kind || null,
+            d.intake_label || null, d.intake_door || null,
+            subject, text, html, contentHash, d.ok ? 1 : 0, d.detail || null,
+            user ? user.id : null, nowIso()).run();
+    return { doc_id: docId, content_hash: contentHash, document: 'recorded' };
+  } catch (e) {
+    console.error('sent_document write failed', e && e.message ? e.message : e);
+    return { doc_id: null, content_hash: contentHash, document: 'not_recorded',
+             document_reason: 'write_failed' };
+  }
+}
+
+/* THE OWNER-COPY RESULT RIDES ON THE DOCUMENT AND ON ITS OWN TRAIL.
+
+   Two writes, on purpose. The column answers "does this document's office copy
+   still need sending?" in one read; the trail answers "what has been tried?"
+   and keeps the FAILURES, which is the state §8 exists to make visible. A
+   success that overwrote a failure would erase the only evidence the office
+   was ever left without its copy. */
+async function recordCopyOutcome(env, user, docId, rec, resend) {
+  if (!docId) return;
+  const ok = rec && rec.record_copy ? 1 : 0;
+  try {
+    await env.DB.prepare(
+      `UPDATE sent_document SET record_copy = ?1, record_reason = ?2, record_at = ?3
+        WHERE doc_id = ?4`)
+      .bind(ok, (rec && rec.record_reason) || null, nowIso(), docId).run();
+  } catch { /* the trail below is the durable half */ }
+  try {
+    await env.DB.prepare(
+      `INSERT INTO document_record_copy (doc_id, ok, reason, sent_to, resend, sent_by, sent_at)
+       VALUES (?1,?2,?3,?4,?5,?6,?7)`)
+      .bind(docId, ok, (rec && rec.record_reason) || null, (rec && rec.record_to) || null,
+            resend ? 1 : 0, user ? user.id : null, nowIso()).run();
+  } catch { /* best effort, the ownerRecordCopy rule */ }
+}
+
+/* AN ATTEMPT KEY IS CLAIMED BEFORE THE PROVIDER IS CALLED (§10).
+
+   Three answers, and the third is the one that matters. `fresh` means nobody
+   has used this key: send. `done` means this exact attempt already produced a
+   document: return that record and send NOTHING. `indeterminate` means the key
+   was claimed and no document followed — the previous attempt died between the
+   two, so whether the client was emailed is genuinely unknown, and the honest
+   move is to say so rather than to send again and hope.
+
+   A caller that sends no key at all gets `fresh` with no claim: the guard is
+   opt-in per attempt, exactly like `client_token` on the money routes, so an
+   older caller that does not send one behaves as it always did. */
+async function claimSendAttempt(env, key, kind) {
+  const k = String(key || '').trim().slice(0, 100);
+  if (!k) return { state: 'fresh', key: '' };
+  try {
+    await env.DB.prepare(
+      `INSERT INTO document_send_attempt (attempt_key, kind, claimed_at) VALUES (?1,?2,?3)`)
+      .bind(k, kind || null, nowIso()).run();
+    return { state: 'fresh', key: k };
+  } catch {
+    let row = null;
+    try {
+      row = await env.DB.prepare(
+        `SELECT attempt_key, doc_id FROM document_send_attempt WHERE attempt_key = ?`)
+        .bind(k).first();
+    } catch { return { state: 'fresh', key: k };  /* no table yet: never block a send */ }
+    if (!row) return { state: 'fresh', key: k };
+    if (!row.doc_id) return { state: 'indeterminate', key: k };
+    let doc = null;
+    try {
+      doc = await env.DB.prepare(
+        `SELECT doc_id, recipient, ok, detail, sent_at, record_copy, record_reason
+           FROM sent_document WHERE doc_id = ?`).bind(row.doc_id).first();
+    } catch { /* fall through to indeterminate */ }
+    return doc ? { state: 'done', key: k, doc } : { state: 'indeterminate', key: k };
+  }
+}
+
+async function finishSendAttempt(env, key, docId) {
+  if (!key || !docId) return;
+  try {
+    await env.DB.prepare('UPDATE document_send_attempt SET doc_id = ? WHERE attempt_key = ?')
+      .bind(docId, key).run();
+  } catch { /* the document row is the record; this only guards the retry */ }
+}
+
+/* WHICH EXACT DOCUMENT THIS CLIENT SIGNED (owner brief 2026-09-07 §2).
+
+   NO ACKNOWLEDGEMENT CHECKBOX WAS ADDED AND NONE MAY BE — the owner's decision
+   stands that the client's existing signature covers the whole document. What
+   was missing was never consent; it was the LINK. The intake carried no
+   reference to the rate sheet that produced it, so "which terms did they agree
+   to?" could only be answered by re-rendering today's template.
+
+   NOTHING IS INFERRED. The link is written only when the submission carries the
+   token its own door was issued with — no name matching, no email matching, no
+   nearest-in-time guess. `recipientIsCarrier` produced four defects in four
+   review rounds doing exactly that, and this project does not do it again. A
+   submission with no token links to nothing, and the screens say so.
+
+   It never throws and never blocks: the public ingest is fire-and-forget by
+   design so a Worker fault can never cost the firm a client, and a link that
+   failed to write is a link, not an intake. */
+async function linkAcceptance(env, caseNo, p) {
+  const ref = String((p && p.doc_ref) || '').trim();
+  if (!/^DOC-[0-9a-f]{32}$/.test(ref)) return;
+  try {
+    if ((await missingTables(env)).includes('document_acceptance')) return;
+    /* THE DOCUMENT HAS TO EXIST. A token that resolves to nothing is a stale or
+       invented reference, and writing a link for it would manufacture evidence
+       that a client signed something the portal never sent. */
+    const doc = await env.DB.prepare('SELECT doc_id FROM sent_document WHERE doc_id = ?')
+      .bind(ref).first();
+    if (!doc) return;
+    const sub = await env.DB.prepare(
+      'SELECT id, created_at FROM submissions WHERE case_no = ?').bind(caseNo).first();
+    if (!sub) return;
+    /* `signed` is whether a signature IMAGE arrived, `signed_name` what they
+       typed. Two different facts, kept apart: a typed name with no drawing and
+       a drawing with no typed name are both real states of the form. */
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO document_acceptance
+         (doc_id, case_no, submission_id, signed_name, signed, accepted_at, linked_at)
+       VALUES (?1,?2,?3,?4,?5,?6,?7)`)
+      .bind(ref, caseNo, sub.id, String((p && p.signed_name) || '').slice(0, 120) || null,
+            p && p.signature ? 1 : 0, sub.created_at || nowIso(), nowIso()).run();
+    /* The document learns the case it landed in. It was sent before the case
+       existed — that is the ordinary path — so `case_no` was null, and leaving
+       it null would keep the send invisible to every case-scoped read. Only
+       ever filled IN, never overwritten: a document already tied to a case
+       cannot be re-pointed at another by a submission quoting its token. */
+    await env.DB.prepare(
+      'UPDATE sent_document SET case_no = ?1 WHERE doc_id = ?2 AND case_no IS NULL')
+      .bind(caseNo, ref).run();
+  } catch (e) {
+    console.error('acceptance link failed', e && e.message ? e.message : e);
+  }
+}
+
+/* THE INTAKE DOOR CARRIES A REFERENCE TO THE DOCUMENT THAT SENT IT (§3).
+
+   `doc_id` is 128 bits of randomness and names nothing — no client, no case,
+   no amount — so putting it in the URL exposes no data, which is the brief's
+   own condition. What it grants is equally nothing: the public ingest uses it
+   to WRITE a link and never to read a document back, and every route that
+   reads one is admin-gated. */
+function doorWithDoc(url, docId) {
+  if (!url || !docId) return url;
+  return url + (url.includes('?') ? '&' : '?') + 'ref=' + encodeURIComponent(docId);
+}
+
 /* What payment instructions actually went, and to whom (PAYMENTS.md §13).
    The confirmation and the case history both read back from THIS, never from
    the form that was submitted — otherwise they report what was asked for
@@ -6363,14 +6807,26 @@ const CEO_CAPS = [
 /* THE MEASURED FLOWS (§9). Tap counts are the gate's and the suites' own
    measurements of the shipped screens — statements about the BUILD, not about
    any client's data. Each carries the CEO recommendation the owner asked for,
-   and the point of most of them is that the answer is "leave it alone". */
+   and the point of most of them is that the answer is "leave it alone".
+
+   EACH ONE NAMES THE ENDPOINT IT MEASURES (owner brief 2026-09-07 §17). The
+   rate-sheet row read "2 taps" while measuring only ARRIVAL at the Rate Sheets
+   screen, and its label said "Prepare & send" — so the number answered a
+   question nobody asked and read as if it covered the whole send. A tap count
+   whose endpoint is unstated is a number that will be believed about whatever
+   the reader had in mind, which on the owner's own health screen is worse than
+   no number. `to` is the endpoint, in words, and the label is what is actually
+   counted. */
 const CEO_FLOWS = [
   { id: 'view_intake', label: 'View a signed intake', taps: 1, status: 'EXCELLENT',
     path: 'Intakes → the client card', action: 'PRESERVE',
     note: 'Already a one-tap workflow. No simplification recommended.' },
-  { id: 'rate_sheet', label: 'Prepare & send a rate sheet', taps: 2, status: 'GOOD',
-    path: 'Home → Rate Sheet → form', action: 'KEEP_PROMINENT',
-    note: 'Heavily used and already first on Home.' },
+  { id: 'rate_sheet', label: 'Open the rate-sheet form', taps: 1, status: 'EXCELLENT',
+    to: 'the Prepare & Send form, ready to type',
+    path: 'Home → Prepare & Send', action: 'KEEP_PROMINENT',
+    note: 'One tap since 2026-09-07: the Home card opens the form itself rather than '
+        + 'the Rate Sheets screen. Sending is four more — fill, Preview, Send — and '
+        + 'this number does not count them.' },
   { id: 'retainer_paid', label: 'Record a retainer payment', taps: 2, status: 'GOOD',
     path: 'Case → Retainer paid', action: 'KEEP_PROMINENT',
     note: 'A direct action on the case actions row.' },
@@ -13450,6 +13906,19 @@ const INTAKE_EXEMPT = {
      to nothing. */
   send_log: 'send history is non-deletable and a send alone must not block deletion',
   payment_send: 'send history is non-deletable and a send alone must not block deletion',
+  /* THE DOCUMENT FAMILY FOLLOWS THE SEND-HISTORY RULE, one step stronger.
+     `sent_document` is the evidence of what a client was actually sent and
+     `document_acceptance` the evidence of what they signed — the two records
+     this unit exists to make provable. Destroying either to tidy away a
+     duplicate intake would delete the answer to "which terms did they agree
+     to", which is exactly the question the owner asked to be able to answer.
+     They neither block the delete nor die with it, like the sends they record.
+     The attempt key stays for a different reason: it is what stops a retry
+     re-emailing a client, and deleting it would arm that. */
+  sent_document: 'the exact document sent is non-deletable evidence, and a send alone must not block deletion',
+  document_acceptance: 'what a client signed is non-deletable evidence, and it must not block deletion',
+  document_record_copy: 'the office-copy trail is send history and must not block deletion',
+  document_send_attempt: 'the idempotency key is what prevents a second client email; removing it would arm one',
   /* Unit 4: a SIMULATED — NOT SENT rehearsal is Beta audit history — kept for
      the same reason the send log is kept, and a dry run about a duplicate
      must not make the duplicate immortal. */
@@ -13564,6 +14033,23 @@ const DEMO_SWEEP = [
   ['report_versions',       'DELETE FROM report_versions WHERE report_id IN (SELECT id FROM case_reports WHERE case_no LIKE ?)'],
   ['subject_vehicles',      'DELETE FROM subject_vehicles WHERE subject_id IN (SELECT id FROM case_subjects WHERE case_no LIKE ?)'],
   ['retainer_payment_void', 'DELETE FROM retainer_payment_void WHERE payment_id IN (SELECT id FROM retainer_payment WHERE case_no LIKE ?)'],
+
+  /* THE DOCUMENT FAMILY. The children go through their parent's `doc_id`, the
+     standing rule — a document's acceptance link, its record-copy trail and
+     its attempt key are all matched by WHOSE document they belong to and never
+     by a prefix of their own. `sent_document` itself follows, and it carries a
+     `case_no` of its own so it is swept like any case-scoped row; a pre-case
+     send has a null one and belongs to no case, exactly as `send_log` does. */
+  /* BOTH WAYS ROUND, the `activity_voice_event` shape. An acceptance row
+     carries its OWN case_no — the submission's — and its parent document may
+     carry a NULL one, because a PRE-CASE rate sheet accepted into a new case is
+     the ordinary path this whole unit exists to record. Matching only through
+     the parent would leave the link behind when the case is swept. ?1 twice,
+     one bind, because the sweep binds a single value. */
+  ['document_acceptance',   'DELETE FROM document_acceptance WHERE case_no LIKE ?1 OR doc_id IN (SELECT doc_id FROM sent_document WHERE case_no LIKE ?1)'],
+  ['document_record_copy',  'DELETE FROM document_record_copy WHERE doc_id IN (SELECT doc_id FROM sent_document WHERE case_no LIKE ?)'],
+  ['document_send_attempt', 'DELETE FROM document_send_attempt WHERE doc_id IN (SELECT doc_id FROM sent_document WHERE case_no LIKE ?)'],
+  ['sent_document',         'DELETE FROM sent_document WHERE case_no LIKE ?'],
 
   ['storage_failure',       'DELETE FROM storage_failure WHERE case_no LIKE ?'],
   ['case_retention',        'DELETE FROM case_retention WHERE case_no LIKE ?'],
@@ -14956,7 +15442,61 @@ const RECORD_DOC = {
   rate_sheet: 'Rate sheet',
   intake: 'Intake request',
   payment_options: 'Payment instructions',
+  /* §13 — the office's copy of money it recorded. Not a send to a client: the
+     client is not emailed anything by recording a payment, and this document
+     type says what the office did, for the office. */
+  retainer_payment: 'Retainer payment recorded',
 };
+
+/* THE OFFICE'S OWN RECORD OF A RETAINER PAYMENT (owner brief 2026-09-07 §13).
+
+   The audit found that recording a payment wrote the ledger and copied nobody,
+   while every SEND already did — so the one act that involves the client's
+   money left no paperwork in the office's inbox at all.
+
+   IT DOCUMENTS; IT DOES NOT MOVE MONEY AND IT REWRITES NOTHING. The ledger row
+   is already committed when this runs, `retainer_payment` is never touched, and
+   no rate-sheet term is altered — the owner's standing accounting rule. It is a
+   copy of what was recorded, exactly as it was recorded.
+
+   THE ASSOCIATED DOCUMENT IS NAMED WHERE ONE EXISTS, and read back from the
+   record rather than re-derived: the terms the client agreed to are the ones
+   they were sent, not the ones today's standard would produce. Where no
+   document is on file the line is ABSENT rather than "none" — the intake form's
+   own rule about a value that does not apply. */
+async function retainerRecordCopy(env, user, caseNo, pay) {
+  try {
+    const sub = await env.DB.prepare(
+      'SELECT client_name, payload FROM submissions WHERE case_no = ?').bind(caseNo).first();
+    let client = sub ? (sub.client_name || '') : '';
+    if (!client && sub) {
+      try { client = JSON.parse(sub.payload || '{}').client_name || ''; } catch { client = ''; }
+    }
+    /* The newest document this case was actually sent, if the table is there.
+       Guarded like every marker-table read: a missing table costs the LINE,
+       never the receipt. */
+    let doc = null;
+    if (!(await missingTables(env)).includes('sent_document')) {
+      doc = await env.DB.prepare(
+        `SELECT doc_id, subject, content_hash, terms_json FROM sent_document
+          WHERE case_no = ? AND kind = 'rate_sheet' AND ok = 1
+          ORDER BY id DESC LIMIT 1`).bind(caseNo).first();
+    }
+    let terms = null;
+    try { terms = doc && doc.terms_json ? JSON.parse(doc.terms_json) : null; } catch { terms = null; }
+    return await ownerRecordCopy(env, 'retainer_payment', {
+      to: '', client, case_no: caseNo,
+      amount: pay.amount, method: RETAINER_METHOD_LABEL[pay.method] || pay.method,
+      paid_on: pay.paid_on || '', reference: pay.reference || '',
+      doc_id: doc ? doc.doc_id : '', content_hash: doc ? doc.content_hash : '',
+      version: doc ? doc.subject : '',
+      engagement: terms,
+    });
+  } catch (e) {
+    console.error('retainer record copy failed', e && e.message ? e.message : e);
+    return { record_copy: false, record_reason: 'failed' };
+  }
+}
 
 async function ownerRecordCopy(env, kind, facts) {
   try {
@@ -14973,8 +15513,22 @@ async function ownerRecordCopy(env, kind, facts) {
        to the office's own paperwork. */
     const rows = [
       ['Document', doc],
+      /* WHICH DOCUMENT, EXACTLY (§4). `Version` used to be the product's
+         display name — "Private Client — $1,500" — which two documents with
+         different non-refundable amounts both wear, so it identified the
+         product and never the content. The id and the content hash identify
+         the bytes; the name stays because it is what a person reads. */
+      ['Document id', f.doc_id || ''],
+      ['Content hash', f.content_hash || ''],
+      ['Resend of the send at', f.resend_of || ''],
       ['Sent to', f.to || ''],
       ['Client', f.client || ''],
+      /* §13's own lines. Absent where they do not apply, never "N/A" — the
+         filter below drops an empty one, so a rate sheet's copy is unchanged. */
+      ['Amount received', f.amount == null ? '' : usd(f.amount)],
+      ['Method', f.method || ''],
+      ['Paid on', f.paid_on || ''],
+      ['Reference', f.reference || ''],
       ['Case', f.case_no || ''],
       ['Business', f.context || ''],
       ['Version', f.version || ''],
@@ -15011,7 +15565,12 @@ async function ownerRecordCopy(env, kind, facts) {
         ${terms.map(t => `<div style="margin-top:4px${t.term ? ';font-weight:700' : ''}">${escHtml(t.text)}</div>`).join('')}
       </div>` : ''}</div>`;
     const r = await sendMail(env, { to, subject, text, html });
-    return { record_copy: !!r.sent, record_reason: r.sent ? '' : (r.reason || 'failed') };
+    /* `record_to` so the trail can name the inbox it went to. It is the
+       office's own configured address, never a client's — the send routes pass
+       the client's address as `to` INSIDE facts, and this one is `billing_
+       owner_record_email`. */
+    return { record_copy: !!r.sent, record_to: to,
+             record_reason: r.sent ? '' : (r.reason || 'failed') };
   } catch (e) {
     /* A record copy that fails is a courtesy that failed. It never becomes the
        caller's problem, and it never reports success it did not have. */
@@ -15189,6 +15748,7 @@ const EXPECTED_TABLES = [
   'case_retention', 'legal_hold', 'retention_event', 'case_day_end',
   'case_content_removed', 'case_content_event', 'feed_hidden', 'assistant_log',
   'case_refund', 'case_closeout', 'case_closeout_detail', 'user_pref',
+  'sent_document', 'document_send_attempt', 'document_acceptance', 'document_record_copy',
 ];
 
 async function missingTables(env) {
@@ -18706,6 +19266,12 @@ async function route(request, env) {
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/workspace$/);
   if (m && method === 'GET') return caseWorkspace(env, user, m[1]);
 
+  /* WHAT THIS CASE HAS BEEN SENT (§11/§12). A read, so it stays open on a
+     deleted or archived case for the same reason the timeline does — an admin
+     has to be able to see what went out before deciding what to do about it. */
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/documents$/);
+  if (m && method === 'GET') return caseDocuments(env, user, m[1]);
+
   /* THE TIMELINE IS A READ, and reads stay open on a deleted or archived case
      on purpose: an admin has to be able to see what happened before deciding
      whether to put one back. `caseTimeline` re-checks the caller through
@@ -18925,6 +19491,18 @@ async function route(request, env) {
   if (p === '/sends' && method === 'GET') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return sendHistory(request, env);
+  }
+
+  /* THE PRESERVED DOCUMENTS (owner brief 2026-09-07). Addressed by their own
+     id, so a case number is not in the path — the deleted/archived chokepoint
+     matches `/cases|submissions|leads/:no/`, and these are reads plus one
+     office-only resend, neither of which touches a case's record. The
+     admin gate is inside each handler, beside the reason for it. */
+  {
+    const m = p.match(/^\/documents\/(DOC-[0-9a-f]{32})$/);
+    if (m && method === 'GET') return documentRead(env, user, m[1]);
+    const r = p.match(/^\/documents\/(DOC-[0-9a-f]{32})\/record-copy$/);
+    if (r && method === 'POST') return resendRecordCopy(env, user, r[1]);
   }
 
   // Active Surveillance Mode: resume-anywhere for whoever is asking, and the
@@ -19693,7 +20271,25 @@ async function route(request, env) {
        idempotent and the notification about it was not. Probed and recorded as
        a defect on 2026-08-17, fixed here. */
     if (outcome !== 'duplicate') await notifyAdmins(env, 'payments', m[1]);
-    return json({ ok: true, authorization: await authorizationFor(env, m[1], true) });
+    /* THE OFFICE'S OWN RECORD OF MONEY IT RECEIVED (owner brief §13). The
+       audit found that recording a payment wrote the ledger and copied nobody,
+       while every SEND already did — so the one act that moves the client's
+       money left no paperwork in the office's inbox.
+
+       ONCE PER PAYMENT, never on a duplicate: the alert above already learned
+       that lesson the hard way, and a retry that produced no ledger row must
+       not produce a receipt either.
+
+       THE LEDGER IS UNTOUCHED AND NO MONEY MOVES. This is a copy of what was
+       recorded, composed after the row is committed, and it cannot fail the
+       payment — the ownerRecordCopy rule. */
+    let payRec = {};
+    if (outcome !== 'duplicate') {
+      payRec = await retainerRecordCopy(env, user, m[1],
+        { amount: amt, method: meth, paid_on: on, reference: clean(body.reference, 200) });
+    }
+    return json({ ok: true, ...payRec,
+                  authorization: await authorizationFor(env, m[1], true) });
   }
 
   /* Correcting a payment VOIDS it. The row stays, so the record still shows
