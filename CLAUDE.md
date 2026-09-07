@@ -791,6 +791,138 @@ workbench, the rehearsal and the real send — are held together by the preview'
 body being **byte-identical** to what the send emails, rather than by three
 assertions that each check a number.
 
+## The exact document a client received, and what they signed
+
+Owner brief 2026-09-07; derived decisions D1–D14 in
+`case-portal/SENT-DOCUMENTS.md`. The question the portal could not answer:
+**"which exact rate sheet and terms did this client receive and sign?"**
+
+`send_log` records **that** a send happened. It was never a record of **what
+went**, so the only way to reconstruct a document was to re-render today's
+template with today's figures — which is exactly the thing that changes.
+
+**`sent_document` STORES THE RENDERED BYTES**, not a recipe for them: the
+subject and both body parts handed to the provider, plus a SHA-256 over them.
+**The sheet's display name is NOT the version** — "Private Client — $1,500" is
+worn by two documents whose non-refundable amounts differ, so it identifies the
+product and never the content.
+
+**`send_log` IS UNTOUCHED, and that is what makes this a safe addition rather
+than a migration.** No row rewritten, no CHECK widened. Four additive tables,
+`kind` carrying no CHECK (the Unit 7 rule). `case_no` follows the send_log rule
+exactly — null unless the typed reference resolved — and **acceptance fills it
+in ONCE**, never overwriting, so a document already tied to a case cannot be
+re-pointed by a later submission quoting its token.
+
+**ONE ATTEMPT KEY PER SEND, CLAIMED BEFORE THE PROVIDER IS CALLED.** `fresh`
+sends; `done` returns the document that attempt already produced and emails
+nobody; **`indeterminate`** — claimed with no document following — is refused
+BY NAME and pointed at the send history, because whether the client got the
+first one is genuinely unknown and guessing wrong emails them twice. The
+failure path records its document too, so retrying a *failed* attempt reads
+back the failure rather than being told it is indeterminate.
+
+**ACCEPTANCE IS LINKED, NEVER INFERRED.** The link is written only when a
+submission carries the token its own door was issued with — no name matching,
+no email matching, no nearest-in-time guess. `recipientIsCarrier` produced four
+defects in four review rounds doing exactly that. A submission with no token
+links to nothing however alike it looks; a token resolving to no document
+writes no link, because that would manufacture evidence a client signed
+something the portal never sent. **No acknowledgement checkbox was added and
+none may be** — the owner's decision stands that the existing signature covers
+the whole document; what was missing was never consent, it was the link.
+
+**THE DOOR CARRIES THE DOCUMENT AND EXPOSES NOTHING.** `doc_id` is 128 bits of
+randomness naming no client, no case and no amount, and it grants nothing: the
+public ingest uses it to WRITE a link and never to read a document back.
+
+**CLIENT SENT / OWNER COPY FAILED IS A STATE THE PAGE CAN NOW SAY.** The Worker
+always answered `record_copy` and `record_reason`; the page read NEITHER, so
+the one failure mode of "you should not have to CC yourself" was invisible.
+Three states, and the middle one is the point — the copy went (quiet); the
+client was sent it and the copy failed (plain, with the remedy, **never worded
+as though the send failed**); and no address configured, which is not a failure
+at all. The state is durable: the column answers "does this still need its
+copy?", and `document_record_copy` keeps every attempt **including the
+failures**, because a trail of successes could not show the state it exists to
+make visible.
+
+**THE RESEND SENDS THE OFFICE COPY AND CANNOT SEND THE CLIENT'S** —
+structurally, not by a guard: there is no parameter by which it could. It
+writes no second `send_log` row (the client received one document, so the
+history says one), and it re-composes from the STORED record, so a resend six
+months later states the amount the client agreed to rather than what today's
+standard would produce. A document that never reached the client refuses a copy
+by name.
+
+**RECORDING A PAYMENT COPIES THE OFFICE TOO**, once per payment and never on a
+duplicate — the alert beside it learned that the hard way. It documents; it
+moves no money, `retainer_payment` is never touched and no rate-sheet term is
+altered.
+
+**THE VISIBLE RETAINER PRESETS ARE A DISPLAY DECISION, NOT A PRICING CHANGE.**
+Two presets plus Custom. `RETAINER_STANDARD` is unchanged and still its own
+name: a list's ORDER is a display decision, which figure is STANDARD is a
+pricing fact, and that separation is exactly what let the smaller figure go
+first. Nothing was removed from the backend — Custom takes any figure, and a
+case carrying a retired figure keeps it.
+
+**THE TYPE CONTROL SETS THE CONTEXT; IT DOES NOT REINTERPRET ONE.** `wizContext`
+stays the one reader. Switching type DROPS the choices belonging to the old
+product rather than carrying them across, and it is **withdrawn on a send
+opened from a lead** — that wizard's type is the case's own recorded kind, and
+letting the screen override it would let a carrier be emailed a consumer sheet.
+
+**THE PRESERVED DOCUMENT RENDERS SANDBOXED.** The stored HTML is composed by our
+own Worker from escaped values and is safe by construction — and it is
+sandboxed anyway, because that is a property of *today's* composer and this is
+the portal's own origin. The `inlineSafeType()` reasoning at a different layer.
+
+**THE MIRROR PIN WAS MADE TRUE, NOT WEAKENED.** A per-send random reference
+cannot be reproduced by a rehearsal, and a preview showing a reference that will
+never exist would be the portal asserting something untrue. The rehearsal
+carries none, the pin normalises that one field out, and two new assertions
+state what each side carries — a real send that stopped stamping its door fails
+there, and so does a rehearsal that starts inventing one.
+
+**Adding these four tables means a manual `portal-setup.yml` dispatch after
+merge.** Until it runs, sends work exactly as before and every new route
+degrades by name.
+
+## Home is seven cards, and Rate Sheet opens the form
+
+Owner brief 2026-09-07 §4/§14. **Home to Rate Sheet was three taps to the form**
+— the Rate Sheets screen, then a card, then "Send this sheet" — on the door the
+owner uses most. The Home card opens the wizard itself now; the Rate Sheets
+SCREEN is unchanged and still on the rail, because this adds a shortcut to the
+form rather than removing the place the products are read.
+
+**Cases and the CEO Bot moved behind More.** Both were DUPLICATES of a door on
+every screen — the bottom navigation and the CEO fab — so two rows of primary
+height came back and neither became harder to reach. **Both timestamp tools stay
+primary under the standing 2026-09-07 lock.** The seven: Rate Sheet, New Intake,
+Private Intake, View Intakes, Active Surveillance, Timestamp Photo, Timestamp
+Video.
+
+**A tap count now names its endpoint.** The CEO gate's rate-sheet row read "2
+taps" under the label "Prepare & send" while measuring only ARRIVAL at a screen
+— a number that will be believed about whatever the reader had in mind, on the
+owner's own health screen. Every flow carries `to` in words, and the row says
+what it counts.
+
+**The intake screen is five named sections in the brief's order:** SUMMARY,
+PROVIDED INFORMATION, NOT AVAILABLE YET, CLIENT SIGNATURE / ACCEPTANCE,
+ASSOCIATED RATE SHEET. "Not available yet" used to OPEN the screen, so the first
+thing anyone read about a submitted intake was a list of what it lacked.
+
+**The Client Record is four rows and no figures** — Rate Sheet, Intake,
+Retainer, Acceptance — each opening the real record. "Do not build another
+dashboard" is why there are no numbers on it. **An item that does not exist says
+so**, the three read-states are kept apart, and **ACCEPTANCE is its own
+question**: a signature on an intake is not, by itself, acceptance OF A
+DOCUMENT, so "Intake signed, not linked to a sent document" is a state rather
+than being rounded up to a tick.
+
 ## The legal intake is the private pricing path wearing a firm's name
 
 Unit 6 (owner brief verbatim in `case-portal/LEGAL-INTAKE.md`, derived
