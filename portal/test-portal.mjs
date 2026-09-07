@@ -22019,8 +22019,12 @@ section('The Client Record strip, and opening the document exactly as it was sen
   await page.goto(SITE + '/portal/');
   await page.waitForTimeout(250);
   await signIn(page, 'trever', 'AdminPassword1x');
-  await page.locator('.caserow').first().click();
-  await page.waitForTimeout(1200);
+  /* `openCase` BY NAME, which is what the rest of this suite does. I reached
+     for a `.caserow` selector that exists nowhere in the page — an invented
+     locator waits its full 30s and then reads as a product failure, which is
+     the same "the gate cried wolf" shape this project has recorded before. */
+  await page.evaluate(() => openCase('API-20260812-4002'));
+  await page.waitForTimeout(1400);
 
   const cr = await page.evaluate(() => {
     const box = document.querySelector('.clrec');
@@ -22141,17 +22145,25 @@ section('320px: the rate sheet, the intake, the case actions and both bots');
   await page.waitForTimeout(900);
   ok('the preview does not scroll sideways at 320', await overflow() === 0,
      String(await overflow()));
-  const send320 = await pressable('.amsheet .btn');
-  ok('and its primary control is pressable at 320',
-     send320 && send320.h >= 44 && send320.hit === true, JSON.stringify(send320));
+  /* EVERY control in the sheet, not "the first .btn" — which on the preview
+     step is Back, so an assertion headed "its primary control" would have been
+     measuring the wrong button and saying so. */
+  const send320 = await page.evaluate(() => {
+    const bs = [...document.querySelectorAll('.amsheet .btn')];
+    return { n: bs.length, min: bs.length ? Math.min(...bs.map(b =>
+      Math.round(b.getBoundingClientRect().height))) : 0,
+      inside: bs.every(b => b.getBoundingClientRect().right
+        <= document.documentElement.clientWidth + 1) };
+  });
+  ok('and every control on the preview is pressable and inside the screen at 320',
+     send320.n >= 2 && send320.min >= 44 && send320.inside === true,
+     JSON.stringify(send320));
   await page.evaluate(() => { SHEET_WIZ = null; paint(); });
   await page.waitForTimeout(400);
 
   /* ---- the case: primary actions, the Client Record, the intake ---- */
-  await page.evaluate(() => { TAB = 'cases'; paint(); });
-  await page.waitForTimeout(700);
-  await page.locator('.caserow').first().click();
-  await page.waitForTimeout(1400);
+  await page.evaluate(() => openCase('API-20260812-4002'));
+  await page.waitForTimeout(1600);
   ok('the case overview does not scroll sideways at 320', await overflow() === 0,
      String(await overflow()));
   const acts320 = await page.evaluate(() => {
@@ -22175,7 +22187,11 @@ section('320px: the rate sheet, the intake, the case actions and both bots');
      String(await overflow()));
 
   /* ---- both bots, and the More disclosure ---- */
-  await page.evaluate(() => { DOC_VIEW = null; VIEW = 'shell'; TAB = 'dashboard'; paint(); });
+  /* `VIEW` is "list" or "case" — there is no "shell". Setting a value the page
+     does not have would have left the case screen up while this section
+     measured the dashboard's More disclosure, and every assertion after it
+     would have been about the wrong screen. */
+  await page.evaluate(() => { DOC_VIEW = null; VIEW = 'list'; TAB = 'dashboard'; paint(); });
   await page.waitForTimeout(700);
   const moreSum = await pressable('.qtmore summary');
   ok('the More disclosure is pressable at 320',
