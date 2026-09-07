@@ -2033,12 +2033,21 @@ section('A private retainer is chosen before the sheet goes, and never reset by 
      has(untouched, 'Agreed retainer') && has(untouched, '$3,000'));
 
   /* And the selector then shows the truth, so the next admin to open it is not
-     misled by the default they arrived on. */
+     misled by the default they arrived on.
+
+     THE AGREED FIGURE IS A CUSTOM ONE NOW — $3,000 stopped being a preset when
+     the owner shortened the visible list — so "caught up" means the selector
+     sits on Custom with that amount in the box, rather than on a preset. The
+     property is unchanged and BOTH halves are asserted, because a selector
+     reading Custom over an empty box would be no better than the default. */
   await page.locator('.btn', { hasText: 'Back' }).click();
   await page.waitForTimeout(600);
+  const caught = await page.evaluate(() => ({
+    pick: (document.getElementById('wiz_ret') || {}).value,
+    amount: (document.getElementById('wiz_retc') || {}).value }));
   ok('the selector has caught up to the case it is now pointed at',
-     await page.locator('#wiz_ret').inputValue() === '3000',
-     await page.locator('#wiz_ret').inputValue());
+     caught.pick === 'custom' && String(caught.amount).replace(/[$,\s]/g, '') === '3000',
+     JSON.stringify(caught));
   await page.close();
 }
 
@@ -11824,9 +11833,16 @@ section('The mobile header is a control, not a glyph');
              btns, firstFits, lastReachable };
   });
   ok('the page does not scroll sideways at 320px', qt.overflowX === 0, String(qt.overflowX));
+  /* CASES LEFT THIS LIST BY OWNER DECISION (2026-09-07 §14): it is a
+     bottom-navigation destination on every screen, so a Home card for it was a
+     duplicate. The tools that have no other door on a phone are what this
+     assertion is for, and all three are still named. */
   ok('quick tools reach the day\'s doors',
-     ['Timestamp Photo', 'Timestamp Video', 'Active Surveillance', 'Cases']
+     ['Timestamp Photo', 'Timestamp Video', 'Active Surveillance']
        .every(name => qt.btns.some(x => x.t.includes(name))), JSON.stringify(qt.btns));
+  ok('and Cases is still reachable, from the bottom navigation it moved to',
+     await page.evaluate(() => [...document.querySelectorAll('.mnav button')]
+       .some(b => b.dataset.tab === 'cases')));
   ok('every tool is a 44px target and all of them are reachable without a gesture',
      qt.btns.length >= 4 && qt.btns.every(x => x.h >= 44) && qt.firstFits && qt.lastReachable,
      JSON.stringify(qt));
@@ -19731,9 +19747,15 @@ section('Mobile Home: an investigator is offered no door the Worker would refuse
                       'Law Firm Intake', 'Reports & Packages']) {
     ok(`an investigator is not offered ${gone}`, !inv.names.includes(gone), inv.names.join('|'));
   }
+  /* SAME OWNER DECISION. Cases is in their bottom navigation, so its Home card
+     went with the admin's; what an investigator must keep on Home are the
+     doors that exist nowhere else for them. */
   ok('and they keep the tools that are theirs',
-     inv.names.includes('Timestamp Photo') && inv.names.includes('Active Surveillance')
-     && inv.names.includes('Cases'), inv.names.join('|'));
+     inv.names.includes('Timestamp Photo') && inv.names.includes('Timestamp Video')
+     && inv.names.includes('Active Surveillance'), inv.names.join('|'));
+  ok('and Cases is still one press away, in their bottom navigation',
+     await page.evaluate(() => [...document.querySelectorAll('.mnav button')]
+       .some(b => b.dataset.tab === 'cases')));
   ok('with no accent card, because the door it belongs to is not on their desk',
      inv.lead === false);
   await page.setViewportSize({ width: 1200, height: 900 });
@@ -21992,6 +22014,10 @@ section('The Client Record strip, and opening the document exactly as it was sen
 {
   const page = await (await browser.newContext({ viewport: { width: 1200, height: 900 } })).newPage();
   page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  /* `signIn` fills the form; it does NOT navigate. A fresh page has to be sent
+     to the portal first or it waits 30s for a field that was never loaded. */
+  await page.goto(SITE + '/portal/');
+  await page.waitForTimeout(250);
   await signIn(page, 'trever', 'AdminPassword1x');
   await page.locator('.caserow').first().click();
   await page.waitForTimeout(1200);

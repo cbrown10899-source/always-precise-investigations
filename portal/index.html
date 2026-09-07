@@ -21621,8 +21621,15 @@ function intakeSummaryHtml(s, p, claim){
       : (WS && WS.legal_badge) || s.legal ? "Legal assignment" : "Private client"))}
     ${cell("Received", esc(when(s.created_at)))}
     ${cell("Signed", signed ? "Yes" : "No")}
-    ${cell("Rate sheet", assocSheetLabel())}
-    ${cell("Retainer", !ret ? "&mdash;" : ret.received ? "Received" : "Not yet received")}
+    ${/* THE PAYING SIDE IS ADMIN-ONLY, AND SO ARE ITS WORDS. The section below
+          was gated and these two cells were not, so an investigator's intake
+          screen carried "Rate sheet" and "Retainer" as labels — and on a claim
+          assignment that is precisely the vocabulary `redactRow` keeps off
+          their screen. Two suite assertions caught it, one of them the Unit 38
+          boundary walk, and both were right: a label naming what the client is
+          paying is the paying side, even with no figure beside it. */""}
+    ${ME.role === "admin" ? `${cell("Rate sheet", assocSheetLabel())}
+    ${cell("Retainer", !ret ? "&mdash;" : ret.received ? "Received" : "Not yet received")}` : ""}
   </div>`;
 }
 
@@ -24222,7 +24229,6 @@ document.addEventListener("click", ev => {
     noteUse("qt:sheets");
     wizSheetLoad(); wizPaymentLoad(); paint();
   }
-  else if(act === "wizType"){ wizSetType(el.value); }
   else if(act === "wizClose"){ SHEET_WIZ = null; paint(); }
   else if(act === "wizStep"){
     wizCollect();
@@ -24682,6 +24688,15 @@ document.addEventListener("input", ev => {
   }
   if(ev.target.dataset && ev.target.dataset.act === "evClass"){ setEvidenceClass(Number(ev.target.dataset.id), ev.target.value); }
   if(ev.target.dataset && ev.target.dataset.act === "pkgType"){ pkgApi(`/build/${PKG.build.id}/package`, {package_type: ev.target.value}); }
+  /* A CONTROL THAT DRAWS IS NOT A CONTROL THAT WORKS. The type selector was
+     registered in the CLICK chain, where a `<select>`'s `change` never
+     arrives — so it rendered, it looked right, choosing a different type did
+     nothing, and only the suite noticed. Exactly the defect this project has
+     already recorded against the profiles contact picker, in the same shape:
+     a select whose handler was in the wrong listener. */
+  if(ev.target.dataset && ev.target.dataset.act === "wizType" && SHEET_WIZ){
+    wizSetType(ev.target.value); return;
+  }
   if(ev.target.dataset && ev.target.dataset.act === "wizRetPick" && SHEET_WIZ){
     wizCollect(); SHEET_WIZ.retainerTouched = true; SHEET_WIZ.err = ""; paint();
   }
