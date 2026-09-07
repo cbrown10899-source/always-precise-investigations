@@ -1937,10 +1937,24 @@ section('A private retainer is chosen before the sheet goes, and never reset by 
   ok('the private wizard offers the retainer selector',
      await page.locator('#wiz_ret').count() === 1);
   const opts = await page.locator('#wiz_ret option').allInnerTexts();
-  ok('with the owner\'s four choices, standard first',
-     opts.length === 4 && has(opts[0], '$1,500') && has(opts[0], 'Standard')
-     && has(opts[1], '$2,000') && has(opts[2], '$3,000') && has(opts[3], 'Custom'),
+  /* OWNER, 2026-09-07 — the list itself changed: two presets plus Custom.
+     THIS ASSERTION ONCE CORRECTLY REFUSED $1,000 when I added it on my own
+     inference, and it is being changed now for the opposite reason — the owner
+     asked for that figure by name, twice. The decision it encodes moved; the
+     assertion follows the decision, not the other way round.
+
+     WHAT IT STILL PROTECTS, and what the shorter list did not weaken: the
+     STANDARD is still named on its own option. `RETAINER_STANDARD` is a
+     pricing fact kept apart from the list's ORDER, and that separation is
+     precisely what let the smaller figure go first without moving which figure
+     the office is told is standard. */
+  ok('with the owner\'s two presets and Custom, the smaller figure first',
+     opts.length === 3 && has(opts[0], '$1,000')
+     && has(opts[1], '$1,500') && has(opts[1], 'Standard')
+     && has(opts[2], 'Custom'),
      JSON.stringify(opts));
+  ok('and exactly one of them is named as the standard',
+     opts.filter(o => /standard/i.test(o)).length === 1, JSON.stringify(opts));
   ok('and opens on the standard figure', await page.locator('#wiz_ret').inputValue() === '1500');
   ok('the custom box stays out of the way until it is wanted',
      await page.locator('#wiz_retc').count() === 0);
@@ -1966,17 +1980,36 @@ section('A private retainer is chosen before the sheet goes, and never reset by 
   await page.waitForTimeout(500);
   ok('and so is a zero one', has(await text(page, '.amsheet'), 'above zero'));
 
-  // A real preset, carried all the way into the preview.
-  await page.locator('#wiz_ret').selectOption('3000');
-  await page.waitForTimeout(400);
-  ok('picking a preset hides the custom box again',
-     await page.locator('#wiz_retc').count() === 0);
+  /* A REAL AGREED FIGURE, CARRIED ALL THE WAY INTO THE PREVIEW — and it is a
+     CUSTOM one now. $3,000 was a preset until the owner shortened the visible
+     list on 2026-09-07; Custom is how any owner-approved figure is reached, and
+     the brief is explicit that it must keep taking one. So this walk exercises
+     the path that actually matters after the change, and it still proves the
+     same property: the figure the office agreed reaches the document, and the
+     standard does not overwrite it. */
+  await page.locator('#wiz_retc').fill('3000');
+  await page.waitForTimeout(200);
+  ok('a custom figure is what the selector now holds',
+     await page.locator('#wiz_ret').inputValue() === 'custom');
   await page.locator('.btn', { hasText: 'Preview' }).click();
   await page.waitForTimeout(900);
   const prev = await text(page, '.amsheet');
   ok('the preview states the agreed retainer', has(prev, 'Agreed retainer') && has(prev, '$3,000'), prev);
   ok('and the sheet it names is the $3,000 one, not the standard',
      has(prev, '$3,000 Retainer') && !has(prev, '$1,500'), prev);
+  /* AND A PRESET STILL HIDES THE CUSTOM BOX — the control's own behaviour,
+     which the switch to Custom above would otherwise have stopped covering. */
+  await page.locator('.amx').click();
+  await page.waitForTimeout(300);
+  await page.locator('.btn', { hasText: 'Send this sheet' }).click();
+  await page.waitForTimeout(700);
+  await page.locator('#wiz_ret').selectOption('custom');
+  await page.waitForTimeout(300);
+  ok('Custom reveals the amount field', await page.locator('#wiz_retc').count() === 1);
+  await page.locator('#wiz_ret').selectOption('1000');
+  await page.waitForTimeout(300);
+  ok('and picking a preset hides it again',
+     await page.locator('#wiz_retc').count() === 0);
   await page.locator('.amx').click();
   await page.waitForTimeout(400);
 
@@ -2133,7 +2166,12 @@ section('An unmatched case reference does not block Preview');
 
   await page.locator('#wiz_to').fill('marinerecon016@example.test');
   await page.locator('#wiz_case').fill('Test123');
-  await page.locator('#wiz_ret').selectOption('2000');
+  /* CUSTOM, for the same reason as above: $2,000 left the visible list on
+     2026-09-07 and the property under test is about a figure that is NOT the
+     standard, which Custom is now the way to reach. */
+  await page.locator('#wiz_ret').selectOption('custom');
+  await page.waitForTimeout(300);
+  await page.locator('#wiz_retc').fill('2000');
   await page.waitForTimeout(400);
   /* The "not stored" notice can only appear AFTER the attempt — until Preview
      tries the write, nothing knows the reference resolves to nothing. */
@@ -7830,7 +7868,7 @@ section('The dashboard has a hierarchy: real numbers lead, zeros stay but recede
     return c;
   });
   ok('its cards keep a usable width when stacked',
-     stacked.every(w => w >= 140), JSON.stringify(stacked));
+     stacked.length >= 1 && stacked.every(w => w >= 140), JSON.stringify(stacked));
   await page.setViewportSize({ width: 1200, height: 900 });
   await page.waitForTimeout(300);
   await page.close();
@@ -10109,7 +10147,8 @@ section('Nothing about the video is persisted anywhere');
     return { before, alive, closed: VST === null };
   });
   ok('closing the generator lets go of the video', revoked.closed
-     && revoked.alive.every(a => a === false), JSON.stringify(revoked));
+     && revoked.alive.length >= 1 && revoked.alive.every(a => a === false),
+     JSON.stringify(revoked));
   await page.close();
 }
 
@@ -12582,8 +12621,8 @@ section('Needs attention: rows that say why, and go where the work is');
     await kindChip.first().click();
     await page.waitForTimeout(500);
     const kinds = await card.locator('.qwhat').allInnerTexts();
-    ok('filtering to Intakes leaves only intakes',
-       kinds.every(t => /intake/i.test(t)), JSON.stringify(kinds));
+    ok('filtering to Intakes leaves only intakes, and leaves some',
+       kinds.length >= 1 && kinds.every(t => /intake/i.test(t)), JSON.stringify(kinds));
     await card.locator('.attnlenses .lens', { hasText: 'All' }).first().click();
     await page.waitForTimeout(500);
   } else {
@@ -21318,7 +21357,8 @@ section('CEO Bot refinement: priority, protection and a plan, at both widths');
   ok('"What should I fix first?" answers with why, benefit and a stated risk',
      !!fix && fix.why && fix.benefit && fix.risk, JSON.stringify(fix));
   ok('and its strongest control is a review, never an act',
-     fix.verbs.every(v => /review|close/i.test(v)), JSON.stringify(fix.verbs));
+     fix.verbs.length >= 1 && fix.verbs.every(v => /review|close/i.test(v)),
+     JSON.stringify(fix.verbs));
 
   /* ---- §7/§8 — the card shows its parts, and Why? expands EVIDENCE. ---- */
   await page.evaluate(() => { CEO_TAB = 'suggestions'; paint(); });
@@ -22061,9 +22101,11 @@ section('320px: the rate sheet, the intake, the case actions and both bots');
      JSON.stringify(wiz320));
   /* 16px or iOS zooms the page on focus; 44px is this portal's own tap floor. */
   ok('each is at least 16px so iOS does not zoom',
-     wiz320.fonts.every(f => f >= 16), JSON.stringify(wiz320.fonts));
+     wiz320.fonts.length === 4 && wiz320.fonts.every(f => f >= 16),
+     JSON.stringify(wiz320.fonts));
   ok('and each clears the 44px tap floor',
-     wiz320.heights.every(h => h >= 44), JSON.stringify(wiz320.heights));
+     wiz320.heights.length === 4 && wiz320.heights.every(h => h >= 44),
+     JSON.stringify(wiz320.heights));
   ok('the Prepare form does not scroll sideways at 320', wiz320.overflow === 0,
      String(wiz320.overflow));
 
