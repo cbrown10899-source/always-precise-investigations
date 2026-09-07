@@ -1001,10 +1001,23 @@ two words what the document underneath it refuses to assert.
 
 **HEIGHT IS THE TRADE, AND BOTH NUMBERS WERE MEASURED** — master's tree and
 this one, same fixture, served and rendered side by side. At 390 the strip goes
-**667 → 801 (+134)** for true 1:1 cards; at **320 it goes 747 → 689, fifty-eight
-pixels SHORTER**, because a square card at 120px wide is shorter than the old
-fixed 150. Desktop goes 76 → 402, which is what a card system costs and what §9
-asked for. Nothing clips at any width and nothing scrolls sideways at 320.
+**667 → 749 (+82)**; at **320 it goes 747 → 689, fifty-eight pixels SHORTER**,
+because a square card at 120px wide is shorter than the old fixed height.
+Desktop goes 76 → 402, which is what a card system costs and what §9 asked for.
+Nothing clips at any width and nothing scrolls sideways at 320.
+
+**THE PHONE CARD IS SQUARE BUT CAPPED AT 142px, AND THE CAP IS AN OWNER
+DECISION.** A true 1:1 card is 155 at 390, which puts Timestamp Video's TOP at
+869 on an 844-tall screen whenever a signed intake sits above the strip — off
+the first screen entirely, against the 2026-09-07 lock that both timestamp
+tools stay primary visible cards, and against the incident behind it. Matching
+an asset's aspect ratio does not outrank that, and the manifest already says a
+1024×1024 source is CROPPED to whatever shape the card is. Measured worst case:
+155 → top 869 off; 148 → 848 off; **142 → 830 ON**. At 320 the width is 120 so
+the aspect wins and the floor holds it at 122 — square there. **And the square
+is the ART'S**: applied to every card it forced the five plain doors under More
+into squares with an empty bottom half, so it is scoped to `.uiart`, and the
+size gap between the two is now the hierarchy.
 
 **What stayed plain on purpose:** every screen in §3's list — Prepare & Send,
 the preview, intake detail, the Client Record, Retainer Paid, Close Case,

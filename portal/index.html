@@ -2850,7 +2850,27 @@
        excessively tall, while the 2026-09-02 decision says the queue belongs
        on the first screen. 150px is the figure that buys most of the art
        presence for a quarter of the height. Re-measure both if it changes. */
-    .qtools .qtapp{aspect-ratio:1/1;min-height:122px;}
+    /* THE SQUARE IS THE ART'S, AND ONLY AN ART CARD HAS ANYTHING TO FILL IT.
+       Applied to every card it forced the five plain doors under More into
+       155px squares with their content in the top half and an empty bottom
+       half — three rows of 155 for five secondary controls, which is the
+       "excessively tall" §8 forbids and the decoration §11 says loses to
+       clarity. `.uiart` is the whole difference: a photograph needs the room,
+       an icon and two lines do not, and the size gap is now the hierarchy. */
+    /* SQUARE, BUT CAPPED — AND THE CAP IS AN OWNER DECISION, NOT A TASTE.
+       A true 1:1 card is 155px at 390, which pushes Timestamp Video's TOP to
+       869 on a 844-tall screen whenever a signed intake sits above the strip:
+       off the first screen entirely. The owner's 2026-09-07 lock says both
+       timestamp tools stay "primary visible cards on Home", and the incident
+       behind it is that the door went missing once. Matching an asset's
+       aspect ratio does not outrank that — and the manifest already says a
+       1024x1024 source is CROPPED to whatever shape the card is.
+
+       Measured, worst case (a signed-intake card above the strip): 155 -> top
+       869, off screen; 148 -> 848, off screen; 142 -> 830, ON. So 142, which
+       is 1.09:1 at 390 and still reads as square. At 320 the width is 120, so
+       the aspect wins and the floor holds it at 122 — square there too. */
+    .qtools .qtapp.uiart{aspect-ratio:1/1;min-height:122px;max-height:142px;}
   }
 
   /* ===== HOME'S BANDS AND STATS AT PHONE DENSITY (owner mockup, 2026-09-04)

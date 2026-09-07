@@ -57,9 +57,15 @@ beside it draws a card with a missing image. The two go in together.
 | **Wide** | the signed-intake alert | **2.4:1** | **1440 × 600** |
 
 **The card's rendered proportion is not always the asset's.** The phone card is
-square (155×155 at 390px, 122×122 at 320px), the desktop card is landscape
-(244×134). `background-size:cover` crops a 1:1 source to both without
-distorting it — which is exactly why the source is square and generous.
+near-square (155×142 at 390px, 120×122 at 320px) and the desktop card is
+landscape (244×134). `background-size:cover` crops a 1:1 source to all of them
+without distorting it — which is exactly why the source is square and generous.
+
+The 390px card is **capped at 142** rather than a true 155 square: at 155 the
+last card's top lands at 869 on an 844-tall screen when a signed intake sits
+above the strip, which puts Timestamp Video off the first screen and breaks the
+owner's 2026-09-07 lock. Compose for a square and expect the top ~8% to be
+cropped on a phone.
 
 ---
 
