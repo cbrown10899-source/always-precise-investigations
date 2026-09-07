@@ -1,141 +1,165 @@
 # ART-ASSET-MANIFEST — the portal's action-card artwork
 
-**Status: CUSTOM ARTWORK PENDING OWNER/CHATGPT.** Every card listed here is
-built and working today with a neutral placeholder. Dropping the final art in
-must cost **one asset file plus one line in `.github/deploy-manifest.txt`** —
-never a layout change, never a code change beyond an `object-position` nudge.
+**Status: CUSTOM ARTWORK PENDING.** Every card listed here is built and working
+today with a restrained placeholder. Dropping the final art in must cost **one
+asset file, one name in `CARD_ART`, and one line in
+`.github/deploy-manifest.txt`** — never a layout change, never a code change
+beyond an `object-position` nudge.
 
-This file exists so the artwork can be produced without guessing. It is the
-owner brief of 2026-09-06 §AF written down as specifications.
+This file is the **approved art sheet of 2026-09-07** written down as
+specifications. Where this file and an older note disagree, this file wins: the
+sheet changed the dimensions, added three filenames and named the guidelines.
 
 ---
 
-## Where the files live, and why
+## What the placeholder actually is, and why it is not a photograph
+
+Each of the seven primary Home cards draws a **deep family-coloured ground**
+from `:root` (`--art-sheet`, `--art-intake`, `--art-private`, `--art-signed`,
+`--art-field`, `--art-photo`, `--art-video`), with the title and subtitle in
+the same lower-left cluster the artwork must keep quiet.
+
+**The scrim is a property of the ART, not of the card.** With no photograph
+there is nothing to scrim, so none is painted — that is the correction that
+makes this work. An earlier build painted the scrim unconditionally and turned
+every card near-black, which is why the art system was previously switched off
+entirely. Now: no art → the ground at full strength; art → the same ground,
+under the photograph, under the scrim. **The type does not move and does not
+need re-measuring when the photographs land.**
+
+---
+
+## Where the files live
 
 ```
 portal/cards/<name>.webp
 ```
 
 **`portal/`, not `assets/`.** `assets/` is the PUBLIC marketing site's image
-folder — `banner1.webp`, the three homepage door cards, the review
-screenshots. Portal artwork is staff-facing and belongs beside the page that
-uses it, the way `portal/icon-192.png` already does.
+folder. Portal artwork is staff-facing and belongs beside the page that uses
+it, the way `portal/icon-192.png` already does.
 
-**Each file must be named ONE BY ONE in `.github/deploy-manifest.txt`.** That
-file is an allow-list of file patterns, and a bare directory entry is
-forbidden — a test fails if one appears. `portal/cards/*.webp` is acceptable
-under the same rule the existing `portal/vendor/mp4-muxer.js` line follows
-only if it stays a FILE pattern; prefer naming each file, as
-`assets/card-*.webp` already does.
+**Each file must be named in `.github/deploy-manifest.txt`.** That file is an
+allow-list of file patterns and a bare directory entry is forbidden — a test
+fails if one appears.
 
-**A missing file must not break the card.** The art is a CSS `background-image`
-over a token-coloured ground, so a card whose art has not arrived draws its
-family colour and its title exactly as it does today. There is no `<img>` to
-show a broken icon and no layout that collapses.
+**And each must be added to `CARD_ART` in `portal/index.html`.** A file that
+exists but is not named there is not drawn; a name there without the file
+beside it draws a card with a missing image. The two go in together.
 
 ---
 
-## The three card shapes
+## The two card shapes, from the approved sheet
 
-| Shape | Where | Aspect | Recommended pixels |
+| Shape | Where | Aspect | Pixels |
 | --- | --- | --- | --- |
-| **Primary quick action** | phone Home grid, 2 across | near-square, ~1.15:1 | **720 × 620** |
-| **Wide action** | View Signed Intakes, Retainer Paid, Close Case | ~3:1 on a phone, wider on desktop | **1200 × 400** |
-| **Desktop feature** | desktop Home, where a card gets a landscape slot | 3:2 | **960 × 640** |
+| **Primary** | Home grid — 2 across on a phone, 3 on a tablet, 4 on desktop | **1:1** | **1024 × 1024** |
+| **Wide** | the signed-intake alert | **2.4:1** | **1440 × 600** |
 
-**Source at the largest size and let CSS crop.** The same file serves all three
-breakpoints through `background-size: cover` plus a controlled
-`background-position`; nothing is ever distorted, because `cover` preserves
-the aspect ratio. Supply a separate `-wide` variant **only** where the
-square crop genuinely loses the subject — the public site's own card artwork
-proved a 3:2 source crops acceptably to 1.40:1, so start with one file.
+**The card's rendered proportion is not always the asset's.** The phone card is
+square (155×155 at 390px, 122×122 at 320px), the desktop card is landscape
+(244×134). `background-size:cover` crops a 1:1 source to both without
+distorting it — which is exactly why the source is square and generous.
 
 ---
 
 ## The text-safe zone — the one rule that matters
 
-**The lower-left 60% of the frame is where the title and subtitle sit.** Keep
-it free of detail the text would fight. The card paints a scrim over it (a
-transparent-to-dark gradient from the top down), so the artwork's own contrast
-does not have to carry the text — but a busy subject there still reads as
-noise behind the words.
+**The lower-left of the frame carries the icon, the title and the subtitle**,
+as one cluster. Keep it free of detail the text would fight.
 
-**Put the subject in the CENTRAL 60% of the frame, and never in the left
-third.** This is the public site's own hard-won rule, recorded in CLAUDE.md:
-two of the three homepage cards had to be mirrored because their subject sat
-where the headline goes and where the crop bites first, and the owner reported
-one of them as "not the van image" while it *was* the van image. Check a new
-image against the other cards in its row, not on its own.
+**Put the subject in the CENTRAL 60% and never in the left third.** This is the
+public site's own hard-won rule: two of the three homepage cards had to be
+mirrored because their subject sat where the headline goes, and the owner
+reported one as "not the van image" while it *was* the van image.
 
-**A badge may sit top-right** (a count, a status). Leave that corner quiet.
+**A badge may sit top-right** (the waiting-intake count). Leave that corner
+quiet.
 
----
-
-## Cards, and what each one needs
-
-Aspect and pixels are the shape's, from the table above.
-
-| Card | File | Shape | Safe zone | Title / subtitle | Family |
-| --- | --- | --- | --- | --- | --- |
-| Rate Sheet | `rate-sheet.webp` | primary | lower-left | **Rate Sheet** / Prepare & send | teal |
-| New Intake | `new-intake.webp` | primary | lower-left | **New Intake** / Choose the type | green |
-| Private Intake | `private-intake.webp` | primary | lower-left | **Private Intake** / Client matter | green |
-| Insurance Intake | `insurance-intake.webp` | primary | lower-left | **Insurance Intake** / Carrier matter | green |
-| Law Firm Intake | `legal-intake.webp` | primary | lower-left | **Law Firm Intake** / Legal matter | green |
-| View Signed Intakes | `signed-intakes.webp` | **wide** | left | **New signed intake** / the client's name | green |
-| Open Cases | `cases.webp` | primary | lower-left | **Cases** / All open work | navy |
-| Retainer Paid | `retainer-paid.webp` | **wide** | left or lower-left | **Retainer paid** | green |
-| Close Case | `close-case.webp` | **wide** | lower-left | **Close case** | red |
-| Active Surveillance | `surveillance.webp` | primary | lower-left | **Active Surveillance** / Start or resume | navy |
-| Reports & Evidence | `reports.webp` | primary | lower-left | **Reports & Packages** / View all | teal |
-| Timestamp Photo | `timestamp-photo.webp` | primary | lower-left | **Timestamp Photo** / Burn the moment | purple |
-| Timestamp Video | `timestamp-video.webp` | primary | lower-left | **Timestamp Video** / Burn the moment | purple |
-| AI Assistant | `assistant.webp` | primary | lower-left | **Assistant** / Operate the business | teal |
-| CEO Bot | `ceo-bot.webp` | primary | lower-left | **CEO Bot** / Improve the portal | gold |
-
-**Scrim:** every card carries a dark scrim, so supply artwork that reads on
-the **light** side. `close-case.webp` is the exception worth stating twice:
-**do not make it alarming.** It is a routine end-of-matter action the owner
-performs on most cases, not an emergency. Restrained, quiet, final.
+**On desktop the card is landscape**, so a composition that only works square
+will crop badly. Check a candidate at both 1:1 and 1.82:1.
 
 ---
 
-## Art direction
+## The cards
 
-Premium, professional, investigative, modern, trustworthy — and **visually
-distinct between actions**, because the artwork's job is navigation.
+### Live slots — these seven draw art the moment the file lands
 
-**Avoid:** magnifying glasses (on any card, let alone every card), cartoon
-styling, generic corporate stock-photo feel, overly dark crime imagery, and
-**anything resembling police or law-enforcement imagery** — the firm is a
-licensed private investigator, and implying law-enforcement status is a
-regulatory problem, not a taste one.
+| Card | File | Ground token | Family (owner §4) |
+| --- | --- | --- | --- |
+| Rate Sheet | `rate-sheet.webp` | `--art-sheet` | navy / teal |
+| New Intake | `new-intake.webp` | `--art-intake` | green / teal |
+| Private Intake | `private-intake.webp` | `--art-private` | muted navy / charcoal |
+| View Intakes | `signed-intakes.webp` | `--art-signed` | green |
+| Active Surveillance | `surveillance.webp` | `--art-field` | dark navy / slate |
+| Timestamp Photo | `timestamp-photo.webp` | `--art-photo` | blue / charcoal |
+| Timestamp Video | `timestamp-video.webp` | `--art-video` | deep blue / indigo |
+| New Signed Intake (wide) | `signed-intake-wide.webp` | `--art-signed` | green |
 
-**Check a new image against the OTHER cards in its row**, the public site's
-rule: three doors that read as one pair and an outlier is a worse row than
-three plain cards.
+`signed-intake-wide.webp` is a **different file** from `signed-intakes.webp` —
+2.4:1 and 1:1 are different crops of a different composition, and the sheet
+names both.
+
+### Reserved slots — specified, not drawn
+
+The owner's §2 keeps these as plain controls: Cases has the bottom navigation,
+the CEO Bot and the Assistant have persistent launchers, Reports & Packages and
+the two extra intake kinds live under More. **They are Home cards without a
+ground, so they draw light and ignore any art.** Giving one artwork means
+giving it a `ground` first, which is an owner decision, not a file drop.
+
+`cases.webp` · `ceo-bot.webp` · `reports.webp` · `insurance-intake.webp` ·
+`legal-intake.webp` · `assistant.webp` (wide) · `open-cases-wide.webp` (wide)
+
+### Retired slots — do not commission these
+
+`retainer-paid.webp` and `close-case.webp` were specified before the 2026-09-07
+brief. **§3 names Retainer Paid and Close Case as screens that must stay clean
+operational surfaces**, and they are `.uibtn` controls on the case action row —
+there is no art card for either. Commissioning them would buy nothing.
+
+The sheet's secondary set (`calendar.webp`, `billing.webp`, `settings.webp`) is
+in the same position: those destinations are rail items, not Home cards.
+
+---
+
+## Art direction (the sheet's own guidelines, verbatim in substance)
+
+- Realistic, professional, on-brand imagery
+- Keep text areas clear — **bottom-left preferred**
+- Dark/light overlay as needed for readability
+- No stock-watermark images
+- Consistent style, colour grading and composition across the set
+- Each image should tell the story of the action
+- Cinematic, trustworthy, professional, discreet
+- **Avoid clichés, cartoons, or law-enforcement appearance** — the firm is a
+  licensed private investigator, and implying law-enforcement status is a
+  regulatory problem, not a taste one
+- No magnifying glasses. Not on one card, and certainly not on every card.
+
+**Check a new image against the OTHER cards in its row**, never on its own.
 
 ---
 
 ## Cache busting is REQUIRED
 
-`_headers` caches static assets for seven days, and these files will be
-replaced **in place at stable URLs**. The public site paid a full round for
-this: `card-insurance.webp` was three different photographs at one URL inside
-an hour, every deploy was green, and the owner correctly reported the site as
-not updating — a stale asset behind fresh markup is indistinguishable from a
-deploy that never ran.
+`_headers` caches these seven days and the files will be replaced **in place at
+stable URLs**. The public site paid a full round for this: one card was three
+different photographs at one URL inside an hour, every deploy was green, and
+the owner correctly reported the site as not updating.
 
-**Every card URL carries `?v=<n>`. Bump it whenever a file changes.**
+**`CARD_ART_V` in `portal/index.html` is the one version number** on every card
+URL. Bump it whenever any card asset changes. A test fails if a card URL is
+emitted without it.
 
 ---
 
 ## Readiness
 
-| Card | Final artwork needed |
+| Card | Final artwork |
 | --- | --- |
-| all fifteen above | **YES — CUSTOM ARTWORK PENDING OWNER/CHATGPT** |
+| the eight live slots above | **PENDING — placeholder ground in use** |
+| the reserved slots | not drawn; needs an owner decision first |
+| `retainer-paid`, `close-case`, the secondary set | **retired — do not commission** |
 
-The card SYSTEM is built and shipping. The artwork is not, and the placeholder
-is deliberately neutral rather than a permanent gradient — a gradient that
-looks finished is how a placeholder stops being replaced.
+The card SYSTEM is built and shipping. The artwork is not.
