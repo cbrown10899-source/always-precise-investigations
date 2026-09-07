@@ -5286,7 +5286,11 @@ function ceoBodyHtml(){
         const tone = f.status === "EXCELLENT" ? "exc" : f.status === "GOOD" ? "ok"
                    : f.status === "WATCH" ? "warn" : "bad";
         return `<div class="ceo-card"><div class="ceo-t">${esc(f.label)}</div>
-        <div class="ceo-flow"><b>${f.taps} tap${f.taps === 1 ? "" : "s"}</b>
+        ${/* §17 — the number says WHAT IT COUNTS. A bare "2 taps" under a card
+              headed "Prepare & send" reads as the whole send; naming the
+              endpoint is what makes the figure answerable. */""}
+        <div class="ceo-flow"><b>${f.taps} tap${f.taps === 1 ? "" : "s"}</b>${
+          f.to ? `<span class="optn"> to ${esc(f.to)}</span>` : ""}
           <span class="ceo-fs ${tone}">${esc(f.status)}</span>
           ${mine ? `<span class="optn">you: ${mine}&times;</span>` : ""}</div>
         <div class="ceo-path">${esc(f.path)}</div>

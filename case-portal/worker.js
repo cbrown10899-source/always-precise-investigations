@@ -6807,14 +6807,26 @@ const CEO_CAPS = [
 /* THE MEASURED FLOWS (§9). Tap counts are the gate's and the suites' own
    measurements of the shipped screens — statements about the BUILD, not about
    any client's data. Each carries the CEO recommendation the owner asked for,
-   and the point of most of them is that the answer is "leave it alone". */
+   and the point of most of them is that the answer is "leave it alone".
+
+   EACH ONE NAMES THE ENDPOINT IT MEASURES (owner brief 2026-09-07 §17). The
+   rate-sheet row read "2 taps" while measuring only ARRIVAL at the Rate Sheets
+   screen, and its label said "Prepare & send" — so the number answered a
+   question nobody asked and read as if it covered the whole send. A tap count
+   whose endpoint is unstated is a number that will be believed about whatever
+   the reader had in mind, which on the owner's own health screen is worse than
+   no number. `to` is the endpoint, in words, and the label is what is actually
+   counted. */
 const CEO_FLOWS = [
   { id: 'view_intake', label: 'View a signed intake', taps: 1, status: 'EXCELLENT',
     path: 'Intakes → the client card', action: 'PRESERVE',
     note: 'Already a one-tap workflow. No simplification recommended.' },
-  { id: 'rate_sheet', label: 'Prepare & send a rate sheet', taps: 2, status: 'GOOD',
-    path: 'Home → Rate Sheet → form', action: 'KEEP_PROMINENT',
-    note: 'Heavily used and already first on Home.' },
+  { id: 'rate_sheet', label: 'Open the rate-sheet form', taps: 1, status: 'EXCELLENT',
+    to: 'the Prepare & Send form, ready to type',
+    path: 'Home → Prepare & Send', action: 'KEEP_PROMINENT',
+    note: 'One tap since 2026-09-07: the Home card opens the form itself rather than '
+        + 'the Rate Sheets screen. Sending is four more — fill, Preview, Send — and '
+        + 'this number does not count them.' },
   { id: 'retainer_paid', label: 'Record a retainer payment', taps: 2, status: 'GOOD',
     path: 'Case → Retainer paid', action: 'KEEP_PROMINENT',
     note: 'A direct action on the case actions row.' },
