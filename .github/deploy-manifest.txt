@@ -96,6 +96,19 @@ portal/vendor/mp4-muxer.js
 portal/icon-180.png
 portal/icon-192.png
 portal/icon-512.png
+# The Home art-card photographs (owner's approved hybrid art pack, 2026-09-07).
+# NAMED ONE BY ONE, not as `portal/cards/*.webp`, for the reason the whole file
+# exists: a directory-shaped entry is default-ALLOW inside it, so dropping any
+# file into portal/cards/ would publish it. Seven cards, seven lines.
+# Each must also be named in `CARD_ART` in portal/index.html or it is never
+# requested. Specifications: case-portal/ART-ASSET-MANIFEST.md
+portal/cards/rate-sheet.webp
+portal/cards/new-intake.webp
+portal/cards/private-intake.webp
+portal/cards/signed-intakes.webp
+portal/cards/surveillance.webp
+portal/cards/timestamp-photo.webp
+portal/cards/timestamp-video.webp
 
 # --- the private visitor dashboard (noindex) ---------------------------------
 watch/index.html
