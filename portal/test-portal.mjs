@@ -22105,13 +22105,23 @@ section('320px: the rate sheet, the intake, the case actions and both bots');
   /* PRESSABLE, NOT MERELY LAID OUT. `elementFromPoint` is the only way to tell
      the two apart — the collapsed-card defect reported `visibility:visible`
      with a real box and painted nothing. */
-  const pressable = sel => page.evaluate(s => {
-    const el = document.querySelector(s); if (!el) return null;
-    const b = el.getBoundingClientRect();
-    if (b.width < 1 || b.height < 1) return { h: 0, hit: false };
-    const hit = document.elementFromPoint(b.left + b.width / 2, b.top + Math.min(b.height / 2, 20));
-    return { h: Math.round(b.height), hit: !!(hit && (hit === el || el.contains(hit))) };
-  }, sel);
+  /* `elementFromPoint` ONLY SEES THE VIEWPORT, so anything below the fold on a
+     568px-tall screen answers null and reads as unpressable when it is merely
+     off screen. Scrolled into view first — which is also what a thumb does. */
+  const pressable = async sel => {
+    await page.evaluate(s => {
+      const el = document.querySelector(s);
+      if (el) el.scrollIntoView({ block: 'center' });
+    }, sel);
+    await page.waitForTimeout(250);
+    return page.evaluate(s => {
+      const el = document.querySelector(s); if (!el) return null;
+      const b = el.getBoundingClientRect();
+      if (b.width < 1 || b.height < 1) return { h: 0, hit: false };
+      const hit = document.elementFromPoint(b.left + b.width / 2, b.top + Math.min(b.height / 2, 20));
+      return { h: Math.round(b.height), hit: !!(hit && (hit === el || el.contains(hit))) };
+    }, sel);
+  };
 
   ok('the dashboard does not scroll sideways at 320', await overflow() === 0,
      String(await overflow()));
@@ -22166,8 +22176,12 @@ section('320px: the rate sheet, the intake, the case actions and both bots');
   await page.waitForTimeout(1600);
   ok('the case overview does not scroll sideways at 320', await overflow() === 0,
      String(await overflow()));
+  /* ONLY WHAT IS ACTUALLY DRAWN. The selector also catches controls this width
+     hides — a zero-height element is not a tap target that fails the floor, it
+     is not on the screen at all, and measuring it would report a defect that
+     does not exist. `offsetParent` is the cheap test for rendered. */
   const acts320 = await page.evaluate(() => {
-    const bs = [...document.querySelectorAll('.uibtn, .uirow')];
+    const bs = [...document.querySelectorAll('.uibtn, .uirow')].filter(b => b.offsetParent);
     return { n: bs.length, min: bs.length ? Math.min(...bs.map(b =>
       Math.round(b.getBoundingClientRect().height))) : 0 };
   });

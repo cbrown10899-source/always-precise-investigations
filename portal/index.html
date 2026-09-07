@@ -9317,8 +9317,15 @@ function sheetsView(){
       </div>
     </div>
     ${SHEET_MSG ? `<div class="note" style="margin-top:4px">${esc(SHEET_MSG)}</div>` : ""}
-    ${lastSendHtml()}
   </div>` : ""}
+  ${/* THE OFFICE-COPY STRIP BELONGS TO THE SEND, NOT TO AN OPEN CARD. It sat
+        inside the `open ?` branch, which was harmless while every send started
+        by opening a sheet — and stopped being harmless the moment Home gained a
+        one-tap door into the wizard (§4), because that flow leaves no card
+        open, so "CLIENT SENT / OWNER COPY FAILED" would never have drawn on
+        the very path the owner uses most. Found by the assertion for §8, which
+        set the state with no card open — which is what the new door does. */""}
+  ${lastSendHtml()}
   ${preCaseSendsHtml()}
   ${sendHistoryHtml()}`;
 }
