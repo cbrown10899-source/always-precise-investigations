@@ -19807,8 +19807,15 @@ section('The hybrid pass: seven art cards on Home, and nothing else touched');
     const plain = [...document.querySelectorAll('.qtapps-more > .qtapp')].map(box);
     return { art, plain };
   });
-  ok('an art card is square on a phone — the sheet\'s own 1:1',
-     shape.art.length === 7 && shape.art.every(c => Math.abs(c.w - c.h) <= 2),
+  /* NEAR-SQUARE, NOT SQUARE — and the difference is the cap, which exists for
+     a measured reason rather than a stylistic one. A true 1:1 card is 155 at
+     390px and puts Timestamp Video's TOP at 869 on an 844-tall screen when a
+     signed intake sits above the strip, which is off the first screen and
+     against the owner's 2026-09-07 lock. 155x142 is 1.09:1 and still reads as
+     square; a letterbox would not, which is what the upper bound catches. */
+  ok('an art card is near-square on a phone, within the 142px cap',
+     shape.art.length === 7
+       && shape.art.every(c => c.w / c.h >= 1.0 && c.w / c.h <= 1.15),
      JSON.stringify(shape.art[0]));
   ok('and a plain card is SHORTER, because it has no photograph to hold',
      shape.plain.length === 5 && shape.plain.every(c => c.h < shape.art[0].h),
@@ -20027,8 +20034,14 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
   const PHONE_MORE = ['Cases', 'Insurance Intake', 'Law Firm Intake',
                       'Reports & Packages', 'CEO Bot'];
   const p390 = await read(390, 844);
-  ok('on a phone the quick actions are two across, and near-square',
-     p390.appsShown === true && p390.cols === 2 && p390.ratio >= 0.9 && p390.ratio <= 1.1,
+  /* TWO ACROSS, AND NOTHING ABOUT THE ART HERE. This section does not open
+     the dashboard, so the cards it measures are the PLAIN ones the strip
+     draws on every other screen — 155x121, not the art card's 155x142. The
+     proportion claim belongs to the hybrid section, which lands on Home
+     first and says so; asserting it here measured a card this section never
+     had. Two-across is true on either, and is what this section is about. */
+  ok('on a phone the quick actions are a two-across grid',
+     p390.appsShown === true && p390.cols === 2,
      JSON.stringify({ cols: p390.cols, ratio: p390.ratio }));
   ok("and they are in the owner's order, Rate Sheet first",
      p390.phone.join('|') === PHONE.join('|'), p390.phone.join('|'));
