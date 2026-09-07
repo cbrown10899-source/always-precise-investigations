@@ -1996,23 +1996,23 @@ section('A private lead can be sent payment options; an insurance lead cannot');
 
   // §15.1 / §15.2 — the whole boundary, on two cards side by side.
   ok('the private card offers Send payment options',
-     await priv.locator('.btn', { hasText: 'Send payment options' }).count() === 1);
+     await priv.locator('.btn, .uibtn', { hasText: 'Send payment options' }).count() === 1);
   ok('the insurance card does NOT, anywhere on it',
-     await ins.locator('.btn', { hasText: 'Send payment options' }).count() === 0);
+     await ins.locator('.btn, .uibtn', { hasText: 'Send payment options' }).count() === 0);
   ok('and the insurance card still offers its own two sends',
-     await ins.locator('.btn', { hasText: 'Send rate sheet' }).count() === 1
-     && await ins.locator('.btn', { hasText: 'Send intake' }).count() === 1);
+     await ins.locator('.btn, .uibtn', { hasText: 'Send rate sheet' }).count() === 1
+     && await ins.locator('.btn, .uibtn', { hasText: 'Send intake' }).count() === 1);
   /* "Review" opened the CASE, which is not what the word promised — the owner
      reported it from a phone. It is "View intake" now and goes to the
      submission. The property this assertion protects is unchanged: the card's
      other actions were not displaced by the rename. */
   ok('the private card keeps its existing actions too — nothing was displaced',
-     await priv.locator('.btn', { hasText: 'View intake' }).count() === 1
-     && await priv.locator('.btn', { hasText: 'Send rate sheet' }).count() === 1
-     && await priv.locator('.btn', { hasText: 'Send intake' }).count() === 1);
+     await priv.locator('.btn, .uibtn', { hasText: 'View intake' }).count() === 1
+     && await priv.locator('.btn, .uibtn', { hasText: 'Send rate sheet' }).count() === 1
+     && await priv.locator('.btn, .uibtn', { hasText: 'Send intake' }).count() === 1);
 
   // The dialog.
-  await priv.locator('.btn', { hasText: 'Send payment options' }).click();
+  await priv.locator('.btn, .uibtn', { hasText: 'Send payment options' }).click();
   await page.waitForTimeout(900);
   ok('the standalone dialog opens', await page.locator('.amsheet').count() === 1);
   ok('titled as payment options, not as a rate sheet send',
@@ -4424,9 +4424,9 @@ section('Leads and intakes: cards, decisions, and the phone-call lead');
   const desk = await text(page, '#app');
   ok('early-stage submissions wait as cards', await page.locator('.pcard').count() >= 1, desk.slice(0, 200));
   ok('a card offers a way into the submitted intake, named for what it opens',
-     await page.locator('.pcard .btn', { hasText: 'View intake' }).count() >= 1);
+     await page.locator('.pcard .btn, .pcard .uibtn', { hasText: 'View intake' }).count() >= 1);
   ok('and Accept routes to the assignment decision',
-     await page.locator('.pcard .btn', { hasText: 'Accept' }).count() >= 1);
+     await page.locator('.pcard .btn, .pcard .uibtn', { hasText: 'Accept' }).count() >= 1);
   // The hostile row is stage new, so it sits on this desk too — as text.
   ok('a hostile case number renders as text on the leads desk',
      desk.includes('window.__pwned'));
@@ -6838,8 +6838,8 @@ section('A lead has its own life, and its sends live on the card');
      && await card.locator('select[data-act="leadStatus"]').count() === 1,
      (await card.innerText()).slice(0, 160));
   ok('and both send actions on the card',
-     await card.locator('.btn', { hasText: 'Send rate sheet' }).count() === 1
-     && await card.locator('.btn', { hasText: 'Send intake' }).count() === 1);
+     await card.locator('.btn, .uibtn', { hasText: 'Send rate sheet' }).count() === 1
+     && await card.locator('.btn, .uibtn', { hasText: 'Send intake' }).count() === 1);
 
   // The office's own hand: set Contacted, and it survives a full reload.
   // The disclosure has to be opened first — it is closed by default, which is
