@@ -21330,6 +21330,299 @@ section('CEO Bot: a capability is not its shortcut, and most answers are "leave 
   ok('and it never reaches the mail sender', !/sendMail/.test(blk));
 }
 
+/* ==== THE EXACT DOCUMENT THAT WAS SENT (owner brief 2026-09-07 §1/§2/§3/§5/§9/§10)
+
+   The question this unit exists to answer is "which exact rate sheet and terms
+   did this client receive and sign?", and the only honest way to test it is to
+   send a document, change nothing, and read the STORED bytes back — never to
+   re-render the template and compare, which is the thing that drifts. */
+section('The exact document that was sent, and what the client signed');
+{
+  const realFetch = globalThis.fetch;
+  let mails = [];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      mails.push(JSON.parse(init.body));
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const row = (sql, ...b) => env.DB.prepare(sql).bind(...b).first();
+
+  /* ---- 1. A PRE-CASE PRIVATE SEND, WITH A CUSTOM RETAINER AND A CUSTOM
+     NON-REFUNDABLE AMOUNT. Pre-case is the ordinary way a new client is
+     quoted, and it is exactly where the old record carried no name. ---- */
+  mails = [];
+  const sent = await jsonOf(await call(env, '/sheets/private_retainer/email', {
+    method: 'POST', cookie: admin,
+    body: { to: 'vanessa@example.com', client_name: 'Vanessa Hart',
+            client_phone: '(540) 555-0142', retainer_amount: 2000, non_refundable: 750,
+            include_intake: true, attempt_key: 'att-doc-1' } }));
+  ok('the send succeeds', sent.ok === true, JSON.stringify(sent).slice(0, 200));
+  ok('and it answers with the document it recorded',
+     sent.document === 'recorded' && /^DOC-[0-9a-f]{32}$/.test(sent.doc_id || ''),
+     JSON.stringify({ document: sent.document, doc_id: sent.doc_id }));
+
+  const doc = await row('SELECT * FROM sent_document WHERE doc_id = ?', sent.doc_id);
+  const client = mails.find(m => String(m.to).includes('vanessa@example.com'));
+  ok('the stored document exists and is marked delivered', !!doc && doc.ok === 1);
+  /* THE BYTES, NOT A RECIPE FOR THEM. This is the whole unit: if these ever
+     stop matching, "View Rate Sheet" is showing something the client never
+     received. */
+  ok('its subject and both body parts are BYTE-IDENTICAL to what was emailed',
+     !!client && doc.subject === client.subject && doc.body_text === client.text
+     && doc.body_html === client.html,
+     JSON.stringify({ subj: !!client && doc.subject === client.subject,
+                      text: !!client && doc.body_text === client.text,
+                      html: !!client && doc.body_html === client.html }));
+  ok('and the content hash is a real SHA-256 of them, not the product name',
+     /^[0-9a-f]{64}$/.test(doc.content_hash || '') && doc.content_hash !== doc.subject,
+     String(doc.content_hash || '').slice(0, 16));
+
+  /* ---- 2. THE FIGURES THE DOCUMENT CARRIED, PRESERVED EXACTLY ---------- */
+  ok('the agreed retainer is stored as agreed, not as the standard',
+     Number(doc.retainer_amount) === 2000, String(doc.retainer_amount));
+  ok('the OWNER-SELECTED non-refundable amount is stored exactly',
+     Number(doc.non_refundable) === 750, String(doc.non_refundable));
+  ok('and never the $500 default it would have resolved to blank',
+     Number(doc.non_refundable) !== 500);
+  const terms = JSON.parse(doc.terms_json || '{}');
+  ok('the engagement terms are stored as rendered, verbatim',
+     Array.isArray(terms.lines) && terms.lines.some(l => l.text === 'NON-REFUNDABLE PORTION: $750'),
+     JSON.stringify((terms.lines || []).map(l => l.text)));
+  /* THE WORDING IS SUBSTANTIVE — a client must not be able to read one
+     four-hour minimum across a three-day case — so it is pinned in the
+     PRESERVED record and not only in today's renderer. */
+  ok('including the per-surveillance-day minimum, in those words',
+     (terms.lines || []).some(l => l.text === '4-HOUR MINIMUM PER SURVEILLANCE DAY'),
+     JSON.stringify((terms.lines || []).map(l => l.text)));
+  ok('and the terms carry only the one bold marker, never a colour or a size',
+     (terms.lines || []).every(l => !l.tone || l.tone === 'term'),
+     JSON.stringify((terms.lines || []).map(l => l.tone || null)));
+
+  /* ---- 3. THE CLIENT'S OWN IDENTITY SURVIVES A PRE-CASE SEND (§5) ------ */
+  ok('the client NAME is on the record even with no case', doc.client_name === 'Vanessa Hart');
+  ok('and so is the phone', doc.client_phone === '(540) 555-0142');
+  ok('the case number is null, because the reference resolved to no case',
+     doc.case_no === null, String(doc.case_no));
+
+  /* ---- 4. THE DOOR CARRIES THE DOCUMENT, AND NOTHING ELSE (§3) --------- */
+  ok('the intake door sent to the client carries the document reference',
+     String(doc.intake_door || '').includes(`ref=${sent.doc_id}`), doc.intake_door);
+  ok('and the URL exposes nothing about the client — no name, no amount, no case',
+     !/vanessa|Hart|2000|750|540/i.test(String(doc.intake_door || '')), doc.intake_door);
+  ok('the door in the record is the door in the email',
+     !!client && client.text.includes(doc.intake_door), doc.intake_door);
+
+  /* ---- 5. THE SAME ATTEMPT SENDS ONCE (§10) ---------------------------- */
+  const before = mails.length;
+  const again = await jsonOf(await call(env, '/sheets/private_retainer/email', {
+    method: 'POST', cookie: admin,
+    body: { to: 'vanessa@example.com', retainer_amount: 2000, non_refundable: 750,
+            include_intake: true, attempt_key: 'att-doc-1' } }));
+  ok('a repeat of the same attempt is accepted and marked a duplicate',
+     again.ok === true && again.duplicate === true, JSON.stringify(again).slice(0, 200));
+  ok('and NOT ONE further email left the building', mails.length === before,
+     `${before} -> ${mails.length}`);
+  ok('it answers with the document that attempt already produced',
+     again.doc_id === sent.doc_id);
+  ok('and no second document row was written',
+     Number((await row('SELECT COUNT(*) n FROM sent_document')).n) === 1);
+
+  /* A DELIBERATE NEW SEND IS A NEW ATTEMPT, and must go. Guarding a retry must
+     never turn into refusing the office's second, intended send. */
+  const second = await jsonOf(await call(env, '/sheets/private_retainer/email', {
+    method: 'POST', cookie: admin,
+    body: { to: 'vanessa@example.com', retainer_amount: 2000, non_refundable: 750,
+            attempt_key: 'att-doc-2' } }));
+  ok('a NEW attempt key sends again and records its own document',
+     second.ok === true && !second.duplicate && second.doc_id !== sent.doc_id,
+     JSON.stringify({ ok: second.ok, dup: second.duplicate }));
+  ok('and the client really did receive that one', mails.length === before + 1);
+
+  /* AN ATTEMPT CLAIMED AND NEVER FINISHED IS INDETERMINATE, not a licence to
+     send again. Planted directly, because that is the only way the state a
+     crashed request leaves behind can be reached. */
+  await env.DB.prepare(
+    'INSERT INTO document_send_attempt (attempt_key, kind, claimed_at) VALUES (?,?,?)')
+    .bind('att-orphan', 'rate_sheet', new Date().toISOString()).run();
+  const midway = mails.length;
+  const orphan = await call(env, '/sheets/private_retainer/email', {
+    method: 'POST', cookie: admin,
+    body: { to: 'vanessa@example.com', attempt_key: 'att-orphan' } });
+  const orphanJson = await jsonOf(orphan);
+  ok('an attempt that was claimed and never recorded is refused BY NAME',
+     orphan.status === 409 && orphanJson.code === 'indeterminate_send',
+     JSON.stringify(orphanJson).slice(0, 200));
+  ok('and it emails nobody rather than guessing', mails.length === midway);
+
+  /* ---- 6. WHAT THE CLIENT SIGNED (§2) --------------------------------- */
+  /* The submission arrives through the PUBLIC ingest carrying the token its
+     own door was issued with — exactly as the intake form sends it. */
+  await ingest(env, { case_no: 'API-DOC-1', client_name: 'Vanessa Hart',
+    client_email: 'vanessa@example.com', subject_name: 'R. Hart',
+    objective: 'Document activity', signed_name: 'Vanessa Hart',
+    signature: 'data:image/png;base64,iVBORw0KGgo=', doc_ref: sent.doc_id });
+  const acc = await row('SELECT * FROM document_acceptance WHERE doc_id = ?', sent.doc_id);
+  ok('the submission is linked to the exact document it came from', !!acc);
+  ok('and the link carries the signature facts as two separate things',
+     acc && acc.signed === 1 && acc.signed_name === 'Vanessa Hart',
+     JSON.stringify(acc || {}));
+  ok('the document learns the case it landed in',
+     (await row('SELECT case_no FROM sent_document WHERE doc_id = ?', sent.doc_id)).case_no
+       === 'API-DOC-1');
+  /* AND THE ANSWER IS READABLE WITHOUT RE-RENDERING ANYTHING. */
+  const read = await jsonOf(await call(env, `/documents/${sent.doc_id}`, { cookie: admin }));
+  ok('reading the document back gives the stored bytes',
+     read.document && read.document.body_text === doc.body_text
+     && read.document.subject === doc.subject);
+  ok('with the acceptance beside it', read.acceptance
+     && read.acceptance.signed === 1 && read.acceptance.case_no === 'API-DOC-1');
+  ok('and the preserved terms, still stating the per-day minimum',
+     (read.document.terms.lines || []).some(l => /PER SURVEILLANCE DAY/.test(l.text)));
+
+  /* NOTHING IS INFERRED. A submission with no token, from the same client, at
+     the same address, links to NOTHING — the `recipientIsCarrier` lesson. */
+  await ingest(env, { case_no: 'API-DOC-2', client_name: 'Vanessa Hart',
+    client_email: 'vanessa@example.com', objective: 'Another matter',
+    signed_name: 'Vanessa Hart' });
+  ok('a submission with no reference links to nothing, however alike it looks',
+     Number((await row('SELECT COUNT(*) n FROM document_acceptance')).n) === 1);
+  /* An invented or stale token manufactures no evidence either. */
+  await ingest(env, { case_no: 'API-DOC-3', client_name: 'Someone Else',
+    objective: 'x', doc_ref: 'DOC-' + 'a'.repeat(32) });
+  ok('and a token that resolves to no document writes no link',
+     Number((await row('SELECT COUNT(*) n FROM document_acceptance')).n) === 1);
+
+  /* ---- 7. THE CASE-SCOPED READ (§12) ---------------------------------- */
+  const cd = await jsonOf(await call(env, '/cases/API-DOC-1/documents', { cookie: admin }));
+  ok('the case lists the document it was quoted', (cd.documents || []).length === 1
+     && cd.documents[0].doc_id === sent.doc_id, JSON.stringify((cd.documents || []).length));
+  ok('with its acceptance summarised on the row',
+     cd.documents[0].accepted && cd.documents[0].accepted.signed === true);
+  ok('and no body in the list — a list does not carry three copies of an email',
+     !('body_text' in cd.documents[0]) && !('body_html' in cd.documents[0]));
+
+  /* ---- 8. THE ROLE BOUNDARY. The paying side is admin-only, and a preserved
+     document is the paying side in full: the client, the retainer and the
+     non-refundable portion are all on it. ---- */
+  const inv = await invite(env, admin,
+    { username: 'docfield', role: 'investigator', display_name: 'Doc Field' });
+  const tok = new URL((await jsonOf(inv)).url, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const field = (await login(env, 'docfield', 'FieldWork2026x')).cookie;
+  ok('an investigator cannot read a preserved document',
+     (await call(env, `/documents/${sent.doc_id}`, { cookie: field })).status === 403);
+  ok('nor a case\'s document list',
+     (await call(env, '/cases/API-DOC-1/documents', { cookie: field })).status === 403);
+  ok('nor resend the office copy',
+     (await call(env, `/documents/${sent.doc_id}/record-copy`,
+       { method: 'POST', cookie: field, body: {} })).status === 403);
+
+  globalThis.fetch = realFetch;
+}
+
+/* ==== THE OFFICE'S COPY CAN FAIL ON ITS OWN, AND BE ASKED FOR AGAIN (§8/§9) */
+section('Client sent, owner copy failed — and the resend that fixes only that');
+{
+  const realFetch = globalThis.fetch;
+  let mails = [];
+  let refuseOffice = false;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      const body = JSON.parse(init.body);
+      /* THE PROVIDER TAKES THE CLIENT'S DOCUMENT AND REFUSES THE OFFICE'S COPY.
+         That exact split is the state §8 exists to make visible, and it cannot
+         be tested by making the provider fail outright. */
+      if (refuseOffice && String(body.to).includes('office@')) {
+        return new Response('{"message":"refused"}', { status: 422 });
+      }
+      mails.push(body);
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await call(env, '/billing-settings', { method: 'POST', cookie: admin,
+    body: { owner_record_email: 'office@alwaysprecise.example' } });
+
+  refuseOffice = true;
+  mails = [];
+  const s = await jsonOf(await call(env, '/sheets/private_retainer/email', {
+    method: 'POST', cookie: admin,
+    body: { to: 'split@example.com', client_name: 'Split Test', non_refundable: 600 } }));
+  ok('the CLIENT is told their document went', s.ok === true && s.sent_to === 'split@example.com');
+  ok('and the office copy is reported as FAILED, not swallowed',
+     s.record_copy === false && !!s.record_reason, JSON.stringify([s.record_copy, s.record_reason]));
+  ok('exactly one message actually left — the client\'s',
+     mails.length === 1 && String(mails[0].to).includes('split@example.com'),
+     JSON.stringify(mails.map(m => String(m.to))));
+  /* THE STATE IS DURABLE. A response the office scrolled past is not an answer
+     to "which of my sends is missing its copy?" — the row has to know. */
+  const stored = await env.DB.prepare('SELECT ok, record_copy, record_reason FROM sent_document WHERE doc_id = ?')
+    .bind(s.doc_id).first();
+  ok('and the document itself records client-sent, copy-failed',
+     stored.ok === 1 && stored.record_copy === 0 && !!stored.record_reason,
+     JSON.stringify(stored));
+  const trail = (await env.DB.prepare('SELECT ok, resend FROM document_record_copy WHERE doc_id = ?')
+    .bind(s.doc_id).all()).results || [];
+  ok('the failure is kept on the trail rather than erased by the next success',
+     trail.length === 1 && trail[0].ok === 0 && trail[0].resend === 0, JSON.stringify(trail));
+
+  /* ---- THE RESEND SENDS THE OFFICE COPY AND NOTHING ELSE (§9) ---------- */
+  refuseOffice = false;
+  mails = [];
+  const re = await jsonOf(await call(env, `/documents/${s.doc_id}/record-copy`,
+    { method: 'POST', cookie: admin, body: {} }));
+  ok('the resend succeeds', re.ok === true && re.resent === true, JSON.stringify(re).slice(0, 200));
+  ok('EXACTLY ONE message left and it went to the OFFICE',
+     mails.length === 1 && String(mails[0].to).includes('office@alwaysprecise.example'),
+     JSON.stringify(mails.map(m => String(m.to))));
+  ok('the client was not emailed again — that is the whole point of the route',
+     !mails.some(m => String(m.to).includes('split@example.com')));
+  ok('and the copy states the amount that was actually sent, read back from the record',
+     /NON-REFUNDABLE PORTION: \$600/.test(mails[0].text), mails[0].text.slice(0, 400));
+  ok('it names the document it is a copy of',
+     mails[0].text.includes(s.doc_id), mails[0].text.slice(0, 300));
+
+  /* NO SECOND CLIENT SEND ROW. The client received one document; the history
+     says one document. */
+  const logs = (await env.DB.prepare("SELECT kind, recipient FROM send_log").all()).results || [];
+  ok('the send history still shows one send, to the client',
+     logs.length === 1 && logs[0].recipient === 'split@example.com', JSON.stringify(logs));
+  const trail2 = (await env.DB.prepare('SELECT ok, resend FROM document_record_copy WHERE doc_id = ? ORDER BY id')
+    .bind(s.doc_id).all()).results || [];
+  ok('and the trail now shows the failure AND the resend that fixed it',
+     trail2.length === 2 && trail2[0].ok === 0 && trail2[1].ok === 1 && trail2[1].resend === 1,
+     JSON.stringify(trail2));
+  const after = await env.DB.prepare('SELECT record_copy FROM sent_document WHERE doc_id = ?')
+    .bind(s.doc_id).first();
+  ok('the document no longer reads as missing its copy', after.record_copy === 1);
+
+  /* A DOCUMENT THAT NEVER REACHED THE CLIENT HAS NO SEND TO FILE A COPY OF. */
+  await env.DB.prepare(
+    `INSERT INTO sent_document (doc_id, kind, recipient, subject, body_text, body_html,
+                                content_hash, ok, sent_at)
+     VALUES (?,?,?,?,?,?,?,0,?)`)
+    .bind('DOC-' + 'b'.repeat(32), 'rate_sheet', 'nope@example.com', 's', 't', 'h', 'x',
+          new Date().toISOString()).run();
+  const dead = await call(env, `/documents/DOC-${'b'.repeat(32)}/record-copy`,
+    { method: 'POST', cookie: admin, body: {} });
+  ok('a document that was never delivered refuses a record copy, by name',
+     dead.status === 409 && (await jsonOf(dead)).code === 'document_not_sent');
+
+  globalThis.fetch = realFetch;
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));

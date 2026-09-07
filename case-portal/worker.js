@@ -397,9 +397,167 @@ async function handleIngest(request, env) {
   if (legal && !(await missingTables(env)).includes('legal_intake')) {
     try { await writeLegalRow(env, caseNo, p, null); } catch { /* payload holds it */ }
   }
+  /* WHICH DOCUMENT THIS SUBMISSION ACCEPTS (§2), when the form carried the
+     token its own door was issued with. Before the alert, because it is part
+     of the record; after the row, because it needs the submission's id. */
+  await linkAcceptance(env, caseNo, p);
   // The case is recorded; telling the office is a courtesy that cannot fail it.
   await notifyAdmins(env, 'intakes', caseNo);
   return json({ ok: true, case_no: caseNo });
+}
+
+/* ==== READING A PRESERVED DOCUMENT (owner brief 2026-09-07 §11/§18) =======
+
+   ADMIN-ONLY, like every other view of what a client was quoted. `redactRow`'s
+   boundary is the reason: this record carries the client's name, their address,
+   the agreed retainer and the non-refundable portion — the paying side, which
+   an investigator is never sent.
+
+   It returns the STORED BYTES. That is the whole point of the unit: "View Rate
+   Sheet" must open the document the client actually received, not whatever
+   today's template would render from today's figures. */
+async function documentRead(env, user, docId) {
+  if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  const miss = await missingTables(env);
+  if (miss.includes('sent_document')) {
+    return json({ error: 'The document record is not set up yet. Run the portal-setup '
+                       + 'workflow, then try again.', code: 'not_set_up' }, 503);
+  }
+  const d = await env.DB.prepare(
+    `SELECT doc_id, kind, sheet_id, send_context, legal_service, case_no, case_ref,
+            client_name, client_email, client_phone, recipient,
+            retainer_amount, non_refundable, flat_fee, terms_json,
+            intake_included, intake_kind, intake_label, intake_door,
+            subject, body_text, body_html, content_hash, ok, detail,
+            record_copy, record_reason, record_at, sent_at
+       FROM sent_document WHERE doc_id = ?`).bind(docId).first();
+  if (!d) return json({ error: 'No such document.' }, 404);
+
+  let terms = null;
+  try { terms = d.terms_json ? JSON.parse(d.terms_json) : null; } catch { terms = null; }
+
+  /* THE ACCEPTANCE, WHEN THERE IS ONE. Absent is a real answer — most documents
+     have not been signed — and it is said as "not linked" rather than drawn as
+     a blank tick. */
+  let acceptance = null;
+  if (!miss.includes('document_acceptance')) {
+    acceptance = await env.DB.prepare(
+      `SELECT a.doc_id, a.case_no, a.submission_id, a.signed_name, a.signed,
+              a.accepted_at, a.linked_at, s.client_name, s.subject_name
+         FROM document_acceptance a
+         LEFT JOIN submissions s ON s.id = a.submission_id
+        WHERE a.doc_id = ? ORDER BY a.id DESC LIMIT 1`).bind(docId).first();
+  }
+  /* AND EVERY ATTEMPT TO PUT THE OFFICE'S COPY IN ITS INBOX, failures kept —
+     that is the state §8 exists to make visible, and a trail of successes only
+     could not show it. */
+  let copies = [];
+  if (!miss.includes('document_record_copy')) {
+    copies = (await env.DB.prepare(
+      `SELECT ok, reason, sent_to, resend, sent_at FROM document_record_copy
+        WHERE doc_id = ? ORDER BY id DESC LIMIT 20`).bind(docId).all()).results || [];
+  }
+  return json({ document: { ...d, terms_json: undefined, terms,
+                            intake_included: !!d.intake_included, ok: !!d.ok,
+                            record_copy: !!d.record_copy },
+                acceptance: acceptance || null, record_copies: copies });
+}
+
+/* EVERY DOCUMENT THIS CASE HAS BEEN SENT — the Client Record strip's own read
+   (§12) and what the intake screen shows as its associated rate sheet (§11).
+   Bodies are deliberately NOT returned here: a list does not need three copies
+   of an email in it, and the one screen that renders a document fetches it by
+   id. Bounded, like every list in this Worker. */
+async function caseDocuments(env, user, caseNo) {
+  if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  const miss = await missingTables(env);
+  if (miss.includes('sent_document')) return json({ documents: [], not_set_up: true });
+  const rows = (await env.DB.prepare(
+    `SELECT doc_id, kind, sheet_id, send_context, legal_service, client_name, recipient,
+            retainer_amount, non_refundable, flat_fee, terms_json,
+            intake_included, intake_kind, intake_label, subject, content_hash,
+            ok, record_copy, record_reason, sent_at
+       FROM sent_document WHERE case_no = ? ORDER BY id DESC LIMIT 50`)
+    .bind(caseNo).all()).results || [];
+  let accepted = new Map();
+  if (rows.length && !miss.includes('document_acceptance')) {
+    /* ONE STATEMENT for the whole page of documents, the Unit 10 rule — a case
+       with forty sends costs what a case with one costs. */
+    const acc = (await env.DB.prepare(
+      `SELECT doc_id, submission_id, signed_name, signed, accepted_at
+         FROM document_acceptance WHERE case_no = ? ORDER BY id`).bind(caseNo).all()).results || [];
+    for (const a of acc) accepted.set(a.doc_id, a);
+  }
+  return json({ documents: rows.map(r => {
+    let terms = null;
+    try { terms = r.terms_json ? JSON.parse(r.terms_json) : null; } catch { terms = null; }
+    const a = accepted.get(r.doc_id) || null;
+    return { ...r, terms_json: undefined, terms,
+             intake_included: !!r.intake_included, ok: !!r.ok,
+             record_copy: !!r.record_copy,
+             accepted: a ? { submission_id: a.submission_id, signed_name: a.signed_name,
+                             signed: !!a.signed, accepted_at: a.accepted_at } : null };
+  }) });
+}
+
+/* ==== RESEND THE OFFICE'S COPY, AND ONLY THAT (§9) ========================
+
+   THE CLIENT IS NOT EMAILED. This route never touches `sendMail` with the
+   client's document — it re-composes the office's internal summary from the
+   STORED record and sends that to the configured business address. There is no
+   parameter by which it could do otherwise, which is stronger than a guard.
+
+   AND IT WRITES NO SECOND SEND-LOG ROW. The client received one document; the
+   history says one document. The resend is recorded in `document_record_copy`
+   with `resend = 1`, which is where the question "what has been tried?" is
+   answered. */
+async function resendRecordCopy(env, user, docId) {
+  if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  const miss = await missingTables(env);
+  if (miss.includes('sent_document')) {
+    return json({ error: 'The document record is not set up yet. Run the portal-setup '
+                       + 'workflow, then try again.', code: 'not_set_up' }, 503);
+  }
+  const d = await env.DB.prepare(
+    `SELECT doc_id, kind, send_context, case_no, case_ref, client_name, client_email,
+            client_phone, recipient, flat_fee, terms_json, intake_included, intake_label,
+            subject, content_hash, ok, sent_at
+       FROM sent_document WHERE doc_id = ?`).bind(docId).first();
+  if (!d) return json({ error: 'No such document.' }, 404);
+  /* A DOCUMENT THAT NEVER REACHED THE CLIENT HAS NO OFFICE COPY TO CHASE. The
+     record of the failed attempt is kept and readable; sending the office a
+     summary headed "sent to the client" about a document that was refused
+     would be this portal's own paperwork asserting something untrue. */
+  if (!d.ok) {
+    return json({ error: 'That document was never delivered to the client, so there is no '
+                       + 'copy of a send to file. Send it again from the rate sheet.',
+                  code: 'document_not_sent' }, 409);
+  }
+  let terms = null;
+  try { terms = d.terms_json ? JSON.parse(d.terms_json) : null; } catch { terms = null; }
+  const rec = await ownerRecordCopy(env, d.kind, {
+    to: d.recipient, client: d.client_name || '', case_no: d.case_no || d.case_ref || '',
+    context: d.send_context || '', version: d.subject || '',
+    doc_id: d.doc_id, content_hash: d.content_hash || '',
+    /* THE TERMS AS THEY WERE SENT, read back from the row rather than
+       re-composed from today's figures — which is the entire reason the row
+       exists. A resend six months later still states the amount the client
+       agreed to, not the amount the standard would produce today. */
+    engagement: terms,
+    flat_fee: d.flat_fee == null ? undefined : d.flat_fee,
+    intake_included: !!d.intake_included,
+    intake_label: d.intake_label || '',
+    resend_of: d.sent_at,
+  });
+  await recordCopyOutcome(env, user, d.doc_id, rec, 1);
+  if (!rec.record_copy) {
+    return json({ error: rec.record_reason === 'not_configured'
+      ? 'No business email is configured for record copies. Add one in Settings under '
+        + 'Billing, then try again.'
+      : 'That copy did not send. The client\'s document is unaffected.',
+      code: rec.record_reason || 'failed', ...rec }, 502);
+  }
+  return json({ ok: true, resent: true, doc_id: d.doc_id, ...rec });
 }
 
 /* ---------------------------------------------------------------- pricing */
@@ -2198,8 +2356,9 @@ async function emailSheet(request, env, user, id) {
      throw, and its outcome rides on the response rather than being swallowed.
      Empty configuration means nothing is sent and this reports why. */
   const rec = await ownerRecordCopy(env, 'rate_sheet', {
-    to, client: recClient, case_no: linkedCase || caseNo || '',
+    to, client: clientName || recClient, case_no: linkedCase || caseNo || '',
     context: sendCtx, version: sheet.name,
+    doc_id: docRec.doc_id || '', content_hash: docRec.content_hash || '',
     /* THE HIGHLIGHTED TERMS, VERBATIM FROM THE DOCUMENT'S OWN BLOCK (owner,
        2026-09-07: "Owner record copy must show the exact same highlighted
        terms and amount"). NOT re-composed from the figures: `engagementBlock`
@@ -4682,6 +4841,59 @@ async function finishSendAttempt(env, key, docId) {
     await env.DB.prepare('UPDATE document_send_attempt SET doc_id = ? WHERE attempt_key = ?')
       .bind(docId, key).run();
   } catch { /* the document row is the record; this only guards the retry */ }
+}
+
+/* WHICH EXACT DOCUMENT THIS CLIENT SIGNED (owner brief 2026-09-07 §2).
+
+   NO ACKNOWLEDGEMENT CHECKBOX WAS ADDED AND NONE MAY BE — the owner's decision
+   stands that the client's existing signature covers the whole document. What
+   was missing was never consent; it was the LINK. The intake carried no
+   reference to the rate sheet that produced it, so "which terms did they agree
+   to?" could only be answered by re-rendering today's template.
+
+   NOTHING IS INFERRED. The link is written only when the submission carries the
+   token its own door was issued with — no name matching, no email matching, no
+   nearest-in-time guess. `recipientIsCarrier` produced four defects in four
+   review rounds doing exactly that, and this project does not do it again. A
+   submission with no token links to nothing, and the screens say so.
+
+   It never throws and never blocks: the public ingest is fire-and-forget by
+   design so a Worker fault can never cost the firm a client, and a link that
+   failed to write is a link, not an intake. */
+async function linkAcceptance(env, caseNo, p) {
+  const ref = String((p && p.doc_ref) || '').trim();
+  if (!/^DOC-[0-9a-f]{32}$/.test(ref)) return;
+  try {
+    if ((await missingTables(env)).includes('document_acceptance')) return;
+    /* THE DOCUMENT HAS TO EXIST. A token that resolves to nothing is a stale or
+       invented reference, and writing a link for it would manufacture evidence
+       that a client signed something the portal never sent. */
+    const doc = await env.DB.prepare('SELECT doc_id FROM sent_document WHERE doc_id = ?')
+      .bind(ref).first();
+    if (!doc) return;
+    const sub = await env.DB.prepare(
+      'SELECT id, created_at FROM submissions WHERE case_no = ?').bind(caseNo).first();
+    if (!sub) return;
+    /* `signed` is whether a signature IMAGE arrived, `signed_name` what they
+       typed. Two different facts, kept apart: a typed name with no drawing and
+       a drawing with no typed name are both real states of the form. */
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO document_acceptance
+         (doc_id, case_no, submission_id, signed_name, signed, accepted_at, linked_at)
+       VALUES (?1,?2,?3,?4,?5,?6,?7)`)
+      .bind(ref, caseNo, sub.id, String((p && p.signed_name) || '').slice(0, 120) || null,
+            p && p.signature ? 1 : 0, sub.created_at || nowIso(), nowIso()).run();
+    /* The document learns the case it landed in. It was sent before the case
+       existed — that is the ordinary path — so `case_no` was null, and leaving
+       it null would keep the send invisible to every case-scoped read. Only
+       ever filled IN, never overwritten: a document already tied to a case
+       cannot be re-pointed at another by a submission quoting its token. */
+    await env.DB.prepare(
+      'UPDATE sent_document SET case_no = ?1 WHERE doc_id = ?2 AND case_no IS NULL')
+      .bind(caseNo, ref).run();
+  } catch (e) {
+    console.error('acceptance link failed', e && e.message ? e.message : e);
+  }
 }
 
 /* THE INTAKE DOOR CARRIES A REFERENCE TO THE DOCUMENT THAT SENT IT (§3).
@@ -15235,6 +15447,14 @@ async function ownerRecordCopy(env, kind, facts) {
        to the office's own paperwork. */
     const rows = [
       ['Document', doc],
+      /* WHICH DOCUMENT, EXACTLY (§4). `Version` used to be the product's
+         display name — "Private Client — $1,500" — which two documents with
+         different non-refundable amounts both wear, so it identified the
+         product and never the content. The id and the content hash identify
+         the bytes; the name stays because it is what a person reads. */
+      ['Document id', f.doc_id || ''],
+      ['Content hash', f.content_hash || ''],
+      ['Resend of the send at', f.resend_of || ''],
       ['Sent to', f.to || ''],
       ['Client', f.client || ''],
       ['Case', f.case_no || ''],
@@ -18974,6 +19194,12 @@ async function route(request, env) {
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/workspace$/);
   if (m && method === 'GET') return caseWorkspace(env, user, m[1]);
 
+  /* WHAT THIS CASE HAS BEEN SENT (§11/§12). A read, so it stays open on a
+     deleted or archived case for the same reason the timeline does — an admin
+     has to be able to see what went out before deciding what to do about it. */
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/documents$/);
+  if (m && method === 'GET') return caseDocuments(env, user, m[1]);
+
   /* THE TIMELINE IS A READ, and reads stay open on a deleted or archived case
      on purpose: an admin has to be able to see what happened before deciding
      whether to put one back. `caseTimeline` re-checks the caller through
@@ -19193,6 +19419,18 @@ async function route(request, env) {
   if (p === '/sends' && method === 'GET') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return sendHistory(request, env);
+  }
+
+  /* THE PRESERVED DOCUMENTS (owner brief 2026-09-07). Addressed by their own
+     id, so a case number is not in the path — the deleted/archived chokepoint
+     matches `/cases|submissions|leads/:no/`, and these are reads plus one
+     office-only resend, neither of which touches a case's record. The
+     admin gate is inside each handler, beside the reason for it. */
+  {
+    const m = p.match(/^\/documents\/(DOC-[0-9a-f]{32})$/);
+    if (m && method === 'GET') return documentRead(env, user, m[1]);
+    const r = p.match(/^\/documents\/(DOC-[0-9a-f]{32})\/record-copy$/);
+    if (r && method === 'POST') return resendRecordCopy(env, user, r[1]);
   }
 
   // Active Surveillance Mode: resume-anywhere for whoever is asking, and the
