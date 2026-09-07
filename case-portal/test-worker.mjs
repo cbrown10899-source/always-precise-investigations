@@ -17840,6 +17840,21 @@ section('API Assistant — Unit 5: rate-sheet preparation, preview, SIMULATE');
      'insurance_assignment',
      { to: 'pin-c@example.com', include_payment: true, methods: ['mail_check'] }],
   ];
+  /* THE ONE FIELD A PREVIEW CANNOT MATCH BYTE FOR BYTE, and it is honest to
+     say so rather than to weaken the pin around it. A real send stamps the
+     intake door with its own `ref=DOC-…` — 128 bits minted for THAT send, which
+     is what later answers "which exact document did this client sign". Two
+     sends of the same sheet differ there by construction, so a rehearsal cannot
+     reproduce it and must not invent one: a preview showing a reference that
+     will never exist is the portal asserting something untrue.
+     So the pin compares the documents with that one field normalised out, and
+     a SEPARATE assertion below states what each side carries.
+     The reference is always APPENDED to a door that already carries a query
+     (`?assignment=…`), so it is always `&ref=…` and removing the whole segment
+     leaves a valid URL. Rewriting it to a placeholder instead would not have
+     worked: the rehearsal has no reference at all, so the two only agree once
+     the field is gone from both. */
+  const noRef = t => String(t == null ? '' : t).replace(/[?&]ref=DOC-[0-9a-f]+/g, '');
   for (const [what, id, body] of shapes) {
     mailed = null;
     const r = await jsonOf(await real(id, body));
@@ -17847,9 +17862,25 @@ section('API Assistant — Unit 5: rate-sheet preparation, preview, SIMULATE');
     const p = await jsonOf(await prep({ id, ...body }));
     ok(`PIN — ${what}: the rehearsal's subject and body EQUAL the real send's`,
        r.ok === true && sent && p.dry_run === true
-       && p.subject === sent.subject && p.body_text === sent.text,
+       && p.subject === sent.subject && noRef(p.body_text) === noRef(sent.text),
        JSON.stringify({ real_subj: sent && sent.subject, prep_subj: p.subject,
-         same_body: !!(sent && p.body_text === sent.text) }).slice(0, 300));
+         same_body: !!(sent && noRef(p.body_text) === noRef(sent.text)),
+         diff: (() => { const a = noRef(sent ? sent.text : ''), b = noRef(p.body_text || '');
+           let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++;
+           return [a.slice(Math.max(0,i-60), i+60), b.slice(Math.max(0,i-60), i+60)]; })()
+       }).slice(0, 900));
+    /* AND THE DIFFERENCE IS EXACTLY THAT ONE FIELD — asserted, not assumed.
+       A real send that stopped stamping its door would fail here, and so would
+       a rehearsal that started inventing a reference. */
+    if (body.include_intake) {
+      const realRefs = (sent.text.match(/ref=DOC-[0-9a-f]{32}/g) || []);
+      ok(`…and only the real send carries a document reference (${what})`,
+         realRefs.length >= 1 && !/ref=DOC-/.test(p.body_text || ''),
+         JSON.stringify({ real: realRefs.length, prep: /ref=DOC-/.test(p.body_text || '') }));
+      ok(`…and it is the id the send recorded (${what})`,
+         !!r.doc_id && realRefs.every(x => x === `ref=${r.doc_id}`),
+         JSON.stringify({ doc_id: r.doc_id, refs: realRefs.slice(0, 2) }));
+    }
     ok(`…and the resolution facts match — context, sheet, inclusions`,
        p.send_context === r.send_context && p.sheet === r.sheet
        && JSON.stringify(p.included) === JSON.stringify(r.included),
