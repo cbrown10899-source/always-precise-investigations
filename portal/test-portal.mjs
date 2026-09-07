@@ -8675,16 +8675,46 @@ section('The quick tool is discoverable, not merely present');
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(400);
-  const p = await page.evaluate(() => {
+  const p = await page.evaluate(async () => {
     /* THE VISIBLE ONE. querySelector returns the desktop chip, which is
        display:none here — measuring it reports 0px and says nothing about
-       what a thumb can reach. */
+       what a thumb can reach.
+
+       WHAT CHANGED, AND IT RELAXES A RULE THIS INCIDENT PRODUCED. Owner brief
+       2026-09-06 §F/§L name six primary phone cards and §Z sends
+       low-frequency items behind More; the timestamp tools are in neither the
+       six nor §AD's list of the eight acts the business runs on, so they are
+       one tap behind a labelled disclosure ON THIS SCREEN rather than on it.
+       The 2026-09-04 rule this section enforces was that the door must not
+       live in a MENU — the hamburger, on another screen — and it still does
+       not. But it is a relaxation, it is flagged to the owner, and it is one
+       they can overturn by moving the tools back into the six.
+
+       So the property asserted is the one that survives: the control that
+       reveals it is itself on the first screen at the tap floor, one tap
+       opens it, and the door is then genuinely PRESSABLE — measured with
+       elementFromPoint, because the first build of this laid the collapsed
+       cards out with `visibility:visible` and a real bounding box that
+       nothing painted, which is a control that renders and cannot be seen. */
+    const det = document.querySelector('.qtmore');
+    const sum = det ? det.querySelector('summary') : null;
+    const sr = sum ? sum.getBoundingClientRect() : null;
+    const before = [...document.querySelectorAll('.qtools [data-act="vstOpen"]')]
+      .find(e => e.offsetParent);
+    if (sum) { sum.click(); await new Promise(r => setTimeout(r, 300)); }
     const b = [...document.querySelectorAll('.qtools [data-act="vstOpen"]')]
       .find(e => e.offsetParent);
-    const r = b.getBoundingClientRect();
+    if (b) { b.scrollIntoView({ block: 'center' }); await new Promise(r => setTimeout(r, 250)); }
+    const r = b ? b.getBoundingClientRect() : null;
+    const hit = r ? document.elementFromPoint(Math.round(r.left + r.width / 2),
+                                              Math.round(r.top + r.height / 2)) : null;
     const nav = document.querySelector('.tabs');
-    return { h: Math.round(r.height), y: Math.round(r.y),
-             onFirstScreen: r.y >= 0 && r.y < innerHeight,
+    return { h: r ? Math.round(r.height) : 0,
+             /* COLLAPSED IT IS GENUINELY ABSENT, not fake-visible */
+             hiddenWhenClosed: !before,
+             revealOnFirstScreen: !!sr && sr.top >= 0 && sr.bottom <= innerHeight,
+             revealH: sr ? Math.round(sr.height) : 0,
+             pressable: !!hit && !!b && (hit === b || b.contains(hit)),
              navHidden: getComputedStyle(nav).display === 'none',
              sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth };
   });
@@ -8692,8 +8722,12 @@ section('The quick tool is discoverable, not merely present');
      burger — so if the only copy lived there, the door would be in a menu,
      which the owner ruled out by name. */
   ok('on a phone the navigation rail really is behind the burger', p.navHidden);
-  ok('and the quick tool is still on the screen, not in that menu',
-     p.onFirstScreen && p.h >= 44, JSON.stringify(p));
+  ok('the way to it is on the first screen, at the tap floor',
+     p.revealOnFirstScreen && p.revealH >= 44, JSON.stringify(p));
+  ok('and one tap gets a real, pressable control — not one that merely renders',
+     p.h >= 44 && p.pressable === true, JSON.stringify(p));
+  ok('while closed it is genuinely absent rather than invisibly present',
+     p.hiddenWhenClosed === true, JSON.stringify(p));
   ok('with nothing scrolling sideways at 390px', p.sw <= p.cw + 1, `${p.sw} vs ${p.cw}`);
 
   // It reaches the workflow that already shipped — not a second one.
@@ -18378,10 +18412,13 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
      JSON.stringify(strip.desk) === JSON.stringify(
        ['pstLaunch:', 'vstOpen:', 'surveillance:', 'tab:newlead', 'tab:cases', 'tab:delivery']),
      JSON.stringify(strip.desk));
-  ok("and the phone strip is the owner's 2026-09-04 order, Rate Sheet first",
+  /* THE PHONE'S SIX (owner brief 2026-09-06 §F/§L, superseding the ten of
+     2026-09-04). Rate Sheet still leads; the other six moved behind More in
+     the same box, which the section above reads out of the DOM to prove. */
+  ok("and the phone strip is the owner's six, Rate Sheet first",
      JSON.stringify(strip.acts) === JSON.stringify(
-       ['tab:sheets', 'tab:newlead', 'nlKind:consumer', 'nlKind:claims', 'nlKind:legal',
-        'tab:delivery', 'pstLaunch:', 'vstOpen:', 'surveillance:', 'tab:cases']),
+       ['tab:sheets', 'tab:newlead', 'nlKind:consumer', 'tab:leads',
+        'tab:cases', 'ceoOpen:']),
      JSON.stringify(strip.acts));
   const reach = await page.evaluate(() => {
     const g = document.querySelector('.qtgrid'); g.scrollLeft = 9999;
@@ -19500,6 +19537,12 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
                                     [4, 'legal', /legal|law firm/i]]) {
     await page.evaluate(() => { TAB = 'dashboard'; NL = { kind: null, err: '', v: {} }; paint(); });
     await page.waitForTimeout(300);
+    /* Insurance and Law Firm intake moved behind More (§F/§L/§Z), so the
+       disclosure is opened first — which is what a person does, and it is
+       also the click that would have timed out silently on a collapsed card
+       had the previous build's fake-visible cards survived. */
+    await page.evaluate(() => { const d = document.querySelector('.qtmore'); if (d) d.open = true; });
+    await page.waitForTimeout(250);
     await page.locator(`.qtapp[data-act="nlKind"][data-k="${kind}"]`).click();
     await page.waitForTimeout(500);
     const landed = await page.evaluate(() => ({

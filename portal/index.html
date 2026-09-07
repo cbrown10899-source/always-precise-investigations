@@ -2673,7 +2673,19 @@
     .qtools-l{display:none;}
     .qtbox{display:block;margin-top:0;}
     .qtools .qtapps{display:grid;}
-    /* §Z — More is a disclosure, not a second strip. Closed it costs one row. */
+    /* §Z — More is a disclosure, not a second strip. Closed it costs one row.
+
+       `.qtmore:not([open]) .qtapps{display:none}` IS LOAD-BEARING, and it is
+       here because leaving it out produced a real defect rather than an
+       untidy one. `.qtools .qtapps{display:grid}` out-specifies the browser's
+       own hiding of closed `<details>` content, so the collapsed cards laid
+       out below the summary, reported `visibility:visible` and a real
+       bounding box at y=924 — and `elementFromPoint` at their own centre
+       returned NOTHING, because they were never painted. Controls that
+       measure as visible and cannot be pressed: the Timestamp Video
+       visibility incident in a new costume, and a Playwright click on one
+       times out, which is exactly what a thumb would do. */
+    .qtmore:not([open]) .qtapps{display:none;}
     .qtmore{margin-top:10px;}
     .qtmore summary{min-height:44px;display:flex;align-items:center;cursor:pointer;
       font-weight:800;font-size:.84rem;color:var(--navy-2);}
