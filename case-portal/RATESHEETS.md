@@ -300,12 +300,33 @@ label and the selector's opening choice, so any reorder would silently move
 which figure is called standard. `RETAINER_STANDARD` is separate now.
 `PERSONAL.retainer` is unchanged and is still the standard figure.
 
-### D6 — the colours are measured
+### D6 — the colours were measured, and then the owner removed them
 
-On the block's `--paper` ground: red `--bad` **4.73:1**, gold `--gold-ink`
-**5.84:1**. On `--neutral-bg` the red is **4.30** and would fail AA. The suite
-computes both ratios in the browser. Do not move this onto a darker ground
-without re-measuring.
+**SUPERSEDED 2026-09-07 BY THE OWNER, AFTER FOUR ROUNDS OF ASKING FOR LESS.**
+The final instruction is exact: *"NON-REFUNDABLE PORTION: $X = bold only,
+4-HOUR MINIMUM PER SURVEILLANCE DAY = bold only, same font size as surrounding
+rate-sheet text, no bigger text, no alert color treatment, no warning box feel,
+no extra emphasis beyond bold."* `tone` now has one value, `term`, and it means
+bold; `.eng-l` lost its blanket bold in the same edit so the two named terms
+are the only bold thing in the block.
+
+**The original measurement stays on the record and it was not wrong.** On the
+block's `--paper` ground the red `--bad` was **4.73:1** and the gold
+`--gold-ink` **5.84:1**; on `--neutral-bg` the red is **4.30** and would have
+failed AA, which is why that ground was chosen. Keep those figures for the day
+a ground is wanted again — and read them as what they are. **The treatment
+cleared AA and was still wrong**: how loud a term should be is a product
+decision, not a contrast one, and the client was reading a warning where the
+sheet states a term.
+
+What the suite computes now is agreement rather than a ratio: the terms' size
+against a real `.rs-l` label on the same card, their ink against the plain
+retainer line in the same block, the block's ground against the card it sits
+on, and no border on **any** side — a rail is a `border-left`, so measuring one
+side is how a rail comes back on another. The emailed copy is asserted over the
+bytes that were sent, because an email cannot read a CSS variable and those two
+colours were literals in that template. The office's record copy carries the
+same treatment, not a louder one.
 
 ### D7 — there is no rate-sheet PDF, and none was invented
 

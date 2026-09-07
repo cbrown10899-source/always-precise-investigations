@@ -1307,14 +1307,23 @@ section('The private sheet states its minimum per surveillance day, and the offi
   ok('the sheet body says it the same way',
      /minimum per surveillance day/i.test(JSON.stringify(priv.lines)),
      JSON.stringify(priv.lines.map(l => l.sub)));
-  /* THE TWO HIGHLIGHTED TERMS ARE TONED, and the tones are the owner's: red
-     on the money, gold on the minimum. The colours themselves are measured in
-     the page suite against their painted ground; here it is the MARKER. */
+  /* THE TWO STATED TERMS CARRY THE ONE MARKER THERE IS, AND NOTHING ELSE
+     DOES. `term` means bold and only bold (owner, 2026-09-07); the weight
+     itself is measured in the page suite against a real neighbouring line.
+     What matters here is that the marker is on exactly the two lines the
+     owner named — a third toned line would put the retainer figure in the
+     same voice as the terms and make bold mean nothing. */
   const nrLine = priv.engagement.lines.find(l => /NON-REFUNDABLE PORTION/.test(l.text));
   const minLine = priv.engagement.lines.find(l => /MINIMUM PER SURVEILLANCE DAY/.test(l.text));
-  ok('both terms carry a highlight tone, and they are not the same one',
-     nrLine.tone === 'alert' && minLine.tone === 'emphasis',
+  const retLine = priv.engagement.lines.find(l => /^Retainer:/.test(l.text));
+  ok('both terms carry the one marker, and it is the same one for both',
+     nrLine.tone === 'term' && minLine.tone === 'term',
      JSON.stringify([nrLine.tone, minLine.tone]));
+  ok('the retainer line beside them carries none, so bold says something',
+     !retLine.tone, JSON.stringify(retLine));
+  ok('and NO line asks for a colour, a size or a box — bold is the whole treatment',
+     priv.engagement.lines.every(l => !l.tone || l.tone === 'term'),
+     JSON.stringify(priv.engagement.lines.map(l => l.tone || null)));
 
   /* ---- LEGAL AND INSURANCE ARE UNTOUCHED, WHICH THE BRIEF REQUIRES ------ */
   ok('the insurance sheet gains no per-day private wording',
@@ -1366,6 +1375,17 @@ section('The private sheet states its minimum per surveillance day, and the offi
      toOffice && toOffice.text.slice(0, 600));
   ok('and never a stale default beside them',
      !!toOffice && !/\$500/.test(toOffice.text), toOffice && toOffice.text.slice(0, 600));
+  /* AND THE SAME EMPHASIS, which is the half the owner named on 2026-09-07:
+     "update both the client-facing rate sheet and the owner/email copy." The
+     record copy used to arrive with EVERY term line bold, so the office's own
+     paperwork shouted three lines where the client's document states one
+     figure and bolds two terms. Asserted over the HTML that was sent. */
+  ok('the office copy bolds the two terms and leaves the retainer line plain',
+     !!toOffice
+       && /font-weight:700">NON-REFUNDABLE PORTION: \$750</.test(toOffice.html)
+       && /font-weight:700">4-HOUR MINIMUM PER SURVEILLANCE DAY</.test(toOffice.html)
+       && /<div style="margin-top:4px">Retainer: \$2,000</.test(toOffice.html),
+     toOffice && toOffice.html.slice(-500));
 
   /* ---- A BLANK BOX IS NOT AN ABSENT FIGURE ----------------------------- */
   mails = [];
@@ -19996,13 +20016,28 @@ section('The private rate sheet carries a non-refundable portion, from one sourc
      screen.non_refundable === 750 && privCard.non_refundable === 750);
   ok('and the card carries the exact client-facing statement the email carries',
      privCard.engagement.lines.some(l => l.text === 'NON-REFUNDABLE PORTION: $750'
-       && l.tone === 'alert'),
+       && l.tone === 'term'),
      JSON.stringify(privCard.engagement.lines));
   ok('the screen also states what a blank box would mean, so the page holds no default',
      screen.non_refundable_default === 500);
-  ok('the block says the minimum out loud, and marks it for the gold treatment',
+  ok('the block says the minimum out loud, and marks it to be bolded like the money',
      privCard.engagement.lines.some(l => /4-HOUR MINIMUM PER SURVEILLANCE DAY/.test(l.text)
-       && l.tone === 'emphasis'));
+       && l.tone === 'term'));
+  /* ---- THE EMAIL IS THE DOCUMENT, so the calm-down has to reach it. The
+     owner asked for bold and nothing else on 2026-09-07; the previous
+     rendering put the two terms in #c14133 and #7a5a12 inside a boxed rail,
+     and an email cannot read a CSS variable so those values were literals in
+     the template. Asserted over the BYTES that were sent. ---- */
+  const engBox = (mailed.html.match(
+    /<div style="margin:0 0 18px">[\s\S]*?non-refundable upon engagement[\s\S]*?<\/div>/) || [''])[0];
+  ok('the emailed engagement block is a plain block — no box, no rail, no ground',
+     engBox !== '' && !/background|border|border-radius|padding/.test(engBox), engBox.slice(0, 160));
+  ok('and it introduces no colour and no size of its own on the terms',
+     !/#c14133|#7a5a12|color:#12305a|font-size:1\.05rem|letter-spacing/.test(engBox));
+  ok('the two terms are emailed bold and the retainer line beside them is not',
+     /font-weight:700">NON-REFUNDABLE PORTION: \$750</.test(engBox)
+     && /font-weight:700">4-HOUR MINIMUM PER SURVEILLANCE DAY</.test(engBox)
+     && /<div style="margin:0 0 5px;">Retainer: \$1,500</.test(engBox), engBox.slice(0, 400));
   ok('and it carries the owner\'s supporting sentence, with no percentage or formula',
      /non-refundable upon engagement and reservation of investigative services/
        .test(privCard.engagement.note)

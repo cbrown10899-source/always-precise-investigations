@@ -1009,34 +1009,43 @@ section('Rate sheets');
   ok('its confirmation line is its own', has(sheet, 'Your case. Your authorization.'));
   ok('the send wizard is the one door out', await page.locator('.btn', { hasText: 'Send this sheet' }).count() === 1);
 
-  /* ==== THE NON-REFUNDABLE PORTION (owner brief 2026-09-05) ================
-     The owner's display rule is exact — three statements, one red, one gold,
-     no percentage and no formula — so the COLOURS are measured rather than
-     assumed present, and the absence of a percentage is asserted as such. */
+  /* ==== THE NON-REFUNDABLE PORTION (owner brief 2026-09-05, restyled by the
+     owner 2026-09-07) =======================================================
+     BOLD ONLY. "Same font size as surrounding rate-sheet text, no bigger
+     text, no alert color treatment, no warning box feel, no extra emphasis
+     beyond bold." So every clause of that is measured, and each against a
+     REAL NEIGHBOUR rather than against a number typed here: the size against
+     a `.rs-l` label on the same card, the colour against the plain retainer
+     line in the same block, the ground against the card the block sits on.
+     A hard-coded 16px would pass on a page whose body size had changed. */
   const eng = await page.evaluate(() => {
     const box = document.querySelector('.rs-eng');
     if (!box) return null;
     const px = el => getComputedStyle(el);
-    const alert = box.querySelector('.eng-alert');
-    const emph = box.querySelector('.eng-emph');
-    const lum = c => {
-      const m = c.match(/\d+/g).slice(0, 3).map(Number)
-        .map(v => v / 255).map(v => v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
-      return 0.2126 * m[0] + 0.7152 * m[1] + 0.0722 * m[2];
-    };
-    const ratio = (a, b) => {
-      const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
-      return Math.round(((hi + 0.05) / (lo + 0.05)) * 100) / 100;
-    };
-    const ground = px(box).backgroundColor;
+    const terms = [...box.querySelectorAll('.eng-term')];
+    const plain = [...box.querySelectorAll('.eng-l')].filter(e => !e.classList.contains('eng-term'));
+    const neighbour = box.closest('.card, .sheet-card, .panel') || box.parentElement;
+    const label = neighbour.querySelector('.rs-l');
+    const bs = px(box);
     return {
       text: box.innerText,
       lines: [...box.querySelectorAll('.eng-l')].map(e => e.innerText),
-      alertColor: alert ? px(alert).color : null,
-      emphColor: emph ? px(emph).color : null,
-      alertRatio: alert ? ratio(px(alert).color, ground) : null,
-      emphRatio: emph ? ratio(px(emph).color, ground) : null,
-      alertWeight: alert ? px(alert).fontWeight : null,
+      termCount: terms.length,
+      termSizes: terms.map(e => parseFloat(px(e).fontSize)),
+      termWeights: terms.map(e => Number(px(e).fontWeight)),
+      termColors: terms.map(e => px(e).color),
+      termSpacing: terms.map(e => px(e).letterSpacing),
+      plainSize: plain.length ? parseFloat(px(plain[0]).fontSize) : null,
+      plainWeight: plain.length ? Number(px(plain[0]).fontWeight) : null,
+      plainColor: plain.length ? px(plain[0]).color : null,
+      labelSize: label ? parseFloat(px(label).fontSize) : null,
+      /* THE BOX ITSELF must have stopped being a box. */
+      boxBg: bs.backgroundColor,
+      boxBorder: [bs.borderTopWidth, bs.borderRightWidth,
+                  bs.borderBottomWidth, bs.borderLeftWidth].map(parseFloat),
+      boxPadding: [bs.paddingTop, bs.paddingRight,
+                   bs.paddingBottom, bs.paddingLeft].map(parseFloat),
+      cardBg: px(neighbour).backgroundColor,
       overflow: document.documentElement.scrollWidth > window.innerWidth,
     };
   });
@@ -1045,16 +1054,40 @@ section('Rate sheets');
      eng.lines.length === 3 && /^Retainer: \$1,500$/.test(eng.lines[0])
      && /^NON-REFUNDABLE PORTION: \$500$/.test(eng.lines[1])
      && /^4-HOUR MINIMUM PER SURVEILLANCE DAY$/.test(eng.lines[2]), JSON.stringify(eng.lines));
-  ok('the non-refundable portion is red and bold',
-     eng.alertColor === 'rgb(193, 65, 51)' && Number(eng.alertWeight) >= 700,
-     `${eng.alertColor} / ${eng.alertWeight}`);
-  ok('the minimum is gold', eng.emphColor === 'rgb(122, 90, 18)', eng.emphColor);
-  /* MEASURED, NOT ASSUMED. A prominent statement that fails AA is worse than a
-     quiet one: it is loud and unreadable. On --neutral-bg the red is 4.30 and
-     would have shipped exactly that. */
-  ok(`both tones clear AA on the block's own ground (red ${eng.alertRatio}, gold ${eng.emphRatio})`,
-     eng.alertRatio >= 4.5 && eng.emphRatio >= 4.5,
-     `${eng.alertRatio} / ${eng.emphRatio}`);
+  ok('exactly the two named terms are marked, and nothing else in the block is',
+     eng.termCount === 2, String(eng.termCount));
+  ok('both terms are bold', eng.termWeights.every(w => w >= 700),
+     JSON.stringify(eng.termWeights));
+  /* THE RETAINER LINE IS THE CONTROL. It lost its own bold in this change, and
+     that is the half that makes bold mean anything: three bold lines with two
+     of them bolder is the "everything is loud" the owner was reading. */
+  ok('and the retainer line beside them is NOT — bold is what says "term"',
+     eng.plainWeight !== null && eng.plainWeight < 700, String(eng.plainWeight));
+  ok(`the terms are the same size as the plain line beside them (${eng.termSizes.join('/')}px)`,
+     eng.termSizes.every(v => Math.abs(v - eng.plainSize) < 0.51),
+     `${JSON.stringify(eng.termSizes)} vs ${eng.plainSize}`);
+  ok(`and the same size as the sheet's own row labels (${eng.labelSize}px)`,
+     eng.labelSize !== null && eng.termSizes.every(v => Math.abs(v - eng.labelSize) < 0.51),
+     `${JSON.stringify(eng.termSizes)} vs ${eng.labelSize}`);
+  /* "NO ALERT COLOR TREATMENT" measured as identity with the plain line rather
+     than as "not red": a term recoloured to any second colour fails this, which
+     is the class the owner was refusing, not one hex. */
+  ok('no term carries a colour of its own — all three lines are one ink',
+     eng.termColors.every(c => c === eng.plainColor),
+     `${JSON.stringify(eng.termColors)} vs ${eng.plainColor}`);
+  ok('and no term is letterspaced apart from the text around it',
+     eng.termSpacing.every(v => v === 'normal' || parseFloat(v) === 0),
+     JSON.stringify(eng.termSpacing));
+  /* "NO WARNING BOX FEEL": the block is not a surface. It sits on the card's
+     own ground with no border and no rail — a rail is a border-left width, so
+     measuring all four sides catches it whichever side it comes back on. */
+  ok('the block has no border and no rail on any side',
+     eng.boxBorder.every(v => v === 0), JSON.stringify(eng.boxBorder));
+  ok('it has no ground of its own — it is the card it sits on',
+     eng.boxBg === eng.cardBg || eng.boxBg === 'rgba(0, 0, 0, 0)',
+     `${eng.boxBg} vs ${eng.cardBg}`);
+  ok('and it is not inset like a panel', eng.boxPadding.every(v => v === 0),
+     JSON.stringify(eng.boxPadding));
   ok('it carries the supporting sentence',
      has(eng.text, 'non-refundable upon engagement and reservation of investigative services'));
   ok('and shows NO percentage and no arithmetic — the owner\'s own rule',
@@ -17609,14 +17642,22 @@ section('The send wizard offers the non-refundable amount, on Private only');
     return { lines: [...box.querySelectorAll('.eng-l')].map(e => e.innerText),
              insidePanel: r.left >= panel.left - 1 && r.right <= panel.right + 1,
              overflow: document.documentElement.scrollWidth > window.innerWidth,
-             alertPx: parseFloat(getComputedStyle(box.querySelector('.eng-alert')).fontSize) };
+             termPx: [...box.querySelectorAll('.eng-term')]
+               .map(e => parseFloat(getComputedStyle(e).fontSize)),
+             plainPx: parseFloat(getComputedStyle(
+               [...box.querySelectorAll('.eng-l')].find(e => !e.classList.contains('eng-term'))
+             ).fontSize) };
   });
   ok('the block draws on a phone, with all three statements', phone && phone.lines.length === 3,
      JSON.stringify(phone && phone.lines));
   ok('it stays inside the card it belongs to', phone.insidePanel === true);
   ok('and the page does not scroll sideways at 390px', phone.overflow === false);
-  ok('the red statement is not shrunk below body size on a phone',
-     phone.alertPx >= 15, String(phone.alertPx));
+  /* ON A PHONE THE RULE IS THE SAME RULE. The terms may not grow to shout and
+     may not shrink to hide: the only number they are allowed to be is the one
+     the line beside them is. */
+  ok(`the terms are body size on a phone, exactly like the line beside them (${phone.termPx.join('/')}px)`,
+     phone.termPx.length === 2 && phone.termPx.every(v => Math.abs(v - phone.plainPx) < 0.51),
+     `${JSON.stringify(phone.termPx)} vs ${phone.plainPx}`);
 
   /* THE CARD IS ALREADY OPEN — `openSheet` TOGGLES, so calling openWiz here
      would shut it and leave no Send button to press. The existing rate-sheet

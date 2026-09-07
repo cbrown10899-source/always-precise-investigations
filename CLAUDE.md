@@ -658,11 +658,11 @@ Three things this found, which is the point of auditing rather than assuming:
 
 ## The private retainer has a non-refundable portion, and one function knows it
 
-Owner brief 2026-09-05, wording corrected by the owner 2026-09-07. The private
-rate sheet states three things to the client — the retainer, the
-**NON-REFUNDABLE PORTION** in red, and the **4-HOUR MINIMUM PER SURVEILLANCE
-DAY** in gold — plus one supporting sentence. **No percentage and no formula**,
-by the owner's own display rule.
+Owner brief 2026-09-05, wording and styling both corrected by the owner
+2026-09-07. The private rate sheet states three things to the client — the
+retainer, the **NON-REFUNDABLE PORTION**, and the **4-HOUR MINIMUM PER
+SURVEILLANCE DAY** — plus one supporting sentence. **No percentage and no
+formula**, by the owner's own display rule.
 
 **"PER SURVEILLANCE DAY" IS SUBSTANTIVE, NOT COSMETIC.** The old wording —
 *4-HOUR MINIMUM REQUIRED* — let a client read ONE four-hour minimum across a
@@ -745,13 +745,43 @@ standard. `RETAINER_STANDARD` is its own name now — **a list's ORDER is a
 display decision; which figure is standard is a pricing fact**, and the two must
 not be the same expression. `PERSONAL.retainer` in the Worker is unchanged.
 
-**The two colours were measured, not picked.** On the block's `--paper` ground
-the red (`--bad`) is **4.73:1** and the gold (`--gold-ink`) **5.84:1**, both
-clear of AA. On `--neutral-bg` — the obvious first choice — the red is **4.30**
-and would have shipped a *prominent* statement that fails the line, which is
-worse than a quiet one. The suite measures both ratios in the browser rather
-than asserting a colour name. Do not restyle this onto a darker ground without
-re-running that.
+**THE TWO TERMS ARE BOLD AND NOTHING ELSE — OWNER, 2026-09-07, AFTER FOUR
+ROUNDS OF ASKING FOR LESS.** *"NON-REFUNDABLE PORTION: $X = bold only,
+4-HOUR MINIMUM PER SURVEILLANCE DAY = bold only, same font size as surrounding
+rate-sheet text, no bigger text, no alert color treatment, no warning box feel,
+no extra emphasis beyond bold."*
+
+It shipped as a red statement and a gold one, at 1.05rem, inside a `--paper`
+box with a 4px `--bad` rail. **Those colours were measured and they cleared
+AA** — red 4.73:1 and gold 5.84:1 on that ground, against 4.30 for the red on
+`--neutral-bg`, which is why the ground was chosen. The treatment was legible
+and it was still wrong: **how loud a term should be is a product decision, not
+a contrast one**, and a client was reading a warning where the sheet states a
+term. Keep that measurement on the record — it is the reason not to reach for
+`--neutral-bg` if a ground is ever wanted again — but do not read it as
+licence to put the colours back.
+
+**`tone` now has ONE value, `term`, and it means bold.** `.eng-l` deliberately
+lost its blanket `font-weight:700` in the same edit: bolding all three lines
+and then bolding two of them harder is exactly how "highlight these two terms"
+became a sheet where nothing was quiet. **The retainer line is the control the
+suite measures against** — the terms are asserted bold *and* that line asserted
+not-bold, because bold only says "term" while something beside it is not.
+
+**Nothing is asserted as a colour name or a pixel count.** The terms are
+measured against a REAL neighbour: their size against a `.rs-l` label on the
+same card, their ink against the plain line in the same block, the block's
+ground against the card it sits on. A hard-coded 16px would pass on a page
+whose body size had changed. The block itself is asserted to have no border on
+**any** side (a rail is a border-left, and measuring one side is how a rail
+comes back on another), no padding and no ground of its own — and the emailed
+copy is asserted over the bytes that were sent, because an email cannot read a
+CSS variable and those two colours were literals in that template.
+
+**The office's record copy carries the same treatment**, not a louder one: the
+tone rides into `ownerRecordCopy` so only the two named terms are bold there
+too. A record copy that shouted what the client's copy states plainly would be
+the office's own paperwork disagreeing with the document it records.
 
 **There is no rate-sheet PDF or print path in this portal, and none was
 invented.** The brief listed one; the document is the EMAIL. Print regions

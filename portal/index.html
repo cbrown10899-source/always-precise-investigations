@@ -442,18 +442,28 @@
   /* THE ENGAGEMENT TERMS (owner brief 2026-09-05): three statements and a
      sentence — no percentage and no formula, which is the owner's own display
      rule. The WORDS come from the Worker so the card, the email's text part
-     and its HTML part cannot say different things; this decides colour only.
+     and its HTML part cannot say different things; this decides weight only.
 
-     THE GROUND IS `--paper`, AND IT WAS MEASURED RATHER THAN PICKED. Red
-     `--bad` on it is 4.73:1 and gold `--gold-ink` 5.84:1, both clear of AA for
-     normal text. On `--neutral-bg` — the obvious first choice — the red is
-     4.30:1 and would have shipped a prominent statement that fails the line.
-     Do not restyle this onto a darker ground without re-measuring both. */
-  .rs-eng{margin:0 0 16px;padding:13px 15px;background:var(--paper);
-    border:1px solid var(--line);border-left:4px solid var(--bad);border-radius:0 8px 8px 0;}
-  .rs-eng .eng-l{margin-bottom:6px;font-weight:700;color:var(--navy);}
-  .rs-eng .eng-alert{color:var(--bad);font-weight:800;font-size:1.05rem;}
-  .rs-eng .eng-emph{color:var(--gold-ink);font-weight:800;letter-spacing:.04em;}
+     BOLD, AND NOTHING ELSE (owner, 2026-09-07, after four rounds of asking for
+     less): "same font size as surrounding rate-sheet text, no bigger text, no
+     alert color treatment, no warning box feel, no extra emphasis beyond
+     bold." So this block has NO background, NO border, NO rail, NO font-size
+     and NO colour of its own — `.eng-l` inherits the sheet's own body ink at
+     the sheet's own body size, and `.eng-term` adds weight to the two lines
+     the Worker marked.
+
+     `.eng-l` DELIBERATELY LOST ITS BLANKET `font-weight:700`. Bolding every
+     line and then bolding two of them harder is how "highlight these two
+     terms" became a rate sheet where nothing was quiet — the two named terms
+     are the only bold thing here now, which is what makes bold say anything
+     at all. The previous treatment (red `--bad` and gold `--gold-ink` on a
+     `--paper` rail, 4.73:1 and 5.84:1) was measured and it CLEARED AA; it was
+     still wrong, because how loud a term should be is a product decision and
+     not a contrast one. Do not reintroduce a tone here to tell the money from
+     the minimum: they are two stated terms and the client reads both. */
+  .rs-eng{margin:0 0 16px;}
+  .rs-eng .eng-l{margin-bottom:5px;}
+  .rs-eng .eng-term{font-weight:700;}
   .rs-eng p{margin:9px 0 0;font-size:.84rem;color:var(--muted);line-height:1.5;}
   /* PRINT ONLY. On screen the masthead already says who this is; on paper the
      sheet leaves the building on its own and has to say so itself. The reveal
@@ -8382,13 +8392,13 @@ function wizRetainerInit(w){
 }
 
 /* THE ONE PAGE-SIDE RENDERER of the engagement block. The Worker composes the
-   words; this maps `tone` to the two colours the owner asked for and nothing
-   else. Absent on the legal and insurance cards, so it draws nothing there —
-   the private-only rule needs no check here because the block is simply not on
-   those objects. */
+   words; this maps the one tone it sets to the one class that bolds a line,
+   and nothing else. Absent on the legal and insurance cards, so it draws
+   nothing there — the private-only rule needs no check here because the block
+   is simply not on those objects. */
 function engBlockHtml(eng){
   if(!eng || !Array.isArray(eng.lines)) return "";
-  const cls = t => t === "alert" ? "eng-l eng-alert" : t === "emphasis" ? "eng-l eng-emph" : "eng-l";
+  const cls = t => t === "term" ? "eng-l eng-term" : "eng-l";
   return `<div class="rs-eng">
     ${eng.lines.map(l => `<div class="${cls(l.tone)}">${esc(l.text)}</div>`).join("")}
     ${eng.note ? `<p>${esc(eng.note)}</p>` : ""}

@@ -585,14 +585,26 @@ function nrMoney(n) {
 
    The owner's display rule is exact: no percentages and no formulas — three
    statements and a sentence. The WORDS live here so the three renderers cannot
-   drift into saying different things; `tone` is all a renderer decides, and it
-   decides colour only. `alert` is the red the owner asked for on the
-   non-refundable portion, `emphasis` the gold on the minimum. */
+   drift into saying different things; `tone` is all a renderer decides.
+
+   THERE IS ONE TONE AND IT IS `term`, WHICH MEANS BOLD AND NOTHING ELSE
+   (owner, 2026-09-07, after four rounds of asking for less): "NON-REFUNDABLE
+   PORTION: $X = bold only, 4-HOUR MINIMUM PER SURVEILLANCE DAY = bold only,
+   same font size as surrounding rate-sheet text, no bigger text, no alert
+   color treatment, no warning box feel, no extra emphasis beyond bold."
+
+   It shipped as a red statement and a gold one inside a box with a coloured
+   rail, and the owner read that as a warning about a term that is simply a
+   term. The two colours were measured against their ground and cleared AA —
+   the treatment was legible and it was still wrong, because prominence is a
+   product decision and not a contrast one. Do not reintroduce a second tone
+   to "distinguish" the money from the minimum: they are two stated terms and
+   the client reads both. */
 function engagementBlock(retainer, nonRefundable) {
   return {
     lines: [
       { text: `Retainer: ${nrMoney(retainer)}` },
-      { text: `NON-REFUNDABLE PORTION: ${nrMoney(nonRefundable)}`, tone: 'alert' },
+      { text: `NON-REFUNDABLE PORTION: ${nrMoney(nonRefundable)}`, tone: 'term' },
       /* "PER SURVEILLANCE DAY" is the owner's correction of 2026-09-07:
          "Replace any generic 4-hour minimum wording with 4-hour minimum per
          surveillance day everywhere in the Private rate-sheet flow." The
@@ -600,7 +612,7 @@ function engagementBlock(retainer, nonRefundable) {
          wording let a client read one four-hour minimum across a three-day
          case. One writer, so the sheet, the preview, the email, the Assistant
          rehearsal and the owner's record copy cannot say different things. */
-      { text: `${PERSONAL.minHours}-HOUR MINIMUM PER SURVEILLANCE DAY`, tone: 'emphasis' },
+      { text: `${PERSONAL.minHours}-HOUR MINIMUM PER SURVEILLANCE DAY`, tone: 'term' },
     ],
     note: 'A minimum portion of the retainer is non-refundable upon engagement and '
         + 'reservation of investigative services. Additional terms are governed by the '
@@ -3827,13 +3839,14 @@ function npPayBlockHtml(picked) {
    block itself is built by `engagementBlock` and neither of these composes a
    sentence or a figure of its own.
 
-   PLAIN TEXT CANNOT CARRY COLOUR, which is exactly why the owner wrote those
+   PLAIN TEXT CANNOT CARRY WEIGHT, which is exactly why the owner wrote those
    two statements in capitals: the emphasis survives the medium that has no
-   styling at all. The HTML adds the red and the gold on top of the same words,
-   never instead of them. The two colours are the portal's own `--bad`
-   (#c14133, 5.15:1 on white) and `--gold-ink` (#7a5a12, 6.37:1) — computed,
-   not picked, and an email cannot read a CSS variable so the values are
-   written out here as every other colour in this template already is. */
+   styling at all. The HTML adds bold on top of the same words, never instead
+   of them — and adds NOTHING ELSE (owner, 2026-09-07). No background, no
+   border, no rail, no font-size and no colour of its own: the terms sit in the
+   email's body ink at the email's body size, exactly as the portal card draws
+   them. An email client that strips styling shows the capitals and loses
+   nothing that was carrying meaning. */
 function engagementText(block) {
   if (!block) return '';
   return `\n${block.lines.map(l => l.text).join('\n')}\n\n${block.note}\n`;
@@ -3841,12 +3854,9 @@ function engagementText(block) {
 
 function engagementHtml(block) {
   if (!block) return '';
-  const tone = t => t === 'alert' ? 'color:#c14133;font-weight:800;font-size:1.05rem'
-    : t === 'emphasis' ? 'color:#7a5a12;font-weight:800;letter-spacing:.04em'
-    : 'color:#12305a;font-weight:700';
-  return `<div style="margin:0 0 18px;padding:14px 16px;background:#f7f9fb;
-    border:1px solid #e4e9ed;border-left:4px solid #c14133;border-radius:6px">
-    ${block.lines.map(l => `<div style="margin:0 0 6px;${tone(l.tone)}">${escHtml(l.text)}</div>`).join('')}
+  const tone = t => t === 'term' ? 'font-weight:700' : '';
+  return `<div style="margin:0 0 18px">
+    ${block.lines.map(l => `<div style="margin:0 0 5px;${tone(l.tone)}">${escHtml(l.text)}</div>`).join('')}
     <p style="margin:10px 0 0;font-size:.84rem;color:#5c6775;line-height:1.5">${escHtml(block.note)}</p>
   </div>`;
 }
@@ -14974,16 +14984,20 @@ async function ownerRecordCopy(env, kind, facts) {
       ['Payment instructions', f.payment || ''],
       ['Sent at', nowIso()],
     ].filter(r => String(r[1] || '').trim() !== '');
-    /* The highlighted terms exactly as the client's document states them —
-       same strings, same order, same amount. */
+    /* The stated terms exactly as the client's document states them — same
+       strings, same order, same amount, AND THE SAME EMPHASIS. The owner's
+       2026-09-07 rule is that the two named terms are bold and nothing else,
+       so the tone rides here rather than every line arriving bold: a record
+       copy that shouted what the client's copy states plainly would be the
+       office's own paperwork disagreeing with the document it records. */
     const terms = (f.engagement && Array.isArray(f.engagement.lines))
-      ? f.engagement.lines.map(l => String(l.text)) : [];
+      ? f.engagement.lines.map(l => ({ text: String(l.text), term: l.tone === 'term' })) : [];
     const subject = `RECORD COPY — ${doc} sent to ${f.to || 'a client'}`;
     const text = [`${doc.toUpperCase()} — RECORD COPY`, '',
       'This is the office\'s own record of a document the portal sent. The client received',
       'their own copy; this message is not a second send and is not in the send history.', '',
       ...rows.map(([k, v]) => `${k}: ${v}`),
-      ...(terms.length ? ['', 'ENGAGEMENT TERMS AS SENT', ...terms.map(t => `  ${t}`)] : []),
+      ...(terms.length ? ['', 'ENGAGEMENT TERMS AS SENT', ...terms.map(t => `  ${t.text}`)] : []),
     ].join('\n');
     const html = `<div style="font-family:Segoe UI,system-ui,Arial,sans-serif;color:#1c2531">
       <h2 style="margin:0 0 4px;font-size:17px">${escHtml(doc)} &mdash; record copy</h2>
@@ -14994,7 +15008,7 @@ async function ownerRecordCopy(env, kind, facts) {
          <td style="padding:3px 0"><b>${escHtml(String(v))}</b></td></tr>`).join('')}</table>
       ${terms.length ? `<div style="margin-top:14px;padding:11px 13px;background:#f4f5f7;border-radius:8px">
         <div style="font-size:11px;letter-spacing:.06em;color:#5c6775">ENGAGEMENT TERMS AS SENT</div>
-        ${terms.map(t => `<div style="font-weight:800;margin-top:4px">${escHtml(t)}</div>`).join('')}
+        ${terms.map(t => `<div style="margin-top:4px${t.term ? ';font-weight:700' : ''}">${escHtml(t.text)}</div>`).join('')}
       </div>` : ''}</div>`;
     const r = await sendMail(env, { to, subject, text, html });
     return { record_copy: !!r.sent, record_reason: r.sent ? '' : (r.reason || 'failed') };
