@@ -1156,6 +1156,261 @@ section('Rate sheets and the emailed quote');
    payment block and the preview alike, or they contradict each other in front
    of the client. Its own section because it needs its own send budget: the cap
    is three a minute and the sheets section spends all of them. */
+
+/* ============================================================================
+   THE OWNER'S RECORD COPY (owner brief 2026-09-06).
+
+   "Corey should not have to remember to CC himself." Four properties are
+   asserted, and the first is the one that makes the other three safe: with
+   the setting EMPTY nothing is sent, so this feature is inert until the owner
+   opts in and every existing expectation in this suite is unmoved.
+   ========================================================================= */
+section("The office's own record copy of what it sent");
+{
+  const realFetch = globalThis.fetch;
+  let mails = [];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      mails.push(JSON.parse(init.body));
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  /* ---- 1. EMPTY CONFIGURATION SENDS NOTHING ----------------------------- */
+  mails = [];
+  const off = await jsonOf(await call(env, '/sheets/private_retainer/email', {
+    method: 'POST', cookie: admin, body: { to: 'client@example.com' } }));
+  ok('the client is sent their rate sheet', off.ok === true, JSON.stringify(off));
+  ok('with no business address configured, exactly one message leaves',
+     mails.length === 1, JSON.stringify(mails.map(m => m.subject)));
+  ok('and the response says WHY there is no copy rather than claiming one',
+     off.record_copy === false && off.record_reason === 'not_configured',
+     JSON.stringify([off.record_copy, off.record_reason]));
+
+  /* ---- 2. CONFIGURED: A SECOND, INTERNAL MESSAGE ------------------------ */
+  /* The route takes a FLAT body and writes every key it recognises — not
+     `{settings:{...}}`, which is the READ's shape. Worth stating: posting the
+     read's shape saved nothing and reported success, which is how the first
+     run of this section measured a feature that had never been switched on. */
+  const saved = await jsonOf(await call(env, '/billing-settings', { method: 'POST', cookie: admin,
+    body: { owner_record_email: 'office@alwaysprecise.example' } }));
+  ok('the business address saves', saved.ok !== false, JSON.stringify(saved));
+  const back = await jsonOf(await call(env, '/billing-settings', { cookie: admin }));
+  ok('and reads back', back.settings.owner_record_email === 'office@alwaysprecise.example',
+     JSON.stringify(back.settings.owner_record_email));
+  mails = [];
+  const on = await jsonOf(await call(env, '/sheets/private_retainer/email', {
+    method: 'POST', cookie: admin, body: { to: 'client@example.com', retainer_amount: 2000 } }));
+  ok('the send still succeeds', on.ok === true, JSON.stringify(on));
+  ok('and the office is copied', on.record_copy === true, JSON.stringify(on));
+  ok('as a SECOND message, not a blind copy of the first',
+     mails.length === 2, JSON.stringify(mails.map(m => m.to)));
+  const copy = mails.find(m => String(m.to).includes('alwaysprecise.example'));
+  const client = mails.find(m => String(m.to).includes('client@example.com'));
+  ok('the client got theirs and the office got its own', !!copy && !!client);
+  /* A missing copy must fail as an assertion, not take the run down with a
+     TypeError — the suite would then report a crash where it means to report
+     a measurement. This section's first run did exactly that. */
+  ok('the copy is marked as a record, not as a second send to a client',
+     !!copy && /RECORD COPY/i.test(copy.subject), copy && copy.subject);
+  /* THE FIGURES THE BRIEF NAMES. A record that omits the amount is a record
+     of the fact that something was sent, which the send history already is. */
+  ok('it carries the retainer that document actually quoted',
+     !!copy && /\$2,000/.test(copy.text), copy ? copy.text.slice(0, 400) : 'no copy');
+  ok('and the non-refundable portion beside it',
+     !!copy && /Non-refundable portion/i.test(copy.text), copy ? copy.text.slice(0, 400) : 'no copy');
+  /* The record copy carries the DOCUMENT'S OWN engagement block now, not a
+     re-composed "Minimum engagement" row — so this looks for the term the
+     client was actually sent, which is the point of the change. */
+  ok('and the minimum, worded exactly as the client sees it',
+     !!copy && /4-HOUR MINIMUM PER SURVEILLANCE DAY/.test(copy.text),
+     copy && copy.text.slice(0, 500));
+  ok('and which document version went', !!copy && /Version:/.test(copy.text));
+
+  /* ---- 3. IT IS NOT A SECOND ROW IN THE HISTORY ------------------------- */
+  const hist = await jsonOf(await call(env, '/sends', { cookie: admin }));
+  const toOffice = (hist.sends || []).filter(r => String(r.recipient || '').includes('alwaysprecise.example'));
+  ok('the office is not recorded as having been sent a rate sheet',
+     toOffice.length === 0, JSON.stringify(toOffice));
+
+  /* ---- 4. A FAILED COPY NEVER COSTS THE SEND ---------------------------- */
+  mails = [];
+  let n = 0;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      n++;
+      /* the FIRST message is the client's and succeeds; the record copy is
+         the second and the provider rejects it */
+      if (n > 1) return new Response('{"message":"nope"}', { status: 422 });
+      mails.push(JSON.parse(init.body));
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const half = await jsonOf(await call(env, '/sheets/private_retainer/email', {
+    method: 'POST', cookie: admin, body: { to: 'client2@example.com' } }));
+  ok('the client is still told their document went', half.ok === true, JSON.stringify(half));
+  ok('and the failed copy is REPORTED, not swallowed and not faked',
+     half.record_copy === false && !!half.record_reason, JSON.stringify(half));
+
+  globalThis.fetch = realFetch;
+}
+
+
+/* ============================================================================
+   THE PRIVATE RATE SHEET'S TWO HIGHLIGHTED TERMS (owner, 2026-09-07).
+
+   "Visually highlight these two terms: 4-HOUR MINIMUM PER SURVEILLANCE DAY /
+   NON-REFUNDABLE PORTION: $X ... The final sent/signed document must preserve
+   the exact custom amount selected ... Owner record copy must show the exact
+   same highlighted terms and amount."
+
+   The wording correction is substantive, not cosmetic: "4-hour minimum" alone
+   let a client read ONE four-hour minimum across a three-day case. It is per
+   DAY of surveillance.
+   ========================================================================= */
+section('The private sheet states its minimum per surveillance day, and the office is told the same');
+{
+  const realFetch = globalThis.fetch;
+  let mails = [];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      mails.push(JSON.parse(init.body));
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  /* ---- THE WORDING, AT ITS ONE WRITER ----------------------------------- */
+  const d = await jsonOf(await call(env, '/sheets', { cookie: admin }));
+  const priv = d.sheets.find(x => x.key === 'private');
+  const ins = d.sheets.find(x => x.key === 'insurance');
+  const legal = d.sheets.find(x => x.key === 'legal');
+  ok('the private engagement block states the minimum PER SURVEILLANCE DAY',
+     priv.engagement.lines.some(l => l.text === '4-HOUR MINIMUM PER SURVEILLANCE DAY'),
+     JSON.stringify(priv.engagement.lines.map(l => l.text)));
+  ok('and no generic "minimum required" wording survives on it',
+     !/MINIMUM REQUIRED/i.test(JSON.stringify(priv)),
+     JSON.stringify(priv.engagement.lines.map(l => l.text)));
+  ok('the sheet body says it the same way',
+     /minimum per surveillance day/i.test(JSON.stringify(priv.lines)),
+     JSON.stringify(priv.lines.map(l => l.sub)));
+  /* THE TWO STATED TERMS CARRY THE ONE MARKER THERE IS, AND NOTHING ELSE
+     DOES. `term` means bold and only bold (owner, 2026-09-07); the weight
+     itself is measured in the page suite against a real neighbouring line.
+     What matters here is that the marker is on exactly the two lines the
+     owner named — a third toned line would put the retainer figure in the
+     same voice as the terms and make bold mean nothing. */
+  const nrLine = priv.engagement.lines.find(l => /NON-REFUNDABLE PORTION/.test(l.text));
+  const minLine = priv.engagement.lines.find(l => /MINIMUM PER SURVEILLANCE DAY/.test(l.text));
+  const retLine = priv.engagement.lines.find(l => /^Retainer:/.test(l.text));
+  ok('both terms carry the one marker, and it is the same one for both',
+     nrLine.tone === 'term' && minLine.tone === 'term',
+     JSON.stringify([nrLine.tone, minLine.tone]));
+  ok('the retainer line beside them carries none, so bold says something',
+     !retLine.tone, JSON.stringify(retLine));
+  ok('and NO line asks for a colour, a size or a box — bold is the whole treatment',
+     priv.engagement.lines.every(l => !l.tone || l.tone === 'term'),
+     JSON.stringify(priv.engagement.lines.map(l => l.tone || null)));
+
+  /* ---- LEGAL AND INSURANCE ARE UNTOUCHED, WHICH THE BRIEF REQUIRES ------ */
+  ok('the insurance sheet gains no per-day private wording',
+     !/minimum per surveillance day/i.test(JSON.stringify(ins)), 'insurance');
+  /* THIS ASSERTION WAS WRONG WHEN FIRST WRITTEN, AND THE SUITE SAID SO. The
+     legal RETAINER card is the private pricing VERBATIM plus one price-free
+     Mail Check line — one pricing source, which CLAUDE.md records and another
+     pin already holds. So it inherits the corrected wording, and that is the
+     inheritance working rather than a change to a legal rule: the alternative
+     is a law firm reading the OLD, wrong "4-hour minimum" while the private
+     client reads the right one, which forks the source the design exists to
+     keep single.
+
+     What must carry no minimum is the legal FIXED sheet — the flat-fee
+     services, where "retainer", "hourly" and "minimum" are all forbidden and
+     a separate grep already enforces the vocabulary. Asserted here as the
+     pair, so neither half can drift alone. */
+  ok('the legal retainer card inherits the private wording, one pricing source',
+     /minimum per surveillance day/i.test(JSON.stringify(legal.lines)),
+     JSON.stringify(legal.lines.map(l => l.sub)));
+  const fixed = await jsonOf(await call(env, '/sheets', { cookie: admin }));
+  const fixedCard = (fixed.sheets || []).find(x => x.type === 'fixed');
+  ok('and a fixed legal service still states no minimum of any kind',
+     !fixedCard || !/minimum/i.test(JSON.stringify(fixedCard)),
+     fixedCard ? JSON.stringify(fixedCard.lines || []).slice(0, 200) : 'no fixed card on /sheets');
+
+  /* ---- A CUSTOM AMOUNT REACHES THE CLIENT AND THE OFFICE UNCHANGED ------ */
+  await call(env, '/billing-settings', { method: 'POST', cookie: admin,
+    body: { owner_record_email: 'office@alwaysprecise.example' } });
+  mails = [];
+  const sent = await jsonOf(await call(env, '/sheets/private_retainer/email', {
+    method: 'POST', cookie: admin,
+    body: { to: 'client@example.com', retainer_amount: 2000, non_refundable: 750 } }));
+  ok('the send succeeds with a custom non-refundable amount', sent.ok === true, JSON.stringify(sent));
+  ok('and the response reports the figure the document carried',
+     sent.non_refundable === 750, JSON.stringify(sent.non_refundable));
+  const toClient = mails.find(m => String(m.to).includes('client@example.com'));
+  const toOffice = mails.find(m => String(m.to).includes('alwaysprecise.example'));
+  ok('the client document states the custom amount, not the $500 default',
+     /NON-REFUNDABLE PORTION: \$750/.test(toClient.text) && !/\$500/.test(toClient.text),
+     toClient.text.slice(0, 500));
+  ok('and states the minimum per surveillance day',
+     /4-HOUR MINIMUM PER SURVEILLANCE DAY/.test(toClient.text), toClient.text.slice(0, 500));
+  /* THE SAME TERMS, NOT MERELY THE SAME FIGURES. The record copy is handed
+     the document's own engagement block, so this compares STRINGS. */
+  ok('the office copy carries the identical highlighted terms',
+     !!toOffice && /NON-REFUNDABLE PORTION: \$750/.test(toOffice.text)
+       && /4-HOUR MINIMUM PER SURVEILLANCE DAY/.test(toOffice.text),
+     toOffice && toOffice.text.slice(0, 600));
+  ok('and never a stale default beside them',
+     !!toOffice && !/\$500/.test(toOffice.text), toOffice && toOffice.text.slice(0, 600));
+  /* AND THE SAME EMPHASIS, which is the half the owner named on 2026-09-07:
+     "update both the client-facing rate sheet and the owner/email copy." The
+     record copy used to arrive with EVERY term line bold, so the office's own
+     paperwork shouted three lines where the client's document states one
+     figure and bolds two terms. Asserted over the HTML that was sent. */
+  ok('the office copy bolds the two terms and leaves the retainer line plain',
+     !!toOffice
+       && /font-weight:700">NON-REFUNDABLE PORTION: \$750</.test(toOffice.html)
+       && /font-weight:700">4-HOUR MINIMUM PER SURVEILLANCE DAY</.test(toOffice.html)
+       && /<div style="margin-top:4px">Retainer: \$2,000</.test(toOffice.html),
+     toOffice && toOffice.html.slice(-500));
+
+  /* ---- A BLANK BOX IS NOT AN ABSENT FIGURE ----------------------------- */
+  mails = [];
+  const dflt = await jsonOf(await call(env, '/sheets/private_retainer/email', {
+    method: 'POST', cookie: admin, body: { to: 'client2@example.com' } }));
+  const c2 = mails.find(m => String(m.to).includes('client2@example.com'));
+  const o2 = mails.find(m => String(m.to).includes('alwaysprecise.example'));
+  ok('with nothing typed the standard portion is stated, never omitted',
+     dflt.non_refundable === 500 && /NON-REFUNDABLE PORTION: \$500/.test(c2.text),
+     JSON.stringify(dflt.non_refundable));
+  ok('and the office copy agrees with it',
+     !!o2 && /NON-REFUNDABLE PORTION: \$500/.test(o2.text), o2 && o2.text.slice(0, 600));
+
+  /* ---- NEITHER TERM REACHES A CARRIER OR A LAW FIRM'S RECORD COPY ------- */
+  mails = [];
+  await call(env, '/sheets/insurance_assignment/email', {
+    method: 'POST', cookie: admin, body: { to: 'adjuster@example.com' } });
+  const insOffice = mails.find(m => String(m.to).includes('alwaysprecise.example'));
+  ok('an insurance record copy states no retainer terms at all',
+     !!insOffice && !/NON-REFUNDABLE|MINIMUM PER SURVEILLANCE/i.test(insOffice.text),
+     insOffice && insOffice.text.slice(0, 500));
+
+  globalThis.fetch = realFetch;
+}
+
 section('A pre-case send is not blocked by a reference that matches nothing');
 {
   /* The owner reproduced this in production: the send screen labels the case
@@ -5045,13 +5300,18 @@ section('Invoice defaults: admin reads and writes them, and the prefix is bounde
 
   const read = await jsonOf(await call(env, '/billing-settings', { cookie: admin }));
   ok('an admin reads the defaults', read.settings && typeof read.settings === 'object');
-  ok('and they are the thirteen the backend supports, no more',
+  /* FOURTEEN NOW: `owner_record_email` joined them (owner brief 2026-09-06).
+     This pin fired on the addition, which is exactly its job — a settings
+     list that grows silently is how a field arrives with no home and no
+     validation. It is EMPTY by default like `remit_address`, so nothing is
+     sent and no other assertion in this suite moved. */
+  ok('and they are the fourteen the backend supports, no more',
      ['company_name', 'company_line', 'invoice_prefix', 'terms_insurance', 'terms_private',
       'payment_instructions', 'invoice_footer', 'remit_address',
       'billcom_enabled', 'billcom_payment_url', 'billcom_org_id', 'billcom_environment',
-      'process_fee_default']
+      'process_fee_default', 'owner_record_email']
        .every(k => k in read.settings)
-     && Object.keys(read.settings).length === 13, JSON.stringify(Object.keys(read.settings)));
+     && Object.keys(read.settings).length === 14, JSON.stringify(Object.keys(read.settings)));
   ok('the remittance address DEFAULTS TO EMPTY — nothing invents one (MAIL-CHECK.md D2)',
      read.settings.remit_address === '');
   ok('every Bill.com field DEFAULTS TO EMPTY — prepared, not connected (BILLCOM.md)',
@@ -19756,13 +20016,28 @@ section('The private rate sheet carries a non-refundable portion, from one sourc
      screen.non_refundable === 750 && privCard.non_refundable === 750);
   ok('and the card carries the exact client-facing statement the email carries',
      privCard.engagement.lines.some(l => l.text === 'NON-REFUNDABLE PORTION: $750'
-       && l.tone === 'alert'),
+       && l.tone === 'term'),
      JSON.stringify(privCard.engagement.lines));
   ok('the screen also states what a blank box would mean, so the page holds no default',
      screen.non_refundable_default === 500);
-  ok('the block says the minimum out loud, and marks it for the gold treatment',
-     privCard.engagement.lines.some(l => /4-HOUR MINIMUM REQUIRED/.test(l.text)
-       && l.tone === 'emphasis'));
+  ok('the block says the minimum out loud, and marks it to be bolded like the money',
+     privCard.engagement.lines.some(l => /4-HOUR MINIMUM PER SURVEILLANCE DAY/.test(l.text)
+       && l.tone === 'term'));
+  /* ---- THE EMAIL IS THE DOCUMENT, so the calm-down has to reach it. The
+     owner asked for bold and nothing else on 2026-09-07; the previous
+     rendering put the two terms in #c14133 and #7a5a12 inside a boxed rail,
+     and an email cannot read a CSS variable so those values were literals in
+     the template. Asserted over the BYTES that were sent. ---- */
+  const engBox = (mailed.html.match(
+    /<div style="margin:0 0 18px">[\s\S]*?non-refundable upon engagement[\s\S]*?<\/div>/) || [''])[0];
+  ok('the emailed engagement block is a plain block — no box, no rail, no ground',
+     engBox !== '' && !/background|border|border-radius|padding/.test(engBox), engBox.slice(0, 160));
+  ok('and it introduces no colour and no size of its own on the terms',
+     !/#c14133|#7a5a12|color:#12305a|font-size:1\.05rem|letter-spacing/.test(engBox));
+  ok('the two terms are emailed bold and the retainer line beside them is not',
+     /font-weight:700">NON-REFUNDABLE PORTION: \$750</.test(engBox)
+     && /font-weight:700">4-HOUR MINIMUM PER SURVEILLANCE DAY</.test(engBox)
+     && /<div style="margin:0 0 5px;">Retainer: \$1,500</.test(engBox), engBox.slice(0, 400));
   ok('and it carries the owner\'s supporting sentence, with no percentage or formula',
      /non-refundable upon engagement and reservation of investigative services/
        .test(privCard.engagement.note)
@@ -20764,9 +21039,17 @@ section('The CEO Bot observes, recommends, and can execute nothing');
   }
   d = await jsonOf(await call(env, '/ceo/insights', { cookie: admin }));
   const hideSug = d.suggestions.find(s => s.id === 'hide:qt:video');
-  ok('with 21 counted taps and zero on Timestamp Video, the hide suggestion appears',
-     !!hideSug && /have not used/.test(hideSug.why) && /only your own portal/i.test(hideSug.why),
+  ok('with 21 counted taps and zero on Timestamp Video, the move suggestion appears',
+     !!hideSug && hideSug.action === 'MOVE_TO_MORE'
+     && /has not been used/.test(hideSug.why),
      JSON.stringify(d.suggestions.map(s => s.id)));
+  ok('and it says what stays available rather than only what goes',
+     /remains available under the More menu/.test(hideSug.impact), hideSug.impact);
+  ok('its evidence is FACTS the reader can check, not prose to trust',
+     hideSug.evidence.some(e => /0 uses in the measured period/.test(e))
+     && hideSug.evidence.some(e => /Still available from/.test(e))
+     && hideSug.evidence.some(e => /does not remove Timestamp Video/.test(e)),
+     JSON.stringify(hideSug.evidence));
   /* THE COUNTER MUST ACCEPT WHAT THE PAGE ACTUALLY SENDS. `noteUse` composes
      "qt:" + the action id, and the allow-list refused the colon — so every
      quick-action tap 400'd, silently, behind that helper's own empty catch.
@@ -20839,6 +21122,181 @@ section('The CEO Bot observes, recommends, and can execute nothing');
      && !JSON.stringify(fd).includes('Michelle'), JSON.stringify(fd.brief));
   ok('and signing out closes the door',
      (await call(env, '/ceo/insights', {})).status === 401);
+}
+
+
+section('CEO Bot: a capability is not its shortcut, and most answers are "leave it alone"');
+{
+  const env = freshEnv();
+  env.INGEST_PER_MINUTE = '90';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const invLink = (await jsonOf(await invite(env, admin,
+    { username: 'trevorf', role: 'investigator', display_name: 'Trevor Field' }))).url;
+  const invTok = new URL(invLink, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${invTok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'trevorf', 'FieldWork2026x')).cookie;
+  const ceo = async cookie => jsonOf(await call(env, '/ceo/insights', { cookie }));
+  const tap = async (cookie, action, n = 1) => {
+    for (let i = 0; i < n; i++) {
+      await call(env, '/me/prefs/use', { method: 'POST', cookie, body: { action } });
+    }
+  };
+
+  /* ---- §2 — NOTHING IS SAID WITHOUT EVIDENCE. ---- */
+  let d = await ceo(admin);
+  ok('with no measured use the Bot proposes nothing at all',
+     d.suggestions.filter(s => s.kind !== 'navigate_case').length === 0,
+     JSON.stringify(d.suggestions.map(s => s.id)));
+  ok('and CEO PRIORITY says so in the owner\'s own words rather than inventing work',
+     d.priority.none === 'No high-impact portal changes recommended today.'
+     && d.priority.highest_impact === null, JSON.stringify(d.priority));
+  ok('Fix First refuses to invent one too',
+     d.fix_first.none === 'No meaningful portal change is recommended right now.',
+     JSON.stringify(d.fix_first));
+
+  /* Now give the Bot a real working pattern: 25 taps, all Rate Sheet. */
+  await tap(admin, 'qt:sheets', 25);
+  d = await ceo(admin);
+
+  const by = id => d.suggestions.find(s => s.pref_target === id || s.target === id);
+
+  /* ---- §1 — THE PROTECTION THAT IS THE POINT OF THIS UNIT. Cases is a core
+     destination. It took none of the 25 taps. The old engine would have said
+     "Hide Cases"; the new one may only ever offer to remove the DUPLICATE
+     shortcut, and must say the capability stays. ---- */
+  const cases = by('qt:cases');
+  ok('Cases is never recommended for hiding as a CAPABILITY',
+     !!cases && cases.action === 'HIDE_DUPLICATE', JSON.stringify(cases && cases.action));
+  ok('the headline names the duplicate, not the capability',
+     /duplicate/i.test(cases.title) && !/^Hide Cases$/i.test(cases.title), cases.title);
+  ok('and it states in words that Cases itself stays where it is',
+     /Cases stays exactly where it is/.test(cases.impact), cases.impact);
+  ok('its evidence names Cases as a core business destination',
+     cases.evidence.some(e => /core business destination/.test(e))
+     && cases.evidence.some(e => /bottom navigation/.test(e)), JSON.stringify(cases.evidence));
+  ok('and the suggestion is flagged as touching a core capability',
+     cases.protects_core === true);
+
+  /* ---- A CORE CAPABILITY WITH NO SECOND ROUTE IS NEVER PROPOSED AWAY. Rate
+     Sheet is core and lives nowhere else; even at zero use it would be kept.
+     Here it is the most-used control, so the answer is a confirmation. ---- */
+  ok('the Rate Sheet is not proposed away — it is confirmed',
+     !by('qt:sheets'), JSON.stringify((by('qt:sheets') || {}).action));
+  ok('and it appears in WHAT IS WORKING as Keep prominent',
+     d.working.some(w => w.id === 'qt:sheets' && w.action === 'KEEP_PROMINENT'),
+     JSON.stringify(d.working.map(w => `${w.id}:${w.action}`)));
+
+  /* ---- §3 — POSITIVE RECOMMENDATIONS EXIST AT ALL. ---- */
+  /* THE PROPERTY, NOT A COUNT. Two entries is the honest answer for a user who
+     has only ever tapped one control; what §3 actually asks is that BOTH
+     positive verdicts are reachable and reported. */
+  ok('the Bot reports what is working, and both positive verdicts are reachable',
+     d.working.some(w => w.action === 'KEEP_PROMINENT')
+     && d.working.some(w => w.action === 'PRESERVE'),
+     JSON.stringify(d.working.map(w => `${w.label}:${w.action}`)));
+  ok('a core capability with no second route is kept, however quiet it is',
+     d.working.some(w => w.id === 'qt:newlead' && w.action === 'PRESERVE'),
+     JSON.stringify(d.working.map(w => w.id)));
+  ok('every measured workflow carries a CEO recommendation, and none is a complaint',
+     d.flows.length === 5
+     && d.flows.every(f => ['PRESERVE', 'KEEP_PROMINENT'].includes(f.action))
+     && d.flows.every(f => ['EXCELLENT', 'GOOD'].includes(f.status)),
+     JSON.stringify(d.flows.map(f => `${f.id}:${f.status}:${f.action}`)));
+  ok('§16 — a one-tap flow is told to stay a one-tap flow, in words',
+     /already a one-tap workflow/i.test(
+       (d.flows.find(f => f.id === 'view_intake') || {}).note || ''),
+     JSON.stringify((d.flows.find(f => f.id === 'view_intake') || {}).note));
+
+  /* ---- §2 — NOT EVERYTHING IS "HIDE". ---- */
+  const actions = new Set(d.suggestions.map(s => s.action));
+  ok('the engine produces more than one kind of recommendation',
+     actions.size >= 2, JSON.stringify([...actions]));
+  ok('a non-core unused shortcut is MOVED, and the move names where it lives',
+     by('qt:photo').action === 'MOVE_TO_MORE'
+     && /remains available under the More menu/.test(by('qt:photo').impact),
+     JSON.stringify(by('qt:photo')));
+
+  /* ---- §4 — CEO PRIORITY ranks, shows at most two, and never invents. ---- */
+  ok('CEO PRIORITY names a highest-impact item once there is one',
+     !!d.priority.highest_impact && !d.priority.none, JSON.stringify(d.priority.none));
+  ok('and a separate low-risk cleanup that is not the same item',
+     !d.priority.low_risk || d.priority.low_risk.id !== d.priority.highest_impact.id,
+     JSON.stringify([d.priority.highest_impact.id, d.priority.low_risk && d.priority.low_risk.id]));
+
+  /* ---- §14 — FIX FIRST is a SELECTION over what is already computed. ---- */
+  ok('Fix First picks the top-ranked recommendation, with its risk stated',
+     d.fix_first.id === d.priority.highest_impact.id
+     && ['LOW', 'MEDIUM', 'HIGH'].includes(d.fix_first.risk),
+     JSON.stringify(d.fix_first));
+  ok('and its WHY is the evidence, not a restatement of the headline',
+     d.fix_first.why !== d.fix_first.recommendation && d.fix_first.why.length > 20,
+     d.fix_first.why);
+
+  /* ---- §6 — MY PORTAL PLAN groups this user's direction. ---- */
+  ok('the portal plan groups by what the engine concluded',
+     Array.isArray(d.plan.KEEP_PROMINENT) && d.plan.KEEP_PROMINENT.includes('Rate Sheet'),
+     JSON.stringify(d.plan));
+  ok('and a core destination is listed under removing the duplicate, never under a capability hide',
+     (d.plan.HIDE_DUPLICATE || []).includes('Cases')
+     && !Object.entries(d.plan).some(([a, list]) =>
+          a !== 'HIDE_DUPLICATE' && a !== 'PRESERVE' && a !== 'KEEP_PROMINENT'
+          && list.includes('Cases')), JSON.stringify(d.plan));
+
+  /* ---- §5 — HEALTH IS GROUPED AND ITS NUMBERS ARE COUNTED. ---- */
+  ok('health is grouped into client and owner experience plus the gate',
+     Array.isArray(d.health.client) && Array.isArray(d.health.owner) && d.health.gate,
+     JSON.stringify(Object.keys(d.health)));
+  ok('the release-gate totals are the CEO UX Gate\'s own',
+     d.health.gate.pass === 43 && d.health.gate.warn === 0 && d.health.gate.fail === 0,
+     JSON.stringify(d.health.gate));
+  const dupRow = d.health.owner.find(o => /duplicate/i.test(o.text)) || {};
+  ok('the duplicate count in health matches the classification, never a typed number',
+     dupRow.text.startsWith(
+       `${d.suggestions.filter(s => s.action === 'HIDE_DUPLICATE').length} duplicate primary shortcut`),
+     JSON.stringify(d.health.owner));
+  /* §1 — AVAILABLE CLEANUP IS A THIRD STATE. It is neither a tick nor a
+     warning, and drawing it as a fault is what made a brand-new portal with a
+     green gate announce itself as needing watching. */
+  ok('and it is marked as an opportunity rather than a fault',
+     dupRow.tone === 'tidy' && /you could clear/.test(dupRow.text), JSON.stringify(dupRow));
+  ok('duplicate shortcuts alone never move overall health off GOOD',
+     d.health.label === 'GOOD', JSON.stringify([d.health.label, dupRow.text]));
+  ok('and the status word is one of the three the owner named',
+     ['GOOD', 'WATCH', 'NEEDS ATTENTION'].includes(d.health.label), d.health.label);
+
+  /* ---- §15 — COREY AND TREVER STAY SEPARATE, on the recommendations too. ---- */
+  await tap(inv, 'qt:field', 22);
+  const dInv = await ceo(inv);
+  const dAdm = await ceo(admin);
+  ok('the investigator\'s own most-used is their own',
+     dInv.most_used[0].id === 'qt:field' && dAdm.most_used[0].id === 'qt:sheets',
+     JSON.stringify([dInv.most_used[0], dAdm.most_used[0]]));
+  ok('and their recommendations differ because their usage does',
+     JSON.stringify(dInv.plan) !== JSON.stringify(dAdm.plan));
+  ok('the investigator is never offered the admin\'s closeout watch',
+     (dInv.closeout_watch || []).length === 0 && !dInv.brief.open_cases,
+     JSON.stringify(dInv.brief));
+  /* One user's decision does not reach the other's screen. */
+  await call(env, '/ceo/suggestion', { method: 'POST', cookie: admin,
+    body: { id: 'hide:qt:photo', state: 'dismissed' } });
+  const after = await ceo(admin);
+  const afterInv = await ceo(inv);
+  ok('a dismissal removes it from that user\'s own list',
+     !after.suggestions.some(s => s.id === 'hide:qt:photo'));
+  ok('and leaves the other user\'s suggestions untouched',
+     Object.keys(afterInv.suggestion_state || {}).length === 0,
+     JSON.stringify(afterInv.suggestion_state));
+
+  /* ---- §17 — STILL READ-ONLY. Nothing in this block writes a case. ---- */
+  const wsrc = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+  const blk = wsrc.slice(wsrc.indexOf('/* ============ CEO BOT — WHAT MAY BE RECOMMENDED'),
+                         wsrc.indexOf('/* ------------------------------------------------------- case workspace */'));
+  ok('the CEO block writes exactly one table, and it is the preference row',
+     (blk.match(/INSERT INTO (\w+)/g) || []).every(m => /user_pref/.test(m))
+     && !/UPDATE (submissions|case_|retainer|invoice)/.test(blk)
+     && !/DELETE FROM/.test(blk), JSON.stringify(blk.match(/INSERT INTO (\w+)/g)));
+  ok('and it never reaches the mail sender', !/sendMail/.test(blk));
 }
 
 /* ------------------------------------------------------------------ report */

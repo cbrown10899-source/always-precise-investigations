@@ -658,10 +658,36 @@ Three things this found, which is the point of auditing rather than assuming:
 
 ## The private retainer has a non-refundable portion, and one function knows it
 
-Owner brief 2026-09-05. The private rate sheet now states three things to the
-client — the retainer, the **NON-REFUNDABLE PORTION** in red, and the
-**4-HOUR MINIMUM REQUIRED** in gold — plus one supporting sentence. **No
-percentage and no formula**, by the owner's own display rule.
+Owner brief 2026-09-05, wording and styling both corrected by the owner
+2026-09-07. The private rate sheet states three things to the client — the
+retainer, the **NON-REFUNDABLE PORTION**, and the **4-HOUR MINIMUM PER
+SURVEILLANCE DAY** — plus one supporting sentence. **No percentage and no
+formula**, by the owner's own display rule.
+
+**"PER SURVEILLANCE DAY" IS SUBSTANTIVE, NOT COSMETIC.** The old wording —
+*4-HOUR MINIMUM REQUIRED* — let a client read ONE four-hour minimum across a
+three-day case. The minimum is per DAY of surveillance. Because
+`engagementBlock` is the one writer of the three statements, correcting it
+moved the sheet, the wizard preview, the email, the Assistant rehearsal, the
+Rate Sheets screen and the owner's record copy together; the private card's
+own `sub` and `note` were corrected beside it. **The legal retainer card
+inherits it**, which is the one-pricing-source design working rather than a
+change to a legal rule — the alternative is a law firm reading the old wrong
+wording while the private client reads the right one. The legal FIXED sheets
+still carry no minimum of any kind, and Insurance keeps its own separate
+8-hour-day figure. A test asserted the opposite of all this when first written
+and the suite refused it: the legal card is the private pricing verbatim, and
+a test may not assert something false about the product to make a change look
+tidier.
+
+**THE OWNER'S RECORD COPY CARRIES THE DOCUMENT'S OWN BLOCK, VERBATIM** (owner,
+2026-09-07: *"Owner record copy must show the exact same highlighted terms and
+amount"*). It is handed `sheet.engagement`'s rendered lines rather than
+re-composing the figures, so "the same terms" is structural: the office
+receives the strings the client received, and the amount that reaches it is by
+construction the amount that was sent — custom or default. **No acknowledgement
+checkbox was added**; the client's signature already covers the whole sheet,
+and the owner's brief says not to add one.
 
 **`nonRefundableFor(retainer, offered)` in `case-portal/worker.js` is the ONE
 source of truth**, and it is the only thing in the codebase that knows the
@@ -719,13 +745,43 @@ standard. `RETAINER_STANDARD` is its own name now — **a list's ORDER is a
 display decision; which figure is standard is a pricing fact**, and the two must
 not be the same expression. `PERSONAL.retainer` in the Worker is unchanged.
 
-**The two colours were measured, not picked.** On the block's `--paper` ground
-the red (`--bad`) is **4.73:1** and the gold (`--gold-ink`) **5.84:1**, both
-clear of AA. On `--neutral-bg` — the obvious first choice — the red is **4.30**
-and would have shipped a *prominent* statement that fails the line, which is
-worse than a quiet one. The suite measures both ratios in the browser rather
-than asserting a colour name. Do not restyle this onto a darker ground without
-re-running that.
+**THE TWO TERMS ARE BOLD AND NOTHING ELSE — OWNER, 2026-09-07, AFTER FOUR
+ROUNDS OF ASKING FOR LESS.** *"NON-REFUNDABLE PORTION: $X = bold only,
+4-HOUR MINIMUM PER SURVEILLANCE DAY = bold only, same font size as surrounding
+rate-sheet text, no bigger text, no alert color treatment, no warning box feel,
+no extra emphasis beyond bold."*
+
+It shipped as a red statement and a gold one, at 1.05rem, inside a `--paper`
+box with a 4px `--bad` rail. **Those colours were measured and they cleared
+AA** — red 4.73:1 and gold 5.84:1 on that ground, against 4.30 for the red on
+`--neutral-bg`, which is why the ground was chosen. The treatment was legible
+and it was still wrong: **how loud a term should be is a product decision, not
+a contrast one**, and a client was reading a warning where the sheet states a
+term. Keep that measurement on the record — it is the reason not to reach for
+`--neutral-bg` if a ground is ever wanted again — but do not read it as
+licence to put the colours back.
+
+**`tone` now has ONE value, `term`, and it means bold.** `.eng-l` deliberately
+lost its blanket `font-weight:700` in the same edit: bolding all three lines
+and then bolding two of them harder is exactly how "highlight these two terms"
+became a sheet where nothing was quiet. **The retainer line is the control the
+suite measures against** — the terms are asserted bold *and* that line asserted
+not-bold, because bold only says "term" while something beside it is not.
+
+**Nothing is asserted as a colour name or a pixel count.** The terms are
+measured against a REAL neighbour: their size against a `.rs-l` label on the
+same card, their ink against the plain line in the same block, the block's
+ground against the card it sits on. A hard-coded 16px would pass on a page
+whose body size had changed. The block itself is asserted to have no border on
+**any** side (a rail is a border-left, and measuring one side is how a rail
+comes back on another), no padding and no ground of its own — and the emailed
+copy is asserted over the bytes that were sent, because an email cannot read a
+CSS variable and those two colours were literals in that template.
+
+**The office's record copy carries the same treatment**, not a louder one: the
+tone rides into `ownerRecordCopy` so only the two named terms are bold there
+too. A record copy that shouted what the client's copy states plainly would be
+the office's own paperwork disagreeing with the document it records.
 
 **There is no rate-sheet PDF or print path in this portal, and none was
 invented.** The brief listed one; the document is the EMAIL. Print regions
@@ -3606,6 +3662,25 @@ which is a navigation into the ordinary portal where the ordinary confirmations
 still stand. A test counts the write-shaped verbs in the rendered drawer and
 requires zero.
 
+**THE ENGINE KNOWS A CAPABILITY FROM ITS SHORTCUT** (product refinement,
+2026-09-06). The first version had one rule — unused implies hide — so it could
+recommend *"Hide Cases"*: removing a core business destination because a
+shortcut to it was quiet, with *"you have not used this once"* printed
+underneath as the argument. `CEO_CAPS` marks each control `core`, `nav` (the
+thing itself is a navigation destination, so its Home card is a DUPLICATE) and
+`alt` (where it still lives if the shortcut goes). **A core capability can only
+ever be offered as a duplicate-shortcut removal, and a control with no `alt` is
+never removed at all** — that would manufacture the dead end the gate exists to
+find. Both are properties of the table, not rules to remember.
+
+**IT CAN SAY "LEAVE IT ALONE".** Eight actions, not one; below 20 counted taps
+the answer is `NOT_ENOUGH_DATA` and nothing is suggested; all five measured
+workflows carry PRESERVE or KEEP_PROMINENT; and CEO Priority and *What should I
+fix first?* are SELECTIONS over the same classified list, both saying so plainly
+when there is nothing worth changing. **Why?** expands the evidence the
+classifier actually used, not a restatement of the headline.
+
+
 **THE GATE DETECTS, THE BOT DISPLAYS.** `CEO_GATE_SUMMARY` in `worker.js` is a
 literal the Health tab prints, and `portal/test-ceo-gate.mjs` **asserts its own
 fresh totals against it and fails on drift**, naming the numbers to paste.
@@ -4254,6 +4329,231 @@ because building them would put an untruth on a staff screen:
   category column — it has `priority`, which is a different thing. Drawing a
   category would be inventing data.
 - **An avatar and an "On Duty" status.** There is no such record.
+
+## One card system, five families, and no new colour
+
+Owner brief 2026-09-06, against the approved **"Assistant — Case Command
+Center (V1)"** mockup: *"Do NOT just keep the current layout and lightly
+recolor it. Refactor the visible UI to resemble the mockup."*
+
+**What was taken from the mockup is its GRAMMAR, not its palette.** A boxed
+section with a heading and a one-line lede; an icon TILE beside a bold name
+over a quiet sub-line; facts as label/value rows; and an action block of one
+filled PRIMARY over a two-across grid of outlined secondaries. The mockup's
+blue is not taken — this portal is navy/teal/gold and the owner's restraint
+rule governs — so `.uibtn.pri` is `--navy-2`, which is what `.btn` already was.
+
+**`--r-card` / `--r-btn` / `--btn-h` / `--card-pad` / `--card-gap` are the whole
+geometry**, named once in `:root`. `--btn-h` is 48 so a large control clears
+the 44px tap floor **from the token** rather than from a padding sum nobody
+can read off a rule.
+
+**EVERY FAMILY IS COMPOSED FROM TOKENS THIS PALETTE ALREADY HAD.**
+`.fam-intake` is the `--ok-*` green, `.fam-money` the `--gold-*`, `.fam-asst`
+the `--info-*` teal, `.fam-ceo` navy, `.fam-tool` the `--media-*` purple,
+`.fam-case` neutral — each setting four locals (`--f-bg/-line/-ink/-tile`)
+that the components read. **Not one hex literal entered the page**, so the
+anti-drift budget had nothing to catch and a future palette edit moves these
+with everything else. The family says what KIND of work a card is for; the
+geometry never varies between families, which is what makes a row of them read
+as one system rather than five decorations.
+
+**Four surfaces, one vocabulary:** the phone Home strip, the case action row,
+the intake card, and the CEO Bot panel's cards. Nothing was added, removed or
+rewired on any of them — same doors, same `data-act`s, same conditions, same
+order — so this is a shape change and the suites that pin behaviour were
+untouched by it.
+
+**THE PHONE'S HOME STRIP STOPPED SWIPING, and that is the substantive win.**
+It was `overflow-x:auto` with 126px cards, so at 390px two and a half of the
+ten doors were visible and the other seven were reachable only by knowing to
+swipe — the sideways scroll the release gate exists to catch, on the portal's
+own first screen. It is a two-across `.uigrid` now: ten cards, all on screen,
+no gesture, no page overflow at 390 or 320. **`grid-auto-rows:1fr` is
+load-bearing** — without it the card whose name wraps to two lines
+("Insurance Intake") makes its row taller than the rest and the strip reads as
+several lists; measured, all ten are 122px.
+
+**The suite's own assertion was INVERTED rather than deleted.** It required the
+strip to scroll inside itself, which was the best the old shape could do; the
+property worth pinning now is the stronger one — nothing scrolls, the strip
+included. Two more moved from `.btn` to `.uibtn` because the intake card's
+action block changed size, and the properties they protect ("a primary action
+never shrinks below its own words", "the View intake door exists") are
+unchanged and still asserted.
+
+**THE DESKTOP QUICK-TOOLS ROW IS BYTE-WHAT-IT-WAS** — same six doors, same
+order, same `dlabel` wording, same markup — and the suite still pins it at
+1200 and 768. Only the phone surface moved, which is the standing rule.
+
+**`.uiact-lead`, NOT `.lead`.** `.lead` is this file's muted-prose class
+(`color:var(--muted); margin-bottom:18px`), so the short name would have
+greyed the flagged card's own text and pushed it 18px taller than its
+siblings. **The class-name contest again** — the same trap as `.qgrid`, `.dlg`,
+the burger base rule and `.opt`, though not the same mechanism: those five are
+counted above as SOURCE-ORDER casualties, where a later rule silently won.
+This one is a NAME collision, where a shorter class the file already owned
+leaked its properties into a new component. Caught by a grep for collisions
+before the first render rather than by a screenshot afterwards, which is the
+cheap way round and is why the grep is worth running on every new class. `.uibtn.ceo-casebtn` is the same
+lesson at the specificity layer: `.uibtn.sec` is a two-class selector and
+would have out-specified a bare `.ceo-casebtn`, painting the CEO door navy
+like its neighbours and losing the one thing that says which bot it opens.
+
+### The back-button audit found a bug two screens wide
+
+`.close` is the DIALOG X's rule — `position:absolute; right:14px; top:12px` —
+and three back buttons borrowed the class for its look and inherited that
+positioning with it. The case page's copy was pinned back into flow at 899px
+and below, which is where the burger sits and where it was covering the
+signed-in name. **The two Clients & Firms back buttons are not `.casepage`**,
+so they were absolutely positioned at EVERY width, floated out of their own
+bar and against whatever ancestor happened to be positioned. A back button is
+in-flow content, not an overlay: `.pagebar .close` is static everywhere now.
+
+### What was deliberately NOT done
+
+- **No new door was added to Home.** The staged version of this work added
+  Assistant, CEO Bot and Review Intakes cards to the phone strip. All three
+  are already one tap away — the two bots as the stacked pills on every
+  screen, Intakes in the bottom nav — so adding them would have been the
+  duplicate-entry creep this file already records the guard catching once.
+- **The CEO Bot panel's information architecture is untouched.** The owner
+  approved it in two briefs; it took the shared radius and a grid of
+  full-width actions, and nothing else.
+- **No mockup content was invented.** The mockup's Beta chip, its "Case
+  Command Center" subtitle and its bottom-nav Assistant tab describe a build
+  this portal deliberately does not have — Beta came off on 2026-09-05, and
+  the Assistant's phone door is the pill, not a nav tab.
+
+## Home is the owner's own first screen, and a signed intake cannot be missed
+
+Owner brief 2026-09-06 (the mockup breakdown, §A–§AF). The instruction that
+governs the whole unit: *"Do NOT just keep the current layout and lightly
+recolor it."*
+
+**§E — IT OPENS WITH A GREETING, NOT A STATISTICS WALL.** *Good morning,
+Corey / Let's keep it simple.*, above the quick actions, on the dashboard
+only. It reads the VIEWER'S clock, which is the right one for a greeting and
+the only place on this page that derives a time locally — the timeline
+composes its wording in the Worker precisely because a laptop set to Pacific
+must not redate a Virginia entry.
+
+**§G — A SIGNED INTAKE IS A WIDE GREEN CARD ABOVE EVERYTHING**, naming the
+client, and one tap opens what they submitted and signed (`?tab=details`) —
+not Review, not the case Overview. It is derived from the case list the page
+already holds: `signed` is the Worker's own computed column (a signature
+exists in the payload), never inferred from a status.
+
+**THE HONESTY RULE MATTERS MOST ON THE CARD BUILT TO DOMINATE.** A failed
+case-list read draws NOTHING here — never "nothing waiting". `CASES_OK` is
+the flag that keeps the three states apart, and there is a test that turns it
+off and asserts the card disappears. A card whose whole job is to be
+impossible to miss must not be the one quietly saying all-clear about a list
+it could not read.
+
+**OWNER DECISION, 2026-09-07 — LOCKED: BOTH TIMESTAMP TOOLS STAY PRIMARY.**
+*"Keep BOTH Timestamp Photo and Timestamp Video as primary visible cards on
+Home. Do not move either behind More. Preserve their direct one-tap access."*
+
+I had put them behind the More disclosure under §Z's *"use More / Advanced for
+low-frequency items"* — they are in neither §F's six nor §AD's eight — and
+flagged it as a relaxation of the 2026-09-04 rule that the timestamp door must
+not live in a menu. The owner overturned it. A labelled disclosure on the same
+screen is not the hamburger, and it is still one tap of concealment on a
+control that already went missing once; that costs more than the two rows it
+saves. **Eight primary cards, four under More** (Insurance Intake, Law Firm
+Intake, Reports & Packages, Active Surveillance — each of which keeps a rail
+door). Measured at 390: the strip is 667px, both tools are on the first screen
+at 122px and pressable, and Today / next actions sits at 909 — just under the
+fold, which is the trade the owner made knowingly. **Do not move these two
+again without asking**, and the suite asserts it from both sides: they are in
+the eight, AND neither is inside `.qtmore`.
+
+**§B — FIVE FAMILIES, AND EACH ONE MEANS SOMETHING.** Green is positive and
+money received (intakes, Retainer paid, View intake); teal is the ordinary
+operational primary (Rate Sheet, Reports, Assistant); gold is the CEO Bot;
+navy is structure (Cases, Active Surveillance, the timestamp tools); red is
+destruction (Close case). There were six — a purple media family and a
+separate gold for money — and six families over ten cards is the rainbow §B
+forbids. The purple TOKENS stay where media chips use them; only the class
+went.
+
+**§M/§N/§O/§P — THE CASE SCREEN IS RANKED.** View intake (teal), Retainer
+paid (green) and Close case (red) are large controls at the top, Send rate
+sheet under them, and everything else became a one-line row with a chevron.
+**Nothing was added or rewired**: same `data-act`s, same conditions, same
+routes — `retQuick` still opens the Authorization panel's own Record Payment
+form and `fcQuick` the Billing panel's closeout, so every confirmation, ledger
+rule and refusal is untouched. A prominent button is still only a button.
+
+**The four fills are measured, not asserted as colours**: white on teal is
+4.71, on the green 6.54, on the red 5.16 — all clear of the 4.5 that applies
+at 14px bold. **`--good` was rejected for the green** because white on it
+computes 4.38 and would have shipped a button nobody could read under a
+comment saying it was greener; `--ok-ink` is what is used.
+
+### §AF — the art cards are built, and the placeholder is the light card
+
+`case-portal/ART-ASSET-MANIFEST.md` carries the fifteen specifications —
+filename, card shape, aspect, pixels, safe zone, family — plus the art
+direction and the mandatory `?v=` cache-bust.
+
+**THE FIRST BUILD EMITTED THE ART URL UNCONDITIONALLY AND MADE THE PORTAL
+WORSE.** The reasoning was sound and the result was not: a background-image
+that 404s does not paint, so the card falls back to its ground — but the art
+treatment IS a dark ground under a scrim, and with no photographs that is ten
+dark slabs in a grid, with the family colours §B asks them to carry crushed
+to near-black by the very scrim that makes white text safe. Rendered and
+compared side by side, the light card is the better placeholder, which is the
+entire point of a placeholder.
+
+So **`CARD_ART` names the files that actually exist**. It is empty, the cards
+draw light, and each card's artwork costs its name here plus the asset plus
+its line in `.github/deploy-manifest.txt` — the layout, the geometry and the
+text do not move, which is what the brief actually asked for. The ONE card
+that keeps the art treatment today is the wide signed-intake card: it is a
+single card, it is meant to dominate, and green-on-dark is legible where a
+grid of ten is not.
+
+## The office gets its own copy of what it sent
+
+Owner brief 2026-09-06: *"Corey should not have to remember to CC himself."*
+`ownerRecordCopy()` in `case-portal/worker.js`, called from the four send
+routes that already existed — the rate sheet, both intake senders and the
+standalone payment instructions.
+
+**IT IS A SEPARATE MESSAGE, NOT A BCC.** A blind copy would be byte for byte
+what the client got, and the brief asks the record to identify the amount, the
+non-refundable portion, the four-hour minimum, whether an intake rode along
+and which document version went. None of that is in the client's copy and
+some of it must not be, so the office gets an internal summary that NAMES the
+client's copy rather than duplicating it.
+
+**THE ADDRESS IS CONFIGURATION AND STARTS EMPTY** —
+`billing_owner_record_email` in `app_config`, the `remit_address` precedent.
+No personal address is hardcoded anywhere, nothing seeds or derives one, and
+with the box empty **nothing is sent and nothing changes**. That is also why
+every existing assertion counting one message after a send still counts one.
+**No schema change and no portal-setup dispatch.**
+
+**IT CAN NEVER COST THE SEND.** It runs after the client's copy has gone and
+after `send_log` has recorded it; it does not throw, and its outcome is
+REPORTED on the response (`record_copy` plus a reason) rather than swallowed
+or faked. There is a test where the provider accepts the client's message and
+rejects the copy: the client is still told their document went, and the
+failure is on the record.
+
+**IT IS NOT A SECOND ROW IN THE SEND HISTORY.** `send_log.kind` carries
+`CHECK (kind IN ('rate_sheet','intake'))` and widening a CHECK is the
+non-idempotent rebuild `schema.sql` cannot do — but the deeper reason is that
+the office was not sent a rate sheet, the client was. A test reads the send
+history back and asserts the office appears in it nowhere.
+
+**The three private-only figures stay private-only.** There is no retainer, no
+non-refundable portion and no hourly minimum on a carrier's or a law firm's
+send, and a record copy naming one would be the office's own file asserting
+something untrue.
 
 ## The /watch/ dashboard
 

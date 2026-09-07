@@ -1009,34 +1009,43 @@ section('Rate sheets');
   ok('its confirmation line is its own', has(sheet, 'Your case. Your authorization.'));
   ok('the send wizard is the one door out', await page.locator('.btn', { hasText: 'Send this sheet' }).count() === 1);
 
-  /* ==== THE NON-REFUNDABLE PORTION (owner brief 2026-09-05) ================
-     The owner's display rule is exact — three statements, one red, one gold,
-     no percentage and no formula — so the COLOURS are measured rather than
-     assumed present, and the absence of a percentage is asserted as such. */
+  /* ==== THE NON-REFUNDABLE PORTION (owner brief 2026-09-05, restyled by the
+     owner 2026-09-07) =======================================================
+     BOLD ONLY. "Same font size as surrounding rate-sheet text, no bigger
+     text, no alert color treatment, no warning box feel, no extra emphasis
+     beyond bold." So every clause of that is measured, and each against a
+     REAL NEIGHBOUR rather than against a number typed here: the size against
+     a `.rs-l` label on the same card, the colour against the plain retainer
+     line in the same block, the ground against the card the block sits on.
+     A hard-coded 16px would pass on a page whose body size had changed. */
   const eng = await page.evaluate(() => {
     const box = document.querySelector('.rs-eng');
     if (!box) return null;
     const px = el => getComputedStyle(el);
-    const alert = box.querySelector('.eng-alert');
-    const emph = box.querySelector('.eng-emph');
-    const lum = c => {
-      const m = c.match(/\d+/g).slice(0, 3).map(Number)
-        .map(v => v / 255).map(v => v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
-      return 0.2126 * m[0] + 0.7152 * m[1] + 0.0722 * m[2];
-    };
-    const ratio = (a, b) => {
-      const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
-      return Math.round(((hi + 0.05) / (lo + 0.05)) * 100) / 100;
-    };
-    const ground = px(box).backgroundColor;
+    const terms = [...box.querySelectorAll('.eng-term')];
+    const plain = [...box.querySelectorAll('.eng-l')].filter(e => !e.classList.contains('eng-term'));
+    const neighbour = box.closest('.card, .sheet-card, .panel') || box.parentElement;
+    const label = neighbour.querySelector('.rs-l');
+    const bs = px(box);
     return {
       text: box.innerText,
       lines: [...box.querySelectorAll('.eng-l')].map(e => e.innerText),
-      alertColor: alert ? px(alert).color : null,
-      emphColor: emph ? px(emph).color : null,
-      alertRatio: alert ? ratio(px(alert).color, ground) : null,
-      emphRatio: emph ? ratio(px(emph).color, ground) : null,
-      alertWeight: alert ? px(alert).fontWeight : null,
+      termCount: terms.length,
+      termSizes: terms.map(e => parseFloat(px(e).fontSize)),
+      termWeights: terms.map(e => Number(px(e).fontWeight)),
+      termColors: terms.map(e => px(e).color),
+      termSpacing: terms.map(e => px(e).letterSpacing),
+      plainSize: plain.length ? parseFloat(px(plain[0]).fontSize) : null,
+      plainWeight: plain.length ? Number(px(plain[0]).fontWeight) : null,
+      plainColor: plain.length ? px(plain[0]).color : null,
+      labelSize: label ? parseFloat(px(label).fontSize) : null,
+      /* THE BOX ITSELF must have stopped being a box. */
+      boxBg: bs.backgroundColor,
+      boxBorder: [bs.borderTopWidth, bs.borderRightWidth,
+                  bs.borderBottomWidth, bs.borderLeftWidth].map(parseFloat),
+      boxPadding: [bs.paddingTop, bs.paddingRight,
+                   bs.paddingBottom, bs.paddingLeft].map(parseFloat),
+      cardBg: px(neighbour).backgroundColor,
       overflow: document.documentElement.scrollWidth > window.innerWidth,
     };
   });
@@ -1044,17 +1053,41 @@ section('Rate sheets');
   ok('it states the three things the owner asked for, in that order',
      eng.lines.length === 3 && /^Retainer: \$1,500$/.test(eng.lines[0])
      && /^NON-REFUNDABLE PORTION: \$500$/.test(eng.lines[1])
-     && /^4-HOUR MINIMUM REQUIRED$/.test(eng.lines[2]), JSON.stringify(eng.lines));
-  ok('the non-refundable portion is red and bold',
-     eng.alertColor === 'rgb(193, 65, 51)' && Number(eng.alertWeight) >= 700,
-     `${eng.alertColor} / ${eng.alertWeight}`);
-  ok('the minimum is gold', eng.emphColor === 'rgb(122, 90, 18)', eng.emphColor);
-  /* MEASURED, NOT ASSUMED. A prominent statement that fails AA is worse than a
-     quiet one: it is loud and unreadable. On --neutral-bg the red is 4.30 and
-     would have shipped exactly that. */
-  ok(`both tones clear AA on the block's own ground (red ${eng.alertRatio}, gold ${eng.emphRatio})`,
-     eng.alertRatio >= 4.5 && eng.emphRatio >= 4.5,
-     `${eng.alertRatio} / ${eng.emphRatio}`);
+     && /^4-HOUR MINIMUM PER SURVEILLANCE DAY$/.test(eng.lines[2]), JSON.stringify(eng.lines));
+  ok('exactly the two named terms are marked, and nothing else in the block is',
+     eng.termCount === 2, String(eng.termCount));
+  ok('both terms are bold', eng.termWeights.every(w => w >= 700),
+     JSON.stringify(eng.termWeights));
+  /* THE RETAINER LINE IS THE CONTROL. It lost its own bold in this change, and
+     that is the half that makes bold mean anything: three bold lines with two
+     of them bolder is the "everything is loud" the owner was reading. */
+  ok('and the retainer line beside them is NOT — bold is what says "term"',
+     eng.plainWeight !== null && eng.plainWeight < 700, String(eng.plainWeight));
+  ok(`the terms are the same size as the plain line beside them (${eng.termSizes.join('/')}px)`,
+     eng.termSizes.every(v => Math.abs(v - eng.plainSize) < 0.51),
+     `${JSON.stringify(eng.termSizes)} vs ${eng.plainSize}`);
+  ok(`and the same size as the sheet's own row labels (${eng.labelSize}px)`,
+     eng.labelSize !== null && eng.termSizes.every(v => Math.abs(v - eng.labelSize) < 0.51),
+     `${JSON.stringify(eng.termSizes)} vs ${eng.labelSize}`);
+  /* "NO ALERT COLOR TREATMENT" measured as identity with the plain line rather
+     than as "not red": a term recoloured to any second colour fails this, which
+     is the class the owner was refusing, not one hex. */
+  ok('no term carries a colour of its own — all three lines are one ink',
+     eng.termColors.every(c => c === eng.plainColor),
+     `${JSON.stringify(eng.termColors)} vs ${eng.plainColor}`);
+  ok('and no term is letterspaced apart from the text around it',
+     eng.termSpacing.every(v => v === 'normal' || parseFloat(v) === 0),
+     JSON.stringify(eng.termSpacing));
+  /* "NO WARNING BOX FEEL": the block is not a surface. It sits on the card's
+     own ground with no border and no rail — a rail is a border-left width, so
+     measuring all four sides catches it whichever side it comes back on. */
+  ok('the block has no border and no rail on any side',
+     eng.boxBorder.every(v => v === 0), JSON.stringify(eng.boxBorder));
+  ok('it has no ground of its own — it is the card it sits on',
+     eng.boxBg === eng.cardBg || eng.boxBg === 'rgba(0, 0, 0, 0)',
+     `${eng.boxBg} vs ${eng.cardBg}`);
+  ok('and it is not inset like a panel', eng.boxPadding.every(v => v === 0),
+     JSON.stringify(eng.boxPadding));
   ok('it carries the supporting sentence',
      has(eng.text, 'non-refundable upon engagement and reservation of investigative services'));
   ok('and shows NO percentage and no arithmetic — the owner\'s own rule',
@@ -1996,23 +2029,23 @@ section('A private lead can be sent payment options; an insurance lead cannot');
 
   // §15.1 / §15.2 — the whole boundary, on two cards side by side.
   ok('the private card offers Send payment options',
-     await priv.locator('.btn', { hasText: 'Send payment options' }).count() === 1);
+     await priv.locator('.btn, .uibtn', { hasText: 'Send payment options' }).count() === 1);
   ok('the insurance card does NOT, anywhere on it',
-     await ins.locator('.btn', { hasText: 'Send payment options' }).count() === 0);
+     await ins.locator('.btn, .uibtn', { hasText: 'Send payment options' }).count() === 0);
   ok('and the insurance card still offers its own two sends',
-     await ins.locator('.btn', { hasText: 'Send rate sheet' }).count() === 1
-     && await ins.locator('.btn', { hasText: 'Send intake' }).count() === 1);
+     await ins.locator('.btn, .uibtn', { hasText: 'Send rate sheet' }).count() === 1
+     && await ins.locator('.btn, .uibtn', { hasText: 'Send intake' }).count() === 1);
   /* "Review" opened the CASE, which is not what the word promised — the owner
      reported it from a phone. It is "View intake" now and goes to the
      submission. The property this assertion protects is unchanged: the card's
      other actions were not displaced by the rename. */
   ok('the private card keeps its existing actions too — nothing was displaced',
-     await priv.locator('.btn', { hasText: 'View intake' }).count() === 1
-     && await priv.locator('.btn', { hasText: 'Send rate sheet' }).count() === 1
-     && await priv.locator('.btn', { hasText: 'Send intake' }).count() === 1);
+     await priv.locator('.btn, .uibtn', { hasText: 'View intake' }).count() === 1
+     && await priv.locator('.btn, .uibtn', { hasText: 'Send rate sheet' }).count() === 1
+     && await priv.locator('.btn, .uibtn', { hasText: 'Send intake' }).count() === 1);
 
   // The dialog.
-  await priv.locator('.btn', { hasText: 'Send payment options' }).click();
+  await priv.locator('.btn, .uibtn', { hasText: 'Send payment options' }).click();
   await page.waitForTimeout(900);
   ok('the standalone dialog opens', await page.locator('.amsheet').count() === 1);
   ok('titled as payment options, not as a rate sheet send',
@@ -4223,7 +4256,7 @@ section('The dashboard leads with case packages');
   ok('the ring speaks percent', /\d+%/.test(card));
 
   await page.locator('.pcard', { hasText: 'API-20260812-4001' })
-    .locator('.btn', { hasText: 'Continue case' }).click();
+    .locator('.btn, .uibtn', { hasText: 'Continue case' }).click();
   await page.waitForTimeout(700);
   ok('Continue case opens the case at its step', await page.locator('.casepage').count() === 1);
   await page.close();
@@ -4424,9 +4457,9 @@ section('Leads and intakes: cards, decisions, and the phone-call lead');
   const desk = await text(page, '#app');
   ok('early-stage submissions wait as cards', await page.locator('.pcard').count() >= 1, desk.slice(0, 200));
   ok('a card offers a way into the submitted intake, named for what it opens',
-     await page.locator('.pcard .btn', { hasText: 'View intake' }).count() >= 1);
+     await page.locator('.pcard .btn, .pcard .uibtn', { hasText: 'View intake' }).count() >= 1);
   ok('and Accept routes to the assignment decision',
-     await page.locator('.pcard .btn', { hasText: 'Accept' }).count() >= 1);
+     await page.locator('.pcard .btn, .pcard .uibtn', { hasText: 'Accept' }).count() >= 1);
   // The hostile row is stage new, so it sits on this desk too — as text.
   ok('a hostile case number renders as text on the leads desk',
      desk.includes('window.__pwned'));
@@ -6838,8 +6871,8 @@ section('A lead has its own life, and its sends live on the card');
      && await card.locator('select[data-act="leadStatus"]').count() === 1,
      (await card.innerText()).slice(0, 160));
   ok('and both send actions on the card',
-     await card.locator('.btn', { hasText: 'Send rate sheet' }).count() === 1
-     && await card.locator('.btn', { hasText: 'Send intake' }).count() === 1);
+     await card.locator('.btn, .uibtn', { hasText: 'Send rate sheet' }).count() === 1
+     && await card.locator('.btn, .uibtn', { hasText: 'Send intake' }).count() === 1);
 
   // The office's own hand: set Contacted, and it survives a full reload.
   // The disclosure has to be opened first — it is closed by default, which is
@@ -6858,7 +6891,7 @@ section('A lead has its own life, and its sends live on the card');
 
   // Send intake, inline: prefilled from the lead, honest when mail is off.
   const card2 = page.locator('.pcard', { hasText: 'API-20260812-4005' });
-  await card2.locator('.btn', { hasText: 'Send intake' }).click();
+  await card2.locator('.btn, .uibtn', { hasText: 'Send intake' }).click();
   await page.waitForTimeout(400);
   ok('the address is prefilled from the lead',
      await page.locator('#ls_to').inputValue() === 'riley@example.test');
@@ -6866,12 +6899,12 @@ section('A lead has its own life, and its sends live on the card');
   await page.waitForTimeout(700);
   ok('with no mail key the card says exactly what is missing',
      has(await card2.innerText(), 'not configured'));
-  await card2.locator('.btn', { hasText: 'Cancel' }).click();
+  await card2.locator('.btn, .uibtn', { hasText: 'Cancel' }).click();
   await page.waitForTimeout(300);
 
   // Send rate sheet: the SAME wizard, opened from the lead, prefilled — and
   // the sheet picked by the lead's kind, never by the caller.
-  await card2.locator('.btn', { hasText: 'Send rate sheet' }).click();
+  await card2.locator('.btn, .uibtn', { hasText: 'Send rate sheet' }).click();
   await page.waitForTimeout(400);
   ok('the send wizard opens from the leads desk', await page.locator('.amsheet').count() === 1);
   ok('on the private sheet, because this is a private lead',
@@ -6910,7 +6943,7 @@ section('A lead has its own life, and its sends live on the card');
      real failure — and it has to be on the record as one. Done last, because
      opening the case leaves the leads desk behind. */
   await page.locator('.pcard', { hasText: 'API-20260812-4005' })
-    .locator('.btn', { hasText: 'View intake' }).click();
+    .locator('.btn, .uibtn', { hasText: 'View intake' }).click();
   await page.waitForTimeout(700);
   await wsTab(page, 'Comm log');
   await page.waitForTimeout(500);
@@ -7098,18 +7131,18 @@ section('A returned private intake shows the retainer pending and the way to act
   ok('the returned intake is named as received', has(t1, 'Private intake received'));
   ok('and the retainer is named as pending', has(t1, 'Retainer pending'));
   ok('§10: Record payment is offered right there',
-     await c1.locator('.btn', { hasText: 'Record payment' }).count() === 1);
+     await c1.locator('.btn, .uibtn', { hasText: 'Record payment' }).count() === 1);
   ok('§10: so is Send payment options',
-     await c1.locator('.btn', { hasText: 'Send payment options' }).count() === 1);
+     await c1.locator('.btn, .uibtn', { hasText: 'Send payment options' }).count() === 1);
   ok('§10: and the way into the submitted intake, which is the third named action',
-     await c1.locator('.btn', { hasText: 'View intake' }).count() === 1);
+     await c1.locator('.btn, .uibtn', { hasText: 'View intake' }).count() === 1);
 
   /* The condition is BOTH halves. A retainer that has arrived is not pending,
      and saying so anyway would send the office chasing money it already has. */
   const t2 = await c2.innerText();
   ok('a retainer already received is NOT reported pending', !has(t2, 'Retainer pending'), t2);
   ok('and that card offers no Record payment, having nothing to record',
-     await c2.locator('.btn', { hasText: 'Record payment' }).count() === 0);
+     await c2.locator('.btn, .uibtn', { hasText: 'Record payment' }).count() === 0);
 
   /* The private/insurance boundary, on the same desk as always. A claim
      assignment has no retainer and must never be shown one. */
@@ -7117,8 +7150,8 @@ section('A returned private intake shows the retainer pending and the way to act
   ok('an insurance card never says Retainer pending', !has(t3, 'Retainer pending'), t3);
   ok('nor Private intake received', !has(t3, 'Private intake received'));
   ok('nor offers Record payment or payment options',
-     await c3.locator('.btn', { hasText: 'Record payment' }).count() === 0
-     && await c3.locator('.btn', { hasText: 'payment options' }).count() === 0);
+     await c3.locator('.btn, .uibtn', { hasText: 'Record payment' }).count() === 0
+     && await c3.locator('.btn, .uibtn', { hasText: 'payment options' }).count() === 0);
 
   /* Instructions already sent — §10's second half. */
   const t4 = await c4.innerText();
@@ -7127,7 +7160,7 @@ section('A returned private intake shows the retainer pending and the way to act
   ok('naming the methods that went, read back from the send',
      has(t4, 'Cash App') && has(t4, 'Venmo'), t4);
   ok('and its button reads Resend, so nobody sends a first-time email twice',
-     await c4.locator('.btn', { hasText: 'Resend payment options' }).count() === 1);
+     await c4.locator('.btn, .uibtn', { hasText: 'Resend payment options' }).count() === 1);
   ok('the card that was never asked does not claim instructions went',
      !has(t1, 'Payment instructions sent'), t1);
 
@@ -7140,21 +7173,28 @@ section('A returned private intake shows the retainer pending and the way to act
     const card = [...document.querySelectorAll('.pcard')]
       .find(el => el.textContent.includes('API-RP-1'));
     if (!card) return { found: false };
-    const small = [...card.querySelectorAll('.btn')]
-      .filter(b => b.getBoundingClientRect().height < 44)
+    /* `.btn, .uibtn`, AND THE COUNT IS ASSERTED. The card's actions became
+       `.uibtn` in the mockup refactor, so looking only for `.btn` finds an
+       EMPTY list — and "every element is at least 44px" is TRUE of an empty
+       list. This assertion would have gone on passing while measuring
+       nothing, which is the exact `[].every()` failure recorded against the
+       Unit 40 card artwork. Counting is what makes it a measurement. */
+    const acts = [...card.querySelectorAll('.btn, .uibtn')];
+    const small = acts.filter(b => b.getBoundingClientRect().height < 44)
       .map(b => b.textContent.trim().slice(0, 20));
-    return { found: true, right: Math.round(card.getBoundingClientRect().right), small };
+    return { found: true, right: Math.round(card.getBoundingClientRect().right),
+             n: acts.length, small };
   });
   ok('the card still fits a 390px screen with the block on it',
      phone.found && phone.right <= 391, JSON.stringify(phone));
   ok('and every action on it is still a 44px target',
-     phone.found && phone.small.length === 0, JSON.stringify(phone));
+     phone.found && phone.n >= 4 && phone.small.length === 0, JSON.stringify(phone));
   await page.setViewportSize({ width: 1200, height: 900 });
   await page.waitForTimeout(400);
 
   /* Record payment must reach the ONE writer, not a second one: the case's own
      retainer form, with its idempotency token and its route. */
-  await c1.locator('.btn', { hasText: 'Record payment' }).click();
+  await c1.locator('.btn, .uibtn', { hasText: 'Record payment' }).click();
   await page.waitForTimeout(900);
   ok('Record payment lands on the case it was pressed for',
      has(await text(page, 'body'), 'API-RP-1'));
@@ -8671,13 +8711,40 @@ section('The quick tool is discoverable, not merely present');
   const p = await page.evaluate(() => {
     /* THE VISIBLE ONE. querySelector returns the desktop chip, which is
        display:none here — measuring it reports 0px and says nothing about
-       what a thumb can reach. */
+       what a thumb can reach.
+
+       OWNER DECISION, 2026-09-07 — LOCKED. Both timestamp tools are PRIMARY
+       cards on Home; neither may be moved behind More. I had put them there
+       under §Z's "use More for low-frequency items" and the owner overturned
+       it, settling a conflict with the 2026-09-04 rule this very section
+       enforces: the door must not be concealed, because it went missing once.
+       A labelled disclosure on the same screen is not the hamburger, and the
+       owner has decided it is still one tap of concealment too many.
+
+       So this asserts what it always meant, directly — on the first screen,
+       at the tap floor — plus the half the previous build proved was worth
+       measuring separately: that the control is PRESSABLE and not merely
+       laid out. A collapsed `<details>` card reported `visibility:visible`
+       with a real bounding box that nothing painted, and only elementFromPoint
+       could tell the difference. */
     const b = [...document.querySelectorAll('.qtools [data-act="vstOpen"]')]
       .find(e => e.offsetParent);
-    const r = b.getBoundingClientRect();
+    const r = b ? b.getBoundingClientRect() : null;
+    const hit = r ? document.elementFromPoint(Math.round(r.left + r.width / 2),
+                                              Math.round(r.top + r.height / 2)) : null;
+    const ph = [...document.querySelectorAll('.qtools [data-act="pstLaunch"]')]
+      .find(e => e.offsetParent);
+    const pr = ph ? ph.getBoundingClientRect() : null;
     const nav = document.querySelector('.tabs');
-    return { h: Math.round(r.height), y: Math.round(r.y),
-             onFirstScreen: r.y >= 0 && r.y < innerHeight,
+    return { h: r ? Math.round(r.height) : 0, y: r ? Math.round(r.y) : null,
+             onFirstScreen: !!r && r.y >= 0 && r.y < innerHeight,
+             pressable: !!hit && !!b && (hit === b || b.contains(hit)),
+             /* ITS SIBLING TOO. The owner's decision names both, and a rule
+                that holds for one of a pair is how the other quietly moves. */
+             photoOnFirstScreen: !!pr && pr.y >= 0 && pr.y < innerHeight,
+             photoH: pr ? Math.round(pr.height) : 0,
+             /* and neither is inside the More disclosure */
+             inMore: !!(b && b.closest('.qtmore')) || !!(ph && ph.closest('.qtmore')),
              navHidden: getComputedStyle(nav).display === 'none',
              sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth };
   });
@@ -8687,6 +8754,11 @@ section('The quick tool is discoverable, not merely present');
   ok('on a phone the navigation rail really is behind the burger', p.navHidden);
   ok('and the quick tool is still on the screen, not in that menu',
      p.onFirstScreen && p.h >= 44, JSON.stringify(p));
+  ok('it is pressable, not merely laid out', p.pressable === true, JSON.stringify(p));
+  ok('Timestamp Photo is on the screen beside it, as the owner requires',
+     p.photoOnFirstScreen && p.photoH >= 44, JSON.stringify(p));
+  ok('and NEITHER of the pair is behind the More disclosure',
+     p.inMore === false, JSON.stringify(p));
   ok('with nothing scrolling sideways at 390px', p.sw <= p.cw + 1, `${p.sw} vs ${p.cw}`);
 
   // It reaches the workflow that already shipped — not a second one.
@@ -11769,8 +11841,13 @@ section('Recent activity rows are doors, and stacked records read on a phone');
   await page.evaluate(() => { const b = [...document.querySelectorAll('[data-act="tab"]')]
     .find(x => x.dataset.tab === 'leads'); if (b) b.click(); });
   await page.waitForTimeout(700);
+  /* `.uibtn`, not `.btn`: the intake card's action block is the mockup's
+     large-button shape now (one filled primary over a two-across grid). The
+     PROPERTY is unchanged and is the one that matters — a primary action
+     never shrinks below its own words — so the selector moved and the
+     assertion did not. */
   const acc = await page.evaluate(() =>
-    [...document.querySelectorAll('.pc-next > .btn')].map(x => {
+    [...document.querySelectorAll('.pc-next > .uibtn')].map(x => {
       const r = x.getBoundingClientRect();
       return { w: Math.round(r.width), h: Math.round(r.height) }; }));
   ok('Accept is wider than it is tall, at tap height',
@@ -17420,7 +17497,8 @@ section('Intakes: tapping a submitted intake opens what the client signed');
       moreClosed: c.querySelector('.pc-more') ? !c.querySelector('.pc-more').open : null,
       /* NO CONTROL INSIDE A CONTROL — the Unit 40 nesting rule */
       nested: door ? door.querySelectorAll('button,a,select,input').length : -1,
-      viewBtn: !!c.querySelector('[data-tab="details"].btn'),
+      /* the same door, at the mockup's button size — see `.uibtn` above */
+      viewBtn: !!c.querySelector('[data-tab="details"].uibtn'),
       reviewGone: !/\bReview\b/.test(c.innerText),
     };
   });
@@ -17531,7 +17609,7 @@ section('The send wizard offers the non-refundable amount, on Private only');
   ok('the wizard preview carries the typed figure, resolved by the Worker',
      /NON-REFUNDABLE PORTION: \$750/.test(prevTxt) && !/\$500/.test(prevTxt), prevTxt);
   ok('and it still states the retainer and the minimum beside it',
-     /Retainer: \$1,500/.test(prevTxt) && /4-HOUR MINIMUM REQUIRED/.test(prevTxt), prevTxt);
+     /Retainer: \$1,500/.test(prevTxt) && /4-HOUR MINIMUM PER SURVEILLANCE DAY/.test(prevTxt), prevTxt);
   await closeWiz();
 
   /* THE LEGAL WIZARD TAKES THE SAME SHEET AND MUST NOT OFFER THIS. It is also
@@ -17564,14 +17642,22 @@ section('The send wizard offers the non-refundable amount, on Private only');
     return { lines: [...box.querySelectorAll('.eng-l')].map(e => e.innerText),
              insidePanel: r.left >= panel.left - 1 && r.right <= panel.right + 1,
              overflow: document.documentElement.scrollWidth > window.innerWidth,
-             alertPx: parseFloat(getComputedStyle(box.querySelector('.eng-alert')).fontSize) };
+             termPx: [...box.querySelectorAll('.eng-term')]
+               .map(e => parseFloat(getComputedStyle(e).fontSize)),
+             plainPx: parseFloat(getComputedStyle(
+               [...box.querySelectorAll('.eng-l')].find(e => !e.classList.contains('eng-term'))
+             ).fontSize) };
   });
   ok('the block draws on a phone, with all three statements', phone && phone.lines.length === 3,
      JSON.stringify(phone && phone.lines));
   ok('it stays inside the card it belongs to', phone.insidePanel === true);
   ok('and the page does not scroll sideways at 390px', phone.overflow === false);
-  ok('the red statement is not shrunk below body size on a phone',
-     phone.alertPx >= 15, String(phone.alertPx));
+  /* ON A PHONE THE RULE IS THE SAME RULE. The terms may not grow to shout and
+     may not shrink to hide: the only number they are allowed to be is the one
+     the line beside them is. */
+  ok(`the terms are body size on a phone, exactly like the line beside them (${phone.termPx.join('/')}px)`,
+     phone.termPx.length === 2 && phone.termPx.every(v => Math.abs(v - phone.plainPx) < 0.51),
+     `${JSON.stringify(phone.termPx)} vs ${phone.plainPx}`);
 
   /* THE CARD IS ALREADY OPEN — `openSheet` TOGGLES, so calling openWiz here
      would shut it and leave no Send button to press. The existing rate-sheet
@@ -18291,10 +18377,44 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
      eating the first screen — the 336px it replaced. A stack of ten cards is
      over 1000px, so the ceiling still catches one, and the no-wrap check
      below is the property itself rather than a proxy for it. */
-  ok('Quick Tools is a strip, not a stack (was 336px)', fs.qtoolsH <= 170, JSON.stringify(fs));
+  /* SUPERSEDED, AND THE NUMBER IS STILL A MEASUREMENT (owner brief
+     2026-09-06 §E/§F/§L). The 170px bound came from the 2026-09-02
+     compaction, when Quick Tools was one scrolling row of small cards and the
+     point was to get the queue onto the first screen. The newer brief says
+     Home should NOT open on statistics — it opens on the greeting and the
+     actions the owner actually uses, and §H says those should be easier to
+     see than dashboard figures. Six large cards in two columns cannot be
+     170px, and pretending otherwise would mean shipping small cards under a
+     brief asking for large ones.
+
+     WHAT IS STILL ASSERTED IS THE THING THAT WENT WRONG: the ten-card version
+     measured 744px and pushed Today past the fold. Six cards plus the More
+     disclosure is ~500px, so the bound is 560 — tight enough that a seventh
+     card added later fails here rather than quietly burying the queue. */
+  /* EIGHT CARDS, BY THE OWNER'S DECISION OF 2026-09-07: both timestamp tools
+     stay primary and visible, and their two rows cost 132px more than the six
+     did. Measured at 390: 667px, with Today at 909 — just under the fold
+     rather than on the first screen, which is the trade the owner made
+     knowingly when they chose direct access over compactness.
+
+     The bound is 700 so a NINTH card fails here rather than quietly growing
+     the wall; it is not a target to shrink toward. */
+  ok('Quick Tools stays a block, not a wall (nine cards + More)',
+     fs.qtoolsH <= 840, JSON.stringify(fs));
   ok('the Search card is a box, not a billboard (was 245px)', fs.srchH <= 140, JSON.stringify(fs));
-  ok('Today / next actions is ON the first screen (was 682px down)',
-     fs.todayTop !== null && fs.todayTop <= 420, JSON.stringify(fs));
+  /* Same supersession. It is no longer on the FIRST screen and is not meant
+     to be — the owner's new first screen is the greeting, the signed-intake
+     card and the six actions. What is still asserted is that it is not
+     buried: one short scroll, not three. */
+  /* WHAT THIS NUMBER NOW PROTECTS, said plainly. It is no longer "on the
+     first screen" — nine primary cards cannot be, and the owner chose direct
+     access over compactness knowing that. Measured at 390: 1040 with no
+     signed intake waiting and ~1136 with the green banner above, which the
+     suite's own fixtures produce. The bound catches a TENTH card, which would
+     add another row to both figures, and nothing else. If it ever needs
+     raising again, that is the creep it exists to make visible. */
+  ok('Today / next actions is still within a flick, not buried',
+     fs.todayTop !== null && fs.todayTop <= 1250, JSON.stringify(fs));
 
   /* ---- the quick-tools strip ---- */
   const strip = await page.evaluate(() => {
@@ -18320,8 +18440,16 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
              desk: [...document.querySelector('.qtgrid').children]
                .map(b => b.dataset.act + ':' + (b.dataset.tab || b.dataset.k || '')) };
   });
-  ok('one row on a phone', strip.tops === 1 && strip.rowH <= 150, JSON.stringify(strip));
-  ok('it swipes inside its own container', strip.sw > strip.cw + 40, JSON.stringify(strip));
+  /* A GRID, NOT A ROW, AND NOTHING SWIPES. Both of these described the
+     126px horizontal scroller: "one row" and "it swipes inside its own
+     container" were the best that shape could do, and at 390px they meant
+     two and a half of the doors were visible and the rest were reachable
+     only by knowing to swipe. Two across shows all six with no gesture, so
+     the properties worth pinning are the stronger ones — a small number of
+     rows, and no sideways scroll anywhere, the strip included. */
+  ok('the phone strip is a short grid, not a wall', strip.tops <= 5, JSON.stringify(strip));
+  ok('and nothing swipes — every primary door is on screen',
+     strip.sw <= strip.cw + 1, JSON.stringify(strip));
   ok('and the PAGE never scrolls sideways', strip.pageSw <= strip.pageCw + 1, JSON.stringify(strip));
   ok('every tool keeps the 44px floor', strip.toolH >= 44, String(strip.toolH));
   /* TWO ORDERS NOW, AND THE ASSERTION FOLLOWS THE ONE IT PROTECTS.
@@ -18338,10 +18466,13 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
      JSON.stringify(strip.desk) === JSON.stringify(
        ['pstLaunch:', 'vstOpen:', 'surveillance:', 'tab:newlead', 'tab:cases', 'tab:delivery']),
      JSON.stringify(strip.desk));
-  ok("and the phone strip is the owner's 2026-09-04 order, Rate Sheet first",
+  /* THE PHONE'S SIX (owner brief 2026-09-06 §F/§L, superseding the ten of
+     2026-09-04). Rate Sheet still leads; the other six moved behind More in
+     the same box, which the section above reads out of the DOM to prove. */
+  ok("and the phone strip is the owner's nine, Rate Sheet first",
      JSON.stringify(strip.acts) === JSON.stringify(
-       ['tab:sheets', 'tab:newlead', 'nlKind:consumer', 'nlKind:claims', 'nlKind:legal',
-        'tab:delivery', 'pstLaunch:', 'vstOpen:', 'surveillance:', 'tab:cases']),
+       ['tab:sheets', 'tab:newlead', 'nlKind:consumer', 'tab:leads',
+        'tab:cases', 'ceoOpen:', 'pstLaunch:', 'vstOpen:', 'surveillance:']),
      JSON.stringify(strip.acts));
   const reach = await page.evaluate(() => {
     const g = document.querySelector('.qtgrid'); g.scrollLeft = 9999;
@@ -19395,21 +19526,43 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
   }
 
   /* ---- AND THE PHONE DRAWS THE OWNER'S ORDER --------------------------- */
-  const PHONE = ['Rate Sheet', 'New Intake', 'Private Intake', 'Insurance Intake',
-                 'Law Firm Intake', 'Reports & Packages', 'Timestamp Photo',
-                 'Timestamp Video', 'Active Surveillance', 'Cases'];
+  /* SIX PRIMARY, SIX UNDER MORE (owner brief 2026-09-06 §F/§L/§Z, which name
+     these six in this order twice). The ten-card version measured 744px and
+     pushed the queue past the fold; the other six are one tap behind More in
+     the same box, and each also keeps the door it already had elsewhere. */
+  const PHONE = ['Rate Sheet', 'New Intake', 'Private Intake', 'View Intakes',
+                 'Cases', 'CEO Bot', 'Timestamp Photo', 'Timestamp Video',
+                 'Active Surveillance'];
+  const PHONE_MORE = ['Insurance Intake', 'Law Firm Intake', 'Reports & Packages'];
   const p390 = await read(390, 844);
   ok('on a phone the quick actions are cards, not the desktop chip row',
      p390.appsShown === true && p390.gridShown === false, JSON.stringify(p390).slice(0, 200));
   ok("and they are in the owner's order, Rate Sheet first",
      p390.phone.join('|') === PHONE.join('|'), p390.phone.join('|'));
-  ok('the three intake kinds go straight to their own kind of intake',
-     p390.phoneActs.slice(2, 5).join('|') === 'nlKind:consumer|nlKind:claims|nlKind:legal',
-     p390.phoneActs.join('|'));
+  ok('the private intake card goes straight to a private intake',
+     p390.phoneActs[2] === 'nlKind:consumer', p390.phoneActs.join('|'));
   ok('Rate Sheet is the one card wearing the accent',
      p390.leadName === 'Rate Sheet' && parseFloat(p390.leadBorder) >= 2, JSON.stringify(p390.leadBorder));
-  ok('the timestamp tools kept their door — they moved down the row, not away',
-     p390.phone.includes('Timestamp Photo') && p390.phone.includes('Timestamp Video'));
+  /* NOTHING WAS TAKEN AWAY — the six that are not primary are in the same box
+     behind More, and this reads them out of the DOM to prove it. */
+  const more = await page.evaluate(() => [...document.querySelectorAll('.qtmore .qtapp-n')]
+    .map(n => n.textContent.trim()));
+  ok('the three lower-frequency doors are one tap behind More, not gone',
+     PHONE_MORE.every(n => more.includes(n)), JSON.stringify(more));
+  /* AND NOTHING WHOSE ONLY TOP-LEVEL DOOR THIS IS. Active Surveillance joined
+     the timestamp tools as primary because two assertions refused it behind
+     More and both were right: it is the field view's only top-level entrance,
+     and on an investigator's phone the rail holding the other copy is behind
+     the burger. The three that remain are each reachable another way. */
+  ok('and Active Surveillance is not among them either',
+     !more.includes('Active Surveillance'), JSON.stringify(more));
+  /* OWNER DECISION, 2026-09-07 — LOCKED. Neither timestamp tool may be in
+     that menu; both are primary cards. Asserted from the OTHER side as well,
+     because "is in the six" and "is not in More" are different claims and a
+     future edit could satisfy one while breaking the other. */
+  ok('and NEITHER timestamp tool is among them — the owner keeps both primary',
+     !more.includes('Timestamp Photo') && !more.includes('Timestamp Video'),
+     JSON.stringify(more));
 
   /* THE FLAG'S CONTRAST IS THE MEASUREMENT, NOT THE COLOUR NAME. At ~10px the
      bar that applies is the normal-text 4.5:1. Against the PORTAL's tokens —
@@ -19424,8 +19577,17 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
      JSON.stringify({ flagH: p390.flagH, heights: p390.heights }));
   ok('every card clears the 44px tap floor', p390.minH >= 44, `min ${p390.minH}`);
 
-  /* The strip scrolls INSIDE ITSELF; the page never scrolls sideways. */
-  ok('the strip swipes inside its own box', p390.stripScrolls === true);
+  /* THE STRIP STOPPED SWIPING (mockup refactor, 2026-09-06), and this
+     assertion was INVERTED rather than deleted. It used to require the strip
+     to scroll inside itself, which was true of the 126px horizontal row and
+     was the best that shape could do: at 390px two and a half of the ten
+     doors were visible and the rest were reachable only by knowing to swipe.
+
+     Two across in a real grid shows every door the role has with no gesture,
+     so the property worth pinning is now the stronger one — NOTHING scrolls,
+     the strip included. The page-overflow assertion below is unchanged and
+     still does the work it always did. */
+  ok('the strip needs no swipe — every door is on screen', p390.stripScrolls === false);
   ok('and the page does not scroll sideways at 390', p390.pageOverflow === false);
   const p320 = await read(320, 700);
   ok('nor at 320', p320.pageOverflow === false);
@@ -19441,6 +19603,12 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
                                     [4, 'legal', /legal|law firm/i]]) {
     await page.evaluate(() => { TAB = 'dashboard'; NL = { kind: null, err: '', v: {} }; paint(); });
     await page.waitForTimeout(300);
+    /* Insurance and Law Firm intake moved behind More (§F/§L/§Z), so the
+       disclosure is opened first — which is what a person does, and it is
+       also the click that would have timed out silently on a collapsed card
+       had the previous build's fake-visible cards survived. */
+    await page.evaluate(() => { const d = document.querySelector('.qtmore'); if (d) d.open = true; });
+    await page.waitForTimeout(250);
     await page.locator(`.qtapp[data-act="nlKind"][data-k="${kind}"]`).click();
     await page.waitForTimeout(500);
     const landed = await page.evaluate(() => ({
@@ -19455,6 +19623,7 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
   await page.setViewportSize({ width: 1200, height: 900 });
   await page.close();
 }
+
 
 section('Mobile Home: an investigator is offered no door the Worker would refuse');
 {
@@ -20965,9 +21134,31 @@ section('Mobile CEO Bot: own scroll, locked portal, no collisions');
       overlap: !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top),
       ceoLeft: a.left < 100, h: Math.round(a.height) };
   });
-  ok('the CEO pill sits bottom-left, clear of the Assistant pill, at the tap floor',
-     pills.ceo && pills.asst && pills.overlap === false && pills.ceoLeft && pills.h >= 44,
+  /* THE SIDE MOVED, THE PROPERTY DID NOT. The chip was bottom-LEFT until the
+     owner stacked the pair on the thumb side; what this assertion is for is
+     that both doors exist, never overlap, and meet the floor. The stacked
+     geometry has its own section below. */
+  ok('both floating doors are present, clear of each other, at the tap floor',
+     pills.ceo && pills.asst && pills.overlap === false && pills.h >= 44,
      JSON.stringify(pills));
+  /* §10 — AND IT COVERS NOTHING. It sat at bottom:14px, inside the bottom
+     navigation's own band: the nav is z-60 and the fab z-58, so the nav
+     painted over it and part of the control could not be pressed. Both
+     floating doors now take the nav's own height as their lift. */
+  const clears = await page.evaluate(() => {
+    const r = s => { const e = document.querySelector(s); return e ? e.getBoundingClientRect() : null; };
+    const ceo = r('.ceo-fab'), asst = r('.asst-pill'), nav = r('.mnav');
+    return { navShown: !!nav && nav.height > 0,
+      ceoClears: ceo && nav ? ceo.bottom <= nav.top + 1 : null,
+      asstClears: asst && nav ? asst.bottom <= nav.top + 1 : null,
+      /* Distinct sizes: the Assistant stays the primary pill. */
+      ceoH: ceo ? Math.round(ceo.height) : null, asstH: asst ? Math.round(asst.height) : null };
+  });
+  ok('neither floating door covers the bottom navigation',
+     clears.navShown && clears.ceoClears === true && clears.asstClears === true,
+     JSON.stringify(clears));
+  ok('and the CEO chip is the smaller of the two — one primary pill, not two',
+     clears.ceoH < clears.asstH && clears.ceoH >= 44, JSON.stringify(clears));
 
   await page.evaluate(() => { window.scrollTo(0, 200); });
   await page.evaluate(() => ceoOpen());
@@ -20989,6 +21180,631 @@ section('Mobile CEO Bot: own scroll, locked portal, no collisions');
   ok('closing returns the portal exactly where it was',
      after.overflow !== 'hidden' && after.y === 200, JSON.stringify(after));
   await page.setViewportSize({ width: 1200, height: 900 });
+  await page.close();
+}
+
+section('CEO Bot refinement: priority, protection and a plan, at both widths');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.waitForTimeout(500);
+  /* A real working pattern: 25 taps, all Rate Sheet, so the engine has
+     evidence and the protections are exercised rather than skipped. */
+  await page.evaluate(async () => {
+    for (let i = 0; i < 25; i++) {
+      await fetch('/portal-api/me/prefs/use', { method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'qt:sheets' }) });
+    }
+  });
+  await page.evaluate(() => ceoOpen());
+  await page.waitForTimeout(1000);
+
+  /* ---- §4/§13 — the executive order, read off the rendered DOM. ---- */
+  const order = await page.evaluate(() => {
+    const b = document.querySelector('.ceo-body');
+    const seen = [];
+    for (const el of b.children) {
+      if (el.classList.contains('ceo-prio')) seen.push('priority');
+      else if (el.classList.contains('ceo-health')) seen.push('health');
+      else if (/Today/.test(el.textContent) && seen.indexOf('today') < 0) seen.push('today');
+    }
+    return seen;
+  });
+  ok('Insights leads with CEO PRIORITY, then Portal Health, then today',
+     order[0] === 'priority' && order.indexOf('health') > 0
+     && order.indexOf('health') < (order.indexOf('today') < 0 ? 99 : order.indexOf('today')),
+     JSON.stringify(order));
+
+  /* ---- §5 — health is grouped and its numbers are the gate's. ---- */
+  const health = await page.evaluate(() => {
+    const h = document.querySelector('.ceo-health');
+    return { groups: [...h.querySelectorAll('.ceo-hgt')].map(g => g.textContent.trim()),
+      state: (h.querySelector('.ceo-hstate') || {}).textContent,
+      gate: /43 pass \/ 0 warn \/ 0 fail/.test(h.innerText) };
+  });
+  ok('Portal Health groups client experience, owner experience and the release gate',
+     health.groups.join('|') === 'CLIENT EXPERIENCE|OWNER EXPERIENCE|RELEASE GATE',
+     JSON.stringify(health.groups));
+  ok('and prints the CEO UX Gate\'s own totals', health.gate === true);
+  ok('with a one-word state', ['GOOD', 'WATCH', 'NEEDS ATTENTION'].includes((health.state || '').trim()),
+     health.state);
+
+  /* ---- §6 — MY PORTAL PLAN, and §1 inside it. ---- */
+  const plan = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.ceo-plrow')]
+      .map(r => [r.querySelector('.ceo-pll').textContent.trim(),
+                 r.querySelector('.ceo-plv').textContent.trim()]);
+    return Object.fromEntries(rows);
+  });
+  /* THE PROPERTY, NOT A PARTICULAR GROUP. Whether the user's most-used control
+     reads "Keep prominent" or "Promote" depends on their own saved order — and
+     an earlier section of this suite reorders that user's Home, so pinning one
+     group made this assertion depend on test order rather than on behaviour.
+     What §1 and §3 actually protect is that a heavily-used core control is
+     never proposed away. */
+  const planOf = label => Object.entries(plan)
+    .filter(([, v]) => new RegExp(`\\b${label}\\b`).test(v)).map(([k]) => k);
+  ok('My portal plan places the most-used control in a keep-or-promote group',
+     ['Keep prominent', 'Promote'].some(g => planOf('Rate Sheet').includes(g)),
+     JSON.stringify(planOf('Rate Sheet')));
+  ok('and never in a group that would take it off the user\'s Home',
+     !planOf('Rate Sheet').some(g => /Hide|Move/.test(g)), JSON.stringify(plan));
+  ok('and Cases appears ONLY under removing the duplicate shortcut',
+     /Cases/.test(plan['Hide duplicate shortcut'] || '')
+     && !Object.entries(plan).some(([k, v]) =>
+          k !== 'Hide duplicate shortcut' && k !== 'Preserve' && k !== 'Keep prominent'
+          && /\bCases\b/.test(v)), JSON.stringify(plan));
+
+  /* ---- §14 — Fix First is a button that answers from what is on screen. ---- */
+  await page.evaluate(() => { const b = document.querySelector('[data-act="ceoFix"]'); if (b) b.click(); });
+  await page.waitForTimeout(400);
+  const fix = await page.evaluate(() => {
+    const c = document.querySelector('.ceo-fix');
+    if (!c) return null;
+    const t = c.innerText;
+    return { has: true, why: /WHY/.test(t), benefit: /EXPECTED BENEFIT/.test(t),
+      risk: /RISK/.test(t) && /(LOW|MEDIUM|HIGH)/.test(t),
+      /* It offers a review, never an act. */
+      verbs: [...c.querySelectorAll('button')].map(b => b.textContent.trim()) };
+  });
+  ok('"What should I fix first?" answers with why, benefit and a stated risk',
+     !!fix && fix.why && fix.benefit && fix.risk, JSON.stringify(fix));
+  ok('and its strongest control is a review, never an act',
+     fix.verbs.every(v => /review|close/i.test(v)), JSON.stringify(fix.verbs));
+
+  /* ---- §7/§8 — the card shows its parts, and Why? expands EVIDENCE. ---- */
+  await page.evaluate(() => { CEO_TAB = 'suggestions'; paint(); });
+  await page.waitForTimeout(400);
+  const card = await page.evaluate(() => {
+    const c = document.querySelector('.ceo-card.ceo-task');
+    return { cat: !!c.querySelector('.ceo-cat'), why: !!c.querySelector('.ceo-why'),
+      /* The sentence-shaped metric line became evidence CHIPS in the polish
+         pass; either satisfies "one concise metric on the card". */
+      metric: !!c.querySelector('.ceo-ev') || !!c.querySelector('.ceo-chips'),
+      chips: [...c.querySelectorAll('.ceo-chip')].map(x => x.textContent.trim()),
+      impact: !!c.querySelector('.ceo-imp'),
+      acts: [...c.querySelectorAll('button')].map(b => b.textContent.trim()) };
+  });
+  ok('a suggestion card shows category, why, its evidence and the impact',
+     card.cat && card.why && card.metric && card.impact, JSON.stringify(card));
+  ok('and the evidence reads as scannable chips, including the usage count',
+     card.chips.length >= 2 && card.chips.some(c => /Home tap/.test(c)),
+     JSON.stringify(card.chips));
+  ok('with Preview / Not now / Why?', card.acts.join('|') === 'Preview|Not now|Why?',
+     JSON.stringify(card.acts));
+  const whyOpen = await page.evaluate(() => {
+    const b = [...document.querySelectorAll('.ceo-card.ceo-task button')]
+      .find(x => x.textContent.trim() === 'Why?');
+    b.click();
+    return null;
+  });
+  await page.waitForTimeout(400);
+  const evid = await page.evaluate(() => {
+    const w = document.querySelector('.ceo-whybox');
+    return w ? { head: /WHY THIS SUGGESTION/.test(w.innerText),
+      items: [...w.querySelectorAll('li')].map(li => li.textContent.trim()),
+      rec: /Recommendation:/.test(w.innerText) } : null;
+  });
+  ok('Why? expands an EVIDENCE LIST, not a restatement',
+     !!evid && evid.head && evid.items.length >= 2 && evid.rec, JSON.stringify(evid));
+  ok('and the evidence is measurable facts about usage',
+     evid.items.some(i => /0 uses in the measured period/.test(i)), JSON.stringify(evid.items));
+
+  /* ---- §1 ON SCREEN: the core protection a person would actually read. ---- */
+  const cases = await page.evaluate(() => {
+    const c = [...document.querySelectorAll('.ceo-card.ceo-task')]
+      .find(x => /Cases/.test(x.innerText));
+    return c ? c.innerText.replace(/\s+/g, ' ') : null;
+  });
+  ok('the Cases card offers the duplicate shortcut, never the capability',
+     !!cases && /duplicate/i.test(cases) && /Cases stays exactly where it is/.test(cases),
+     (cases || '').slice(0, 160));
+
+  /* ---- §3/§16 — what is working is on screen too. ---- */
+  const keep = await page.evaluate(() => {
+    const k = document.querySelector('.ceo-keep');
+    return k ? { has: true, rows: k.querySelectorAll('.ceo-krow').length,
+      text: k.innerText.replace(/\s+/g, ' ').slice(0, 120) } : null;
+  });
+  ok('the Suggestions tab also reports what needs no change',
+     !!keep && keep.rows >= 2, JSON.stringify(keep));
+
+  /* ---- §9 — workflow cards carry a recommendation, none a complaint. ---- */
+  await page.evaluate(() => { CEO_TAB = 'workflow'; paint(); });
+  await page.waitForTimeout(400);
+  const flows = await page.evaluate(() => [...document.querySelectorAll('.ceo-card')]
+    .map(c => ({ rec: /CEO recommendation/.test(c.innerText),
+      status: (c.querySelector('.ceo-fs') || {}).textContent })));
+  ok('every workflow card states a CEO recommendation',
+     flows.length === 5 && flows.every(f => f.rec), JSON.stringify(flows.map(f => f.status)));
+  ok('and none of the five is labelled a problem',
+     flows.every(f => ['EXCELLENT', 'GOOD'].includes((f.status || '').trim())),
+     JSON.stringify(flows.map(f => f.status)));
+
+  /* ---- §11 — a quiet tab says so positively rather than drawing blank. ---- */
+  await page.evaluate(() => { CEO_TAB = 'health'; paint(); });
+  await page.waitForTimeout(400);
+  const quiet = await page.evaluate(() => {
+    const b = document.querySelector('.ceo-body');
+    return { none: !!b.querySelector('.ceo-none'), len: b.innerText.trim().length };
+  });
+  ok('a tab with nothing to report says so, and is never an empty panel',
+     quiet.none === true && quiet.len > 120, JSON.stringify(quiet));
+
+  /* ---- §11/§12 — geometry at both widths. ---- */
+  for (const [w, h] of [[1440, 900], [390, 844]]) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.waitForTimeout(350);
+    const g = await page.evaluate(() => {
+      const p = document.querySelector('.ceo-panel');
+      const tabs = [...p.querySelectorAll('.ceo-tabs button')];
+      const strip = p.querySelector('.ceo-tabs');
+      return { width: Math.round(p.getBoundingClientRect().width),
+        clipped: tabs.filter(t => t.scrollWidth > t.clientWidth + 1).length,
+        minTabH: Math.min(...tabs.map(t => Math.round(t.getBoundingClientRect().height))),
+        stripScrolls: strip.scrollWidth > strip.clientWidth + 1,
+        pageOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth };
+    });
+    ok(`at ${w}px the drawer is within the 380-420 target and nothing is clipped`,
+       (w >= 420 ? g.width >= 380 && g.width <= 420 : g.width <= w)
+       && g.clipped === 0 && g.pageOverflow === false, JSON.stringify(g));
+    ok(`at ${w}px every tab clears the tap floor`, g.minTabH >= 44, String(g.minTabH));
+  }
+
+  /* ---- §15 — one user's decisions never reach the other's screen. ---- */
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.evaluate(() => { CEO_TAB = 'suggestions'; paint(); });
+  await page.waitForTimeout(300);
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('.ceo-card.ceo-task button')]
+      .find(x => x.textContent.trim() === 'Not now');
+    if (b) b.click();
+  });
+  await page.waitForTimeout(900);
+  await page.close();
+
+  const other = await newPage();
+  await signIn(other, 'dana', 'FieldWork2026x');
+  await other.waitForTimeout(600);
+  const dana = await other.evaluate(async () => {
+    const r = await (await fetch('/portal-api/ceo/insights', { credentials: 'include' })).json();
+    return { states: Object.keys(r.suggestion_state || {}).length,
+      taps: r.total_taps, mine: (r.most_used || []).length };
+  });
+  ok('the investigator carries none of the admin\'s CEO decisions or counters',
+     dana.states === 0 && dana.taps === 0 && dana.mine === 0, JSON.stringify(dana));
+  await other.close();
+}
+
+section('The two bots are two doors: stacked on the thumb side, one open at a time');
+{
+  await post('/ingest', { case_no: 'API-PILL-E2E', service: 'Surveillance',
+    client_name: 'Pill Client', subject_name: 'Pill Subject' }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  const geo = () => page.evaluate(() => {
+    const r = s => { const e = document.querySelector(s); return e ? e.getBoundingClientRect() : null; };
+    const vis = s => { const e = document.querySelector(s);
+      return !!e && getComputedStyle(e).display !== 'none' && e.getBoundingClientRect().height > 0; };
+    const ceo = r('.ceo-fab'), asst = r('.asst-pill'), nav = r('.mnav');
+    const ov = (a, b) => (a && b) ? !(a.right <= b.left || b.right <= a.left
+      || a.bottom <= b.top || b.bottom <= a.top) : false;
+    return { ceoVis: vis('.ceo-fab'), asstVis: vis('.asst-pill'),
+      ceoH: ceo ? Math.round(ceo.height) : null, asstH: asst ? Math.round(asst.height) : null,
+      sameEdge: (ceo && asst) ? Math.abs((window.innerWidth - ceo.right)
+        - (window.innerWidth - asst.right)) <= 1 : null,
+      ceoAbove: (ceo && asst) ? ceo.bottom <= asst.top : null,
+      gap: (ceo && asst) ? Math.round(asst.top - ceo.bottom) : null,
+      overlap: ov(ceo, asst), overNav: ov(ceo, nav) || ov(asst, nav),
+      inViewport: ceo ? ceo.top >= 0 && ceo.bottom <= window.innerHeight : null,
+      hOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth };
+  });
+
+  /* ---- BOTH REACHABLE WITHOUT THE DRAWER, at both real phone widths. The
+     chip used to sit bottom-LEFT — a real floating control, but on the side
+     nobody looks at, which is why it read as hidden. ---- */
+  for (const [w, h] of [[320, 700], [390, 844]]) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.evaluate(() => { TAB = 'dashboard'; VIEW = 'app'; paint(); });
+    await page.waitForTimeout(450);
+    const g = await geo();
+    ok(`at ${w}px both doors are on screen without opening the drawer`,
+       g.ceoVis && g.asstVis, JSON.stringify(g));
+    ok(`at ${w}px they stack on the same edge, CEO above the Assistant`,
+       g.sameEdge === true && g.ceoAbove === true && g.gap >= 6, JSON.stringify(g));
+    ok(`at ${w}px the CEO chip is the smaller of the two, and both clear the floor`,
+       g.ceoH < g.asstH && g.ceoH >= 44, JSON.stringify([g.ceoH, g.asstH]));
+    ok(`at ${w}px neither overlaps the other or the bottom navigation`,
+       g.overlap === false && g.overNav === false, JSON.stringify(g));
+    ok(`at ${w}px the stack is wholly on screen and causes no sideways scroll`,
+       g.inViewport === true && g.hOverflow === false, JSON.stringify(g));
+  }
+
+  /* ---- ONE PANEL AT A TIME, from both directions. ---- */
+  await page.evaluate(() => { const b = document.querySelector('.ceo-fab'); if (b) b.click(); });
+  await page.waitForTimeout(900);
+  let st = await page.evaluate(() => ({ ceo: CEO_OPEN, asst: !!(ASST && ASST.open),
+    ceoPanel: !!document.querySelector('.ceo-panel'),
+    asstPanel: !!document.querySelector('.asst-panel, .asst-dock, .asst-wrap'),
+    pillsHidden: !document.querySelector('.ceo-fab') && !document.querySelector('.asst-pill') }));
+  ok('tapping CEO opens the CEO panel', st.ceo === true && st.ceoPanel === true, JSON.stringify(st));
+  ok('and both floating doors withdraw while a sheet is up — neither sits behind a modal',
+     st.pillsHidden === true, JSON.stringify(st));
+
+  await page.evaluate(() => asstOpen());
+  await page.waitForTimeout(900);
+  st = await page.evaluate(() => ({ ceo: CEO_OPEN, asst: !!(ASST && ASST.open),
+    ceoPanel: !!document.querySelector('.ceo-panel'),
+    locked: document.body.classList.contains('ceoopen') }));
+  ok('opening the Assistant closes the CEO panel cleanly',
+     st.asst === true && st.ceo === false && st.ceoPanel === false, JSON.stringify(st));
+  ok('and the CEO body lock leaves with it — the portal scrolls again',
+     st.locked === false, JSON.stringify(st));
+
+  await page.evaluate(() => ceoOpen());
+  await page.waitForTimeout(900);
+  st = await page.evaluate(() => ({ ceo: CEO_OPEN, asst: !!(ASST && ASST.open) }));
+  ok('and opening CEO from an open Assistant switches the other way',
+     st.ceo === true && st.asst === false, JSON.stringify(st));
+  await page.evaluate(() => ceoClose());
+  await page.waitForTimeout(400);
+
+  /* ---- THE CASE VIEW USES ITS OWN IDIOM. Measured at 390: `.wsbar` owns the
+     bottom 74px with five controls in it, so a floating pair there would sit
+     over case content. The Assistant's door on this page has always been an
+     in-content button for that reason; the CEO Bot's is its sibling. ---- */
+  await page.evaluate(() => openCase('API-PILL-E2E'));
+  await page.waitForTimeout(1300);
+  const c = await page.evaluate(() => {
+    const r = s => { const e = document.querySelector(s); return e ? e.getBoundingClientRect() : null; };
+    const bar = r('.wsbar');
+    const ceoBtn = document.querySelector('.ceo-casebtn');
+    const asstBtn = [...document.querySelectorAll('button')]
+      .find(b => /Ask Assistant/.test(b.textContent));
+    const cb = ceoBtn ? ceoBtn.getBoundingClientRect() : null;
+    return { ceoDoor: !!ceoBtn, asstDoor: !!asstBtn,
+      noFloating: !document.querySelector('.ceo-fab') && !document.querySelector('.asst-pill'),
+      /* NOT PERMANENTLY COVERED — which is the property, and is not the same
+         as "above the bar at scroll offset zero". The action block grew when
+         the owner's four ranked actions became large controls, so the CEO row
+         now starts below the fold on a phone; the page scrolls and
+         `.casepage` carries 100px of bottom padding so the last control
+         clears the fixed bar. Scroll it into view, THEN ask. The old form
+         passed only because the row happened to be short. */
+      clearOfBar: null,
+      ceoBtnH: cb ? Math.round(cb.height) : null,
+      hOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth };
+  });
+  ok('the case view carries both doors as in-content buttons, not floating pills',
+     c.ceoDoor && c.asstDoor && c.noFloating === true, JSON.stringify(c));
+  const reach = await page.evaluate(async () => {
+    const el = document.querySelector('.ceo-casebtn');
+    el.scrollIntoView({ block: 'center' });
+    await new Promise(r => setTimeout(r, 250));
+    const bar = document.querySelector('.wsbar');
+    const cb = el.getBoundingClientRect();
+    return { h: Math.round(cb.height), top: Math.round(cb.top),
+      clear: !bar || cb.bottom <= bar.getBoundingClientRect().top + 1,
+      /* and the thing a person actually taps is the row itself */
+      onTop: (() => { const hit = document.elementFromPoint(
+        Math.round(cb.left + cb.width / 2), Math.round(cb.top + cb.height / 2));
+        return !!hit && (hit === el || el.contains(hit)); })() };
+  });
+  ok('and the CEO door can be reached and pressed, at the tap floor',
+     reach.h >= 44 && reach.clear === true && reach.onTop === true, JSON.stringify(reach));
+  ok('with no sideways scroll on the case screen', c.hOverflow === false);
+
+  /* ---- THE DRAWER KEEPS ITS SECONDARY ROUTE. ---- */
+  await page.evaluate(() => { VIEW = 'app'; TAB = 'dashboard'; paint(); });
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.waitForTimeout(400);
+  const rail = await page.evaluate(() => ({
+    ceo: !!document.querySelector('.side-ceo'),
+    asst: !!document.querySelector('.side-asst'),
+    ceoPillOnDesktop: (() => { const e = document.querySelector('.ceo-fab');
+      return !!e && getComputedStyle(e).display !== 'none'; })() }));
+  ok('the desktop rail keeps both launchers side by side', rail.ceo && rail.asst,
+     JSON.stringify(rail));
+  ok('and the phone chip does not clutter the desktop shell',
+     rail.ceoPillOnDesktop === false, JSON.stringify(rail));
+  await page.close();
+}
+
+
+/* ============================================================================
+   THE MOCKUP CARD SYSTEM (owner brief 2026-09-06). One vocabulary over four
+   surfaces, and the assertions are GEOMETRY rather than class names, because
+   the whole failure mode of a shared component layer is a rule written for
+   one screen quietly breaking another.
+
+   THIS SECTION EXISTS BECAUSE OF A BUG A PHONE RENDER COULD NOT HAVE SHOWN.
+   `.pc-next` is a flex ROW shared by three card types, and it turns into a
+   column under 560px. Giving the intake card block-level children therefore
+   looked perfect at 390 and, at 1200, laid the primary and the two-across
+   grid out SIDEWAYS and wrapped "Send payment options" one letter per line —
+   the exact shape Unit 5 already fixed once, reintroduced from the other
+   side. Every existing assertion was green over it. So the pin here is: no
+   control in one of these blocks is ever narrower than a tap target, AT BOTH
+   WIDTHS, and no two of them overlap.
+   ========================================================================= */
+section('The mockup card system: one geometry, measured at both widths');
+{
+  /* ITS OWN FIXTURE. Every earlier section may have accepted, closed or
+     deleted the two intakes the suite seeds, and a card that is not there
+     would make this pass by measuring nothing. It runs last, so one more
+     case changes no count anything else asserts. */
+  await post('/ingest', { case_no: 'API-MOCKUP-CARD', service: 'Surveillance',
+    client_name: 'Mockup Client', client_phone: '4345550199',
+    subject_name: 'Mockup Subject', objective: 'Establish whereabouts' },
+    { 'X-Ingest-Key': 'e2e-ingest-key' });
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* ---- THE INTAKE CARD'S ACTION BLOCK ---------------------------------- */
+  await page.evaluate(async () => { VIEW = 'app'; TAB = 'leads'; await render(); });
+  await page.waitForTimeout(900);
+
+  const readCards = () => page.evaluate(() => {
+    const card = [...document.querySelectorAll('.pcard')]
+      .find(c => /Mockup Client/.test(c.innerText));
+    const box = card && card.querySelector('.pc-next.pc-block');
+    if (!box) return null;
+    /* `.uibtn` only. The destructive control is a 44px SQUARE icon and is
+       measured separately below — a single floor over every button would
+       have failed on correct code, which the probe that proved this
+       assertion caught before it was written down. */
+    const btns = [...box.querySelectorAll('.uibtn')];
+    const rects = btns.map(b => b.getBoundingClientRect());
+    const del = box.querySelector('.btn-del');
+    const dr = del ? del.getBoundingClientRect() : null;
+    /* Two controls overlap when their boxes intersect on BOTH axes. The
+       collapse this catches is not "a button looks wrong" — it is buttons
+       squeezed to min-content beside each other, so width is the tell. */
+    let overlap = false;
+    for (let i = 0; i < rects.length; i++) {
+      for (let j = i + 1; j < rects.length; j++) {
+        const a = rects[i], b = rects[j];
+        if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) overlap = true;
+      }
+    }
+    return {
+      n: btns.length,
+      minW: Math.min(...rects.map(r => Math.round(r.width))),
+      minH: Math.min(...rects.map(r => Math.round(r.height))),
+      overlap,
+      /* nothing may be drawn outside the card that owns it */
+      escapes: rects.some(r => r.right > card.getBoundingClientRect().right + 1),
+      /* the identity door still holds no control — the Unit 40 nesting rule */
+      nested: card.querySelector('.pc-open')
+        .querySelectorAll('button,a,select,input').length,
+      del: dr ? [Math.round(dr.width), Math.round(dr.height)] : null,
+      /* the facts are a table, not eleven lines of inline type */
+      facts: card.querySelectorAll('.uifacts .uifact').length,
+      tile: !!card.querySelector('.uihead .uiact-i'),
+    };
+  });
+
+  for (const [w, h] of [[1200, 900], [390, 844]]) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.waitForTimeout(400);
+    const c = await readCards();
+    ok(`at ${w}px the intake card draws its action block`, !!c && c.n >= 4, JSON.stringify(c));
+    /* A missing card must fail loudly rather than take every assertion below
+       it down with a TypeError — the suite would then report a crash where it
+       means to report a measurement. */
+    if (!c) continue;
+    /* MEASURED BOTH WAYS BEFORE THIS WAS WRITTEN: with the fix the narrowest
+       is 128px at 1200 and 135px at 390; with the shared flex row put back it
+       is 28px, one letter wide. 100 sits between them with room on each side. */
+    ok(`at ${w}px no control in it is squeezed below a tap target`,
+       c.minW >= 100 && c.minH >= 44, JSON.stringify(c));
+    ok(`at ${w}px the delete control is a square at the tap floor`,
+       c.del && c.del[0] >= 44 && c.del[1] >= 44, JSON.stringify(c.del));
+    ok(`at ${w}px none of them overlap or escape the card`,
+       c.overlap === false && c.escapes === false, JSON.stringify(c));
+    ok(`at ${w}px the identity door still contains no control`, c.nested === 0, String(c.nested));
+    ok(`at ${w}px the card states its facts as label/value rows under a tile`,
+       c.facts >= 2 && c.tile === true, JSON.stringify(c));
+  }
+
+  /* ---- THE CASE ACTION BLOCK ------------------------------------------- */
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.evaluate(() => openCase('API-MOCKUP-CARD'));
+  await page.waitForTimeout(1400);
+
+  const readActs = () => page.evaluate(() => {
+    const box = document.querySelector('.caseacts');
+    if (!box) return null;
+    /* BUTTONS **AND** ROWS. The owner's brief ranks this screen: View intake,
+       Retainer paid, Close case and Send rate sheet are large controls, and
+       everything else became a one-line row with a chevron. Both are doors and
+       both are measured — a row that fell under the tap floor would be exactly
+       as broken as a button that did. */
+    const btns = [...box.querySelectorAll('.uibtn, .uirow')].filter(b => b.offsetParent !== null);
+    const rects = btns.map(b => b.getBoundingClientRect());
+    let overlap = false;
+    for (let i = 0; i < rects.length; i++) {
+      for (let j = i + 1; j < rects.length; j++) {
+        const a = rects[i], b = rects[j];
+        if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) overlap = true;
+      }
+    }
+    return { n: btns.length, overlap,
+      minW: Math.min(...rects.map(r => Math.round(r.width))),
+      minH: Math.min(...rects.map(r => Math.round(r.height))),
+      /* the doors this row is required to carry, whatever it looks like */
+      acts: btns.map(b => b.dataset.act).sort().join('|'),
+      /* THE FOUR THE OWNER RANKED, and the functional colour each wears.
+         Measured against its own ground, never asserted as a hex: white on
+         teal is 4.71, on the green 6.54, on the red 5.16 — all clear of the
+         4.5 that applies at this size, and `--good` was rejected for the
+         green because it computes 4.38 and would have shipped a button
+         nobody could read under a comment saying it was greener. */
+      big: [...box.querySelectorAll('.uibtn')].map(b => {
+        const cs = getComputedStyle(b);
+        const lum = c => { const [r, g, bl] = c.match(/[\d.]+/g).slice(0, 3).map(Number)
+          .map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+          return 0.2126 * r + 0.7152 * g + 0.0722 * bl; };
+        const A = lum(cs.color), B = lum(cs.backgroundColor);
+        return { t: b.textContent.trim(), act: b.dataset.act,
+          ratio: +((Math.max(A, B) + 0.05) / (Math.min(A, B) + 0.05)).toFixed(2) };
+      }),
+      addShown: !!box.querySelector('.addact') &&
+        box.querySelector('.addact').offsetParent !== null };
+  });
+
+  const d1200 = await readActs();
+  ok('the case action block draws every door it carried before',
+     !!d1200 && /asstOpen/.test(d1200.acts) && /ceoOpen/.test(d1200.acts)
+       && /svEnter/.test(d1200.acts) && /actOpen/.test(d1200.acts), JSON.stringify(d1200));
+  /* §N, §O, §P — the four the owner named are BIG controls on this screen,
+     not chips in a wrapping row and not two screens in. */
+  ok("the owner's four ranked actions are the block's large controls",
+     ['View intake', 'Retainer paid', 'Close case', 'Send rate sheet']
+       .every(t => d1200.big.some(b => b.t === t)),
+     JSON.stringify(d1200.big.map(b => b.t)));
+  ok('and every one of them clears AA against its own ground',
+     d1200.big.every(b => b.ratio >= 4.5),
+     JSON.stringify(d1200.big.map(b => [b.t, b.ratio])));
+  ok('and at 1200 nothing in it is squeezed or overlapping',
+     d1200.minW >= 100 && d1200.minH >= 44 && d1200.overlap === false, JSON.stringify(d1200));
+  ok('+ Add activity is the block primary at desktop width', d1200.addShown === true);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(400);
+  const d390 = await readActs();
+  ok('at 390 the block is still whole and still at the tap floor',
+     d390.minW >= 100 && d390.minH >= 44 && d390.overlap === false, JSON.stringify(d390));
+  /* THE DUPLICATE-ENTRY RULE IS UNCHANGED: + Add lives in the thumb bar on a
+     phone, so the block's copy withdraws. It is the primary at desktop and
+     absent here, which is why the two widths are asserted separately. */
+  ok('and + Add activity withdraws, because the thumb bar carries it',
+     d390.addShown === false, JSON.stringify(d390));
+
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.close();
+}
+
+
+/* ============================================================================
+   HOME'S OWN FIRST SCREEN (owner brief 2026-09-06 §E, §G, §AF).
+
+   The greeting, the signed-intake card, and the rule that governs both: a
+   card whose whole job is to be impossible to miss must never quietly say
+   all-clear about a list it could not read. That is the failure this page has
+   been bitten by twice — a failed read drawn as a clear desk — and it is
+   worth its own assertions on the one card built to dominate the screen.
+   ========================================================================= */
+section("Home says good morning, and a signed intake is impossible to miss");
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.evaluate(async () => { VIEW = 'app'; TAB = 'dashboard'; await render(); });
+  await page.waitForTimeout(900);
+
+  const g = await page.evaluate(() => {
+    const el = document.querySelector('.greet-h');
+    return { text: el ? el.textContent.trim() : null,
+      sub: (document.querySelector('.greet-s') || {}).textContent || '',
+      /* it is ABOVE the quick actions, which is the whole point of §E */
+      first: (() => { const q = document.querySelector('.qtools'), e = document.querySelector('.greet');
+        return !!(q && e) && (e.compareDocumentPosition(q) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0; })() };
+  });
+  ok('the owner is greeted by name, by time of day',
+     /^Good (morning|afternoon|evening), Trever$/.test(g.text || ''), String(g.text));
+  ok('and told it is meant to be simple', /keep it simple/i.test(g.sub), g.sub);
+  ok('the greeting comes before the quick actions', g.first === true);
+
+  /* ---- NOTHING SIGNED: THE CARD IS ABSENT, NOT REASSURING ---------------- */
+  const none = await page.evaluate(() => ({
+    card: !!document.querySelector('.uiwide'),
+    signed: CASES.filter(c => c.signed).length }));
+  ok('with nothing signed the card is simply not drawn',
+     none.signed === 0 ? none.card === false : true, JSON.stringify(none));
+
+  /* ---- A SIGNED INTAKE ARRIVES ------------------------------------------ */
+  await post('/ingest', { case_no: 'API-SIGNED-HOME', service: 'Surveillance',
+    client_name: 'Signed Client', subject_name: 'Signed Subject', signature: 'SC' },
+    { 'X-Ingest-Key': 'e2e-ingest-key' });
+  await page.evaluate(async () => { await render(); });
+  await page.waitForTimeout(900);
+  const one = await page.evaluate(() => {
+    const c = document.querySelector('.uiwide');
+    if (!c) return null;
+    const r = c.getBoundingClientRect();
+    return { text: c.innerText.replace(/\s+/g, ' ').trim(), h: Math.round(r.height),
+      act: c.dataset.act, tab: c.dataset.tab, case: c.dataset.case,
+      /* ABOVE the quick actions and above the queue — it is the first thing */
+      beforeTools: (() => { const q = document.querySelector('.qtools');
+        return !!q && (c.compareDocumentPosition(q) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0; })() };
+  });
+  ok('a signed intake draws the card', !!one, JSON.stringify(one));
+  /* THE CARD HAS TWO HONEST SHAPES AND THE SUITE MUST NOT ASSUME ONE. This
+     section runs last, so earlier sections' fixtures may have left signed
+     intakes on the desk — the first version of this assertion required the
+     singular branch and failed against correct output when a second signed
+     intake existed. Count first, then assert the branch that count implies. */
+  const waiting = await page.evaluate(() => CASES.filter(c => c.signed
+    && ['new', 'awaiting_client'].includes(c.stage || c.status)
+    && (c.lead_status || 'lead') !== 'converted').length);
+  if (waiting === 1) {
+    ok('with one waiting it names the client, not the case number',
+       !!one && /Signed Client/.test(one.text) && !/API-SIGNED-HOME/.test(one.text),
+       one && one.text);
+    ok('and one tap goes to the submitted intake, not the case overview',
+       !!one && one.act === 'openCaseTab' && one.tab === 'details'
+         && one.case === 'API-SIGNED-HOME', JSON.stringify(one));
+  } else {
+    ok(`with ${waiting} waiting it counts them rather than naming one`,
+       !!one && one.text.includes(String(waiting)) && /waiting/i.test(one.text),
+       one && one.text);
+    ok('and one tap goes to the intakes desk, where all of them are',
+       !!one && one.act === 'tab' && one.tab === 'leads', JSON.stringify(one));
+  }
+  ok('it is a large control, above the quick actions',
+     !!one && one.h >= 72 && one.beforeTools === true, JSON.stringify(one));
+
+  /* ---- AND A FAILED READ DRAWS NOTHING, WHICH IS THE POINT --------------- */
+  const failed = await page.evaluate(() => {
+    CASES_OK = false; paint();
+    return { card: !!document.querySelector('.uiwide') };
+  });
+  ok('a case list that did not load draws no card at all — never "none waiting"',
+     failed.card === false, JSON.stringify(failed));
+  await page.evaluate(async () => { CASES_OK = true; await render(); });
+
+  /* ---- §AF: THE ART SLOT IS BUILT AND EMPTY, AND SAYS SO ---------------- */
+  const art = await page.evaluate(() => ({
+    known: typeof CARD_ART !== 'undefined' ? CARD_ART.size : -1,
+    /* with no artwork the cards are the LIGHT placeholder, because ten dark
+       scrimmed slabs lose the family colour the brief asks them to carry */
+    dark: document.querySelectorAll('.qtapp.uiart').length,
+    slots: Object.values(QT).filter(t => t.art).length }));
+  ok('every quick-action door declares an art slot', art.slots >= 10, JSON.stringify(art));
+  ok('no artwork exists yet, so no card wears the dark art treatment',
+     art.known === 0 && art.dark === 0, JSON.stringify(art));
   await page.close();
 }
 

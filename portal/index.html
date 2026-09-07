@@ -48,6 +48,10 @@
     --ok-bg:#dff2e5; --ok-ink:#1a6b3c; --ok-line:#9fd3b2; --ok-soft:#f4faf6;
     --warn-bg:#fdf1e3;
     --gold-bg:#fdf7ec; --gold-line:#f0dcb6; --gold-ink:#7a5a12;
+    /* The attention tint: a step stronger than --gold-bg's notice ground, for
+       a chip or bar that has to be found rather than merely read. Promoted
+       from three literal uses by the anti-drift budget, which was right. */
+    --gold-tint:#f6ead2;
     --bad-bg:#fdecea; --bad-line:#f5c6c0; --bad-ink:#8a2318;
     --info-bg:#eaf5f7; --info-line:#b7dbe3; --info-ink:#1d5c6c;
     --neutral-bg:#e6ebf0; --neutral-ink:#42505f;
@@ -59,6 +63,12 @@
     --field-line:#23405f; --field-ink:#e8eef5; --field-label:#8fb4d9;
     --field-muted:#8fa9c2; --field-line-2:#1e3149; --field-edge:#2a456a;
     --field-edge-2:#3a5b80; --field-edge-3:#33526f; --field-ink-2:#cfe2f5;
+    /* THE MOCKUP GEOMETRY (owner brief 2026-09-06). Radius, button height,
+       padding and gap are named once so the boxes, cards and buttons of the
+       approved mockup are one system rather than four sets of numbers that
+       drift apart. `--btn-h` is 48 so a large control clears the project's
+       44px tap floor from the token, not from a padding sum nobody can read. */
+    --r-card:14px; --r-btn:10px; --btn-h:48px; --card-pad:16px; --card-gap:12px;
   }
   *{margin:0;padding:0;box-sizing:border-box;}
   body{font-family:'Segoe UI',system-ui,-apple-system,Arial,sans-serif;background:var(--paper);color:var(--ink);line-height:1.6;-webkit-text-size-adjust:100%;}
@@ -299,7 +309,14 @@
      but the phone's, where .qtgrid is hidden instead — one strip in the
      accessibility tree at a time, never two. The rules that draw it live at
      the END of this stylesheet with the rest of the phone overrides. */
-  .qtapps{display:none;}
+  /* `.qtools .qtapps`, TWO CLASSES, NOT ONE. The strip carries `.uigrid`
+     now, whose `display:grid` sits LATER in this stylesheet than a bare
+     `.qtapps{display:none}` and silently won it — so the phone strip computed
+     as drawn at every width. The sixth source-order casualty this project has
+     recorded, and the first one caused by adding a shared component class to
+     an element that already had a display rule. Specificity settles it rather
+     than position, because this rule has to hold wherever `.uigrid` moves to. */
+  .qtools .qtapps, .qtbox{display:none;}
   .qtools-l{font-size:.76rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
     color:var(--muted);}
   /* IT HAS TO READ AS AN ACTION, and the first two attempts did not.
@@ -425,18 +442,28 @@
   /* THE ENGAGEMENT TERMS (owner brief 2026-09-05): three statements and a
      sentence — no percentage and no formula, which is the owner's own display
      rule. The WORDS come from the Worker so the card, the email's text part
-     and its HTML part cannot say different things; this decides colour only.
+     and its HTML part cannot say different things; this decides weight only.
 
-     THE GROUND IS `--paper`, AND IT WAS MEASURED RATHER THAN PICKED. Red
-     `--bad` on it is 4.73:1 and gold `--gold-ink` 5.84:1, both clear of AA for
-     normal text. On `--neutral-bg` — the obvious first choice — the red is
-     4.30:1 and would have shipped a prominent statement that fails the line.
-     Do not restyle this onto a darker ground without re-measuring both. */
-  .rs-eng{margin:0 0 16px;padding:13px 15px;background:var(--paper);
-    border:1px solid var(--line);border-left:4px solid var(--bad);border-radius:0 8px 8px 0;}
-  .rs-eng .eng-l{margin-bottom:6px;font-weight:700;color:var(--navy);}
-  .rs-eng .eng-alert{color:var(--bad);font-weight:800;font-size:1.05rem;}
-  .rs-eng .eng-emph{color:var(--gold-ink);font-weight:800;letter-spacing:.04em;}
+     BOLD, AND NOTHING ELSE (owner, 2026-09-07, after four rounds of asking for
+     less): "same font size as surrounding rate-sheet text, no bigger text, no
+     alert color treatment, no warning box feel, no extra emphasis beyond
+     bold." So this block has NO background, NO border, NO rail, NO font-size
+     and NO colour of its own — `.eng-l` inherits the sheet's own body ink at
+     the sheet's own body size, and `.eng-term` adds weight to the two lines
+     the Worker marked.
+
+     `.eng-l` DELIBERATELY LOST ITS BLANKET `font-weight:700`. Bolding every
+     line and then bolding two of them harder is how "highlight these two
+     terms" became a rate sheet where nothing was quiet — the two named terms
+     are the only bold thing here now, which is what makes bold say anything
+     at all. The previous treatment (red `--bad` and gold `--gold-ink` on a
+     `--paper` rail, 4.73:1 and 5.84:1) was measured and it CLEARED AA; it was
+     still wrong, because how loud a term should be is a product decision and
+     not a contrast one. Do not reintroduce a tone here to tell the money from
+     the minimum: they are two stated terms and the client reads both. */
+  .rs-eng{margin:0 0 16px;}
+  .rs-eng .eng-l{margin-bottom:5px;}
+  .rs-eng .eng-term{font-weight:700;}
   .rs-eng p{margin:9px 0 0;font-size:.84rem;color:var(--muted);line-height:1.5;}
   /* PRINT ONLY. On screen the masthead already says who this is; on paper the
      sheet leaves the building on its own and has to say so itself. The reveal
@@ -694,9 +721,258 @@
                             size, which is what actually sizes the track
      A case number is data from a public form. It is never going to be short
      because we would like it to be. */
+
+  /* ==================================================================== *
+     THE MOCKUP SYSTEM (owner brief 2026-09-06, against the approved
+     "Case Command Center (V1)" mockup).
+
+     ONE GEOMETRY, FIVE FAMILIES, AND NO NEW COLOUR. The mockup's visual
+     grammar is: a boxed section, an icon TILE, a bold name over a quiet
+     sub-line, facts as label/value rows, and a block of large rounded
+     buttons — one filled primary above a two-across grid of outlined
+     secondaries. That grammar is what these classes are; the mockup's own
+     blue is NOT, because this portal's palette is navy/teal/gold and the
+     owner's restraint rule governs.
+
+     EVERY FAMILY IS COMPOSED FROM TOKENS THIS PALETTE ALREADY HAD. Not one
+     hex literal enters the page here, so the anti-drift budget has nothing
+     to catch and a future palette edit moves these with everything else.
+     The family says what KIND of work a card is for; the geometry never
+     varies between families, which is what makes a row of them read as one
+     system rather than five decorations. */
+  /* FIVE FAMILIES, AND EACH ONE MEANS SOMETHING (owner brief 2026-09-06 §B:
+     "Use color to communicate function. Do NOT randomly color everything.").
+     Green is positive and money received; teal is the ordinary operational
+     primary; gold is the CEO Bot and financial attention; navy is structure;
+     red is destruction. There were six a moment ago — a purple `--media`
+     family for the timestamp tools and a separate gold for money — and six
+     families over ten cards is the rainbow §B forbids. The purple TOKENS stay
+     where they are used (media chips); only this class went. */
+  .fam-intake{--f-bg:var(--ok-soft);   --f-line:var(--ok-line);    --f-ink:var(--ok-ink);    --f-tile:var(--ok-bg);}
+  .fam-asst  {--f-bg:var(--teal-wash); --f-line:var(--info-line);  --f-ink:var(--info-ink);  --f-tile:var(--info-bg);}
+  .fam-ceo   {--f-bg:var(--gold-soft); --f-line:var(--gold-line);  --f-ink:var(--gold-ink);  --f-tile:var(--gold-bg);}
+  .fam-case  {--f-bg:var(--paper);     --f-line:var(--line);       --f-ink:var(--navy-2);    --f-tile:var(--neutral-bg);}
+  .fam-bad   {--f-bg:var(--bad-bg);    --f-line:var(--bad-line);   --f-ink:var(--bad-ink);   --f-tile:var(--bad-bg);}
+
+  /* .uibox — the mockup's boxed section: a titled white panel grouping
+     things that belong together. `.uibox-s` is the small grey sentence the
+     mockup puts above every result ("Here are 3 new intakes."). */
+  .uibox{background:var(--card);border:1px solid var(--line);border-radius:var(--r-card);
+    padding:var(--card-pad);margin:0 0 var(--card-gap);}
+  .uibox-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin:0 0 10px;}
+  .uibox-t{font-weight:800;font-size:.95rem;letter-spacing:.01em;}
+  .uibox-s{font-size:.8rem;color:var(--muted);}
+
+  /* .uiact — the action card. The left rule and the tile carry the family;
+     everything else is identical card to card. `min-height` is what keeps a
+     grid of them one shape, and it clears the 44px floor by construction. */
+  .uiact{display:flex;flex-direction:column;align-items:flex-start;gap:1px;
+    background:var(--card);border:1px solid var(--f-line,var(--line));
+    border-left:4px solid var(--f-ink,var(--line));border-radius:var(--r-btn);
+    padding:11px 12px;min-height:92px;width:100%;min-width:0;
+    text-align:left;font:inherit;color:var(--ink);cursor:pointer;}
+  .uiact-i{display:inline-flex;align-items:center;justify-content:center;
+    width:34px;height:34px;border-radius:9px;background:var(--f-tile,var(--paper));
+    font-size:1.05rem;line-height:1;margin-bottom:5px;}
+  .uiact-n{font-weight:800;font-size:.88rem;line-height:1.2;}
+  .uiact-s{font-size:.74rem;color:var(--muted);line-height:1.25;}
+  .uiact:hover{background:var(--f-bg,var(--paper));}
+  .uiact:focus-visible{outline:3px solid var(--gold);outline-offset:2px;}
+  /* The flagged card is the one the owner reaches for first. It says so in
+     words as well as in weight — a border alone is not a label.
+
+     `.uiact-lead`, NOT `.lead`. `.lead` is this file's muted-prose class
+     (`color:var(--muted);margin-bottom:18px`), so the short name would have
+     greyed the card's own text and pushed it 18px taller than its siblings —
+     the class-name contest this project has now recorded six times, caught
+     here before it shipped rather than after. */
+  .uiact-lead{border-width:2px;border-left-width:5px;}
+  .uiact-flag{align-self:flex-start;font-size:.58rem;font-weight:800;
+    letter-spacing:.02em;text-transform:uppercase;color:var(--info-ink);
+    background:var(--info-bg);border:1px solid var(--info-line);
+    border-radius:999px;padding:1px 6px;margin:0 0 3px;white-space:nowrap;}
+
+  /* .uigrid — two across, and one across only where two will not fit. */
+  /* `grid-auto-rows:1fr` is load-bearing, not tidiness: without it a card
+     whose NAME wraps to two lines ("Insurance Intake") makes its row taller
+     than the rest and the strip reads as several lists. Every row takes the
+     tallest row's height, so one shape, whatever the words are. */
+  .uigrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;
+    grid-auto-rows:1fr;}
+
+  /* .uibtn — the mockup's large button. Primary is the owner's dark navy
+     (`.btn` is navy here and teal is the accent — do not reintroduce a teal
+     default); secondary is the same shape outlined. Both clear 44px from
+     `--btn-h` rather than from a padding sum nobody can read off. */
+  .uibtn{display:inline-flex;align-items:center;justify-content:center;gap:7px;
+    min-height:var(--btn-h);width:100%;min-width:0;border-radius:var(--r-btn);
+    padding:10px 12px;font:inherit;font-weight:700;font-size:.88rem;
+    line-height:1.2;text-align:center;cursor:pointer;}
+  .uibtn.pri{background:var(--navy-2);border:1px solid var(--navy-2);color:#fff;}
+  .uibtn.pri:hover{background:var(--navy);}
+  .uibtn.sec{background:var(--card);border:1.5px solid var(--navy-2);color:var(--navy-2);}
+  .uibtn.sec:hover{background:var(--panel);}
+  .uibtn.acc{background:var(--teal);border:1px solid var(--teal);color:#fff;}
+  .uibtn:focus-visible{outline:3px solid var(--gold);outline-offset:2px;}
+  .uibtn[disabled]{opacity:.55;cursor:default;}
+  /* A row of two. On its own it is one full-width control, which is the
+     mockup's primary; `.ui2` is the pair beneath it. */
+  .ui2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:9px;}
+  .ui2 .uibtn{width:100%;}
+  /* An odd trailing control takes the whole width rather than sitting alone
+     in the left column with a hole beside it — the mockup's own shape, and
+     the reason it is `:last-child:nth-child(odd)` is that the number of
+     controls here is conditional (a claim assignment has no retainer pair, a
+     legal intake no payment options), so no fixed count can be written down. */
+  .ui2 > .uibtn:last-child:nth-child(odd){grid-column:1 / -1;}
+
+  /* .uifacts — the mockup's label/value block. The value is bold and hard
+     right, and it may wear a semantic colour; the label never does. */
+  .uifacts{margin:10px 0 0;border-top:1px solid var(--line);}
+  .uifact{display:flex;justify-content:space-between;gap:12px;align-items:baseline;
+    padding:6px 0;border-bottom:1px solid var(--line);font-size:.84rem;}
+  .uifact:last-child{border-bottom:0;}
+  .uifact-l{color:var(--muted);}
+  .uifact-v{font-weight:700;text-align:right;overflow-wrap:anywhere;}
+  .uifact-v.bad{color:var(--bad);}
+  .uifact-v.good{color:var(--good);}
+
+  /* .uihead — the identity block the mockup opens every result card with:
+     the tile, then a bold name over one or two quiet lines. */
+  .uihead{display:flex;gap:11px;align-items:flex-start;min-width:0;}
+  .uihead .uiact-i{flex:0 0 auto;margin-bottom:0;}
+  .uihead-b{min-width:0;}
+  .uihead-n{font-weight:800;font-size:.95rem;line-height:1.25;overflow-wrap:anywhere;}
+  .uihead-s{font-size:.78rem;color:var(--muted);line-height:1.3;overflow-wrap:anywhere;}
+
+  /* ---- THE ART CARD (owner brief 2026-09-06 §AF) --------------------------
+     A card whose personality will be a photograph that has not been made yet.
+     It is built art-shaped NOW so the final asset costs one file and one
+     manifest line: the ground, the scrim, the text zone and the geometry do
+     not move when `--art` is set. Specifications, per card, with safe zones
+     and dimensions: `case-portal/ART-ASSET-MANIFEST.md`.
+
+     THE PLACEHOLDER IS A SOLID FAMILY TONE, NOT A GRADIENT. A gradient that
+     looks finished is how a placeholder stops being replaced; a flat colour
+     reads as deliberately unfinished. And because the SCRIM is painted either
+     way, the title's contrast is identical with art and without — so nothing
+     about the type has to be re-measured when the photographs land.
+
+     One element, two background layers, no pseudo-element and no stacking
+     context: the scrim is the first layer and the art the second, with a
+     transparent gradient standing in for `none` because `none` is not a legal
+     member of a background-image list. */
+  .uiart{color:#fff;border-color:transparent;
+    background-color:var(--f-ink,var(--navy-2));
+    background-image:linear-gradient(180deg,rgba(12,22,38,.18) 0%,rgba(12,22,38,.80) 84%),
+      var(--art,linear-gradient(rgba(0,0,0,0),rgba(0,0,0,0)));
+    background-size:cover;background-position:var(--art-pos,center);}
+  .uiart .uiact-n,.uiart .uiwide-n{color:#fff;}
+  .uiart .uiact-s,.uiart .uiwide-s{color:rgba(255,255,255,.88);}
+  .uiart .uiact-i{background:rgba(255,255,255,.18);}
+  .uiart:hover{background-color:var(--f-ink,var(--navy-2));filter:brightness(1.12);}
+  /* The text sits in the LOWER portion, which is the safe zone the manifest
+     tells the artist to keep quiet. `margin-top:auto` is what puts it there
+     whatever the card's height, so a taller card does not float its title. */
+  .uiart .uiact-n{margin-top:auto;}
+
+  /* ---- THE WIDE ACTION CARD (§AF: "wide action card") --------------------
+     For the two or three actions that must be impossible to miss — a signed
+     intake waiting, the open case list. Art-ready on the same terms. */
+  .uiwide{display:flex;align-items:center;gap:13px;width:100%;min-height:84px;
+    border:1px solid var(--f-line,var(--line));border-radius:var(--r-card);
+    padding:14px 16px;text-align:left;font:inherit;color:var(--ink);
+    cursor:pointer;margin:0 0 var(--card-gap);}
+  .uiwide-b{min-width:0;flex:1 1 auto;}
+  .uiwide-n{font-weight:800;font-size:1.02rem;line-height:1.25;}
+  .uiwide-s{font-size:.82rem;color:var(--muted);line-height:1.3;}
+  /* MEASURED AT 390: the words "View intake →" and the client's name were
+     competing for the same line, so the name wrapped THROUGH the label. The
+     label never shrinks and never wraps; below 480px it becomes the arrow
+     alone, because the whole card is the button and the words were only ever
+     telling you what tapping it does. */
+  .uiwide-go{flex:0 0 auto;font-weight:800;font-size:.9rem;white-space:nowrap;}
+  .uiwide-go .uiwide-goword{display:inline;}
+  @media(max-width:480px){
+    .uiwide-go .uiwide-goword{display:none;}
+    .uiwide-go{font-size:1.3rem;line-height:1;}
+  }
+  .uiwide .uiact-i{flex:0 0 auto;width:42px;height:42px;font-size:1.25rem;margin:0;}
+  .uiwide:focus-visible{outline:3px solid var(--gold);outline-offset:2px;}
+  /* A count, top corner, as the manifest reserves it. */
+  .uiwide-badge{flex:0 0 auto;min-width:30px;height:30px;border-radius:15px;
+    display:inline-flex;align-items:center;justify-content:center;
+    background:rgba(255,255,255,.22);color:#fff;font-weight:800;font-size:.92rem;
+    padding:0 9px;}
+
+  /* ---- THE GREETING (§E) -------------------------------------------------
+     The owner lands on his own portal, not on a statistics wall. */
+  .greet{margin:2px 2px 12px;}
+  .greet-h{font-size:1.3rem;font-weight:800;line-height:1.2;letter-spacing:-.01em;}
+  .greet-s{color:var(--muted);font-size:.9rem;}
+
+  /* ---- FUNCTIONAL BUTTON COLOURS (§B, §X) --------------------------------
+     Green is money received and positive completion, red is the destructive
+     act, teal is the ordinary primary. Both fills are measured against white
+     in the suite rather than asserted: `--ok-ink` is used instead of the
+     brighter `--good` because white on `--good` computes 4.38:1, which is
+     under AA for text this size, and a button nobody can read is not a
+     stronger button for being greener. */
+  .uibtn.ok{background:var(--ok-ink);border:1px solid var(--ok-ink);color:#fff;}
+  .uibtn.ok:hover{filter:brightness(1.1);}
+  .uibtn.bad{background:var(--bad);border:1px solid var(--bad);color:#fff;}
+  .uibtn.bad:hover{filter:brightness(1.1);}
+  /* The outlined destructive, for where red-filled would shout. */
+  .uibtn.badline{background:var(--card);border:1.5px solid var(--bad);color:var(--bad-ink);}
+
+  /* ---- SIMPLE OPERATIONAL ROWS (§M) --------------------------------------
+     Below the big actions the case screen becomes a list of places, not a
+     second wall of buttons: one line each, a chevron, the 44px floor cleared
+     by min-height. "Do not immediately show assignment widgets, progress
+     rings, mileage, expense review, staff controls" — none of those moved,
+     they simply stopped competing with Retainer paid for the same weight. */
+  .uirows{border-top:1px solid var(--line);margin-top:11px;}
+  .uirow{display:flex;align-items:center;gap:10px;width:100%;min-height:52px;
+    padding:9px 4px;border:0;border-bottom:1px solid var(--line);
+    background:transparent;font:inherit;color:var(--ink);text-align:left;cursor:pointer;}
+  .uirow:last-child{border-bottom:0;}
+  .uirow-n{flex:1 1 auto;font-weight:700;font-size:.92rem;min-width:0;}
+  .uirow-go{flex:0 0 auto;color:var(--muted);font-weight:800;font-size:1.15rem;line-height:1;}
+  .uirow:hover{background:var(--paper);}
+  .uirow:focus-visible{outline:3px solid var(--gold);outline-offset:-2px;}
+  .uirow.ceo-casebtn .uirow-n{color:var(--gold-ink);}
+
   .pkgcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(290px,100%),1fr));gap:14px;margin-top:10px;}
-  .pcard{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px;
-    min-width:0;overflow-wrap:anywhere;}
+  .pcard{background:#fff;border:1px solid var(--line);border-radius:var(--r-card);
+    padding:var(--card-pad);min-width:0;overflow-wrap:anywhere;
+    display:flex;flex-direction:column;}
+  /* THE MOCKUP CARD'S PARTS. `.pc-tags` is the chip row above the identity;
+     `.uihead` inside `.pc-open` is the tile-and-name block. `.pc-open` is a
+     <button>, so its children have to be inline-level or explicitly blocked —
+     a <div> inside a <button> is what the identity block used to be, and the
+     spans here say the same thing legally. */
+  .pc-tags{display:flex;flex-wrap:wrap;gap:5px;margin:0 0 9px;}
+  .pc-open .uihead{display:flex;}
+  .pc-open .uihead-b, .pc-open .uihead-n, .pc-open .uihead-s{display:block;}
+  .pc-arr{display:block;margin-top:7px;}
+  /* The action block sits at the FOOT of the card whatever the facts above it
+     ran to, so a row of cards has its primaries on one line. */
+  /* `.pc-next` IS A FLEX ROW AND TWO OTHER CARDS DEPEND ON IT — the package
+     card pairs a "Next step" label with one button, the profile card holds an
+     inner flex row. The intake card's block needs the opposite, so it says so
+     with its own class rather than by redefining a shared one. Caught in a
+     desktop render: as a flex item the primary and the two-across grid lined
+     up sideways and wrapped "Send payment options" one letter per line — the
+     exact shape Unit 5 already fixed once, reintroduced from the other side.
+     A phone render alone would NEVER have shown it, because `.pc-next` turns
+     into a column under 560px. */
+  .pcard .pc-next{margin-top:auto;padding-top:11px;}
+  .pc-next.pc-block{display:block;}
+  .pcard .pc-next > .uibtn + .uibtn{margin-top:9px;}
+  /* THE DESTRUCTIVE CONTROL GETS ITS OWN LINE, hard right. It used to sit in
+     the same wrapping row as Send rate sheet with `margin-left:auto`, which on
+     a phone put a delete beside a send at thumb height. */
+  .pc-del{display:flex;justify-content:flex-end;margin-top:9px;}
   .pc-top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;}
   /* THE INTAKE CARD'S OWN DOOR. A real button, full width, left aligned, and
      carrying the card's whole identity — so "tap the client's name" and "tap
@@ -796,8 +1072,12 @@
 
   /* THE PRIMARY ACTIONS, directly under the header. The owner's line: the most
      common field actions are never buried behind More. */
-  .caseacts{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 12px;}
-  .caseacts .btn{min-height:44px;}
+  /* THE MOCKUP BOX (2026-09-06). `.caseacts` was a wrapping flex row of small
+     chips; it is a titled box with one primary over a two-across grid now.
+     The flex rule and the phone `flex:1 1 auto` that went with it are gone
+     rather than left dead — a rule doing nothing under a comment claiming it
+     fixed something is worse than no rule. */
+  .caseacts{margin:0 0 12px;}
   .caseacts .addact{position:static;box-shadow:none;}
 
   /* THE DAILY SUMMARY HEAD — day, date and state, so nobody has to guess which
@@ -853,9 +1133,10 @@
     .casepage .wsmorelist{margin-top:0;}
     .casepage{padding-bottom:100px;}
     .addact{bottom:96px;}
-    .caseacts .btn{flex:1 1 auto;}
     /* DUPLICATE ENTRY POINT CLEANUP. + Add is in the thumb bar on a phone, so
-       the action row's copy stands down: one obvious way in at any width. */
+       the action row's copy stands down: one obvious way in at any width —
+       which is also why it is the box's PRIMARY at desktop widths and the box
+       simply opens on its grid here. */
     .caseacts .addact{display:none;}
   }
   .ovgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:14px;}
@@ -1491,7 +1772,31 @@
      trusting source order again. Scoped to the case screen; the portal-wide
      pass is roadmap item 5, not this. */
   .casepage{max-width:980px;margin:0 auto;}
+  /* §6, THE BACK-BUTTON AUDIT (owner brief 2026-09-06) — AND A BUG IT FOUND.
+
+     `.close` is the DIALOG X's rule: `position:absolute; right:14px; top:12px`.
+     Three back buttons borrowed the class for its look and inherited that
+     positioning with it. The case page's copy was pinned back in flow at
+     899px and below (`.casepage .pagebar .close`), which is where the burger
+     sits and where it was covering the signed-in name — but the two Clients &
+     Firms back buttons are not `.casepage`, so they were absolutely
+     positioned at EVERY width, floated out of their own bar and against
+     whatever ancestor happened to be positioned.
+
+     A back button is in-flow content, not an overlay. `.pagebar .close` is
+     static everywhere now, which also makes the case page's ≤899px special
+     case redundant — it is left in place because it additionally sets the
+     44px floor, and removing it is a separate edit with nothing to gain. */
   .pagebar{margin-bottom:12px;}
+  /* `:not(.casepage) .pagebar`, NOT every `.pagebar`. The bug was the two
+     Clients & Firms back buttons; the case page's own copy is already pinned
+     into flow at 899px and below, and at desktop widths it sits in the header
+     corner where a passing assertion says it belongs — measured there, it
+     covers nothing and Sign out is still the element at its own centre. The
+     first fix made every pagebar static and broke that on the strength of a
+     bug that was somewhere else. Fix what is broken. */
+  :not(.casepage) > .pagebar .close{position:static;right:auto;top:auto;
+    min-height:44px;display:inline-flex;align-items:center;}
   .xrev{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:.8rem;}
   .xrev label{display:flex;gap:4px;align-items:center;white-space:nowrap;}
   .tag.xr{background:var(--ok-bg);color:var(--ok-ink);} .tag.xb{background:var(--info-bg-2);color:var(--info-ink);}
@@ -2357,25 +2662,45 @@
      The lead card is an accent and a flag, NOT a bigger box: a card of a
      different size would break the strip's rhythm and make one row read as
      two lists. LAST IN THE FILE, like every other phone override here. */
+  /* THE MOCKUP REFACTOR, 2026-09-06 — THE STRIP STOPPED SWIPING.
+
+     It was `overflow-x:auto` with 126px cards, so at 390px two and a half
+     doors were visible and the other seven were reachable only by knowing to
+     swipe. That is the sideways scroll the release gate is written to catch,
+     on the portal's own first screen. Two across in a real grid shows all ten
+     without a gesture, and the box around them is the mockup's own grouping.
+
+     THE CARDS ARE `.uiact` NOW and carry only what is phone-specific here —
+     the family colour, the tile and the geometry are the shared system. The
+     lead card is still an accent and a flag rather than a bigger box: one row
+     must read as one list, which is why `min-height` is on the base class and
+     not varied per card. LAST IN THE FILE, like every other phone override. */
   @media(max-width:640px){
     .qtgrid{display:none;}
-    .qtapps{display:flex;gap:8px;margin-top:6px;padding:2px 2px 4px;
-      overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
-    .qtapps::-webkit-scrollbar{display:none;}
-    .qtapp{flex:0 0 auto;width:126px;min-height:96px;background:var(--card);
-      border:1px solid var(--line);border-radius:14px;padding:10px 9px;
-      display:flex;flex-direction:column;align-items:flex-start;gap:2px;
-      text-align:left;font:inherit;color:var(--navy);cursor:pointer;
-      box-shadow:0 1px 3px rgba(16,32,52,.07);}
-    .qtapp-i{font-size:1.35rem;line-height:1.15;}
-    .qtapp-n{font-weight:800;font-size:.82rem;line-height:1.15;}
-    .qtapp-s{font-size:.68rem;color:var(--muted);line-height:1.2;}
-    .qtapp-lead{border:2px solid var(--teal);padding:9px 8px;}
-    .qtapp-flag{font-size:.58rem;font-weight:800;letter-spacing:.02em;
-      text-transform:uppercase;color:var(--info-ink);background:var(--info-bg);
-      border:1px solid var(--info-line);border-radius:999px;
-      padding:1px 6px;margin-bottom:1px;white-space:nowrap;}
-    .qtapp:focus-visible{outline:2px solid var(--gold);outline-offset:2px;}
+    /* The box carries its own heading, so the row's label above it would be
+       the same thing said twice. It is the DESKTOP row's label and stays
+       there; only the phone withdraws it. */
+    .qtools-l{display:none;}
+    .qtbox{display:block;margin-top:0;}
+    .qtools .qtapps{display:grid;}
+    /* §Z — More is a disclosure, not a second strip. Closed it costs one row.
+
+       `.qtmore:not([open]) .qtapps{display:none}` IS LOAD-BEARING, and it is
+       here because leaving it out produced a real defect rather than an
+       untidy one. `.qtools .qtapps{display:grid}` out-specifies the browser's
+       own hiding of closed `<details>` content, so the collapsed cards laid
+       out below the summary, reported `visibility:visible` and a real
+       bounding box at y=924 — and `elementFromPoint` at their own centre
+       returned NOTHING, because they were never painted. Controls that
+       measure as visible and cannot be pressed: the Timestamp Video
+       visibility incident in a new costume, and a Playwright click on one
+       times out, which is exactly what a thumb would do. */
+    .qtmore:not([open]) .qtapps{display:none;}
+    .qtmore{margin-top:10px;}
+    .qtmore summary{min-height:44px;display:flex;align-items:center;cursor:pointer;
+      font-weight:800;font-size:.84rem;color:var(--navy-2);}
+    .qtmore summary:focus-visible{outline:3px solid var(--gold);outline-offset:2px;}
+    .qtmore .qtapps{margin-top:8px;}
   }
 
   /* ===== HOME'S BANDS AND STATS AT PHONE DENSITY (owner mockup, 2026-09-04)
@@ -2621,23 +2946,71 @@
      teal fill anywhere in the panel. `.ceo-` is its own prefix. The drawer is
      the Assistant dock's geometry on the OTHER visual identity, and the phone
      pill sits bottom-LEFT so the two bots cannot collide. */
-  .ceo-fab{position:fixed;left:14px;bottom:calc(14px + env(safe-area-inset-bottom));z-index:58;
-    background:var(--navy-2);color:var(--gold);border:1px solid var(--gold);border-radius:22px;
-    padding:10px 16px;font-weight:800;font-size:.9rem;cursor:pointer;min-height:44px;
-    box-shadow:0 2px 10px rgba(14,26,44,.35);}
+  /* §10 — THE MOBILE DOOR: NEARBY, DISTINCT, AND OVER NOTHING.
+
+     It sat at `bottom:14px`, which is inside the bottom navigation's own band
+     — the nav is z-60 and the fab z-58, so the nav painted over it and the
+     control was partly a control you could not press. It now takes the SAME
+     lift the Assistant pill takes (`body.hasmnav`), so both clear the nav by
+     the nav's own height rather than by a guessed number.
+
+     IT IS DELIBERATELY THE SMALLER OF THE TWO. The Assistant is the primary
+     operational pill and keeps its size and its corner; the CEO Bot is a
+     compact gold chip on the opposite side. Two identical floating pills would
+     read as one feature drawn twice — the owner's own note. */
+  /* THE TWO DOORS STACK ON THE RIGHT, CEO ABOVE ASSISTANT (owner, 2026-09-06).
+
+     It was bottom-LEFT, opposite the Assistant — a real floating control, not
+     a drawer-only entry, but on the side of the screen nobody looks at, which
+     is why it read as hidden. Stacked on the thumb side the pair is one
+     column: the Assistant is the resting position and the CEO Bot sits above
+     it, so the hierarchy is read before either is pressed.
+
+     `--pillgap` is the ONE number the stack is built from — the Assistant's
+     own height plus the space between them — so the two cannot drift apart
+     when either changes size. */
+  :root{--pillgap:58px;}
+  .ceo-fab{position:fixed;right:14px;
+    bottom:calc(max(14px,env(safe-area-inset-bottom)) + var(--pillgap));z-index:55;
+    display:none;align-items:center;gap:5px;
+    background:var(--navy-2);color:var(--gold);border:1px solid var(--gold);border-radius:20px;
+    padding:8px 13px;font-weight:800;font-size:.8rem;letter-spacing:.03em;cursor:pointer;
+    /* THE FLOOR IS THE FLOOR. It was 40px — visibly smaller than the pill, and
+       under the 44px minimum every other control on this phone is held to.
+       44 against the pill's 48 is still a clear size difference and both are
+       pressable; shaving a tap target for hierarchy is not a trade this
+       project makes. */
+    min-height:44px;box-shadow:0 4px 14px rgba(12,22,38,.3);}
   .ceo-fab:focus-visible{outline:2px solid var(--gold);outline-offset:2px;}
+  .ceo-fabstar{font-size:.95rem;line-height:1;}
+  /* The case page's door wears the identity without becoming a second pill. */
+  /* `.uibtn.ceo-casebtn`, not `.ceo-casebtn`: `.uibtn.sec` is a two-class
+     selector and would otherwise out-specify this and paint the CEO door
+     navy like its neighbours, losing the one thing that says which bot it
+     opens. Same weight, its own colour. */
+  .uibtn.ceo-casebtn{color:var(--gold-ink);border-color:var(--gold-2);}
   .ceo-back{position:fixed;inset:0;background:rgba(10,16,26,.45);z-index:70;border:0;}
-  .ceo-panel{position:fixed;top:0;right:0;bottom:0;width:min(430px,100%);z-index:71;
+  .ceo-panel{position:fixed;top:0;right:0;bottom:0;width:min(420px,100%);z-index:71;
     background:#fff;border-left:3px solid var(--gold);display:flex;flex-direction:column;}
   .ceo-head{display:flex;align-items:center;gap:10px;padding:12px 14px;
     background:var(--navy-2);color:#fff;}
   .ceo-brand{font-weight:800;letter-spacing:.04em;color:var(--gold);}
   .ceo-head .optn{color:#c8d4e4;}
   .ceo-x{margin-left:auto;color:#fff;border-color:#3a4c66;background:transparent;}
-  .ceo-tabs{display:flex;border-bottom:2px solid var(--gold);background:var(--paper);}
-  .ceo-tabs button{flex:1;border:0;background:none;padding:11px 4px;font:inherit;font-size:.72rem;
-    font-weight:800;letter-spacing:.05em;color:var(--muted);cursor:pointer;min-height:44px;}
+  /* §12 — THE TAB STRIP SCROLLS RATHER THAN CLIPPING. Four uppercase words in
+     390px of a phone is tight, and the failure mode of `flex:1` there is a
+     clipped word, not a narrow one. The strip scrolls horizontally INSIDE
+     itself (never the page), each tab keeps its whole label on one line, and
+     the active tab is marked by weight and a gold underline rather than by
+     colour alone. */
+  .ceo-tabs{display:flex;border-bottom:2px solid var(--gold);background:var(--paper);
+    overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none;}
+  .ceo-tabs::-webkit-scrollbar{display:none;}
+  .ceo-tabs button{flex:1 0 auto;border:0;background:none;padding:11px 14px;font:inherit;
+    font-size:.72rem;font-weight:800;letter-spacing:.05em;color:var(--muted);cursor:pointer;
+    min-height:44px;white-space:nowrap;}
   .ceo-tabs button.on{color:var(--navy-2);box-shadow:inset 0 -3px 0 var(--gold);}
+  .ceo-tabs button:focus-visible{outline:2px solid var(--gold);outline-offset:-3px;}
   /* ONE SCROLLER — the Assistant's own lesson applied on day one: the body is
      the only overflow in the panel, min-height:0 so the column can shrink. */
   .ceo-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;
@@ -2646,23 +3019,115 @@
   .ceo-hl{font-weight:800;letter-spacing:.04em;font-size:.85rem;color:var(--gold);}
   .ceo-health ul{margin:8px 0 0 18px;font-size:.85rem;}
   .ceo-gate{margin-top:8px;font-size:.75rem;color:#c8d4e4;}
-  .ceo-card{border:1px solid var(--line);border-left:3px solid var(--gold);border-radius:10px;
-    padding:12px 14px;margin:0 0 10px;background:#fff;}
+  /* §13 — NOT EVERY CARD GETS A COLOURED EDGE. Gold means "the CEO Bot is
+     recommending something"; a card that is reporting a fact or confirming a
+     working flow is plain, so the accent still means something when it does
+     appear. Red stays reserved for genuine risk. */
+  /* THE MOCKUP GEOMETRY (2026-09-06). The panel keeps its own gold identity
+     and its information architecture — both approved — and takes the shared
+     radius and padding, so a CEO card and an intake card are the same object
+     at different sizes rather than two card systems that happen to resemble
+     each other today. */
+  .ceo-card{border:1px solid var(--line);border-radius:var(--r-card);
+    padding:13px 15px;margin:0 0 11px;background:#fff;}
+  /* §8 — RESTRAINT. A recommendation gets a gold edge; everything else is a
+     plain card on white. The accent is the only place gold appears as a rule,
+     so it keeps meaning "the Bot is proposing something". */
+  .ceo-card.ceo-task{border-left:3px solid var(--gold);}
+  /* §3 — EVIDENCE CHIPS. The facts the classifier used, short enough to scan,
+     composed in the Worker from the same classification as the evidence list —
+     a chip that disagreed with the list under it would be drift. */
+  .ceo-chips{display:flex;flex-wrap:wrap;gap:5px;margin:8px 0 0;}
+  .ceo-chip{font-size:.7rem;font-weight:700;letter-spacing:.02em;padding:3px 8px;
+    border-radius:11px;background:var(--paper);color:var(--navy-2);white-space:nowrap;}
+  .ceo-chip-ok{background:var(--ok-bg);color:var(--ok-ink);}
+  /* §5 — technical detail, one tap away, out of the executive view. */
+  .ceo-det{margin-top:9px;}
+  .ceo-det summary{font-size:.78rem;color:var(--muted);cursor:pointer;min-height:34px;
+    display:flex;align-items:center;}
+  .ceo-det summary:focus-visible{outline:2px solid var(--gold);outline-offset:2px;}
+  /* §1 — the third tone: available cleanup is neither a tick nor a warning. */
+  .ceo-hmk.tidy{color:#9fb4cc;}
   .ceo-card.ceo-hi{border-left-color:var(--bad);}
   .ceo-flag{display:inline-block;font-size:.68rem;font-weight:800;letter-spacing:.06em;
     color:var(--bad);margin-bottom:4px;}
   .ceo-t{font-weight:800;font-size:.95rem;}
   .ceo-st{display:inline-block;font-size:.72rem;color:var(--muted);margin-top:2px;}
   .ceo-why{font-size:.85rem;color:var(--muted);margin:6px 0 0;}
-  .ceo-acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;}
-  .ceo-acts .btn{min-height:44px;}
+  /* The mockup's action block: controls that fill the width they are given
+     rather than shrinking to their own words and wrapping into a ragged
+     column. `auto-fit` with a 132px floor puts two on a phone and as many as
+     fit on the drawer, and the 44px floor is unchanged. */
+  .ceo-acts{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));
+    gap:7px;margin-top:9px;}
+  .ceo-acts .btn{min-height:44px;width:100%;}
   .ceo-brief{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;font-size:.9rem;margin-top:6px;}
   .ceo-most{margin:6px 0 0 20px;font-size:.9rem;}
   .ceo-flow{display:flex;gap:10px;align-items:baseline;margin-top:4px;}
   .ceo-fs{font-size:.7rem;font-weight:800;letter-spacing:.05em;padding:2px 7px;border-radius:9px;}
   .ceo-fs.ok{background:var(--ok-bg);color:var(--ok-ink);}
-  .ceo-fs.warn{background:#f6ead2;color:var(--gold-ink);}
-  .ceo-prevbar{position:sticky;top:0;z-index:2;background:#f6ead2;color:var(--gold-ink);
+  .ceo-fs.warn{background:var(--gold-tint);color:var(--gold-ink);}
+  /* §4 CEO PRIORITY — the top of the executive hierarchy, and the one place
+     gold is a FILL rather than an accent. Two items maximum. */
+  /* §4 — THE EXECUTIVE CARD. Navy header with a gold rule under it rather than
+     a gold fill: the fill read as a banner competing with the drawer's own
+     head, and ordinary cleanup should not arrive looking like an alert. */
+  .ceo-prio{border:1px solid var(--line);border-radius:12px;margin:0 0 14px;overflow:hidden;
+    background:#fff;box-shadow:0 1px 3px rgba(14,26,44,.06);}
+  .ceo-pt{background:var(--navy-2);color:#fff;font-weight:800;font-size:.7rem;
+    letter-spacing:.09em;padding:9px 15px;border-bottom:3px solid var(--gold);}
+  .ceo-pitem{padding:12px 14px;border-top:1px solid var(--line);}
+  .ceo-pitem:first-of-type{border-top:0;}
+  /* HIGHEST IMPACT wears the gold; LOW-RISK CLEANUP is deliberately quieter,
+     because the two are not the same call to action. */
+  .ceo-plab{font-size:.66rem;font-weight:800;letter-spacing:.07em;color:var(--muted);}
+  .ceo-pitem.hi .ceo-plab{color:var(--gold-ink);}
+  .ceo-ph{font-weight:800;font-size:1rem;margin:3px 0 0;line-height:1.3;}
+  .ceo-pw{font-size:.86rem;color:var(--muted);margin:5px 0 0;line-height:1.5;}
+  .ceo-prio-none .ceo-pnone{padding:12px 14px;margin:0;font-size:.9rem;color:var(--muted);}
+  /* §14 — Fix First. A row until asked, a card once answered. */
+  .ceo-fixrow{margin:0 0 14px;}
+  .ceo-fix .ceo-fh{font-weight:800;font-size:.98rem;margin:4px 0 8px;line-height:1.35;}
+  .ceo-fl{font-size:.64rem;font-weight:800;letter-spacing:.07em;color:var(--muted);margin-top:8px;}
+  /* §5 — grouped health. */
+  .ceo-hstate{display:inline-block;font-size:.68rem;font-weight:800;letter-spacing:.06em;
+    padding:2px 8px;border-radius:9px;margin-left:6px;vertical-align:middle;}
+  .ceo-hstate.ok{background:var(--ok-bg);color:var(--ok-ink);}
+  .ceo-hstate.warn{background:var(--gold-tint);color:var(--gold-ink);}
+  .ceo-hstate.bad{background:#f7ded9;color:var(--bad);}
+  .ceo-hgrp{margin-top:10px;}
+  .ceo-hgt{font-size:.64rem;font-weight:800;letter-spacing:.07em;color:var(--gold);}
+  .ceo-hrow{display:flex;gap:8px;align-items:baseline;font-size:.86rem;margin-top:3px;}
+  .ceo-hmk{flex:0 0 auto;font-weight:800;}
+  .ceo-hmk.ok{color:#8fd6a8;} .ceo-hmk.warn{color:#f0c778;}
+  /* §8 — the card's own parts. */
+  .ceo-cat{font-size:.64rem;font-weight:800;letter-spacing:.07em;color:var(--muted);
+    margin-bottom:3px;}
+  .ceo-ev{font-size:.78rem;color:var(--navy-2);background:var(--paper);border-radius:7px;
+    padding:5px 9px;margin:7px 0 0;display:inline-block;}
+  .ceo-imp{font-size:.82rem;color:var(--muted);margin:7px 0 0;line-height:1.5;}
+  .ceo-whybox{margin-top:9px;padding:9px 11px;background:var(--paper);border-radius:9px;}
+  .ceo-evl{margin:5px 0 0 17px;font-size:.83rem;line-height:1.55;}
+  .ceo-rec{font-size:.83rem;margin-top:7px;}
+  .ceo-path{font-size:.8rem;color:var(--muted);margin-top:3px;}
+  /* §3/§16 — what is working. No coloured border: it is not a task. */
+
+  .ceo-krow{display:flex;justify-content:space-between;gap:10px;font-size:.87rem;padding:4px 0;
+    border-bottom:1px solid var(--line);}
+  .ceo-krow:last-of-type{border-bottom:0;}
+  .ceo-kact{color:var(--ok-ink);font-weight:700;white-space:nowrap;}
+  /* §6 — the plan. */
+  .ceo-plrow{display:flex;gap:10px;padding:5px 0;border-bottom:1px solid var(--line);font-size:.86rem;}
+  .ceo-plrow:last-of-type{border-bottom:0;}
+  .ceo-pll{flex:0 0 38%;font-weight:800;color:var(--navy-2);}
+  .ceo-plv{flex:1 1 auto;color:var(--muted);}
+  /* §11 — a tab with nothing in it says so positively. */
+  .ceo-none{text-align:center;padding:26px 16px;color:var(--muted);}
+  .ceo-nonemk{font-size:1.6rem;color:var(--ok-ink);line-height:1;}
+  .ceo-none p{margin:8px 0 0;font-size:.9rem;line-height:1.55;}
+  .ceo-fs.exc{background:var(--ok-bg);color:var(--ok-ink);}
+  .ceo-fs.bad{background:#f7ded9;color:var(--bad);}
+  .ceo-prevbar{position:sticky;top:0;z-index:2;background:var(--gold-tint);color:var(--gold-ink);
     border:1px solid var(--gold);border-radius:10px;padding:10px 12px;margin:0 0 10px;
     display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;
     font-size:.85rem;font-weight:700;}
@@ -2670,9 +3135,26 @@
      pill hides while the panel is open. */
   @media(max-width:640px){
     .ceo-panel{width:100%;}
+    /* §2 — FOUR TABS IN 390px. Measured: at 14px of side padding each the
+       strip needed to scroll, which works but hides a tab behind a gesture
+       nobody is told about. Tightening the padding and the tracking fits all
+       four with the labels whole; the strip keeps its own overflow so a fifth
+       tab would scroll rather than clip. */
+    .ceo-tabs button{padding:11px 7px;font-size:.68rem;letter-spacing:.02em;}
+    .ceo-fab{display:inline-flex;}
     body.ceoopen .ceo-fab{display:none;}
     body.ceoopen{overflow:hidden;}
+    /* Cleared over the bottom navigation by the nav's own height, the same
+       expression `.asst-pill` uses — one number, two controls. */
+    body.hasmnav .ceo-fab{
+      bottom:calc(64px + max(10px, env(safe-area-inset-bottom)) + var(--pillgap));}
   }
+  /* §6 — 320px. The two floating doors have 292px between their outer edges
+     there; the chip drops its word to its mark so the pair cannot meet in the
+     middle, and both keep the 44px floor. */
+  /* 320px: stacked, the chip has no horizontal neighbour to meet, so it keeps
+     its word. The rule that hid the label existed for a side-by-side pair. */
+  @media(max-width:359px){ .ceo-fab{padding:8px 11px;font-size:.76rem;} }
 
 </style>
 </head>
@@ -3495,7 +3977,8 @@ function shell(inner){
      own defect, and a hidden one is still the FIRST one to anything reading
      the document in order. */
   return `<h1 class="vh">Always Precise Investigations case portal</h1>
-    <nav class="tabs" aria-label="Portal sections">${tabs}</nav>${schema}${problem}${quickToolsHtml()}${
+    <nav class="tabs" aria-label="Portal sections">${tabs}</nav>${schema}${problem}${
+    greetHtml()}${signedIntakeHtml()}${quickToolsHtml()}${
     summaryCards()}${inner}${
     SHEET_WIZ ? sheetWizardHtml() : ""}${PAY_SEND ? paySendHtml() : ""}${
     INTAKE_SEND ? preIntakeHtml() : ""}${asstPillHtml()}${asstHtml()}${
@@ -3523,6 +4006,9 @@ function asstReset(){ ASST = null; }
 
 async function asstOpen(caseNo){
   if(!ASST) ASST = { open: true, busy: false, guide: false, state: null, msgs: [], err: "", view: "home", draft: "", pending: null, cmdBusy: false };
+  /* The same rule from the other side. `ceoClose` also drops a standing
+     preview, so an unapplied layout cannot survive behind the Assistant. */
+  if(CEO_OPEN) ceoClose();
   ASST.open = true;
   ASST.case = caseNo || (VIEW === "case" && WS_CASE ? WS_CASE : "");
   paint();
@@ -4539,15 +5025,22 @@ let CEO_ERR = "";
 let CEO_BUSY = false;
 let CEO_PREVIEW = null;  /* {sug, prevValue, key} while a preview is standing */
 let CEO_WHY = {};        /* suggestion id -> expanded */
+let CEO_FIX = false;     /* "What should I fix first?" asked, this visit */
 
 function ceoReset(){ CEO = null; CEO_OPEN = false; CEO_TAB = "insights"; CEO_ERR = "";
-  CEO_BUSY = false; CEO_PREVIEW = null; CEO_WHY = {};
+  CEO_BUSY = false; CEO_PREVIEW = null; CEO_WHY = {}; CEO_FIX = false;
   /* The lock is a body class, so it outlives the state that set it unless the
      reset takes it too — a signed-out page that cannot scroll is the failure. */
   try{ document.body.classList.remove("ceoopen"); }catch{}
 }
 
 async function ceoOpen(){
+  /* ONE PANEL AT A TIME (owner, §MOBILE SAFETY). The two are separate
+     products with separate state, and on a phone they are both full sheets —
+     two open at once is one covering the other with no way to tell which is
+     which. Opening either closes the other; neither loses anything by it,
+     because each keeps its own state and reopens where it was. */
+  if(ASST && ASST.open) ASST.open = false;
   CEO_OPEN = true; CEO_ERR = "";
   /* THE PORTAL BEHIND THE SHEET DOES NOT MOVE. `body.ceoopen` is what the
      phone rule keys off; without the class the rule is dead CSS and a swipe
@@ -4569,33 +5062,129 @@ function ceoClose(){
   paint();
 }
 
+/* PORTAL HEALTH, GROUPED (§5). Three groups, a tick or a triangle per line,
+   and the release gate's own totals — an executive summary rather than a list
+   of sentences. Every number arrives counted from the Worker. */
 function ceoHealthHtml(h){
   if(!h) return "";
+  const grp = (title, rows) => `<div class="ceo-hgrp"><div class="ceo-hgt">${title}</div>
+    ${(rows || []).map(r => {
+      const tone = r.tone || (r.ok ? "ok" : "warn");
+      const mark = tone === "ok" ? "&#10003;" : tone === "tidy" ? "&#8226;" : "&#9651;";
+      return `<div class="ceo-hrow"><span class="ceo-hmk ${tone}" aria-hidden="true">${mark}</span>
+      <span>${esc(r.text)}</span></div>`; }).join("")}</div>`;
+  const tone = h.label === "GOOD" ? "ok" : h.label === "WATCH" ? "warn" : "bad";
   return `<div class="ceo-health">
-    <div class="ceo-hl">PORTAL HEALTH: <b>${esc(h.label)}</b></div>
-    <ul>${(h.lines || []).map(l => `<li>${esc(l)}</li>`).join("")}</ul>
-    <div class="ceo-gate">Last release gate: ${esc(String(h.gate && h.gate.ran || "never"))}
-      &middot; ${h.gate ? `${h.gate.pass} pass / ${h.gate.warn} warn / ${h.gate.fail} fail` : ""}</div>
+    <div class="ceo-hl">PORTAL HEALTH <span class="ceo-hstate ${tone}">${esc(h.label)}</span></div>
+    ${grp("CLIENT EXPERIENCE", h.client)}
+    ${grp("OWNER EXPERIENCE", h.owner)}
+    <div class="ceo-hgrp"><div class="ceo-hgt">RELEASE GATE</div>
+      <div class="ceo-hrow"><span class="ceo-hmk ok" aria-hidden="true">&#10003;</span>
+        <span>${h.gate.pass} pass / ${h.gate.warn} warn / ${h.gate.fail} fail</span></div>
+      <div class="ceo-gate">Last run ${esc(String(h.gate.ran || "never"))}</div></div>
   </div>`;
 }
 
+/* CEO PRIORITY (§4) — at most two, and the honest empty state when there is
+   genuinely nothing. The Bot does not invent work to look busy. */
+function ceoPriorityHtml(p){
+  if(!p) return "";
+  if(p.none) return `<div class="ceo-prio ceo-prio-none">
+    <div class="ceo-pt">CEO PRIORITY</div>
+    <p class="ceo-pnone">${esc(p.none)}</p></div>`;
+  const item = (label, it, cls) => it ? `<div class="ceo-pitem ${cls}">
+    <div class="ceo-plab">${label}</div>
+    <div class="ceo-ph">${esc(it.title)}</div>
+    <p class="ceo-pw">${esc(it.why)}</p>
+    <div class="ceo-acts">${it.cta === "review"
+      ? `<button class="btn sm" data-act="ceoReview" data-case="${esc(it.case_no || "")}">Review</button>`
+      : `<button class="btn sm" data-act="ceoPreview" data-id="${esc(it.id)}">Preview</button>`}</div>
+  </div>` : "";
+  return `<div class="ceo-prio">
+    <div class="ceo-pt">CEO PRIORITY</div>
+    ${item("HIGHEST IMPACT TODAY", p.highest_impact, "hi")}
+    ${item("LOW-RISK CLEANUP", p.low_risk, "lo")}
+  </div>`;
+}
+
+/* WHAT SHOULD I FIX FIRST (§14). Not a chatbot: it prints the selection the
+   Worker already made over data already on screen, with its risk stated. */
+function ceoFixFirstHtml(f){
+  if(!f) return "";
+  if(!CEO_FIX) return `<div class="ceo-acts ceo-fixrow">
+    <button class="btn sm ghost" data-act="ceoFix">What should I fix first?</button></div>`;
+  if(f.none) return `<div class="ceo-card ceo-fix">
+    <div class="ceo-t">What I would fix first</div>
+    <p class="ceo-why">${esc(f.none)}</p>
+    <div class="ceo-acts"><button class="btn sm ghost" data-act="ceoFixClose">Close</button></div></div>`;
+  return `<div class="ceo-card ceo-fix">
+    <div class="ceo-t">What I would fix first</div>
+    <div class="ceo-fh">${esc(f.recommendation)}</div>
+    <div class="ceo-fl">WHY</div><p class="ceo-why">${esc(f.why)}</p>
+    <div class="ceo-fl">EXPECTED BENEFIT</div><p class="ceo-why">${esc(f.benefit)}</p>
+    <div class="ceo-fl">RISK</div><p class="ceo-why"><b>${esc(f.risk)}</b></p>
+    <div class="ceo-acts">
+      ${f.cta === "review"
+        ? `<button class="btn sm" data-act="ceoReview" data-case="${esc(f.case_no || "")}">Review recommendation</button>`
+        : `<button class="btn sm" data-act="ceoPreview" data-id="${esc(f.id)}">Review recommendation</button>`}
+      <button class="btn sm ghost" data-act="ceoFixClose">Close</button></div>
+  </div>`;
+}
+
+/* MY PORTAL PLAN (§6) — this user's direction, grouped, and a proposal only.
+   Ordered so the "keep" groups read first: the plan's headline is what stays. */
+const CEO_PLAN_ORDER = ["KEEP_PROMINENT", "PROMOTE", "PRESERVE", "HIDE_DUPLICATE",
+  "MOVE_TO_MORE", "MOVE_TO_ADVANCED", "REVIEW"];
+function ceoPlanHtml(plan, labels){
+  if(!plan || !Object.keys(plan).length) return "";
+  const rows = CEO_PLAN_ORDER.filter(k => (plan[k] || []).length);
+  if(!rows.length) return "";
+  return `<div class="ceo-card"><div class="ceo-t">My portal plan</div>
+    ${rows.map(k => `<div class="ceo-plrow"><div class="ceo-pll">${esc((labels || {})[k] || k)}</div>
+      <div class="ceo-plv">${plan[k].map(esc).join(", ")}</div></div>`).join("")}
+    <p class="ceo-why">A summary of where your own portal is heading. Nothing here is applied until
+      you preview and accept it, and it is yours alone.</p></div>`;
+}
+
+/* A SUGGESTION CARD (§8): category, headline, why, evidence, impact — then the
+   three controls. `Why?` expands the EVIDENCE LIST rather than restating the
+   sentence above it, which is what §7 asks for. */
 function ceoSugCard(s){
   const st = ((CEO && CEO.suggestion_state) || {})[s.id];
   const stLbl = st ? { accepted: "Accepted", implemented: "Implemented", reviewed: "Reviewed",
     not_now: "Not now", dismissed: "Dismissed" }[st.state] : "";
-  return `<div class="ceo-card${s.priority === "high" ? " ceo-hi" : ""}">
-    ${s.priority === "high" ? `<span class="ceo-flag">HIGH PRIORITY</span>` : ""}
+  const open = CEO_WHY[s.id];
+  return `<div class="ceo-card ceo-task${s.priority === "high" ? " ceo-hi" : ""}">
+    <div class="ceo-cat">${esc(s.category || "")}</div>
     <div class="ceo-t">${esc(s.title)}</div>
     ${stLbl ? `<span class="ceo-st">${esc(stLbl)}</span>` : ""}
-    ${CEO_WHY[s.id] ? `<p class="ceo-why">${esc(s.why)}</p>` : ""}
+    <p class="ceo-why">${esc(s.why)}</p>
+    ${(s.chips || []).length
+      ? `<div class="ceo-chips">${s.chips.map(c =>
+          `<span class="ceo-chip">${esc(c)}</span>`).join("")}</div>`
+      : s.metric ? `<div class="ceo-ev">${esc(s.metric)}</div>` : ""}
+    ${s.impact ? `<p class="ceo-imp">${esc(s.impact)}</p>` : ""}
+    ${open ? `<div class="ceo-whybox">
+      <div class="ceo-fl">WHY THIS SUGGESTION?</div>
+      <ul class="ceo-evl">${(s.evidence || []).map(e => `<li>${esc(e)}</li>`).join("")}</ul>
+      <div class="ceo-rec">Recommendation: <b>${esc(s.action_label || "")}</b></div>
+    </div>` : ""}
     <div class="ceo-acts">
       ${s.kind === "navigate_case"
         ? `<button class="btn sm" data-act="ceoReview" data-case="${esc(s.target)}">Review case</button>`
         : `<button class="btn sm" data-act="ceoPreview" data-id="${esc(s.id)}">Preview</button>`}
       <button class="btn sm ghost" data-act="ceoNotNow" data-id="${esc(s.id)}">Not now</button>
-      <button class="btn sm ghost" data-act="ceoWhy" data-id="${esc(s.id)}">Why?</button>
+      <button class="btn sm ghost" data-act="ceoWhy" data-id="${esc(s.id)}"
+        aria-expanded="${!!open}">Why?</button>
     </div>
   </div>`;
+}
+
+/* A TAB WITH NOTHING IN IT SAYS SO POSITIVELY (§11) — never an unfinished
+   blank panel. */
+function ceoNoneHtml(msg){
+  return `<div class="ceo-none"><div class="ceo-nonemk" aria-hidden="true">&#10003;</div>
+    <p>${esc(msg)}</p></div>`;
 }
 
 function ceoBodyHtml(){
@@ -4603,62 +5192,87 @@ function ceoBodyHtml(){
     <div class="actions"><button class="btn sm ghost" data-act="ceoRetry">Try again</button></div></div>`;
   if(!CEO) return `<p class="hint">Reading your portal&hellip;</p>`;
   const d = CEO;
+  const L = d.action_labels || {};
+
   if(CEO_TAB === "insights"){
+    /* THE EXECUTIVE ORDER (§13): priority, health, today, then the detail. */
     const b = d.brief || {};
-    return `${ceoHealthHtml(d.health)}
-      ${Object.keys(b).length ? `<div class="ceo-card"><div class="ceo-t">Today</div>
-        <div class="ceo-brief">
-          ${b.new_signed_intakes != null ? `<div><b>${b.new_signed_intakes}</b> new signed intake${b.new_signed_intakes === 1 ? "" : "s"}</div>` : ""}
-          ${b.open_cases != null ? `<div><b>${b.open_cases}</b> open case${b.open_cases === 1 ? "" : "s"}</div>` : ""}
-          ${b.retainers_recorded_7d != null ? `<div><b>${b.retainers_recorded_7d}</b> retainer${b.retainers_recorded_7d === 1 ? "" : "s"} recorded this week</div>` : ""}
-          ${b.possible_closeouts != null ? `<div><b>${b.possible_closeouts}</b> possible closeout${b.possible_closeouts === 1 ? "" : "s"}</div>` : ""}
-        </div></div>` : ""}
+    const briefRows = [
+      b.new_signed_intakes != null ? [b.new_signed_intakes, `new signed intake${b.new_signed_intakes === 1 ? "" : "s"}`] : null,
+      b.open_cases != null ? [b.open_cases, `open case${b.open_cases === 1 ? "" : "s"}`] : null,
+      b.retainers_recorded_7d != null ? [b.retainers_recorded_7d, "retainers this week"] : null,
+      b.possible_closeouts != null ? [b.possible_closeouts, `possible closeout${b.possible_closeouts === 1 ? "" : "s"}`] : null,
+    ].filter(Boolean);
+    return `${ceoPriorityHtml(d.priority)}
+      ${ceoFixFirstHtml(d.fix_first)}
+      ${ceoHealthHtml(d.health)}
+      ${briefRows.length ? `<div class="ceo-card"><div class="ceo-t">Daily CEO brief</div>
+        <div class="ceo-brief">${briefRows.map(([n, w]) =>
+          `<div><b>${n}</b> ${esc(w)}</div>`).join("")}</div></div>` : ""}
+      ${ceoPlanHtml(d.plan, L)}
       ${d.most_used && d.most_used.length ? `<div class="ceo-card"><div class="ceo-t">Most used actions</div>
         <ol class="ceo-most">${d.most_used.slice(0, 5).map(m =>
-          `<li>${esc(ceoActionLabel(m.id))} <span class="optn">${m.n} taps</span></li>`).join("")}</ol>
+          `<li>${esc(m.label || ceoActionLabel(m.id))} <span class="optn">${m.n}</span></li>`).join("")}</ol>
         <p class="ceo-why">Counted from your own taps, on your sign-in only.</p></div>`
         : `<div class="ceo-card"><div class="ceo-t">Most used actions</div>
           <p class="ceo-why">Nothing counted yet — use the portal normally and this fills in, for
-          your sign-in only.</p></div>`}
-      ${(d.closeout_watch || []).length ? `<div class="ceo-card ceo-hi">
-        <span class="ceo-flag">POSSIBLE CLOSEOUT</span>
-        ${d.closeout_watch.map(c => `<div class="ceo-t">${esc(c.client)}</div>
-          <ul>${c.facts.map(f => `<li>${esc(f)}</li>`).join("")}</ul>
-          <div class="ceo-acts"><button class="btn sm" data-act="ceoReview" data-case="${esc(c.case_no)}">Review case</button>
-            <button class="btn sm ghost" data-act="ceoNotNow" data-id="closeout:${esc(c.case_no)}">Not now</button></div>`).join("")}
-        <p class="ceo-why">The CEO Bot never closes a case — Review opens it and the ordinary
-          Close Case confirmations stand.</p></div>` : ""}`;
+          your sign-in only.</p></div>`}`;
   }
+
   if(CEO_TAB === "suggestions"){
     const live = (d.suggestions || []);
     return `${CEO_PREVIEW ? `<div class="ceo-prevbar">Previewing: ${esc(CEO_PREVIEW.sug.title)}
       <span class="ceo-acts"><button class="btn sm" data-act="ceoApply">Apply</button>
       <button class="btn sm ghost" data-act="ceoUndo">Undo</button></span></div>` : ""}
       ${live.length ? live.map(ceoSugCard).join("")
-        : `<p class="hint">Nothing to suggest right now. Suggestions appear from your own usage —
-          never from anyone else's — and dismissed ones stay dismissed.</p>`}`;
+        : ceoNoneHtml("No changes recommended right now. Suggestions come from your own usage, "
+          + "never from anyone else's, and dismissed ones stay dismissed.")}
+      ${(d.working || []).length ? `<div class="ceo-card ceo-keep">
+        <div class="ceo-cat">WORKING WELL &mdash; NO CHANGE</div>
+        ${d.working.map(w => `<div class="ceo-krow"><b>${esc(w.label)}</b>
+          <span class="ceo-chip ceo-chip-ok">${esc(w.action_label)}</span></div>`).join("")}
+        <p class="ceo-why">A good portal is mostly one nobody needs to change.</p></div>` : ""}`;
   }
+
   if(CEO_TAB === "workflow"){
-    return `<p class="ceo-why">Measured flows of the shipped build — taps counted by the release
-      gate, your own usage beside each.</p>
+    return `<p class="ceo-why">Measured flows of the shipped build &mdash; taps counted by the
+      release gate, your own usage beside each.</p>
       ${(d.flows || []).map(f => {
         const mine = ((d.most_used || []).find(m => m.id === `qt:${f.id}` || m.id === f.id) || {}).n;
+        const tone = f.status === "EXCELLENT" ? "exc" : f.status === "GOOD" ? "ok"
+                   : f.status === "WATCH" ? "warn" : "bad";
         return `<div class="ceo-card"><div class="ceo-t">${esc(f.label)}</div>
         <div class="ceo-flow"><b>${f.taps} tap${f.taps === 1 ? "" : "s"}</b>
-          <span class="ceo-fs ${f.status === "GOOD" ? "ok" : "warn"}">${esc(f.status)}</span>
+          <span class="ceo-fs ${tone}">${esc(f.status)}</span>
           ${mine ? `<span class="optn">you: ${mine}&times;</span>` : ""}</div>
-        <div class="optn">${esc(f.path)}</div>
-        ${CEO_WHY[f.id] ? `<p class="ceo-why">${esc(f.evidence)}</p>` : ""}
-        <div class="ceo-acts"><button class="btn sm ghost" data-act="ceoWhy" data-id="${esc(f.id)}">Why?</button></div>
+        <div class="ceo-path">${esc(f.path)}</div>
+        <div class="ceo-rec">CEO recommendation: <b>${esc(f.action_label || "")}</b></div>
+        ${f.note ? `<p class="ceo-why">${esc(f.note)}</p>` : ""}
       </div>`; }).join("")}`;
   }
+
   /* HEALTH */
   return `${ceoHealthHtml(d.health)}
+    ${(d.closeout_watch || []).length ? `<div class="ceo-card ceo-task ceo-hi">
+      <span class="ceo-flag">POSSIBLE CLOSEOUT</span>
+      ${d.closeout_watch.map(c => `<div class="ceo-t">${esc(c.client)}</div>
+        <ul class="ceo-evl">${c.facts.map(f => `<li>${esc(f)}</li>`).join("")}</ul>
+        <div class="ceo-acts"><button class="btn sm" data-act="ceoReview" data-case="${esc(c.case_no)}">Review case</button>
+          <button class="btn sm ghost" data-act="ceoNotNow" data-id="closeout:${esc(c.case_no)}">Not now</button></div>`).join("")}
+      <p class="ceo-why">The CEO Bot never closes a case &mdash; Review opens it and the ordinary
+        Close Case confirmations stand.</p></div>`
+      : ceoNoneHtml("No unresolved closeout alerts.")}
     <div class="ceo-card"><div class="ceo-t">The release gate</div>
       <p class="ceo-why">The CEO UX Gate walks the public site, the intake doors, the portal and
-        the phone render before a release — dead ends, tap floors, sideways scroll, internal
+        the phone render before a release &mdash; dead ends, tap floors, sideways scroll, internal
         vocabulary on client pages. The Bot displays its findings; it never runs its own crawler.</p>
-      <p class="optn">node portal/test-ceo-gate.mjs</p></div>`;
+      ${/* §5 — THE COMMAND IS FOR WHOEVER RUNS THE RELEASE, not for the owner
+            reading his own portal on a phone. It stays available, one tap
+            behind a disclosure, rather than sitting in the executive view. */""}
+      <details class="ceo-det"><summary>Technical details</summary>
+        <p class="optn">node portal/test-ceo-gate.mjs</p>
+        <p class="ceo-why">Run before a release; it fails if the totals above drift.</p>
+      </details></div>`;
 }
 
 const ceoActionLabel = id => {
@@ -4741,11 +5355,18 @@ function ceoReviewCase(caseNo){
    withdraws while either panel is open so it cannot sit over its own drawer. */
 function ceoFabHtml(){
   if(CEO_OPEN || (ASST && ASST.open)) return "";
-  return `<button class="ceo-fab" data-act="ceoOpen" aria-label="Open the CEO Bot">&#9733;</button>`;
+  return `<button class="ceo-fab" data-act="ceoOpen" aria-label="Open the CEO Bot">
+    <span class="ceo-fabstar" aria-hidden="true">&#9733;</span><span>CEO</span></button>`;
 }
 
 function asstPillHtml(){
   if(ASST && ASST.open) return "";
+  /* SYMMETRY WITH THE CEO CHIP, which already withdraws while the Assistant is
+     open. Measured: with the CEO sheet up the pill was still rendered — under
+     the z-70 backdrop, so invisible, but present in the DOM and in the
+     accessibility tree, which is a control a screen-reader user could reach
+     behind a modal sheet. Each door withdraws while the other is open. */
+  if(CEO_OPEN) return "";
   return `<button class="asst-pill" data-act="asstOpen" aria-label="Open the API Assistant">
     &#10024; <span class="asst-tag">ASSISTANT</span></button>`;
 }
@@ -5270,42 +5891,155 @@ function prefOrder(defaults){
 }
 
 const QT = {
-  sheets:  {act:"tab", tab:"sheets",   icon:"&#128179;", label:"Rate Sheet",
+  sheets:  {fam:"asst", art:"rate-sheet", act:"tab", tab:"sheets",   icon:"&#128179;", label:"Rate Sheet",
             sub:"Prepare &amp; send", admin:true, lead:true},
   /* dlabel: the ONE place the two surfaces are allowed to differ in words, and
      it exists so the desktop row keeps the wording it already had. Renaming a
      desktop control is a desktop change, and the owner's standing rule forbids
      one. Every other door reads the same on both. */
-  newlead: {act:"tab", tab:"newlead",  icon:"&#10133;",  label:"New Intake",
+  newlead: {fam:"intake", art:"new-intake", act:"tab", tab:"newlead",  icon:"&#10133;",  label:"New Intake",
             dlabel:"Intake a Client", sub:"Choose the type", admin:true},
   /* The three kinds are the same door one step in: nlKind is the button
      newLeadView() already draws, so nothing new decides what an intake is. */
-  priv:    {act:"nlKind", k:"consumer", icon:"&#128100;", label:"Private Intake",
+  priv:    {fam:"intake", art:"private-intake", act:"nlKind", k:"consumer", icon:"&#128100;", label:"Private Intake",
             sub:"Client matter", admin:true},
-  claims:  {act:"nlKind", k:"claims",   icon:"&#127974;", label:"Insurance Intake",
+  claims:  {fam:"intake", art:"insurance-intake", act:"nlKind", k:"claims",   icon:"&#127974;", label:"Insurance Intake",
             sub:"Carrier matter", admin:true},
-  legal:   {act:"nlKind", k:"legal",    icon:"&#128188;", label:"Law Firm Intake",
+  legal:   {fam:"intake", art:"legal-intake", act:"nlKind", k:"legal",    icon:"&#128188;", label:"Law Firm Intake",
             sub:"Legal matter", admin:true},
-  delivery:{act:"tab", tab:"delivery", icon:"&#128230;", label:"Reports &amp; Packages",
+  delivery:{fam:"asst", art:"reports", act:"tab", tab:"delivery", icon:"&#128230;", label:"Reports &amp; Packages",
             sub:"View all", admin:true},
-  photo:   {act:"pstLaunch", caseless:true, pair:true, icon:"&#128247;",
+  photo:   {fam:"case", art:"timestamp-photo", act:"pstLaunch", caseless:true, pair:true, icon:"&#128247;",
             label:"Timestamp Photo", sub:"Burn the moment"},
-  video:   {act:"vstOpen",   caseless:true, pair:true, icon:"&#127909;",
+  video:   {fam:"case", art:"timestamp-video", act:"vstOpen",   caseless:true, pair:true, icon:"&#127909;",
             label:"Timestamp Video", sub:"Burn the moment"},
-  field:   {act:"surveillance", icon:"&#128373;", label:"Active Surveillance",
+  field:   {fam:"case", art:"surveillance", act:"surveillance", icon:"&#128373;", label:"Active Surveillance",
             sub:"Start or resume"},
-  cases:   {act:"tab", tab:"cases", icon:"&#128193;", label:"Cases",
+  cases:   {fam:"case", art:"cases", act:"tab", tab:"cases", icon:"&#128193;", label:"Cases",
             sub:"All open work"},
+  /* §F and §L name six primary phone cards, and two of them had no entry
+     here: View Intakes and the CEO Bot. Both are DOORS THAT ALREADY EXIST —
+     the Intakes tab and the panel opener — so this adds a card, never a
+     destination. I flagged the CEO Bot as a possible duplicate entry point
+     (it also has a pill, a rail button and a case-screen row); the owner
+     named it twice in the same brief, in §F and again in §L, which is a
+     specification rather than an oversight. */
+  leads:   {fam:"intake", art:"signed-intakes", act:"tab", tab:"leads", icon:"&#128234;",
+            label:"View Intakes", sub:"Signed &amp; waiting", admin:true},
+  ceo:     {fam:"ceo", art:"ceo-bot", act:"ceoOpen", icon:"&#9733;", label:"CEO Bot",
+            sub:"Improve the portal"},
 };
+/* THE ARTWORK THAT EXISTS. Empty until the owner's own card art is made —
+   see case-portal/ART-ASSET-MANIFEST.md for the fifteen specifications. A
+   name here without `portal/cards/<name>.webp` beside it draws a dark card
+   with no picture, so the two are added together. */
+const CARD_ART = new Set([]);
+
 /* EXACTLY WHAT THE DESKTOP ROW WAS: same doors, same order, same markup. */
 const QT_DESK = ["photo", "video", "field", "newlead", "cases", "delivery"];
-/* The phone's order is the owner's own: Rate Sheet first and the only card
-   wearing the accent, then the four intake doors, then Reports & Packages.
-   The timestamp tools MOVED DOWN THE ROW — they were not taken away, and
-   their nav-foot door is untouched either way. Cases is last because the
-   bottom bar carries it on every screen at this width. */
-const QT_PHONE = ["sheets", "newlead", "priv", "claims", "legal", "delivery",
-                  "photo", "video", "field", "cases"];
+/* THE PHONE'S SIX, AND THE REST UNDER MORE (owner brief 2026-09-06 §F/§L/§Z).
+
+   §F and §L both name the same six primary cards, in this order, and §Z says
+   low-frequency items go behind More rather than competing for the first
+   screen. The first build of the grid kept all ten, and that was a REAL
+   REGRESSION rather than a matter of taste: the strip measured 744px on a
+   phone, which pushed Today / next actions to 1082px — past the fold, against
+   the owner's own 2026-09-02 decision that the queue must be on the first
+   screen. Six cards is what reconciles the two briefs, and it is what the
+   newer one asked for.
+
+   NOTHING WAS TAKEN AWAY. The other six are one tap behind More, in the same
+   box, and every one of them also keeps the door it already had — the
+   timestamp tools and Active Surveillance in the navigation foot, Reports &
+   Packages and the two intake kinds in the rail. */
+const QT_PHONE = ["sheets", "newlead", "priv", "leads", "cases", "ceo", "photo", "video",
+                  "field"];
+/* OWNER DECISION, 2026-09-07 — LOCKED: "Keep BOTH Timestamp Photo and
+   Timestamp Video as primary visible cards on Home. Do not move either behind
+   More. Preserve their direct one-tap access."
+
+   This overturns my reading of §Z, and it settles a conflict between two of
+   the owner's own decisions rather than changing their mind: the 2026-09-04
+   rule that produced the timestamp door says it must not live in a menu,
+   because they could not find it. A labelled disclosure on the same screen is
+   not the hamburger, but it is still one tap of concealment on a control that
+   already went missing once, and the owner has decided that costs more than
+   the two rows it saves. Eight primary cards, four under More. Do not move
+   these two again without asking. */
+/* ACTIVE SURVEILLANCE IS PRIMARY TOO, and the suite is why. Two assertions
+   refused it behind More and both were right: it is the FIELD VIEW'S ONLY
+   TOP-LEVEL DOOR — the same "could not find it" incident that produced the
+   timestamp door produced this one — and on an investigator's phone the
+   navigation rail that holds the other copy is behind the burger. It is also
+   pure loss there: every admin-only card is filtered out for that role, so
+   their strip is four cards and concealing a fifth compacts nothing.
+
+   WHAT IS LEFT UNDER MORE IS THE HONEST SET. Insurance and Law Firm intake
+   are one step inside New Intake's own kind picker, which is what "Choose the
+   type" means; Reports & Packages has a rail door and its own Home band. None
+   of the three is anyone's only way in. An investigator sees NONE of them —
+   all three are admin-only — so the disclosure is not drawn for that role at
+   all, which is why it is guarded on the filtered length rather than on the
+   list. */
+const QT_PHONE_MORE = ["claims", "legal", "delivery"];
+
+/* ============ HOME: THE OWNER'S OWN FIRST SCREEN (owner brief 2026-09-06) ===
+
+   "The mockup Home does NOT begin with a wall of statistics." It begins with
+   a greeting, then the actions this owner actually uses, then the one thing
+   that must never be missed — a client who has signed and sent an intake
+   back.
+
+   All three are DERIVED from what the case list already carries. No route was
+   added, nothing new is stored, and `signed` is the Worker's own computed
+   column (a signature exists in the payload), not a guess from a status. */
+function greetHtml(){
+  if(TAB !== "dashboard" || !ME) return "";
+  /* The greeting reads the VIEWER'S clock, which is the right one: it is a
+     greeting, not a record. Nothing else on this page derives a time this
+     way — the timeline composes its wording in the Worker precisely because
+     a laptop set to Pacific must not redate a Virginia entry. */
+  const h = new Date().getHours();
+  const part = h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+  const who = String(ME.display_name || ME.username || "").trim().split(/\s+/)[0] || "";
+  return `<div class="greet">
+    <div class="greet-h">${esc(part)}${who ? `, ${esc(who)}` : ""}</div>
+    <div class="greet-s">Let&rsquo;s keep it simple.</div></div>`;
+}
+
+/* §G — A SIGNED INTAKE MUST BE IMPOSSIBLE TO MISS.
+
+   The owner's own words. It is a wide green card above everything, naming the
+   client, and one tap opens what they submitted and signed — not Review, not
+   the case Overview, not Intake Details three screens in.
+
+   THREE STATES, AS EVERYWHERE ELSE ON THIS PAGE. A failed case-list read
+   draws NOTHING here rather than "nothing waiting": this card's whole job is
+   to be the thing you cannot miss, so it must never quietly say all-clear
+   about a list it could not read. `CASES_OK` is the flag that already keeps
+   those apart. */
+function signedIntakeHtml(){
+  if(TAB !== "dashboard" || !ME || ME.role !== "admin" || !CASES_OK) return "";
+  const waiting = CASES.filter(c => c.signed
+    && ["new", "awaiting_client"].includes(c.stage || c.status)
+    && (c.lead_status || "lead") !== "converted");
+  if(!waiting.length) return "";
+  const one = waiting.length === 1 ? waiting[0] : null;
+  const who = one ? (one.legal ? (one.legal_firm || one.client_name)
+    : one.kind === "claims" ? (one.carrier || one.client_name) : one.client_name) : "";
+  return `<button class="uiwide uiart fam-intake" data-act="${one ? "openCaseTab" : "tab"}"${
+      one ? ` data-case="${esc(one.case_no)}" data-tab="details"` : ` data-tab="leads"`}>
+    <span class="uiact-i" aria-hidden="true">&#9989;</span>
+    <span class="uiwide-b">
+      <span class="uiwide-n">${one ? "New signed intake" : "New signed intakes"}</span>
+      <span class="uiwide-s">${one
+        ? `${esc(who || one.case_no)}${one.subject_name ? ` &middot; ${esc(one.subject_name)}` : ""}`
+        : `${waiting.length} waiting to be read`}</span>
+    </span>
+    ${one ? `<span class="uiwide-go"><span class="uiwide-goword">View intake </span>&rarr;</span>`
+          : `<span class="uiwide-badge">${waiting.length}</span>`}
+  </button>`;
+}
 
 function quickToolsHtml(){
   /* ONE WORDING, and it is the navigation's. Two spellings of the same control
@@ -5329,19 +6063,79 @@ function quickToolsHtml(){
     t.k ? ` data-k="${t.k}"` : ""}${t.caseless ? ` data-case=""` : ""}`;
   const deskBtn = id => { const t = QT[id];
     return `<button class="qtool${t.pair ? " qt-pair" : ""}" data-qt="${id}" ${attrs(t)}><b>${t.icon}</b> ${t.dlabel || t.label}</button>`; };
+  /* THE MOCKUP CARD (owner brief 2026-09-06). Same doors, same ids, same
+     destinations — a different SHAPE. The card carries the mockup's icon
+     tile, its bold name over a quiet purpose line, and the family colour of
+     the KIND of work it starts: money, intake, tool, case, assistant.
+
+     `.qtapp` and its three parts keep their names on purpose. They are what
+     the suite reaches for, and renaming a hook to signal that a rule changed
+     is how a guard stops guarding while still passing. The `.uiact` classes
+     beside them are what actually draws it, so this card and the case
+     screen's buttons are one system rather than two that resemble each
+     other today. */
+  /* THE ART SLOT (§AF), AND WHY IT IS GATED ON `CARD_ART`.
+
+     The first build emitted the art URL unconditionally, reasoning that a
+     background-image which 404s simply does not paint — true, and it made the
+     portal worse. The art treatment is a dark ground under a scrim so white
+     text reads over a photograph; with no photograph, ten dark slabs in a
+     grid are what you get, and the family colours the brief asks to
+     COMMUNICATE FUNCTION are crushed to near-black by the very scrim that
+     makes the text safe. Rendered and compared, the light card is the better
+     placeholder, which is the whole point of a placeholder.
+
+     So `CARD_ART` names the files that actually exist. It is EMPTY today, the
+     cards draw light, and the day the artwork lands each card needs its name
+     here plus the asset plus its line in `.github/deploy-manifest.txt` — the
+     layout, the geometry and the text do not move, which is what the brief
+     actually asked for. `?v=` is required either way: `_headers` caches these
+     for seven days and they will be replaced in place, the stale-asset round
+     the public site already paid for once.
+     Per-card dimensions, safe zones and crops: case-portal/ART-ASSET-MANIFEST.md */
+  /* §F: "small count if applicable". Derived from the case list the page
+     already holds, and only when the read SUCCEEDED — a count of zero drawn
+     over a failed load is the reassuring lie this page has been bitten by. */
+  const waitingIntakes = () => CASES_OK
+    ? CASES.filter(c => ["new", "awaiting_client"].includes(c.stage || c.status)).length : null;
   const appCard = id => { const t = QT[id];
-    return `<button class="qtapp${t.lead ? " qtapp-lead" : ""}" data-qt="${id}" ${attrs(t)}>${
-      t.lead ? `<span class="qtapp-flag">Fastest action</span>` : ""}
-      <span class="qtapp-i" aria-hidden="true">${t.icon}</span>
-      <span class="qtapp-n">${t.label}</span>
-      <span class="qtapp-s">${t.sub}</span></button>`; };
+    const n = id === "leads" ? waitingIntakes() : null;
+    const hasArt = t.art && CARD_ART.has(t.art);
+    const art = hasArt ? ` style="--art:url('cards/${t.art}.webp?v=1')"` : "";
+    return `<button class="qtapp uiact${hasArt ? " uiart" : ""} fam-${t.fam || "case"}${t.lead ? " qtapp-lead uiact-lead" : ""}" data-qt="${id}" ${attrs(t)}${art}>${
+      t.lead ? `<span class="qtapp-flag uiact-flag">Fastest action</span>` : ""}
+      <span class="qtapp-i uiact-i" aria-hidden="true">${t.icon}</span>
+      <span class="qtapp-n uiact-n">${t.label}</span>
+      <span class="qtapp-s uiact-s">${n != null && n > 0 ? `${n} waiting` : t.sub}</span></button>`; };
   /* THE USER'S OWN ORDER over each surface's default — stored ids first, new
      doors appended, hidden ones withdrawn. With nothing stored, both rows are
      byte-what-they-were. */
+  /* THE PHONE STRIP IS A BOXED GRID NOW, NOT A SIDEWAYS SCROLLER. It was a
+     126px-wide row that swiped, so seven of the ten doors were off-screen and
+     the owner had to know they were there to go looking. The mockup stacks
+     its content and never scrolls sideways; two across at 390px shows every
+     door the role has without a swipe, and the box gives the strip the
+     heading the mockup puts over every group.
+
+     THE DESKTOP ROW IS UNTOUCHED — same markup, same six doors, same
+     wording via `dlabel`. The owner's standing rule is that desktop does not
+     move for a mobile brief, and `.qtools-l` stays its label. */
   return `<div class="qtools">
     <span class="qtools-l">Quick tools</span>
     <div class="qtgrid">${prefOrder(QT_DESK).filter(ok).map(deskBtn).join("")}</div>
-    <div class="qtapps">${prefOrder(QT_PHONE).filter(ok).map(appCard).join("")}</div>
+    <div class="qtbox uibox">
+      <div class="uibox-h"><span class="uibox-t">Start something</span>
+        <span class="uibox-s">Every door you use most, one tap away.</span></div>
+      <div class="qtapps uigrid">${prefOrder(QT_PHONE).filter(ok).map(appCard).join("")}</div>
+      ${/* §Z — the lower-frequency doors, one tap away, in the same box so
+           they are plainly the same kind of thing rather than hidden
+           somewhere else. `<details>` because it needs no state, no handler
+           and no repaint: the browser already knows how to do this. */""}
+      ${prefOrder(QT_PHONE_MORE).filter(ok).length ? `<details class="qtmore">
+        <summary>More actions</summary>
+        <div class="qtapps uigrid">${prefOrder(QT_PHONE_MORE).filter(ok).map(appCard).join("")}</div>
+      </details>` : ""}
+    </div>
   </div>`;
 }
 
@@ -6290,32 +7084,56 @@ function leadsView(){
        the accepted LIST, and a shadow inside the card renderer is a reader's
        trap even where it happens to be harmless. */
     const isAccepted = ls === "converted";
-    return `<div class="pcard">
+    /* THE MOCKUP RESULT CARD (owner brief 2026-09-06). The mockup opens every
+       result with an ICON TILE beside a bold name and a quiet sub-line, then
+       states the facts as label/value rows, then offers one filled primary
+       over a grid of outlined secondaries.
+
+       WHAT WAS HERE was eleven stacked `<div style="font-size:...">`s of
+       inline type, so the case number, the claim number, the received time
+       and the send count all read at the same weight as the client's name.
+       The facts are a table now; nothing was dropped and nothing was added.
+       All three kinds share ONE family, as the mockup does — the tags carry
+       which kind it is, and a list that changes colour per row stops reading
+       as one list. */
+    const kindIcon = legal ? "&#128188;" : claim ? "&#127974;" : "&#128100;";
+    const headName = legal ? (c.legal_firm || c.client_name || "—")
+      : claim ? (c.carrier || c.client_name || "—") : (c.client_name || "—");
+    const fact = (l, v, cls) => v ? `<div class="uifact"><span class="uifact-l">${l}</span>
+      <span class="uifact-v ${cls || ""}">${v}</span></div>` : "";
+    return `<div class="pcard fam-intake">
       <button class="pc-open" data-act="openCaseTab" data-case="${esc(c.case_no)}" data-tab="details"
         aria-label="View the submitted intake for ${esc(who)}">
-        <span class="tag ${legal ? "legaltag" : claim ? "claims" : "consumer"}">${legal ? "Legal" : claim ? "Insurance" : "Private"}</span>
-        <span class="tag ${tone}">${lbl}</span>
-        ${isAccepted ? `<span class="tag lead-converted">Accepted</span>` : ""}
-        ${/* SIGNED is the fact that decides whether this is ready to read, so
-             it sits with the category rather than under a status dropdown. The
-             Worker computes it from the payload without sending the payload. */""}
-        ${c.signed ? `<span class="tag ok">Signed &#10003;</span>` : ""}
-        <div style="font-weight:800;margin-top:5px">${esc(legal ? (c.legal_firm || c.client_name || "—")
-          : claim ? (c.carrier || c.client_name || "—") : (c.client_name || "—"))}</div>
-        ${legal && c.legal_attorney ? `<div style="font-size:.82rem;color:var(--muted)">${esc(c.legal_attorney)}</div>` : ""}
-        ${legal && c.client_name && c.legal_firm ? `<div style="font-size:.82rem">Client: ${esc(c.client_name)}</div>` : ""}
-        <div style="font-size:.85rem;color:var(--muted)">${esc(c.subject_name || "")}</div>
-        ${legal && c.legal_assignment ? `<div style="font-size:.78rem;color:var(--muted);margin-top:2px">${esc(c.legal_assignment)}${
-          c.legal_deadline ? ` &middot; due ${esc(c.legal_deadline)}` : ""}</div>` : ""}
-        ${legal && c.legal_arrangement ? `<div style="font-size:.78rem;margin-top:2px"><span class="tag lead-quoted">${
-          esc(ARR[c.legal_arrangement] || c.legal_arrangement)}</span></div>` : ""}
-        ${c.claim_number ? `<div class="mono" style="font-size:.72rem;margin-top:2px">Claim ${esc(c.claim_number)}</div>` : ""}
-        <div class="mono" style="font-size:.72rem;margin-top:3px">${esc(c.case_no)}</div>
-        <div style="font-size:.76rem;color:var(--muted);margin-top:4px">Received ${when(c.created_at)}</div>
-        ${c.send_count ? `<div style="font-size:.76rem;color:var(--muted);margin-top:2px">
-          &#9993; ${c.send_count} sent &middot; last ${when(c.last_sent_at)}</div>` : ""}
+        <span class="pc-tags">
+          <span class="tag ${legal ? "legaltag" : claim ? "claims" : "consumer"}">${legal ? "Legal" : claim ? "Insurance" : "Private"}</span>
+          <span class="tag ${tone}">${lbl}</span>
+          ${isAccepted ? `<span class="tag lead-converted">Accepted</span>` : ""}
+          ${/* SIGNED is the fact that decides whether this is ready to read, so
+               it sits with the category rather than under a status dropdown. The
+               Worker computes it from the payload without sending the payload. */""}
+          ${c.signed ? `<span class="tag ok">Signed &#10003;</span>` : ""}
+        </span>
+        <span class="uihead">
+          <span class="uiact-i" aria-hidden="true">${kindIcon}</span>
+          <span class="uihead-b">
+            <span class="uihead-n">${esc(headName)}</span>
+            ${legal && c.legal_attorney ? `<span class="uihead-s">${esc(c.legal_attorney)}</span>` : ""}
+            ${legal && c.client_name && c.legal_firm ? `<span class="uihead-s">Client: ${esc(c.client_name)}</span>` : ""}
+            ${c.subject_name ? `<span class="uihead-s">${claim ? "Claimant" : "Subject"}: ${esc(c.subject_name)}</span>` : ""}
+          </span>
+        </span>
+        ${legal && c.legal_arrangement ? `<span class="pc-arr"><span class="tag lead-quoted">${
+          esc(ARR[c.legal_arrangement] || c.legal_arrangement)}</span></span>` : ""}
         <span class="pc-cue">View intake &rarr;</span>
       </button>
+      <div class="uifacts">
+        ${fact("Case", `<span class="mono">${esc(c.case_no)}</span>`)}
+        ${fact("Claim", c.claim_number ? `<span class="mono">${esc(c.claim_number)}</span>` : "")}
+        ${fact("Assignment", legal && c.legal_assignment ? esc(c.legal_assignment) : "")}
+        ${fact("Due", legal && c.legal_deadline ? esc(c.legal_deadline) : "")}
+        ${fact("Received", when(c.created_at))}
+        ${fact("Sent", c.send_count ? `${c.send_count} &middot; last ${when(c.last_sent_at)}` : "")}
+      </div>
       ${retPending || paySent ? `<div class="retpend">
         ${retPending ? `<div class="rp-ok">&#10003; Private intake received</div>
           <div class="rp-due">Retainer pending</div>` : ""}
@@ -6323,29 +7141,35 @@ function leadsView(){
           payMethodLabels(c.pay_methods) ? ` &middot; ${esc(payMethodLabels(c.pay_methods))}` : ""
           } &middot; ${when(c.pay_sent_at)}</div>` : ""}
       </div>` : ""}
-      <div class="pc-next">
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
-          ${/* "Review" OPENED THE CASE, which is not what the word promised —
-               the owner's own report. Renamed to what it does, and pointed at
-               the intake. Open Case is its own separate action, offered when
-               the intake has actually been accepted into one. */""}
-          <button class="btn sm" data-act="openCaseTab" data-case="${esc(c.case_no)}" data-tab="details">View intake</button>
-          ${isAccepted ? `<button class="btn sm ghost" data-act="openCase" data-case="${esc(c.case_no)}">Open case</button>` : ""}
-          <button class="btn sm ghost" data-act="openCaseTab" data-case="${esc(c.case_no)}" data-tab="comms">Message</button>
-          <button class="btn sm ghost" data-act="leadSheet" data-case="${esc(c.case_no)}" data-kind="${esc(c.kind)}">Send rate sheet</button>
-          <button class="btn sm ghost" data-act="leadIntake" data-case="${esc(c.case_no)}">Send intake</button>
-          ${claim || legal ? "" : `<button class="btn sm ghost" data-act="leadPayOpen"
+      ${/* THE MOCKUP ACTION BLOCK: one filled primary, then a two-across grid
+           of outlined secondaries, then the destructive control on its own
+           line where a thumb cannot reach it by accident. Every control here
+           is the one that was here — same `data-act`, same conditions, same
+           order — at the size the mockup draws them rather than as eight
+           small chips wrapping into three ragged rows. */""}
+      <div class="pc-next pc-block">
+        ${/* "Review" OPENED THE CASE, which is not what the word promised —
+             the owner's own report. Renamed to what it does, and pointed at
+             the intake. Open Case is its own separate action, offered when
+             the intake has actually been accepted into one. */""}
+        <button class="uibtn pri" data-act="openCaseTab" data-case="${esc(c.case_no)}" data-tab="details">View intake</button>
+        <div class="ui2">
+          ${isAccepted ? `<button class="uibtn sec" data-act="openCase" data-case="${esc(c.case_no)}">Open case</button>` : ""}
+          <button class="uibtn sec" data-act="openCaseTab" data-case="${esc(c.case_no)}" data-tab="comms">Message</button>
+          <button class="uibtn sec" data-act="leadSheet" data-case="${esc(c.case_no)}" data-kind="${esc(c.kind)}">Send rate sheet</button>
+          <button class="uibtn sec" data-act="leadIntake" data-case="${esc(c.case_no)}">Send intake</button>
+          ${claim || legal ? "" : `<button class="uibtn sec" data-act="leadPayOpen"
             data-case="${esc(c.case_no)}" data-name="${esc(c.client_name || "")}"
             data-to="${esc(c.client_email || "")}">${
             paySent ? "Resend payment options" : "Send payment options"}</button>`}
-          ${retPending ? `<button class="btn sm ghost" data-act="leadRecordPay"
+          ${retPending ? `<button class="uibtn sec" data-act="leadRecordPay"
             data-case="${esc(c.case_no)}">Record payment</button>` : ""}
-          ${open ? `<button class="btn-del" style="margin-left:auto" data-act="intakeDel"
-            data-case="${esc(c.case_no)}" data-name="${esc(who)}"
-            aria-label="Delete intake for ${esc(who)}" title="Delete intake">${TRASH_SVG}</button>` : ""}
         </div>
         ${sendRow}
-        ${open ? `<button class="btn sm" data-act="openCaseTab" data-case="${esc(c.case_no)}" data-tab="assign">Accept &rarr;</button>` : ""}
+        ${open ? `<button class="uibtn acc" data-act="openCaseTab" data-case="${esc(c.case_no)}" data-tab="assign">Accept &rarr;</button>` : ""}
+        ${open ? `<div class="pc-del"><button class="btn-del" data-act="intakeDel"
+          data-case="${esc(c.case_no)}" data-name="${esc(who)}"
+          aria-label="Delete intake for ${esc(who)}" title="Delete intake">${TRASH_SVG}</button></div>` : ""}
       </div>
       ${/* THE LEAD LADDER IS ADMIN PAPERWORK, NOT THE INTAKE. The owner's
            report: the Lead status dropdown was as visually prominent as the
@@ -7521,7 +8345,8 @@ async function wizFeeSave(){
    The figure is a property of the CASE, not of this email — the owner's wording
    is "becomes the AGREED RETAINER for that specific private client/case" — so
    it is written to `case_retainer` and everything downstream re-reads it. The
-   hourly rate and the 4-hour minimum are untouched and must stay that way.
+   hourly rate and the per-surveillance-day minimum are untouched and must stay
+   that way.
 
    The standard figure is only the STARTING point, never a reset: a case that
    agreed a higher one opens this selector on that higher one, and an amount
@@ -7567,13 +8392,13 @@ function wizRetainerInit(w){
 }
 
 /* THE ONE PAGE-SIDE RENDERER of the engagement block. The Worker composes the
-   words; this maps `tone` to the two colours the owner asked for and nothing
-   else. Absent on the legal and insurance cards, so it draws nothing there —
-   the private-only rule needs no check here because the block is simply not on
-   those objects. */
+   words; this maps the one tone it sets to the one class that bolds a line,
+   and nothing else. Absent on the legal and insurance cards, so it draws
+   nothing there — the private-only rule needs no check here because the block
+   is simply not on those objects. */
 function engBlockHtml(eng){
   if(!eng || !Array.isArray(eng.lines)) return "";
-  const cls = t => t === "alert" ? "eng-l eng-alert" : t === "emphasis" ? "eng-l eng-emph" : "eng-l";
+  const cls = t => t === "term" ? "eng-l eng-term" : "eng-l";
   return `<div class="rs-eng">
     ${eng.lines.map(l => `<div class="${cls(l.tone)}">${esc(l.text)}</div>`).join("")}
     ${eng.note ? `<p>${esc(eng.note)}</p>` : ""}
@@ -7636,7 +8461,7 @@ function wizRetainerHtml(w){
         ? `Preview reads back what <b>${esc(w.caseNo)}</b> has already agreed. Change this only to
            agree a different figure &mdash; leaving it alone keeps whatever the case holds.`
         : `This becomes the agreed retainer for <b>${esc(w.caseNo)}</b>, and is what the sheet, the
-           subject line and the payment block all carry. The hourly rate and the four-hour minimum
+           subject line and the payment block all carry. The hourly rate and the per-day minimum
            do not change.`}</p>
   </div>`;
 }
@@ -9156,6 +9981,14 @@ const BILL_FIELDS = [
      the firm's real remittance address here, and only then do Legal and
      Insurance invoices print their "Remit checks to" section. */
   ["remit_address",        "Check remittance address — printed on Legal and Insurance invoices when set", "area"],
+  /* THE OWNER'S RECORD COPY (owner brief 2026-09-06). Starts EMPTY, the
+     `remit_address` precedent: no personal address is hardcoded anywhere and
+     nothing derives one. Typed in, every rate sheet, intake request and set
+     of payment instructions the portal sends is copied to the office with the
+     figures it carried — the amount, the non-refundable portion, the minimum,
+     which intake rode along and which document version went. Blank, nothing
+     is sent and nothing else changes. */
+  ["owner_record_email",   "Send the office a record copy of every send — business email (leave empty for none)", "text"],
   /* BILLCOM.md — prepared, not connected. All four start empty; none is a
      secret; Bill.com is offered NOWHERE until the enable word AND a real
      https payment link are both typed here. Credentials, if a full API
@@ -18493,28 +19326,60 @@ function caseBodyHtml(){
    on the screen rather than two clicks into it. */
 function caseActionsHtml(){
   const cur = wsCurrentDay();
-  /* RETAINER PAID and CLOSE CASE are core business actions (CEO charter
-     Missions 6-7) — as operationally important as Start Day, so they sit on
-     the row every case screen carries. Admin only, never on a claim
-     assignment (hour blocks, no retainer), and Close Case withdraws once the
-     case is closed — a control that can do nothing is not drawn as a button.
-     Both open EXISTING flows: retQuick is the Authorization panel's own
-     Record Payment form, fcQuick the Billing panel's closeout. */
+  const admin = ME.role === "admin";
   const s0 = (WS && WS.submission) || {};
-  const coreActs = ME.role === "admin" && s0.kind !== "claims" && WS
-    ? `${(WS.stage || s0.status) !== "closed"
-        ? `<button class="btn sm" data-act="retQuick">Retainer paid</button>
-           <button class="btn sm" data-act="fcQuick">Close case</button>` : ""}` : "";
-  return `<div class="caseacts">
-    <button class="btn addact" data-act="actOpen">+ Add activity</button>
-    ${coreActs}
-    <button class="btn sm ghost" data-act="asstOpen" data-case="${esc(WS_CASE)}">&#10024; Ask Assistant</button>
-    <button class="btn sm ghost" data-act="wsTab" data-tab="daily">Daily summary</button>
-    ${cur.open
-      ? `<button class="btn sm ghost" data-act="wsTab" data-tab="field">End day</button>
-         <button class="btn sm accent" data-act="svEnter" data-case="${esc(WS_CASE)}">Resume surveillance</button>`
-      : `<button class="btn sm ghost" data-act="wsTab" data-tab="field">Start a day</button>
-         <button class="btn sm ghost" data-act="svEnter" data-case="${esc(WS_CASE)}">Active surveillance</button>`}
+  const closed = WS && (WS.stage || s0.status) === "closed";
+  /* THE OWNER'S OWN PRIORITY ORDER (brief 2026-09-06 §AD, §M, §N, §O, §P).
+     View intake, Retainer paid, Close case and Send rate sheet are four of
+     the eight highest-frequency acts in this business, and every one of them
+     used to be a small ghost chip in a wrapping row or two screens in. They
+     are the block's big controls now, wearing the FUNCTIONAL colours §B
+     assigns: teal for the ordinary primary, green for money received, red for
+     the destructive act.
+
+     NOTHING WAS ADDED OR REWIRED. Every control here is the one that was
+     here, with the same `data-act`, the same conditions and the same route —
+     `retQuick` still opens the Authorization panel's own Record Payment form
+     and `fcQuick` the Billing panel's closeout, so the confirmations, the
+     ledger rules and the refusals are untouched. A prominent button is still
+     only a button.
+
+     INTAKE DETAILS IS ADMIN-ONLY IN `wsSections()`, so View intake is drawn
+     for an admin alone: a door that would refuse the field is not a door. */
+  const rowBtn = (act, label, extra, cls) => `<button class="uirow${cls ? " " + cls : ""}" data-act="${act}"${extra || ""}>
+    <span class="uirow-n">${label}</span><span class="uirow-go" aria-hidden="true">&rsaquo;</span></button>`;
+  const dayLine = cur.open ? "A day is running on this case."
+    : "Nothing is running — start a day when you go out.";
+  return `<div class="caseacts uibox">
+    <div class="uibox-h"><span class="uibox-t">Case actions</span>
+      <span class="uibox-s">${dayLine}</span></div>
+    ${admin ? `<button class="uibtn acc" data-act="wsTab" data-tab="details">View intake</button>` : ""}
+    ${admin && s0.kind !== "claims" && WS && !closed
+      ? `<div class="ui2">
+           <button class="uibtn ok" data-act="retQuick">Retainer paid</button>
+           <button class="uibtn bad" data-act="fcQuick">Close case</button>
+         </div>` : ""}
+    ${admin ? `<button class="uibtn sec" data-act="leadSheet" data-case="${esc(WS_CASE)}"
+        data-kind="${esc(s0.kind || "consumer")}">Send rate sheet</button>` : ""}
+    ${/* + Add activity stays the block's own control and still withdraws on a
+         phone, where the thumb bar carries it — one obvious door at any
+         width, the rule this row already followed. */""}
+    <button class="uibtn pri addact" data-act="actOpen">+ Add activity</button>
+    <div class="uirows">
+      ${cur.open
+        ? `${rowBtn("wsTab", "End day", ` data-tab="field"`)}
+           ${rowBtn("svEnter", "Resume surveillance", ` data-case="${esc(WS_CASE)}"`)}`
+        : `${rowBtn("wsTab", "Start a day", ` data-tab="field"`)}
+           ${rowBtn("svEnter", "Active surveillance", ` data-case="${esc(WS_CASE)}"`)}`}
+      ${rowBtn("wsTab", "Daily summary", ` data-tab="daily"`)}
+      ${rowBtn("wsTab", "Reports &amp; evidence", ` data-tab="evidence"`)}
+      ${rowBtn("asstOpen", "&#10024; Ask Assistant", ` data-case="${esc(WS_CASE)}"`)}
+      ${/* THE CEO BOT'S DOOR ON A CASE IS A ROW, NOT A PILL. Measured at
+           390px: the section bar owns the bottom 74px of this screen with five
+           controls in it, so a floating pair here would sit over case content,
+           and the owner's own constraint forbids covering case buttons. */""}
+      ${rowBtn("ceoOpen", "&#9733; CEO Bot", "", "ceo-casebtn")}
+    </div>
   </div>`;
 }
 
@@ -22430,6 +23295,8 @@ document.addEventListener("click", ev => {
   else if(act === "ceoDismiss"){ ceoSetState(el.dataset.id, "dismissed"); }
   else if(act === "ceoReview"){ ceoReviewCase(el.dataset.case); }
   else if(act === "ceoSimplify"){ CEO_TAB = "suggestions"; paint(); }
+  else if(act === "ceoFix"){ CEO_FIX = true; paint(); }
+  else if(act === "ceoFixClose"){ CEO_FIX = false; paint(); }
   else if(act === "closeCase"){ doCloseCase(); }
   else if(act === "fcOpen"){ fcOpen(); }
   else if(act === "fcCancel"){ fcCancel(); }

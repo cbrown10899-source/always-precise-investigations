@@ -128,3 +128,84 @@ right one (passes).
 
 The desktop drawer is modal (backdrop) but leaves the page scrollable, so it
 does not repeat the Assistant's "the dim must not swallow the page" trap.
+
+## Product refinement (owner brief 2026-09-06) — the engine grew a conscience
+
+The first engine had ONE rule: unused implies hide. It could therefore
+recommend **"Hide Cases"** — a proposal to remove a core business destination
+because a shortcut to it was quiet, printed with *"you have not used this
+once"* underneath as though that were an argument.
+
+### §1 — A CAPABILITY IS NOT ITS SHORTCUT
+
+`CEO_CAPS` classifies every watched control: `core` (a business capability the
+owner named), `nav` (the thing itself is a primary navigation destination,
+which makes its Home card a **duplicate**), and `alt` (where the capability
+still lives if the shortcut goes).
+
+Two consequences are properties of the table rather than rules to remember:
+
+- **A core capability is never recommended away.** For a `core` row the engine
+  can only ever return `HIDE_DUPLICATE` (and only when `nav` is true, i.e. the
+  thing is genuinely reachable elsewhere) or a positive verdict.
+- **A control with no `alt` is never removed.** Hiding it would manufacture the
+  dead end the gate exists to find, so the answer is `REVIEW` — a look, not a
+  change.
+
+Cases now reads: *"Cases is a core destination you already reach from the
+bottom navigation; the Home card duplicates it… Only the duplicate shortcut
+goes. Cases stays exactly where it is."*
+
+### §2 — EIGHT ACTIONS, NOT ONE
+
+`KEEP_PROMINENT · PRESERVE · PROMOTE · MOVE_TO_MORE · MOVE_TO_ADVANCED ·
+HIDE_DUPLICATE · REVIEW · NOT_ENOUGH_DATA`
+
+Below `CEO_MIN_TAPS` (20) the honest answer is `NOT_ENOUGH_DATA` and **no
+suggestion is made at all** — a portal with no measured use is one nobody has
+told the Bot anything about yet.
+
+### §3 / §16 — THE BOT CAN SAY "LEAVE IT ALONE"
+
+`working` is its own list, and all five measured workflows carry `PRESERVE` or
+`KEEP_PROMINENT`. *"View Intake is already a one-tap workflow. No
+simplification recommended."* A good portal is mostly one nobody needs to
+change, and the Bot now says so instead of only ever printing tasks.
+
+### §4 / §14 — PRIORITY AND FIX FIRST ARE SELECTIONS, NOT NEW ANSWERS
+
+Both rank the SAME classified list by `CEO_VALUE`. Priority shows at most two;
+Fix First prints the top one with its evidence, benefit and risk. With nothing
+open, both say so in the owner's own words rather than inventing work.
+
+### §7 — EVIDENCE IS A LIST OF FACTS
+
+`ceoClassify` returns the evidence it used, so *Why?* expands checkable facts
+("0 uses in the measured period", "Still available from the More menu",
+"Removing the shortcut does not remove Timestamp Photo") instead of restating
+the sentence above it.
+
+### What the render measured
+
+| | desktop | phone 390 |
+| --- | --- | --- |
+| drawer width | **420px** (§11 target 380–420) | 390 full sheet |
+| tabs clipped | 0 | 0 |
+| tab height | 44px | 44px |
+| tab strip | scrolls inside itself, never the page | same |
+| CEO chip vs Assistant pill | — | **44px vs 48px**, no overlap, both clear the bottom nav |
+| gold-accented cards | only recommendations (`.ceo-task`) | same |
+| case-write verbs | **0** | **0** |
+| sideways scroll | none | none |
+
+### THE MOBILE DOOR WAS OVER THE BOTTOM NAV
+
+It sat at `bottom:14px` — inside the navigation's own band. The nav is `z-60`
+and the fab `z-58`, so the nav painted over it and part of the control could
+not be pressed. Both floating doors now take the nav's own height as their
+lift (`body.hasmnav`), which is one expression serving two controls.
+
+**And the chip went back up to the 44px floor.** At 40px it was visibly the
+smaller of the two, which was the point — and under the minimum every other
+control on the phone is held to. 44 against 48 is still a clear difference.
+Shaving a tap target for hierarchy is not a trade this project makes.

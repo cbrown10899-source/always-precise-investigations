@@ -585,15 +585,34 @@ function nrMoney(n) {
 
    The owner's display rule is exact: no percentages and no formulas — three
    statements and a sentence. The WORDS live here so the three renderers cannot
-   drift into saying different things; `tone` is all a renderer decides, and it
-   decides colour only. `alert` is the red the owner asked for on the
-   non-refundable portion, `emphasis` the gold on the minimum. */
+   drift into saying different things; `tone` is all a renderer decides.
+
+   THERE IS ONE TONE AND IT IS `term`, WHICH MEANS BOLD AND NOTHING ELSE
+   (owner, 2026-09-07, after four rounds of asking for less): "NON-REFUNDABLE
+   PORTION: $X = bold only, 4-HOUR MINIMUM PER SURVEILLANCE DAY = bold only,
+   same font size as surrounding rate-sheet text, no bigger text, no alert
+   color treatment, no warning box feel, no extra emphasis beyond bold."
+
+   It shipped as a red statement and a gold one inside a box with a coloured
+   rail, and the owner read that as a warning about a term that is simply a
+   term. The two colours were measured against their ground and cleared AA —
+   the treatment was legible and it was still wrong, because prominence is a
+   product decision and not a contrast one. Do not reintroduce a second tone
+   to "distinguish" the money from the minimum: they are two stated terms and
+   the client reads both. */
 function engagementBlock(retainer, nonRefundable) {
   return {
     lines: [
       { text: `Retainer: ${nrMoney(retainer)}` },
-      { text: `NON-REFUNDABLE PORTION: ${nrMoney(nonRefundable)}`, tone: 'alert' },
-      { text: `${PERSONAL.minHours}-HOUR MINIMUM REQUIRED`, tone: 'emphasis' },
+      { text: `NON-REFUNDABLE PORTION: ${nrMoney(nonRefundable)}`, tone: 'term' },
+      /* "PER SURVEILLANCE DAY" is the owner's correction of 2026-09-07:
+         "Replace any generic 4-hour minimum wording with 4-hour minimum per
+         surveillance day everywhere in the Private rate-sheet flow." The
+         minimum is per DAY of surveillance, not per engagement, and the old
+         wording let a client read one four-hour minimum across a three-day
+         case. One writer, so the sheet, the preview, the email, the Assistant
+         rehearsal and the owner's record copy cannot say different things. */
+      { text: `${PERSONAL.minHours}-HOUR MINIMUM PER SURVEILLANCE DAY`, tone: 'term' },
     ],
     note: 'A minimum portion of the retainer is non-refundable upon engagement and '
         + 'reservation of investigative services. Additional terms are governed by the '
@@ -700,8 +719,8 @@ function rateSheets(retainer) {
           note: 'Applied in full toward authorized investigative services. It is not a '
               + 'separate fee — your retainer funds the work performed on your case.' },
         { label: 'Investigative rate', value: `${money(PERSONAL.hourly)}/hr`, big: true,
-          sub: `${PERSONAL.minHours}-hour minimum`,
-          note: `${PERSONAL.minHours}-hour minimum engagement. Investigative time is deducted `
+          sub: `${PERSONAL.minHours}-hour minimum per surveillance day`,
+          note: `${PERSONAL.minHours}-hour minimum per surveillance day. Investigative time is deducted `
               + `from the retainer at the same ${money(PERSONAL.hourly)}-per-hour rate. Field `
               + 'investigation, necessary video review, case documentation and report '
               + 'preparation are handled at this rate and applied against your authorized '
@@ -1577,7 +1596,9 @@ async function sendLeadIntake(request, env, user, caseNo) {
   await logSend(env, user, { case_no: caseNo, kind: 'intake', door: intake.url,
     recipient: to, ok: 1 });
   await stampLead(env, user, caseNo, 'intake_sent');
-  return json({ ok: true, sent_to: to, intake: intake.label, send_context: context,
+  const rec = await ownerRecordCopy(env, 'intake', {
+    to, case_no: caseNo, context, version: intake.label, intake_label: intake.label });
+  return json({ ok: true, sent_to: to, intake: intake.label, send_context: context, ...rec,
                 lead_status: (await env.DB.prepare(
                   'SELECT status FROM lead_status WHERE case_no = ?').bind(caseNo).first() || {}).status });
 }
@@ -1696,8 +1717,10 @@ async function sendPreCaseIntake(request, env, user) {
     recipient: to, ok: 1 });
   /* The context is returned so it is observable rather than merely believed —
      the tests assert on it, and it can never be a payment-carrying one here. */
+  const rec = await ownerRecordCopy(env, 'intake', {
+    to, context, version: intake.label, intake_label: intake.label });
   return json({ ok: true, sent_to: to, intake: intake.label, case_no: null,
-                send_context: context });
+                send_context: context, ...rec });
 }
 
 async function emailSheet(request, env, user, id) {
@@ -2087,8 +2110,36 @@ async function emailSheet(request, env, user, id) {
   /* §13 — the confirmation lists exactly what WENT. Read back from the record
      of the send rather than echoed from the request, and note that sending
      instructions says nothing whatever about the retainer being paid. */
+  /* THE OFFICE'S OWN COPY. After the client's document has gone and after
+     `send_log` has recorded it, so it can never cost the send; it does not
+     throw, and its outcome rides on the response rather than being swallowed.
+     Empty configuration means nothing is sent and this reports why. */
+  let recClient = '';
+  try { recClient = caseSub ? (JSON.parse(caseSub.payload || '{}').client_name || '') : ''; }
+  catch { recClient = ''; }
+  const rec = await ownerRecordCopy(env, 'rate_sheet', {
+    to, client: recClient, case_no: linkedCase || caseNo || '',
+    context: sendCtx, version: sheet.name,
+    /* THE HIGHLIGHTED TERMS, VERBATIM FROM THE DOCUMENT'S OWN BLOCK (owner,
+       2026-09-07: "Owner record copy must show the exact same highlighted
+       terms and amount"). NOT re-composed from the figures: `engagementBlock`
+       is the one writer of those three statements, so passing the rendered
+       lines makes "the same terms" structural instead of two lists kept in
+       step by hand — and the amount that reaches the office is by
+       construction the amount the client was sent, custom or default.
+
+       PRIVATE ONLY, the boundary these figures already live behind: there is
+       no retainer, no non-refundable portion and no per-day minimum on a
+       carrier's or a law firm's send, and a record copy naming one would be
+       the office's own file asserting something untrue. */
+    engagement: sendCtx === SEND_CONTEXT.PRIVATE ? sheet.engagement : null,
+    flat_fee: flatFee != null ? flatFee : undefined,
+    intake_included: includeIntake,
+    intake_label: intakeDoor ? intakeDoor.label : '',
+    payment: (npPicked.length ? npPicked : payment.map(x => x.id)).join(', '),
+  });
   return json({ ok: true, sent_to: to, sheet: sheet.id,
-    send_context: sendCtx,
+    send_context: sendCtx, ...rec,
     /* The figure the document actually carried, so the screen, the record and
        the client cannot quietly disagree — the `legal_service` / `flat_fee`
        rule applied to the third per-send figure. Absent on a non-private send,
@@ -2279,8 +2330,11 @@ async function emailPaymentOptions(request, env, user) {
 
   // RULE 2, said out loud in the answer the page shows. The context is stated
   // too: this route is PRIVATE by construction and can be nothing else.
+  const rec = await ownerRecordCopy(env, 'payment_options', {
+    to, case_no: linkedCase || '', context: SEND_CONTEXT.PRIVATE,
+    payment: payment.map(x => x.label).join(', ') });
   return json({ ok: true, sent_to: to, retainer_marked_paid: false,
-    send_context: SEND_CONTEXT.PRIVATE,
+    send_context: SEND_CONTEXT.PRIVATE, ...rec,
     included: { payment_methods: payment.map(x => ({ id: x.id, label: x.label })) } });
 }
 
@@ -3785,13 +3839,14 @@ function npPayBlockHtml(picked) {
    block itself is built by `engagementBlock` and neither of these composes a
    sentence or a figure of its own.
 
-   PLAIN TEXT CANNOT CARRY COLOUR, which is exactly why the owner wrote those
+   PLAIN TEXT CANNOT CARRY WEIGHT, which is exactly why the owner wrote those
    two statements in capitals: the emphasis survives the medium that has no
-   styling at all. The HTML adds the red and the gold on top of the same words,
-   never instead of them. The two colours are the portal's own `--bad`
-   (#c14133, 5.15:1 on white) and `--gold-ink` (#7a5a12, 6.37:1) — computed,
-   not picked, and an email cannot read a CSS variable so the values are
-   written out here as every other colour in this template already is. */
+   styling at all. The HTML adds bold on top of the same words, never instead
+   of them — and adds NOTHING ELSE (owner, 2026-09-07). No background, no
+   border, no rail, no font-size and no colour of its own: the terms sit in the
+   email's body ink at the email's body size, exactly as the portal card draws
+   them. An email client that strips styling shows the capitals and loses
+   nothing that was carrying meaning. */
 function engagementText(block) {
   if (!block) return '';
   return `\n${block.lines.map(l => l.text).join('\n')}\n\n${block.note}\n`;
@@ -3799,12 +3854,9 @@ function engagementText(block) {
 
 function engagementHtml(block) {
   if (!block) return '';
-  const tone = t => t === 'alert' ? 'color:#c14133;font-weight:800;font-size:1.05rem'
-    : t === 'emphasis' ? 'color:#7a5a12;font-weight:800;letter-spacing:.04em'
-    : 'color:#12305a;font-weight:700';
-  return `<div style="margin:0 0 18px;padding:14px 16px;background:#f7f9fb;
-    border:1px solid #e4e9ed;border-left:4px solid #c14133;border-radius:6px">
-    ${block.lines.map(l => `<div style="margin:0 0 6px;${tone(l.tone)}">${escHtml(l.text)}</div>`).join('')}
+  const tone = t => t === 'term' ? 'font-weight:700' : '';
+  return `<div style="margin:0 0 18px">
+    ${block.lines.map(l => `<div style="margin:0 0 5px;${tone(l.tone)}">${escHtml(l.text)}</div>`).join('')}
     <p style="margin:10px 0 0;font-size:.84rem;color:#5c6775;line-height:1.5">${escHtml(block.note)}</p>
   </div>`;
 }
@@ -6239,33 +6291,225 @@ const CEO_GATE_SUMMARY = {
   notes: 'Run node portal/test-ceo-gate.mjs before a release; it fails if this drifts.',
 };
 
-/* The primary controls the Bot watches for disuse, each with where it lives
-   and which existing per-user hide (or reorder) answers it. Evidence-based:
-   a suggestion fires only off THIS user's own counters. */
-const CEO_WATCH = [
-  { id: 'qt:photo',  label: 'Timestamp Photo quick action', hideable: true },
-  { id: 'qt:video',  label: 'Timestamp Video quick action', hideable: true },
-  { id: 'qt:delivery', label: 'Reports & Packages quick action', hideable: true },
-  { id: 'qt:cases',  label: 'Cases quick action', hideable: true },
-  { id: 'needs_assignment', label: 'Needs-assignment alert card', hideable: true },
-  { id: 'lead_status', label: 'Lead status controls', hideable: true },
+/* ============ CEO BOT — WHAT MAY BE RECOMMENDED, AND ABOUT WHAT ============
+
+   Owner brief 2026-09-06 (product refinement), §§1–2, 16.
+
+   THE DEFECT THIS REPLACES: the first engine had one rule — unused implies
+   hide — so it could recommend hiding **Cases**. That is not a tidy-up, it is
+   a proposal to remove a core business destination because a shortcut to it
+   was quiet, and it would have been printed with "you have not used this once"
+   underneath as though that were an argument.
+
+   THE DISTINCTION THAT FIXES IT is the owner's own: a CAPABILITY is not its
+   SHORTCUT. Cases is a core destination reachable from the bottom navigation;
+   its Home quick action is a duplicate of that route. Removing the duplicate
+   costs nothing. Removing the capability is not on the table at all, and no
+   rule below can produce that recommendation for a `core` row — a property of
+   the table rather than a check somebody has to remember.
+
+   `alt` is WHERE ELSE THE THING LIVES, and it is what makes a hide safe: a
+   control with no other route can never be recommended away, because that
+   would be manufacturing the dead end the gate exists to find. */
+
+const CEO_ACTIONS = {
+  KEEP_PROMINENT:  'Keep prominent',
+  PRESERVE:        'Preserve',
+  PROMOTE:         'Promote',
+  MOVE_TO_MORE:    'Move to More',
+  MOVE_TO_ADVANCED:'Move to Advanced',
+  HIDE_DUPLICATE:  'Hide duplicate shortcut',
+  REVIEW:          'Review',
+  NOT_ENOUGH_DATA: 'Not enough data',
+};
+
+/* An action that TAKES SOMETHING OFF the user's primary view. Only these
+   produce a `pref_hide` suggestion, and §1 forbids all of them on a core
+   capability that has nowhere else to be reached from. */
+const CEO_REMOVING = ['MOVE_TO_MORE', 'MOVE_TO_ADVANCED', 'HIDE_DUPLICATE'];
+
+/* THE CAPABILITY TABLE. `core` marks a business capability the owner named in
+   §1; `nav` says the thing itself is a primary navigation destination, which
+   is what makes its Home card a DUPLICATE rather than the only door; `alt` is
+   where the capability still lives if the shortcut goes. */
+const CEO_CAPS = [
+  { id: 'qt:sheets',   label: 'Rate Sheet',          core: true,  nav: false, alt: null },
+  { id: 'qt:newlead',  label: 'New Intake',          core: true,  nav: false, alt: 'the Intakes desk' },
+  { id: 'qt:priv',     label: 'Private Intake',      core: false, nav: false, alt: 'New Intake' },
+  { id: 'qt:claims',   label: 'Insurance Intake',    core: false, nav: false, alt: 'New Intake' },
+  { id: 'qt:legal',    label: 'Law Firm Intake',     core: false, nav: false, alt: 'New Intake' },
+  { id: 'qt:delivery', label: 'Reports & Packages',  core: false, nav: false, alt: 'the More menu' },
+  { id: 'qt:photo',    label: 'Timestamp Photo',     core: false, nav: false, alt: 'the More menu' },
+  { id: 'qt:video',    label: 'Timestamp Video',     core: false, nav: false, alt: 'the More menu' },
+  { id: 'qt:field',    label: 'Active Surveillance', core: true,  nav: true,  alt: 'the bottom navigation' },
+  { id: 'qt:cases',    label: 'Cases',               core: true,  nav: true,  alt: 'the bottom navigation' },
+  /* The two cards §F and §L added to the phone's six. Both are DUPLICATE
+     shortcuts by the rule this table exists to encode — Intakes is in the
+     bottom navigation and the CEO Bot has a pill on every screen — so the
+     strongest thing the Bot can ever propose for either is removing the Home
+     card, never the capability. `core` on View Intakes because reading a
+     signed intake is one of the eight acts the business runs on. */
+  { id: 'qt:leads',    label: 'View Intakes',        core: true,  nav: true,  alt: 'the bottom navigation' },
+  { id: 'qt:ceo',      label: 'CEO Bot',             core: false, nav: true,  alt: 'the CEO Bot button on every screen' },
+  /* Not quick actions — dashboard furniture the owner's noise list already
+     names, hideable per user and reachable nowhere else, so they are REVIEW
+     candidates at most. */
+  { id: 'needs_assignment', label: 'Needs-assignment alert card', core: false, nav: false,
+    alt: null, panel: true },
+  { id: 'lead_status',      label: 'Lead status controls',        core: false, nav: false,
+    alt: 'the Intakes desk', panel: true },
 ];
 
-/* The measured flows the WORKFLOW tab shows. Tap counts are the gate's and
-   the suites' own measurements of the shipped screens — statements about the
-   BUILD, not about any client's data, and each names its evidence. */
+/* THE MEASURED FLOWS (§9). Tap counts are the gate's and the suites' own
+   measurements of the shipped screens — statements about the BUILD, not about
+   any client's data. Each carries the CEO recommendation the owner asked for,
+   and the point of most of them is that the answer is "leave it alone". */
 const CEO_FLOWS = [
-  { id: 'view_intake', label: 'View a signed intake', taps: 1, status: 'GOOD',
-    path: 'Intakes → tap the card', evidence: 'The card is the door (shipped 2026-09-06).' },
+  { id: 'view_intake', label: 'View a signed intake', taps: 1, status: 'EXCELLENT',
+    path: 'Intakes → the client card', action: 'PRESERVE',
+    note: 'Already a one-tap workflow. No simplification recommended.' },
   { id: 'rate_sheet', label: 'Prepare & send a rate sheet', taps: 2, status: 'GOOD',
-    path: 'Home → Rate Sheet → form', evidence: 'Quick action first on Home.' },
+    path: 'Home → Rate Sheet → form', action: 'KEEP_PROMINENT',
+    note: 'Heavily used and already first on Home.' },
   { id: 'retainer_paid', label: 'Record a retainer payment', taps: 2, status: 'GOOD',
-    path: 'Case → Retainer paid', evidence: 'On the case actions row (Mission 6).' },
+    path: 'Case → Retainer paid', action: 'KEEP_PROMINENT',
+    note: 'A direct action on the case actions row.' },
   { id: 'close_case', label: 'Close a no-work case', taps: 2, status: 'GOOD',
-    path: 'Case → Close case → preset → confirm', evidence: 'No checklist required (Mission 7).' },
+    path: 'Case → Close case → confirm', action: 'PRESERVE',
+    note: 'Already at the target two-tap flow.' },
   { id: 'surveillance', label: 'Start Active Surveillance', taps: 2, status: 'GOOD',
-    path: 'Home → Active Surveillance → case', evidence: 'Top-level door, both roles.' },
+    path: 'Home → Active Surveillance → case', action: 'PRESERVE',
+    note: 'A top-level door for both roles.' },
 ];
+
+/* HOW MUCH EVIDENCE BEFORE THE BOT SPEAKS AT ALL. Below this the honest
+   answer is NOT_ENOUGH_DATA — §2's own action — and no suggestion is made. */
+const CEO_MIN_TAPS = 20;
+/* "Heavily used" for KEEP_PROMINENT: a fifth of the measured taps. */
+const CEO_HEAVY_SHARE = 0.2;
+
+/* ONE CONTROL, CLASSIFIED (§2). Deterministic, evidence-first, and it returns
+   the EVIDENCE it used rather than a sentence about it — §7's requirement, so
+   "Why?" can print facts the reader can check instead of prose they have to
+   trust. Nothing here reads a case, a client or a payment: the inputs are this
+   user's own tap counters and the capability table above. */
+function ceoClassify(cap, ctx) {
+  const { metrics, totalTaps, hidden, firstQt } = ctx;
+  const n = metrics[cap.id] && Number(metrics[cap.id].n) > 0 ? Number(metrics[cap.id].n) : 0;
+  const share = totalTaps > 0 ? n / totalTaps : 0;
+  const ev = [];
+  const out = a => ({ cap, action: a, uses: n, share, evidence: ev });
+
+  /* ALREADY THE USER'S OWN CHOICE — nothing to recommend about it. */
+  if (hidden.includes(cap.id)) {
+    ev.push(`You have already hidden this from your own view`);
+    if (cap.alt) ev.push(`Still reachable from ${cap.alt}`);
+    return out('PRESERVE');
+  }
+
+  /* NOT ENOUGH EVIDENCE TO SAY ANYTHING (§2). Said out loud rather than
+     defaulting to a change: a portal with no measured use is a portal nobody
+     has told the Bot anything about yet. */
+  if (totalTaps < CEO_MIN_TAPS) {
+    ev.push(`${totalTaps} counted actions so far — the Bot waits for ${CEO_MIN_TAPS}`);
+    return out('NOT_ENOUGH_DATA');
+  }
+
+  if (n > 0) {
+    ev.push(`${n} of your last ${totalTaps} counted actions`);
+    if (share >= CEO_HEAVY_SHARE) {
+      ev.push('One of your most-used controls');
+      /* PROMOTE only when it is genuinely not first — otherwise the honest
+         answer is that it is already where it should be (§16). */
+      if (firstQt && cap.id === `qt:${firstQt}`) {
+        ev.push('Already first on your Home');
+        return out('KEEP_PROMINENT');
+      }
+      if (cap.id.startsWith('qt:')) return out('PROMOTE');
+      return out('KEEP_PROMINENT');
+    }
+    return out('PRESERVE');
+  }
+
+  /* UNUSED FROM HERE DOWN. */
+  ev.push(`0 uses in the measured period (${totalTaps} counted actions)`);
+  ev.push('Occupies a primary slot on your Home');
+
+  /* §1 — A CAPABILITY IS NOT ITS SHORTCUT, and this is where that is enforced
+     rather than remembered. A core capability whose own destination is in the
+     navigation has a DUPLICATE shortcut: only the duplicate may go, and the
+     recommendation says so in those words. A core capability with no other
+     route keeps its place, however quiet it is. */
+  if (cap.core) {
+    if (cap.nav) {
+      ev.push(`${cap.label} is a core business destination`);
+      ev.push(`Reached from ${cap.alt}, which is where you already use it`);
+      ev.push(`Only the duplicate Home shortcut would go — ${cap.label} itself stays`);
+      return out('HIDE_DUPLICATE');
+    }
+    ev.push(`${cap.label} is a core business capability`);
+    ev.push(cap.alt ? `Also reachable from ${cap.alt}` : 'This is its only door');
+    /* Core, quiet, and no duplicate route: KEEP AS IS. Removing it would be
+       trading a rarely-used capability for space, which is not the Bot's
+       call to make. */
+    return out('PRESERVE');
+  }
+
+  if (cap.alt) {
+    ev.push(`Still available from ${cap.alt}`);
+    ev.push(`Removing the shortcut does not remove ${cap.label}`);
+    return out(cap.panel ? 'MOVE_TO_ADVANCED' : 'MOVE_TO_MORE');
+  }
+
+  /* Not core, unused, and nowhere else to reach it: hiding it WOULD be a dead
+     end, so the answer is a look rather than a change. */
+  ev.push('No other route to it — hiding this would remove the only door');
+  return out('REVIEW');
+}
+
+/* THE HEADLINE, THE ONE SENTENCE AND WHAT ACTUALLY CHANGES (§8). One writer,
+   so a card, the priority strip and Fix First cannot word the same
+   recommendation three ways. */
+function ceoCard(c) {
+  const L = c.cap.label;
+  const A = c.action;
+  const t = {
+    KEEP_PROMINENT:  { cat: 'WORKING WELL', head: `Keep ${L} prominent`,
+      why: `${L} is one of the controls you actually use.`,
+      impact: 'Nothing changes — this is a confirmation, not a task.' },
+    PRESERVE:        { cat: 'WORKING WELL', head: `Keep ${L} as it is`,
+      why: `${L} is doing its job where it sits.`,
+      impact: 'Nothing changes.' },
+    PROMOTE:         { cat: 'SIMPLIFY HOME', head: `Move ${L} to the front of Home`,
+      why: `${L} is your most-used action and it is not first.`,
+      impact: 'Reorders your own Home only. Nothing is hidden.' },
+    MOVE_TO_MORE:    { cat: 'SIMPLIFY HOME', head: `Move ${L} to More`,
+      why: `This shortcut has not been used from your Home quick actions.`,
+      impact: `${L} remains available under ${c.cap.alt}.` },
+    MOVE_TO_ADVANCED:{ cat: 'REDUCE NOISE', head: `Move ${L} out of the main view`,
+      why: `${L} has not been used and takes primary space.`,
+      impact: `Yours only; returns from Settings → My Portal.` },
+    HIDE_DUPLICATE:  { cat: 'REMOVE A DUPLICATE', head: `Remove the duplicate ${L} shortcut`,
+      why: `${L} is a core destination you already reach from ${c.cap.alt}; `
+         + 'the Home card duplicates it.',
+      impact: `Only the duplicate shortcut goes. ${L} stays exactly where it is.` },
+    REVIEW:          { cat: 'WORTH A LOOK', head: `Take a look at ${L}`,
+      why: `${L} has not been used, and it has no second route.`,
+      impact: 'Nothing changes from here — this is a note, not a proposal.' },
+    NOT_ENOUGH_DATA: { cat: 'NOT ENOUGH DATA', head: `Not enough use recorded for ${L}`,
+      why: 'The Bot has not seen enough of your work to say anything useful yet.',
+      impact: 'Nothing changes.' },
+  }[A];
+  return { ...t, action: A, action_label: CEO_ACTIONS[A] };
+}
+
+/* WHAT A RECOMMENDATION IS WORTH, so the priority strip and Fix First rank by
+   the same number. Removing a genuine duplicate is the highest-value low-risk
+   change; a confirmation is worth nothing to act on. */
+const CEO_VALUE = { HIDE_DUPLICATE: 40, MOVE_TO_MORE: 30, MOVE_TO_ADVANCED: 25,
+  PROMOTE: 20, REVIEW: 5, KEEP_PROMINENT: 0, PRESERVE: 0, NOT_ENOUGH_DATA: 0 };
+const CEO_RISK = { HIDE_DUPLICATE: 'LOW', MOVE_TO_MORE: 'LOW', MOVE_TO_ADVANCED: 'LOW',
+  PROMOTE: 'LOW', REVIEW: 'LOW' };
 
 async function ceoInsights(env, user) {
   const missing = await missingTables(env);
@@ -6278,8 +6522,8 @@ async function ceoInsights(env, user) {
   const hidden = Array.isArray(prefs.hidden) ? prefs.hidden : ['needs_assignment', 'lead_status'];
   const now = Date.now();
 
-  /* ---- THE DAILY CEO BRIEF: today's numbers, from the shared record, scoped
-     by role exactly as the dashboard scopes them. ---- */
+  /* ---- TODAY'S OPERATING SUMMARY: the shared record, scoped by role exactly
+     as the dashboard scopes it. ---- */
   const brief = {};
   if (admin) {
     const dayAgo = new Date(now - 86400e3).toISOString();
@@ -6294,24 +6538,13 @@ async function ceoInsights(env, user) {
       'SELECT COUNT(*) AS n FROM retainer_payment WHERE recorded_at > ?').bind(weekAgo).first()).n : 0;
   }
 
-  /* ---- CLOSEOUT WATCH (brief §11): possible closeouts, each a REVIEW
-     navigation and never an act. Derived from records that exist — retainer
-     in, no day ever started, case still open, older than 7 days; and open
-     cases with no activity for 14+ days. ---- */
+  /* ---- CLOSEOUT WATCH: possible closeouts, each a REVIEW navigation and
+     never an act. Marker tables excluded through `hiddenCases` (guarded), and
+     the LIMIT applies after the exclusion so hidden rows cannot empty a watch
+     with live candidates behind them. ---- */
   let closeoutWatch = [];
   if (admin && have('retainer_payment') && have('case_days')) {
-    /* THE MARKER TABLES ARE EXCLUDED THROUGH `hiddenCases`, NOT THROUGH A
-       SUBQUERY. A bare `NOT IN (SELECT case_no FROM case_deleted)` is a hard
-       reference to a table that does not exist between a merge and its manual
-       portal-setup dispatch — the same shape that would have taken out the
-       case list before `missingTables` was put in front of it. `hiddenCases`
-       already carries that guard and returns a Set, so the filter costs one
-       read the portal already makes everywhere else.
-
-       The void guard is inline for the same reason, and the LIMIT is applied
-       AFTER the exclusion: filtering a page of already-limited rows lets six
-       hidden cases empty a watch that has live candidates behind them. */
-    const hidden = await hiddenCases(env);
+    const hiddenSet = await hiddenCases(env);
     const voidGuard = have('retainer_payment_void')
       ? ' WHERE id NOT IN (SELECT payment_id FROM retainer_payment_void)' : '';
     const { results: paidNoWork } = await env.DB.prepare(
@@ -6324,7 +6557,7 @@ async function ceoInsights(env, user) {
           AND NOT EXISTS (SELECT 1 FROM case_days d WHERE d.case_no = s.case_no)
         LIMIT 40`).bind(new Date(now - 7 * 86400e3).toISOString()).all();
     closeoutWatch = (paidNoWork || [])
-      .filter(r => !hidden.has(r.case_no))
+      .filter(r => !hiddenSet.has(r.case_no))
       .slice(0, 6)
       .map(r => ({
         case_no: r.case_no, client: r.client_name || r.case_no,
@@ -6333,17 +6566,26 @@ async function ceoInsights(env, user) {
   }
   if (admin) brief.possible_closeouts = closeoutWatch.length;
 
-  /* ---- MOST USED: this user's own counters, labelled. ---- */
+  /* ---- THIS USER'S OWN COUNTERS. ---- */
   const mostUsed = Object.entries(metrics)
-    .map(([id, m]) => ({ id, n: Number(m.n) || 0, last: m.last || null }))
+    .map(([id, m]) => ({ id, n: Number(m.n) || 0, last: m.last || null,
+      label: (CEO_CAPS.find(c => c.id === id) || {}).label || id }))
     .filter(m => m.n > 0)
     .sort((a, b) => b.n - a.n).slice(0, 6);
+  const totalTaps = Object.values(metrics).reduce((a, m) => a + (Number(m.n) || 0), 0);
+  const order = Array.isArray(prefs.qt_order) && prefs.qt_order.length ? prefs.qt_order : null;
+  const firstQt = order ? order[0] : 'sheets';
 
-  /* ---- SUGGESTIONS: deterministic, evidence-based, personal. Every one
-     names its why, previews through the EXISTING pref layer, and respects
-     this user's own dismissals. NOT NOW sleeps 14 days; DISMISSED sleeps
-     until the suggestion's evidence version changes. ---- */
-  const suggestions = [];
+  /* ---- EVERY WATCHED CONTROL, CLASSIFIED. This is the whole engine: one
+     pass, one function, and the same classification feeds the suggestions,
+     the portal plan, the health counts and Fix First — so the four cannot
+     disagree about the same control. ---- */
+  const ctx = { metrics, totalTaps, hidden, firstQt };
+  const classified = CEO_CAPS.map(cap => {
+    const c = ceoClassify(cap, ctx);
+    return { ...c, card: ceoCard(c), value: CEO_VALUE[c.action] || 0 };
+  });
+
   const asleep = id => {
     const st = sugState[id];
     if (!st) return false;
@@ -6352,60 +6594,150 @@ async function ceoInsights(env, user) {
     if (st.state === 'accepted' || st.state === 'implemented') return true;
     return false;
   };
-  const totalTaps = mostUsed.reduce((a, m) => a + m.n, 0);
-  for (const w of CEO_WATCH) {
-    if (!w.hideable || hidden.includes(w.id)) continue;
-    const used = metrics[w.id] && Number(metrics[w.id].n) > 0;
-    /* Only speak when there is evidence: this user has really been working
-       (20+ counted taps) and this control took none of them. */
-    if (!used && totalTaps >= 20 && !asleep(`hide:${w.id}`)) {
-      suggestions.push({ id: `hide:${w.id}`, kind: 'pref_hide', target: w.id,
-        priority: 'normal', title: `Hide ${w.label} from my main view`,
-        why: `Across your last ${totalTaps} counted quick actions you have not used ${w.label} once, `
-           + 'but it occupies primary space. Hiding it changes only your own portal, and it can '
-           + 'come back any time from Settings → My Portal.' });
-    }
-  }
-  if (mostUsed.length && totalTaps >= 20) {
-    const top = mostUsed[0];
-    const order = Array.isArray(prefs.qt_order) && prefs.qt_order.length ? prefs.qt_order : null;
-    const first = order ? order[0] : 'sheets';
-    const topQt = top.id.startsWith('qt:') ? top.id.slice(3) : null;
-    if (topQt && topQt !== first && !asleep(`front:${topQt}`)) {
-      suggestions.push({ id: `front:${topQt}`, kind: 'pref_front', target: topQt,
-        priority: 'normal', title: `Keep your most-used action first on Home`,
-        why: `${top.id} is your most-used action (${top.n} of your last ${totalTaps} taps) and it `
-           + 'is not first. Moving it changes only your own portal.' });
-    }
+
+  /* ---- SUGGESTIONS: only the classifications that PROPOSE something. A
+     confirmation is reported in the plan and the workflow tab, never as a task
+     card — "keep it as it is" is not something to accept or dismiss. ---- */
+  const suggestions = [];
+  for (const c of classified) {
+    if (!CEO_REMOVING.includes(c.action) && c.action !== 'PROMOTE') continue;
+    const id = c.action === 'PROMOTE' ? `front:${c.cap.id.replace(/^qt:/, '')}`
+                                      : `hide:${c.cap.id}`;
+    if (asleep(id)) continue;
+    suggestions.push({
+      id, target: c.cap.id.replace(/^qt:/, ''),
+      kind: c.action === 'PROMOTE' ? 'pref_front' : 'pref_hide',
+      pref_target: c.cap.id,
+      priority: 'normal',
+      action: c.action, action_label: c.card.action_label,
+      category: c.card.cat, title: c.card.head,
+      why: c.card.why, impact: c.card.impact,
+      evidence: c.evidence,
+      /* The one-line metric §8 asks the card to show. */
+      metric: `${c.uses} Home tap${c.uses === 1 ? '' : 's'} in ${totalTaps} counted actions`,
+      /* §3 — THE SAME FACTS AS CHIPS. Short, scannable, and derived from the
+         classification rather than written twice: a chip that disagreed with
+         the evidence list underneath it would be the drift this project keeps
+         recording. */
+      chips: [
+        `${c.uses} Home tap${c.uses === 1 ? '' : 's'}`,
+        ...(c.cap.core ? ['Core destination'] : []),
+        ...(c.action === 'HIDE_DUPLICATE' ? ['Duplicate shortcut'] : []),
+        ...(c.cap.alt && c.action !== 'HIDE_DUPLICATE' ? [`Also in ${c.cap.alt}`] : []),
+      ],
+      protects_core: !!c.cap.core,
+      value: c.value,
+    });
   }
   for (const c of closeoutWatch) {
     if (asleep(`closeout:${c.case_no}`)) continue;
     suggestions.push({ id: `closeout:${c.case_no}`, kind: 'navigate_case',
-      target: c.case_no, priority: 'high', title: `Possible closeout — ${c.client}`,
-      why: `${c.facts.join('. ')}. Clients sometimes pay and change their minds; if this one has, `
-         + 'the Close Case flow documents the retention and any refund. Nothing here closes '
-         + 'anything — Review opens the case and the ordinary confirmations stand.' });
+      target: c.case_no, priority: 'high', action: 'REVIEW', action_label: 'Review',
+      category: 'POSSIBLE CLOSEOUT', title: `Possible closeout — ${c.client}`,
+      why: 'A retainer was received and no investigation day was ever started.',
+      impact: 'Review opens the case. Nothing here closes anything, and the ordinary '
+            + 'confirmations still stand.',
+      evidence: c.facts, metric: `Open 7+ days`, value: 60 });
+  }
+  suggestions.sort((a, b) => (b.value || 0) - (a.value || 0));
+
+  /* ---- WHAT IS WORKING (§3). Reported as its own list so the Bot says the
+     true thing — most of this portal needs nothing — instead of only ever
+     printing tasks. ---- */
+  const working = classified
+    .filter(c => c.action === 'KEEP_PROMINENT' || c.action === 'PRESERVE')
+    .filter(c => c.uses > 0 || c.cap.core)
+    .map(c => ({ id: c.cap.id, label: c.cap.label, action: c.action,
+      action_label: c.card.action_label, note: c.card.why }));
+
+  /* ---- CEO PRIORITY (§4): at most two, and NOTHING INVENTED. Highest impact
+     is the most valuable open recommendation; low-risk cleanup is the best
+     remaining LOW-risk one that is not already the headline. ---- */
+  const ranked = suggestions.filter(s => (s.value || 0) > 0);
+  const highest = ranked[0] || null;
+  const lowRisk = ranked.find(s => s !== highest && CEO_RISK[s.action] === 'LOW') || null;
+  const priority = {
+    highest_impact: highest ? {
+      id: highest.id, title: highest.title, why: highest.why,
+      action: highest.action, cta: highest.kind === 'navigate_case' ? 'review' : 'preview',
+      case_no: highest.kind === 'navigate_case' ? highest.target : null } : null,
+    low_risk: lowRisk ? {
+      id: lowRisk.id, title: lowRisk.title, why: lowRisk.why, action: lowRisk.action,
+      cta: lowRisk.kind === 'navigate_case' ? 'review' : 'preview',
+      case_no: lowRisk.kind === 'navigate_case' ? lowRisk.target : null } : null,
+    /* THE HONEST EMPTY STATE, in the owner's own words. */
+    none: ranked.length === 0
+      ? 'No high-impact portal changes recommended today.' : null,
+  };
+
+  /* ---- MY PORTAL PLAN (§6): this user's direction, grouped by what the
+     engine concluded. Proposal and summary — it changes nothing by existing,
+     and it is one user's own. ---- */
+  const plan = {};
+  for (const c of classified) {
+    if (c.action === 'NOT_ENOUGH_DATA') continue;
+    (plan[c.action] = plan[c.action] || []).push(c.cap.label);
   }
 
-  /* ---- PORTAL HEALTH: the gate's totals plus today's counts, in words. ---- */
+  /* ---- PORTAL HEALTH, GROUPED (§5). Client experience is the gate's
+     findings; owner experience is this user's own classification; the release
+     gate is the gate's raw totals. Every number here is counted, not typed. */
+  const dupes = classified.filter(c => c.action === 'HIDE_DUPLICATE').length;
+  const unnecessary = classified.filter(c => CEO_REMOVING.includes(c.action)).length;
+  const atTarget = CEO_FLOWS.filter(f => f.status === 'EXCELLENT' || f.status === 'GOOD').length;
+  /* §1 — A TIDY-UP IS NOT A PROBLEM. The label used to go to WATCH when this
+     user had more than two removable shortcuts, so a brand-new portal — every
+     quick action untouched, every gate check green, no client anywhere near a
+     dead end — announced itself as needing watching because somebody had not
+     personalised their Home yet. That is the overall health of the PRODUCT
+     reporting one person's layout preference.
+
+     It now keys off the things that are actually wrong: a failing gate check,
+     a gate warning, or a real operational item (an unresolved closeout). The
+     duplicate count still appears under OWNER EXPERIENCE, marked as an
+     opportunity rather than a fault. */
   const health = {
-    label: CEO_GATE_SUMMARY.fail > 0 ? 'Needs attention'
-         : CEO_GATE_SUMMARY.warn > 0 ? 'Fair' : 'Good',
+    label: CEO_GATE_SUMMARY.fail > 0 ? 'NEEDS ATTENTION'
+         : (CEO_GATE_SUMMARY.warn > 0 || closeoutWatch.length > 0) ? 'WATCH' : 'GOOD',
     gate: CEO_GATE_SUMMARY,
-    lines: [
-      `${CEO_GATE_SUMMARY.fail} critical dead ends in the last release gate`,
-      `${CEO_GATE_SUMMARY.warn} gate warnings open`,
-      `${suggestions.filter(s => s.kind === 'pref_hide').length} unused primary controls (yours)`,
-      `${closeoutWatch.length} possible closeout${closeoutWatch.length === 1 ? '' : 's'}`,
+    client: [
+      { ok: CEO_GATE_SUMMARY.fail === 0, text: `${CEO_GATE_SUMMARY.fail} dead ends` },
+      { ok: CEO_GATE_SUMMARY.fail === 0, text: `${CEO_GATE_SUMMARY.fail} broken intake routes` },
+      { ok: CEO_GATE_SUMMARY.fail === 0, text: `${CEO_GATE_SUMMARY.fail} mobile blockers` },
+    ],
+    owner: [
+      { ok: true, text: `${atTarget} core workflows at target` },
+      /* `tone: 'tidy'` — neither a tick nor a warning. Cleanup available is a
+         third state, and drawing it as a fault is what made a healthy portal
+         look unhealthy. */
+      { ok: dupes === 0, tone: dupes === 0 ? 'ok' : 'tidy',
+        text: dupes === 0 ? 'No duplicate primary shortcuts'
+          : `${dupes} duplicate primary shortcut${dupes === 1 ? '' : 's'} you could clear` },
+      { ok: closeoutWatch.length === 0,
+        text: `${closeoutWatch.length} unresolved closeout alert${closeoutWatch.length === 1 ? '' : 's'}` },
     ],
   };
 
+  /* ---- WHAT SHOULD I FIX FIRST (§14): a SELECTION over what is already
+     computed, never a new answer and never a chatbot. ---- */
+  const fixFirst = highest ? {
+    recommendation: highest.title,
+    why: highest.evidence && highest.evidence.length ? highest.evidence.join('. ') + '.' : highest.why,
+    benefit: highest.impact,
+    risk: CEO_RISK[highest.action] || 'LOW',
+    id: highest.id,
+    cta: highest.kind === 'navigate_case' ? 'review' : 'preview',
+    case_no: highest.kind === 'navigate_case' ? highest.target : null,
+  } : { none: 'No meaningful portal change is recommended right now.' };
+
   return json({ ok: true,
-    health, brief, most_used: mostUsed, flows: CEO_FLOWS,
+    health, brief, most_used: mostUsed, total_taps: totalTaps,
+    flows: CEO_FLOWS.map(f => ({ ...f, action_label: CEO_ACTIONS[f.action] })),
+    priority, plan, working, fix_first: fixFirst,
     suggestions, closeout_watch: closeoutWatch,
     suggestion_state: sugState,
-    /* Named so the page can say "no store yet" honestly. */
-    prefs_stored: !(await missingTables(env)).includes('user_pref') });
+    action_labels: CEO_ACTIONS,
+    prefs_stored: !missing.includes('user_pref') });
 }
 
 /* The one CEO write, and it is a PREF write: this user's own suggestion
@@ -9574,6 +9906,14 @@ const BILLING_DEFAULTS = {
      SNAPSHOTS the fee in force onto the case (snapshotFixedFee) and a stored
      figure always wins. */
   process_fee_default: '',
+  /* THE OWNER'S RECORD COPY (owner brief 2026-09-06). EMPTY ON PURPOSE, the
+     `remit_address` precedent: no personal address is hardcoded anywhere,
+     nothing seeds or derives one, and with this blank NOTHING IS SENT and
+     nothing anywhere changes. The owner types the business address in
+     Settings -> Billing and every rate sheet, intake request and set of
+     payment instructions the portal sends is copied to the office from then
+     on. See `ownerRecordCopy`. */
+  owner_record_email: '',
 };
 
 async function billingSettings(env) {
@@ -14573,6 +14913,110 @@ async function sendMail(env, { to, subject, text, html }) {
   } catch (e) {
     console.error('email failed', e && e.message ? e.message : e);
     return { sent: false, reason: 'unreachable' };
+  }
+}
+
+/* ===== THE OWNER'S RECORD COPY (owner brief 2026-09-06) ====================
+
+   "Whenever the portal sends a Rate Sheet, an Intake request or payment
+   instructions, automatically send the business a RECORD COPY. Corey should
+   not have to remember to CC himself."
+
+   FOUR DECISIONS THIS ENCODES.
+
+   1 — IT IS A SEPARATE MESSAGE, NOT A BCC. A blind copy would be byte for
+   byte what the client got, and the brief asks the record to identify the
+   amount, the non-refundable portion, the four-hour minimum, whether an
+   intake rode along and exactly which document version went. None of that is
+   in the client's copy, and some of it must not be. So the office gets an
+   internal summary that names the client's copy rather than duplicating it.
+
+   2 — THE ADDRESS IS CONFIGURATION AND STARTS EMPTY. `billing_owner_record_email`
+   in `app_config`, the `remit_address` precedent: no personal address is
+   hardcoded anywhere, nothing is seeded or derived, and with the box empty
+   NOTHING IS SENT AND NOTHING CHANGES. That is also why every existing
+   assertion counting one message after a send still counts one.
+
+   3 — IT CAN NEVER COST THE SEND. It runs after the client's copy has gone
+   and after `send_log` has recorded it; it cannot throw, and its failure is
+   REPORTED (`record_copy: false` with a reason) rather than swallowed or
+   allowed to turn a delivered document into an error. The `notifyAdmins`
+   rule, and the Unit 11 rule about a record that failed to write.
+
+   4 — IT IS NOT A SECOND SEND IN THE HISTORY. `send_log.kind` carries
+   `CHECK (kind IN ('rate_sheet','intake'))` and widening a CHECK is the
+   non-idempotent rebuild `schema.sql` cannot do — but the deeper reason is
+   that the office was not sent a rate sheet, the client was. One send, one
+   row, and the copy is observable on the response instead.
+
+   The recipient is the FIRM'S OWN address, so unlike the Web3Forms relay
+   there is no boundary here to widen: the office may be told everything
+   about its own send. */
+const RECORD_DOC = {
+  rate_sheet: 'Rate sheet',
+  intake: 'Intake request',
+  payment_options: 'Payment instructions',
+};
+
+async function ownerRecordCopy(env, kind, facts) {
+  try {
+    const cfg = await billingSettings(env);
+    const to = String(cfg.owner_record_email || '').trim();
+    if (!to) return { record_copy: false, record_reason: 'not_configured' };
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      return { record_copy: false, record_reason: 'invalid_address' };
+    }
+    const doc = RECORD_DOC[kind] || 'Document';
+    const f = facts || {};
+    /* Every line is a fact the send already resolved. A value that does not
+       apply is ABSENT rather than "N/A" — the intake form's own rule, applied
+       to the office's own paperwork. */
+    const rows = [
+      ['Document', doc],
+      ['Sent to', f.to || ''],
+      ['Client', f.client || ''],
+      ['Case', f.case_no || ''],
+      ['Business', f.context || ''],
+      ['Version', f.version || ''],
+      ['Flat fee', f.flat_fee != null ? usd(f.flat_fee) : ''],
+      ['Intake included', f.intake_included == null ? '' : (f.intake_included ? 'Yes' : 'No')],
+      ['Intake form', f.intake_label || ''],
+      ['Payment instructions', f.payment || ''],
+      ['Sent at', nowIso()],
+    ].filter(r => String(r[1] || '').trim() !== '');
+    /* The stated terms exactly as the client's document states them — same
+       strings, same order, same amount, AND THE SAME EMPHASIS. The owner's
+       2026-09-07 rule is that the two named terms are bold and nothing else,
+       so the tone rides here rather than every line arriving bold: a record
+       copy that shouted what the client's copy states plainly would be the
+       office's own paperwork disagreeing with the document it records. */
+    const terms = (f.engagement && Array.isArray(f.engagement.lines))
+      ? f.engagement.lines.map(l => ({ text: String(l.text), term: l.tone === 'term' })) : [];
+    const subject = `RECORD COPY — ${doc} sent to ${f.to || 'a client'}`;
+    const text = [`${doc.toUpperCase()} — RECORD COPY`, '',
+      'This is the office\'s own record of a document the portal sent. The client received',
+      'their own copy; this message is not a second send and is not in the send history.', '',
+      ...rows.map(([k, v]) => `${k}: ${v}`),
+      ...(terms.length ? ['', 'ENGAGEMENT TERMS AS SENT', ...terms.map(t => `  ${t.text}`)] : []),
+    ].join('\n');
+    const html = `<div style="font-family:Segoe UI,system-ui,Arial,sans-serif;color:#1c2531">
+      <h2 style="margin:0 0 4px;font-size:17px">${escHtml(doc)} &mdash; record copy</h2>
+      <p style="margin:0 0 14px;color:#5c6775;font-size:13px">The office's own record of a
+        document the portal sent. Not a second send, and not in the send history.</p>
+      <table style="border-collapse:collapse;font-size:14px">${rows.map(([k, v]) =>
+        `<tr><td style="padding:3px 14px 3px 0;color:#5c6775">${escHtml(k)}</td>
+         <td style="padding:3px 0"><b>${escHtml(String(v))}</b></td></tr>`).join('')}</table>
+      ${terms.length ? `<div style="margin-top:14px;padding:11px 13px;background:#f4f5f7;border-radius:8px">
+        <div style="font-size:11px;letter-spacing:.06em;color:#5c6775">ENGAGEMENT TERMS AS SENT</div>
+        ${terms.map(t => `<div style="margin-top:4px${t.term ? ';font-weight:700' : ''}">${escHtml(t.text)}</div>`).join('')}
+      </div>` : ''}</div>`;
+    const r = await sendMail(env, { to, subject, text, html });
+    return { record_copy: !!r.sent, record_reason: r.sent ? '' : (r.reason || 'failed') };
+  } catch (e) {
+    /* A record copy that fails is a courtesy that failed. It never becomes the
+       caller's problem, and it never reports success it did not have. */
+    console.error('record copy failed', e && e.message ? e.message : e);
+    return { record_copy: false, record_reason: 'failed' };
   }
 }
 
