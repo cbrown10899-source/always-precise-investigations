@@ -21904,8 +21904,14 @@ section('The client record packet reproduces what was sent, and invents nothing'
 
   /* ---- THE SOURCE PIN: NO RENDERER, NO SENDER, NO WRITE (§12/§14/§15) -- */
   const src = fs.readFileSync(new URL('./worker.js', import.meta.url), 'utf8');
-  const blk = src.slice(src.indexOf('async function recordPacket'),
-                        src.indexOf('/* THE CHECKLIST IS STILL THE ONLY DOOR'));
+  /* THE SLICE ENDS AT THE READ FUNCTION'S OWN END, not at a distant marker.
+     It used to run to the closeout comment, which was fine until the packet
+     gained a WRITE route in between — the pin then failed on a genuine INSERT
+     in a different function, which is the guard being imprecise rather than
+     the code being wrong. Bounded properly it says what it means: the packet
+     READ writes nothing. */
+  const blk = src.slice(src.indexOf('async function recordPacket('),
+                        src.indexOf('/* ==== THE PACKET GENERATION RECORD'));
   ok('the packet block exists to be checked', blk.length > 500);
   /* THE RULE THE UNIT RESTS ON. A packet that could call the sheet renderer
      could rebuild yesterday's document from today's figures, and the output
@@ -21917,6 +21923,215 @@ section('The client record packet reproduces what was sent, and invents nothing'
   ok('and it writes nothing at all',
      !/\bINSERT\b|\bUPDATE\b|\bDELETE\b/.test(blk.toUpperCase().replace(/DELETED_AT/g, '')),
      (blk.match(/\b(INSERT|UPDATE|DELETE)\b/g) || []).join(','));
+
+  /* THE WRITE ROUTE IS APPEND-ONLY, AND THAT IS A SEPARATE PIN (§16). The
+     owner's rule is "never overwrite historical packet-generation records", so
+     the property is one INSERT and no UPDATE or DELETE anywhere in it — which
+     is stronger than counting rows, because a route that rewrote a row would
+     still leave the count unchanged. */
+  const wblk = src.slice(src.indexOf('async function recordPacketGenerated'),
+                         src.indexOf('/* THE CHECKLIST IS STILL THE ONLY DOOR'));
+  ok('the generation route exists to be checked', wblk.length > 400);
+  ok('it inserts exactly once', (wblk.match(/INSERT INTO/g) || []).length === 1,
+     String((wblk.match(/INSERT INTO/g) || []).length));
+  ok('and never updates or deletes a historical packet record',
+     !/\bUPDATE\b|\bDELETE\b/.test(wblk),
+     (wblk.match(/\b(UPDATE|DELETE)\b/g) || []).join(','));
+  ok('it reaches no mail sender either', !/\bsendMail\s*\(/.test(wblk));
+
+  globalThis.fetch = realFetch;
+}
+
+/* ==== THE PACKET GENERATION RECORD AND THE HISTORICAL DOCUMENT (§16/§25/§26/§27)
+
+   Two questions this section exists to answer, and neither can be answered by
+   reading the packet route alone:
+
+   1. does a packet reproduce the document the client ACTUALLY ACCEPTED, even
+      when a later rate sheet has been sent since?
+   2. is every generation kept, for ever, as its own row? */
+section('Packet generation is recorded for ever, and the accepted document is the one reproduced');
+{
+  const realFetch = globalThis.fetch;
+  let mails = [];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      mails.push(JSON.parse(init.body));
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const row = (sql, ...b) => env.DB.prepare(sql).bind(...b).first();
+  const packet = async (caseNo, cookie = admin) =>
+    jsonOf(await call(env, `/cases/${caseNo}/record-packet`, { cookie }));
+
+  /* ---- §26/§27: THE HISTORICAL DOCUMENT, AND ONLY IT -------------------- */
+  /* The FIRST sheet carries the owner's own figures and is the one signed. */
+  const first = await jsonOf(await call(env, '/sheets/private_retainer/email', {
+    method: 'POST', cookie: admin,
+    body: { to: 'nina@example.com', client_name: 'Nina Ward',
+            retainer_amount: 1500, non_refundable: 750, attempt_key: 'att-hist-1' } }));
+  ok('the first sheet went', first.ok === true);
+  await ingest(env, { case_no: 'API-HIST-1', client_name: 'Nina Ward',
+    client_email: 'nina@example.com', subject_name: 'Ray Ward',
+    objective: 'Document movements', signed_name: 'Nina Ward',
+    signature: 'data:image/png;base64,iVBORw0KGgo=', doc_ref: first.doc_id });
+
+  /* A SECOND, LATER SHEET ON THE SAME CASE, with different figures — the
+     "current template changed" case §26 describes, reached the only way it can
+     actually be reached in a live system. */
+  const later = await jsonOf(await call(env, '/sheets/private_retainer/email', {
+    method: 'POST', cookie: admin,
+    body: { to: 'nina@example.com', client_name: 'Nina Ward', case_no: 'API-HIST-1',
+            retainer_amount: 3000, non_refundable: 500, attempt_key: 'att-hist-2' } }));
+  ok('a later sheet with different figures also went',
+     later.ok === true && later.doc_id !== first.doc_id);
+
+  const ph = await packet('API-HIST-1');
+  /* §25F — THE PACKET REPRODUCES WHAT WAS ACCEPTED, not what was sent last. A
+     packet showing the newest document while the signature belongs to an
+     earlier one is the single most misleading thing it could do. */
+  ok('the packet reproduces the ACCEPTED document, not the newest one',
+     ph.rate_sheet.doc_id === first.doc_id, JSON.stringify({
+       shown: ph.rate_sheet.doc_id, accepted: first.doc_id, newest: later.doc_id }));
+  ok('with the figures that document carried, not the later ones',
+     Number(ph.rate_sheet.retainer_amount) === 1500
+     && Number(ph.rate_sheet.non_refundable) === 750,
+     JSON.stringify({ r: ph.rate_sheet.retainer_amount, n: ph.rate_sheet.non_refundable }));
+  ok('and never the newer figures', !/\$3,?000/.test(ph.rate_sheet.body_text)
+     && Number(ph.rate_sheet.non_refundable) !== 500);
+  const hl = ((ph.rate_sheet.terms || {}).lines || []).map(l => l.text);
+  ok('the preserved terms are the accepted document’s own',
+     hl.some(t => /NON-REFUNDABLE PORTION: \$750/.test(t))
+     && hl.some(t => /4-HOUR MINIMUM PER SURVEILLANCE DAY/.test(t)), JSON.stringify(hl));
+  /* §27 — THE LINK IS THE CHAIN. Document -> submission -> signature -> packet,
+     each step named rather than inferred. */
+  const sub1 = await row('SELECT id FROM submissions WHERE case_no = ?', 'API-HIST-1');
+  ok('the acceptance names the submission, and the packet agrees',
+     ph.acceptance.doc_id === first.doc_id
+     && ph.acceptance.submission_id === sub1.id
+     && ph.record_info.acceptance_submission_id === sub1.id,
+     JSON.stringify(ph.record_info));
+  /* THE LATER SEND IS NOT LOST — it is in the delivery record, which is where
+     §25F says additional sends belong. */
+  ok('the later send still appears in the delivery record',
+     ph.documents.some(d => d.doc_id === later.doc_id), JSON.stringify(
+       ph.documents.map(d => d.doc_id)));
+
+  /* §26'S OTHER HALF: a same-name client on a DIFFERENT case must not adopt
+     this document. */
+  await ingest(env, { case_no: 'API-HIST-2', client_name: 'Nina Ward',
+    client_email: 'nina@example.com', objective: 'A second matter' });
+  const p2 = await packet('API-HIST-2');
+  ok('a same-name client on another case adopts nothing',
+     p2.rate_sheet === null && p2.rate_sheet_missing === 'none_sent',
+     JSON.stringify({ rs: p2.rate_sheet, why: p2.rate_sheet_missing }));
+
+  /* ---- §5 THE RECORD TIMELINE ------------------------------------------ */
+  ok('the timeline carries the sends, the intake and the acceptance',
+     ph.timeline.some(e => /Rate sheet sent/.test(e.label))
+     && ph.timeline.some(e => /Client intake received/.test(e.label))
+     && ph.timeline.some(e => /Client acceptance recorded/.test(e.label)),
+     JSON.stringify(ph.timeline.map(e => e.label)));
+  ok('and every entry carries a stored instant rather than an invented one',
+     ph.timeline.every(e => !!e.at), JSON.stringify(ph.timeline));
+  ok('a case with no records has an empty timeline, not an invented one',
+     Array.isArray(p2.timeline) && p2.timeline.filter(
+       e => /Rate sheet|acceptance/.test(e.label)).length === 0,
+     JSON.stringify(p2.timeline.map(e => e.label)));
+
+  /* ---- §15 RECORD INFORMATION ------------------------------------------ */
+  ok('the record information names the source rows',
+     ph.record_info.rate_sheet_doc_id === first.doc_id
+     && /^[0-9a-f]{64}$/.test(ph.record_info.rate_sheet_hash || '')
+     && ph.record_info.case_no === 'API-HIST-1', JSON.stringify(ph.record_info));
+
+  /* ---- §16 THE GENERATION RECORD --------------------------------------- */
+  const beforeMail = mails.length;
+  const g1 = await jsonOf(await call(env, '/cases/API-HIST-1/record-packet/generated', {
+    method: 'POST', cookie: admin,
+    body: { filename: 'API-API-HIST-1-Client-Record-Packet-2026-09-08.pdf',
+            content_hash: 'a'.repeat(64), status: 'generated',
+            sections: ph.sections, source: ph.record_info } }));
+  ok('a generation is recorded and answers with its own id',
+     g1.ok === true && /^PKT-[0-9a-f]{32}$/.test(g1.packet_id || ''), JSON.stringify(g1));
+  ok('the digest is recorded when it arrives in the right shape',
+     g1.hash_recorded === true && g1.content_hash === 'a'.repeat(64));
+  /* IT IS A RECORD, NOT A SEND. */
+  ok('and recording it emails nobody', mails.length === beforeMail);
+
+  const stored = await row('SELECT * FROM packet_generation WHERE packet_id = ?', g1.packet_id);
+  ok('the row carries the case, the actor and the source document',
+     stored && stored.case_no === 'API-HIST-1' && !!stored.generated_name
+     && stored.doc_id === first.doc_id, JSON.stringify(stored || {}));
+  ok('with the source ids as their own field, not in the case narrative',
+     stored && JSON.parse(stored.source_json || '{}').document_ids.length >= 2,
+     stored && stored.source_json);
+
+  /* §25L — A SECOND GENERATION IS A SECOND ROW. */
+  const g2 = await jsonOf(await call(env, '/cases/API-HIST-1/record-packet/generated', {
+    method: 'POST', cookie: admin,
+    body: { filename: 'API-API-HIST-1-Client-Record-Packet-2026-09-08-2.pdf',
+            content_hash: 'b'.repeat(64), sections: ph.sections, source: ph.record_info } }));
+  ok('generating again makes a NEW record rather than replacing the first',
+     g2.ok === true && g2.packet_id !== g1.packet_id);
+  const both = (await env.DB.prepare(
+    'SELECT packet_id, content_hash FROM packet_generation WHERE case_no = ? ORDER BY id')
+    .bind('API-HIST-1').all()).results || [];
+  ok('both rows are on the record, with their own digests',
+     both.length === 2 && both[0].content_hash === 'a'.repeat(64)
+     && both[1].content_hash === 'b'.repeat(64), JSON.stringify(both));
+
+  /* A JUNK DIGEST IS REFUSED BY SHAPE AND SAID SO, never stored as if real. */
+  const g3 = await jsonOf(await call(env, '/cases/API-HIST-1/record-packet/generated', {
+    method: 'POST', cookie: admin,
+    body: { filename: 'x.pdf', content_hash: 'not-a-hash' } }));
+  ok('a digest that is not one is not stored, and the answer says so',
+     g3.ok === true && g3.hash_recorded === false && g3.content_hash === null,
+     JSON.stringify(g3));
+  ok('a packet with no filename is refused',
+     (await call(env, '/cases/API-HIST-1/record-packet/generated', {
+       method: 'POST', cookie: admin, body: {} })).status === 400);
+
+  /* §24 — THE HISTORY COMES BACK ON THE PACKET READ. */
+  const ph2 = await packet('API-HIST-1');
+  ok('the packet read lists what has been generated, newest first',
+     ph2.packets.length === 3 && ph2.packets[0].packet_id === g3.packet_id,
+     JSON.stringify(ph2.packets.map(x => x.filename)));
+  ok('each with who made it and when',
+     ph2.packets.every(x => !!x.generated_at)
+     && ph2.packets.some(x => !!(x.generated_by_name || x.generated_name)),
+     JSON.stringify(ph2.packets[0]));
+
+  /* §22 — THE CASE TIMELINE GAINS ONE CONCISE LINE, AND NO SOURCE IDS. */
+  const tl = await jsonOf(await call(env, '/cases/API-HIST-1/timeline', { cookie: admin }));
+  /* `type`, not `kind` — `tlEvent` names it that, and reading the wrong key
+     gave an empty list that looked like a missing arm rather than a wrong
+     selector. */
+  const pkEvents = (tl.events || []).filter(e => e.type === 'packet');
+  ok('the case timeline records the generation', pkEvents.length === 3,
+     String(pkEvents.length));
+  ok('and says only what, who and when',
+     pkEvents.every(e => /Client Record Packet generated/.test(e.title)
+       && !/PKT-|DOC-|submission/i.test(JSON.stringify(e))), JSON.stringify(pkEvents[0]));
+
+  /* ---- ACCESS (§21) ---------------------------------------------------- */
+  const inv = await jsonOf(await call(env, '/invites', { method: 'POST', cookie: admin,
+    body: { username: 'fieldgen', display_name: 'Field Gen', role: 'investigator' } }));
+  const tok = new URL(inv.url, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok}/accept`, { method: 'POST', body: { password: 'FieldGenPass12' } });
+  const field = (await login(env, 'fieldgen', 'FieldGenPass12')).cookie;
+  ok('an investigator cannot record a packet generation',
+     (await call(env, '/cases/API-HIST-1/record-packet/generated', {
+       method: 'POST', cookie: field, body: { filename: 'x.pdf' } })).status === 403);
+  ok('and neither can an anonymous caller',
+     (await call(env, '/cases/API-HIST-1/record-packet/generated', {
+       method: 'POST', body: { filename: 'x.pdf' } })).status === 401);
 
   globalThis.fetch = realFetch;
 }

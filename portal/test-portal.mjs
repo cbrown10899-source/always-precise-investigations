@@ -20206,8 +20206,13 @@ section('The Client Record Packet is built from what was preserved, and sends no
     return { rows, sections: (CR_PACKET || {}).sections || null,
              doc: !!document.getElementById('crpdoc') };
   });
-  ok('the preview lists every section of the packet', prev.rows.length === 8,
-     JSON.stringify(prev.rows.map(r => r.label)));
+  /* §3 — THE OWNER'S OWN ROW SET, by name rather than by a count, so adding a
+     row is a deliberate edit here and not a number nobody can interpret. */
+  const wantRows = ['Rate Sheet', 'Acceptance', 'Intake', 'Retainer', 'Work Activity',
+                    'Closeout', 'Refund Record', 'Send History', 'Evidence & Files'];
+  ok('the preview lists the brief’s own inclusion summary, in its order',
+     JSON.stringify(prev.rows.map(r => r.label.trim()).slice(0, wantRows.length))
+       === JSON.stringify(wantRows), JSON.stringify(prev.rows.map(r => r.label)));
   /* THE TICKS ARE THE WORKER'S OWN ANSWER, not the page's opinion — otherwise
      a preview could promise a section the document does not contain. */
   const byLabel = Object.fromEntries(prev.rows.map(r => [r.label.trim(), r.on]));
@@ -20219,6 +20224,17 @@ section('The Client Record Packet is built from what was preserved, and sends no
   ok('a section with no record shows a dash, never a tick',
      prev.rows.filter(r => !r.on).every(r => r.mark === '—'),
      JSON.stringify(prev.rows.filter(r => !r.on)));
+  /* §3 — AND IT IS NOT WORDED AS A FAILURE. "Not recorded" and "Not applicable"
+     are the owner's own words; the brief says missing optional records must not
+     read as system errors. */
+  const offWords = await page.evaluate(() =>
+    [...document.querySelectorAll('.crp-pre')]
+      .filter(r => !r.querySelector('.crp-mk.on'))
+      .map(r => (r.querySelector('.clrec-d') || {}).textContent.trim()));
+  ok('and it is worded as an absence, never as an error',
+     offWords.length > 0
+     && offWords.every(w => /^(Not recorded|Not applicable|Unavailable)$/.test(w)),
+     JSON.stringify(offWords));
   ok('the document itself is on screen beneath the preview', prev.doc === true);
 
   /* ---- §2 THE COVER, AND WHAT IT MUST NOT SAY -------------------------- */
@@ -20292,11 +20308,18 @@ section('The Client Record Packet is built from what was preserved, and sends no
 
   /* THE FILENAME THE OWNER ASKED FOR. */
   const name = await page.evaluate(() => crPacketName());
-  ok('the filename is API-CASE-[case]-Client-Record-Packet-[YYYY-MM-DD].pdf',
-     /^API-CASE-API-20260812-4002-Client-Record-Packet-\d{4}-\d{2}-\d{2}\.pdf$/.test(name), name);
+  /* THE CASE NUMBER ALREADY BEGINS `API-`, so the first cut's own `API-CASE-`
+     prefix stuttered. The owner's shape is `API-[CASE-NUMBER]-…`, which the
+     case number itself satisfies. */
+  ok('the filename is [CASE-NUMBER]-Client-Record-Packet-[YYYY-MM-DD].pdf',
+     /^API-20260812-4002-Client-Record-Packet-\d{4}-\d{2}-\d{2}\.pdf$/.test(name), name);
+  ok('and it does not stutter the API- prefix', !/API-CASE-API-/.test(name), name);
 
   /* ---- BACK RETURNS TO THE CASE, and the packet does not follow it ----- */
-  await page.locator('[data-act="crPacketClose"]').click();
+  /* TWO CONTROLS CLOSE THIS SCREEN NOW — the pagebar Back and §3's Cancel —
+     and they are the same act, so the selector takes the first rather than
+     failing strict mode on a pair that does the same thing. */
+  await page.locator('[data-act="crPacketClose"]').first().click();
   await page.waitForTimeout(700);
   ok('closing returns to the case with the packet dropped',
      await page.evaluate(() => !CR_PACKET && !document.getElementById('crpdoc')
@@ -20309,6 +20332,136 @@ section('The Client Record Packet is built from what was preserved, and sends no
   ok('and a packet composed for another case does not follow you to this one',
      await page.evaluate(() => CR_PACKET === null));
   await page.close();
+}
+
+section('The packet records every generation, and the document carries its own IDs');
+{
+  /* Owner's fuller brief 2026-09-08 §5/§15/§16/§22/§24. The Worker suite proves
+     the ROW; this proves the screen writes one, reads it back, and prints the
+     record information the brief asks for. */
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.evaluate(() => openCase('API-20260812-4002'));
+  await page.waitForTimeout(1400);
+  await page.locator('[data-act="crPacket"]').click();
+  await page.waitForTimeout(1500);
+
+  /* ---- §5 THE RECORD TIMELINE, AND §15 RECORD INFORMATION -------------- */
+  const doc = await page.evaluate(() => {
+    const d = document.getElementById('crpdoc');
+    return { text: d.innerText,
+             tl: [...d.querySelectorAll('.crp-tl')].map(x => x.innerText.trim().slice(0, 60)) };
+  });
+  ok('the document carries a Record information section',
+     /Record information/i.test(doc.text) && /Case number/i.test(doc.text),
+     doc.text.slice(-400));
+  ok('and names who generated it', /Generated by/i.test(doc.text));
+  /* A TIMELINE ENTRY EXISTS ONLY WHERE A RECORD DOES. This fixture case has an
+     intake, so the intake line must be there; nothing is asserted that the
+     case has no row for. */
+  ok('the record timeline draws from stored events',
+     doc.tl.length > 0 && doc.tl.some(t => /INTAKE|RATE SHEET|ACCEPTANCE/i.test(t)),
+     JSON.stringify(doc.tl));
+
+  /* ---- §16 GENERATING WRITES A RECORD ---------------------------------- */
+  const before = await page.evaluate(() => ((CR_PACKET || {}).packets || []).length);
+  await page.locator('[data-act="crPacketPdf"]').click();
+  await page.waitForTimeout(2600);
+  const after = await page.evaluate(() => ({
+    packets: ((CR_PACKET || {}).packets || []).length,
+    first: ((CR_PACKET || {}).packets || [])[0] || null,
+    msg: (document.querySelector('.note') || {}).textContent || '',
+  }));
+  ok('generating the PDF records the generation',
+     after.packets === before + 1, JSON.stringify({ before, after: after.packets }));
+  ok('with the filename and a real SHA-256 of the file that was downloaded',
+     after.first && /Client-Record-Packet-/.test(after.first.filename)
+     && /^[0-9a-f]{64}$/.test(after.first.content_hash || ''),
+     JSON.stringify(after.first));
+  ok('and it names who made it',
+     !!(after.first && (after.first.generated_by_name || after.first.generated_name)),
+     JSON.stringify(after.first));
+  ok('the screen says the packet was downloaded', /downloaded/i.test(after.msg), after.msg);
+
+  /* §24 — THE HISTORY IS ON SCREEN. */
+  const hist = await page.evaluate(() => {
+    const box = [...document.querySelectorAll('.uibox-t')]
+      .find(t => /GENERATED PACKETS/.test(t.textContent));
+    const card = box && box.closest('.uibox');
+    return card ? card.innerText : null;
+  });
+  ok('the generated packets are listed on the screen',
+     hist && /Client-Record-Packet-/.test(hist), (hist || '').slice(0, 200));
+  /* AND IT SAYS PLAINLY THAT THE PDF ITSELF IS NOT KEPT — §17's answer, stated
+     rather than left for the owner to assume. */
+  ok('and it states that the portal does not store the PDF',
+     hist && /not stored by the portal/i.test(hist), (hist || '').slice(0, 300));
+
+  /* §25L — A SECOND GENERATION IS A SECOND RECORD, and the filename differs so
+     two downloads never collide in one folder. */
+  const name1 = after.first.filename;
+  await page.locator('[data-act="crPacketPdf"]').click();
+  await page.waitForTimeout(2600);
+  const twice = await page.evaluate(() => ({
+    n: ((CR_PACKET || {}).packets || []).length,
+    names: ((CR_PACKET || {}).packets || []).map(x => x.filename),
+  }));
+  ok('generating again makes a second record, not a replacement',
+     twice.n === before + 2, JSON.stringify(twice));
+  ok('and the second file has its own name',
+     twice.names[0] !== name1 && /-2\.pdf$/.test(twice.names[0]), JSON.stringify(twice.names));
+
+  /* STILL NO WAY TO EMAIL IT, after all of that. */
+  const sendish = await page.evaluate(() => {
+    const card = document.querySelector('.casepage') || document.body;
+    return [...card.querySelectorAll('button, a')]
+      .filter(b => b.getBoundingClientRect().height > 0)
+      .map(b => (b.textContent || '').trim())
+      .filter(t => /\b(send|email|e-mail|deliver|share)\b/i.test(t));
+  });
+  ok('the packet screen still offers no send control at all',
+     sendish.length === 0, JSON.stringify(sendish));
+
+  await page.locator('[data-act="crPacketClose"]').first().click();
+  await page.waitForTimeout(600);
+  await page.close();
+}
+
+section('The packet has a second door on Billing & closing, and it is the same feature');
+{
+  /* §2 — "make it available from the closed-case/closeout area where
+     appropriate without duplicating the feature". One act, one screen, one
+     route; two places to press it. */
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.evaluate(() => openCase('API-20260812-4002'));
+  await page.waitForTimeout(1300);
+  await page.evaluate(() => { WS_TAB = 'billing'; paint(); });
+  await page.waitForTimeout(900);
+  const door = await page.evaluate(() => {
+    const b = document.querySelector('[data-act="crPacket"]');
+    if (!b) return null;
+    b.scrollIntoView({ block: 'center' });
+    const r = b.getBoundingClientRect();
+    return { h: Math.round(r.height), label: b.textContent.trim(),
+             count: document.querySelectorAll('[data-act="crPacket"]').length };
+  });
+  ok('Billing & closing carries the packet door', !!door && door.count === 1,
+     JSON.stringify(door));
+  ok('and it is the same control, not a second implementation',
+     door && /Build Client Record Packet/i.test(door.label), JSON.stringify(door));
+  await page.locator('[data-act="crPacket"]').click();
+  await page.waitForTimeout(1500);
+  ok('pressing it opens the one packet screen',
+     await page.evaluate(() => !!CR_PACKET && !!document.getElementById('crpdoc')));
+  /* AND IT IS ADMIN TERRITORY, like every panel it sits among. */
+  await page.close();
+  const inv = await newPage();
+  await signIn(inv, 'dana', 'FieldWork2026x');
+  await inv.waitForTimeout(600);
+  ok('an investigator is offered the packet nowhere at all',
+     await inv.locator('[data-act="crPacket"]').count() === 0);
+  await inv.close();
 }
 
 section('The packet reads on a phone, at 390 and 320');
@@ -20380,7 +20533,10 @@ section('The packet reads on a phone, at 390 and 320');
     });
     ok(`${w}: Generate PDF collides with neither bot nor the bottom nav`,
        clash.length === 0, JSON.stringify(clash));
-    await page.locator('[data-act="crPacketClose"]').click();
+    /* TWO CONTROLS CLOSE THIS SCREEN NOW — the pagebar Back and §3's Cancel —
+     and they are the same act, so the selector takes the first rather than
+     failing strict mode on a pair that does the same thing. */
+  await page.locator('[data-act="crPacketClose"]').first().click();
     await page.waitForTimeout(500);
   }
   await page.setViewportSize({ width: 1200, height: 900 });

@@ -570,6 +570,12 @@
   .crp-k{min-width:150px;font-weight:700;color:var(--navy-2);}
   .crp-v{flex:1;min-width:0;overflow-wrap:anywhere;}
   .crp-none{font-size:.88rem;color:var(--muted);font-style:italic;}
+  /* §5 — the record timeline: a label above its instant, nothing decorative.
+     A left rule in the restrained gold, which is the only accent this document
+     uses anywhere. */
+  .crp-tl{padding:6px 0 6px 11px;border-left:2px solid var(--gold-2);margin:0 0 6px;
+    font-size:.86rem;}
+  .crp-tl b{display:block;letter-spacing:.04em;font-size:.78rem;color:var(--navy-2);}
   /* The preserved document is printed as the text the client was sent, so its
      own newlines are the paragraphing — the same `pre-line` the report bodies
      use, which is what the PDF collector reads them by. */
@@ -15300,7 +15306,7 @@ async function openCase(caseNo, tab){
      defect already paid for twice. The DOCS cache is keyed BY case, so it
      survives correctly; only the open view is dropped. */
   DOC_VIEW = null;
-  CR_PACKET = null; CR_PACKET_ERR = ""; CR_PACKET_MSG = "";
+  CR_PACKET = null; CR_PACKET_ERR = ""; CR_PACKET_MSG = ""; CR_PACKET_MADE = false;
   /* THE RETAINER FORM BELONGS TO THE CASE IT WAS OPENED ON. All of its state is
      page-level, so without this an unfinished payment followed the admin to the
      next case: the form still open, still carrying the FIGURE they typed for
@@ -20229,7 +20235,7 @@ let DOC_VIEW = null;  // the preserved document currently open
    DOC_VIEW, and cleared in `openCase` for the same reason: a packet composed
    for one client standing over another case number is the stale-context defect
    this file has already paid for three times. */
-let CR_PACKET = null, CR_PACKET_ERR = "", CR_PACKET_MSG = "";
+let CR_PACKET = null, CR_PACKET_ERR = "", CR_PACKET_MSG = "", CR_PACKET_MADE = false;
 
 async function loadCaseDocs(caseNo){
   if(!caseNo) return;
@@ -20348,7 +20354,7 @@ function clientRecordHtml(s){
    IT IS NOT EMAILED (§14). There is no send control on this screen and no
    route behind one; the packet is built, previewed and downloaded. */
 async function crPacketOpen(){
-  CR_PACKET = null; CR_PACKET_ERR = ""; CR_PACKET_MSG = "";
+  CR_PACKET = null; CR_PACKET_ERR = ""; CR_PACKET_MSG = ""; CR_PACKET_MADE = false;
   const want = WS_CASE;
   paintCase();
   try{
@@ -20365,7 +20371,7 @@ async function crPacketOpen(){
   paintCase();
 }
 function crPacketClose(){
-  CR_PACKET = null; CR_PACKET_ERR = ""; CR_PACKET_MSG = "";
+  CR_PACKET = null; CR_PACKET_ERR = ""; CR_PACKET_MSG = ""; CR_PACKET_MADE = false;
   paintCase();
 }
 
@@ -20376,7 +20382,32 @@ function crPacketName(){
   const gen = (CR_PACKET && CR_PACKET.cover && CR_PACKET.cover.generated_at) || "";
   const day = /^\d{4}-\d{2}-\d{2}/.test(gen) ? gen.slice(0, 10)
     : new Date().toISOString().slice(0, 10);
-  return `API-CASE-${WS_CASE || "case"}-Client-Record-Packet-${day}.pdf`;
+  /* THE CASE NUMBER ALREADY BEGINS `API-`, so the first cut's `API-CASE-` made
+     `API-CASE-API-20260908-1234-…` — a prefix stuttering because it was added
+     twice. The owner's shape is `API-[CASE-NUMBER]-…`, which the case number
+     itself satisfies.
+
+     §18 — A SECOND PACKET ON THE SAME DAY GETS ITS OWN NAME. The count comes
+     from the generation records this case already has for that day, so two
+     downloads never land on one filename in a folder. `-2` on the second, `-3`
+     on the third; the first stays clean. */
+  const base = `${WS_CASE || "case"}-Client-Record-Packet-${day}`;
+  const sameDay = ((CR_PACKET && CR_PACKET.packets) || [])
+    .filter(x => String(x.generated_at || "").slice(0, 10) === day
+                 && x.status !== "failed").length;
+  return sameDay ? `${base}-${sameDay + 1}.pdf` : `${base}.pdf`;
+}
+
+/* THE DIGEST OF THE FILE THE OWNER ACTUALLY RECEIVED (§17). Taken over the
+   PDF's own bytes here, because that is where the document is composed — the
+   Worker never sees it. A browser without SubtleCrypto returns nothing rather
+   than a placeholder, and the record then says the hash was not recorded. */
+async function crPacketHash(blob){
+  try{
+    const buf = await blob.arrayBuffer();
+    const d = await crypto.subtle.digest("SHA-256", buf);
+    return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, "0")).join("");
+  }catch(e){ return ""; }
 }
 
 async function crPacketPdf(){
@@ -20391,14 +20422,50 @@ async function crPacketPdf(){
        second writer. */
     const blob = await pdfFromDoc(root,
       (n, total) => `${caseNo}  ·  Client Record Packet  ·  ${gen}  ·  Page ${n} of ${total}`);
+    const name = crPacketName();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = crPacketName();
+    a.href = url; a.download = name;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
-    CR_PACKET_MSG = "Packet PDF downloaded.";
-  }catch(e){ CR_PACKET_ERR = "The PDF could not be built: " + (e.message || "unknown"); }
+    CR_PACKET_MSG = "Packet PDF downloaded."; CR_PACKET_MADE = true;
+    /* §16 — THE GENERATION IS RECORDED AFTER THE FILE EXISTS, never before. A
+       row written first would claim a packet that the PDF writer then failed
+       to produce. It cannot cost the download either: the file is already on
+       the operator's disk by the time this runs, so a failed record is
+       reported beside the success rather than turning it into an error. */
+    await crPacketRecord(name, await crPacketHash(blob), "generated", "");
+  }catch(e){
+    CR_PACKET_ERR = "The PDF could not be built: " + (e.message || "unknown");
+    await crPacketRecord(crPacketName(), "", "failed", e.message || "unknown");
+  }
   paintCase();
+}
+
+/* ONE ROW PER GENERATION, AND IT NEVER REPLACES AN EARLIER ONE — the Worker
+   route has no UPDATE by which it could. The packet is re-read afterwards so
+   the history on screen is the database's answer rather than this page's
+   optimism, and so the next filename knows how many were made today. */
+async function crPacketRecord(filename, hash, status, detail){
+  const want = WS_CASE;
+  try{
+    const P = CR_PACKET || {};
+    await api(`/cases/${encodeURIComponent(want)}/record-packet/generated`, {
+      method: "POST",
+      body: {filename, content_hash: hash || "", status, detail: detail || "",
+             sections: P.sections || {}, source: P.record_info || {}},
+    });
+    if(WS_CASE !== want) return;
+    const fresh = await api(`/cases/${encodeURIComponent(want)}/record-packet`);
+    if(WS_CASE !== want) return;
+    CR_PACKET = fresh;
+  }catch(e){
+    if(WS_CASE !== want) return;
+    /* SAID, NOT SWALLOWED. The download succeeded; what failed is the record
+       of it, and the office is the one who needs to know which. */
+    CR_PACKET_MSG = (CR_PACKET_MSG ? CR_PACKET_MSG + " " : "")
+      + "The packet record could not be saved — " + (e.message || "unknown") + ".";
+  }
 }
 
 /* A DATE THE WAY A DOCUMENT SAYS ONE. Absent is absent — never today's date
@@ -20444,14 +20511,50 @@ function crPacketHtml(){
   const P = CR_PACKET, C = P.cover || {}, S = P.sections || {};
 
   /* ---- §13 THE PREVIEW, derived from the sections the Worker reported --- */
-  const pre = [
-    ["Rate Sheet", S.rate_sheet], ["Acceptance", S.acceptance], ["Intake", S.intake],
-    ["Retainer", S.retainer], ["Closeout", S.closeout], ["Work Activity", S.work],
-    ["Evidence & Files", S.files], ["Send Record", S.sends],
-  ].map(([label, on]) => `<div class="crp-pre">
+  /* §3 — THE WORDING IS THE OWNER'S, AND IT DISTINGUISHES TWO KINDS OF ABSENCE.
+     "Not recorded" is a record that could have existed and does not; "Not
+     applicable" is one this matter never had a reason to have. Neither is an
+     error, and the brief says so by name: "Do not present missing optional
+     records as system errors." */
+  const preRow = (label, on, offWord) => `<div class="crp-pre">
       <span class="crp-mk ${on ? "on" : "off"}" aria-hidden="true">${on ? "&#10003;" : "&mdash;"}</span>
       <span>${esc(label)}</span>
-      <span class="clrec-d">${on ? "included" : "no record on this case"}</span></div>`).join("");
+      <span class="clrec-d">${on ? "Included" : esc(offWord)}</span></div>`;
+  const pre = [
+    preRow("Rate Sheet", S.rate_sheet,
+           P.rate_sheet_missing === "snapshot_unavailable" ? "Unavailable" : "Not recorded"),
+    preRow("Acceptance", S.acceptance, "Not recorded"),
+    preRow("Intake", S.intake, "Not recorded"),
+    preRow("Retainer", S.retainer, "Not recorded"),
+    preRow("Work Activity", S.work, "Not recorded"),
+    preRow("Closeout", S.closeout, "Not applicable"),
+    preRow("Refund Record", (P.closeout && (P.closeout.refunds || []).length > 0), "Not applicable"),
+    preRow("Send History", S.sends, "Not recorded"),
+    preRow("Evidence & Files", S.files, "Not recorded"),
+    /* THE ONE LINE THAT IS NOT AN ORDINARY ABSENCE (§3/§12): a link that exists
+       whose document does not. It appears only in that state. */
+    P.rate_sheet_missing === "snapshot_unavailable"
+      ? `<div class="crp-pre"><span class="crp-mk off" aria-hidden="true">&mdash;</span>
+          <span>Historical Rate Sheet Snapshot</span>
+          <span class="clrec-d">Unavailable</span></div>` : "",
+  ].join("");
+
+  /* §24 — WHAT THIS CASE HAS ALREADY PRODUCED. Absent until portal-setup has
+     run, and said as configuration rather than as a failure. */
+  const packets = !P.packets_set_up
+    ? `<p class="crp-none">The packet record is not set up yet &mdash; run the
+        portal-setup workflow to keep a history of generated packets.</p>`
+    : (P.packets || []).length
+    ? (P.packets || []).map(x => `<div class="crp-pre">
+        <span class="crp-mk ${x.status === "failed" ? "off" : "on"}" aria-hidden="true">${
+          x.status === "failed" ? "&mdash;" : "&#10003;"}</span>
+        <span class="crp-v"><b>${esc(x.filename)}</b><br>
+          <span class="clrec-d">${esc(crWhen(x.generated_at))}${
+            x.generated_by_name || x.generated_name
+              ? " &middot; " + esc(x.generated_by_name || x.generated_name) : ""}${
+            x.status === "failed" ? " &middot; generation failed" : ""}</span></span>
+        </div>`).join("")
+    : `<p class="crp-none">No packet has been generated for this matter yet.</p>`;
 
   /* ---- the document itself ---------------------------------------------- */
   const rs = P.rate_sheet;
@@ -20470,13 +20573,14 @@ function crPacketHtml(){
     ${crRow2("Recipient", rs.recipient)}
     ${crRow2("Client name", rs.client_name)}
     ${crRow2("Sent", crWhen(rs.sent_at))}
+    ${crRow2("Sent by", rs.sent_by_name)}
     ${crRow2("Delivered to the client", rs.ok ? "Yes" : "No — the provider refused it")}
     ${crRow2("Retainer", crMoney(rs.retainer_amount))}
     ${crRow2("Non-refundable portion", crMoney(rs.non_refundable))}
     ${crRow2("Flat fee", crMoney(rs.flat_fee))}
     ${rsLines.length ? crRow2("Stated terms", rsLines.map(l => l.text).join("  |  ")) : ""}
     ${crRow2("Intake included", rs.intake_included ? "Yes" : "No")}
-    ${crRow2("Content reference", rs.content_hash)}
+    ${crRow2("Document version / hash", rs.content_hash)}
     <h3>The document as sent</h3>
     <div class="crp-body">${esc(rs.body_text || "")}</div>`
     /* §12'S EXACT SENTENCE, and only in the state it describes. A case that was
@@ -20487,6 +20591,7 @@ function crPacketHtml(){
 
   const acceptSection = acc.linked || acc.signed_not_linked ? `
     ${crRow2("Linked document ID", acc.doc_id)}
+    ${crRow2("Document version / hash", acc.linked && rs ? rs.content_hash : "")}
     ${crRow2("Submission ID", acc.submission_id)}
     ${crRow2("Name given", acc.signed_name)}
     ${crRow2("Received", crWhen(acc.signed_at))}
@@ -20496,20 +20601,51 @@ function crPacketHtml(){
       ? `<p class="crp-none">This intake was signed but is not linked to a document
            the portal sent.</p>` : ""}
     ${acc.signature ? `<h3>Signature as captured</h3>
-      <img class="crp-sig" src="${esc(acc.signature)}" alt="Client signature as captured">` : ""}`
+      <img class="crp-sig" src="${esc(acc.signature)}" alt="Client signature as captured">` : ""}
+    ${/* §7 — THE OWNER'S OWN WORDING. It states the association and nothing
+         more: no enforceability, no guarantee, no proof. */""}
+    ${acc.linked ? `<p class="crp-none">This acceptance record is associated with the
+      Rate Sheet document identified above.</p>` : ""}`
     : `<p class="crp-none">No associated acceptance record.</p>`;
 
+  /* §8 — RETAINER STATUS AS A WORD, from the ledger rather than from an
+     assumption: money that arrived, a figure agreed and not yet arrived, or
+     neither. */
+  const retWord = (ret.payments || []).length ? "Received"
+    : ret.agreed_amount != null ? "Agreed, not yet received" : "None recorded";
   const intakeSection = intake.present ? `
-    ${crRow2("Received", crWhen(intake.received_at))}
-    ${crRow2("Intake type", intake.matter_type)}
+    <h3>Summary</h3>
     ${crRow2("Client", intake.client_name)}
     ${crRow2("Subject", intake.subject_name)}
+    ${crRow2("Intake type", intake.matter_type)}
+    ${crRow2("Received", crWhen(intake.received_at))}
+    ${crRow2("Associated rate sheet", rs ? rs.doc_id : "None")}
+    ${crRow2("Retainer status", retWord)}
     <h3>Provided information</h3>
     ${(intake.provided || []).length
       ? intake.provided.map(f => crRow2(crLabel(f.field), f.value)).join("")
       : `<p class="crp-none">Nothing further was provided.</p>`}
     ${(intake.not_available || []).length ? `<h3>Not available yet</h3>
-      ${intake.not_available.map(f => crRow2(crLabel(f.field), "Not available yet")).join("")}` : ""}`
+      ${intake.not_available.map(f => crRow2(crLabel(f.field), "Not available yet")).join("")}` : ""}
+    <h3>Client signature / acceptance</h3>
+    ${acc.signature || acc.signed_name
+      ? `${crRow2("Name given", acc.signed_name)}
+         ${crRow2("Received", crWhen(acc.signed_at))}
+         ${acc.linked ? "" : `<p class="crp-none">Signed, and not linked to a document
+           the portal sent.</p>`}`
+      : `<p class="crp-none">This intake carries no signature.</p>`}
+    ${/* §8 — ASSOCIATED RATE SHEET, stated where the intake is read rather than
+         only in the document's own section, because the question "what were
+         they agreeing to" is asked here. Every figure is the STORED one. */""}
+    <h3>Associated rate sheet</h3>
+    ${rs ? `${crRow2("Document ID", rs.doc_id)}
+      ${crRow2("Retainer", crMoney(rs.retainer_amount))}
+      ${crRow2("Non-refundable portion", crMoney(rs.non_refundable))}
+      ${rsLines.filter(l => /PER SURVEILLANCE DAY/.test(l.text))
+        .map(l => crRow2("Surveillance term", l.text)).join("")}
+      ${crRow2("Sent", crWhen(rs.sent_at))}
+      ${crRow2("Intake / acceptance received", crWhen(acc.signed_at || intake.received_at))}`
+      : `<p class="crp-none">No rate sheet is associated with this intake.</p>`}`
     : `<p class="crp-none">No submitted intake on this matter.</p>`;
 
   const payRows = (ret.payments || []).map(p => `
@@ -20603,6 +20739,30 @@ function crPacketHtml(){
     (files.stamps || {}).video ? crRow2("Timestamped video copies", String(files.stamps.video)) : "",
   ].join("");
 
+  /* §5 — THE RECORD TIMELINE, from stored instants only. A matter with none
+     says so rather than drawing an empty spine. */
+  const tlRows = (P.timeline || []).map(e => `
+    <div class="crp-tl"><b>${esc(String(e.label || "").toUpperCase())}</b>
+      <span>${esc(crWhen(e.at))}${e.detail ? " &mdash; " + esc(e.detail) : ""}</span></div>`).join("");
+
+  /* §15 — RECORD INFORMATION. Ids only: this section says WHICH rows the
+     document reproduced, never any of their contents again. */
+  const RI = P.record_info || {};
+  const riRows = [
+    crRow2("Case number", RI.case_no),
+    crRow2("Packet generated", crWhen(C.generated_at)),
+    crRow2("Generated by", C.generated_by),
+    crRow2("Intake / submission ID", RI.submission_id),
+    crRow2("Rate sheet document ID", RI.rate_sheet_doc_id),
+    crRow2("Rate sheet content hash", RI.rate_sheet_hash),
+    crRow2("Acceptance submission ID", RI.acceptance_submission_id),
+    crRow2("Payment record IDs", (RI.payment_ids || []).join(", ")),
+    crRow2("Refund record IDs", (RI.refund_ids || []).join(", ")),
+    crRow2("Investigation day IDs", (RI.day_ids || []).join(", ")),
+    crRow2("Documents on this matter", (RI.document_ids || []).length || ""),
+    crRow2("Evidence records", RI.evidence_count),
+  ].join("");
+
   const doc = `<div id="crpdoc" class="crp-doc">
     <h1 class="crp-h1">${esc(C.firm || "")}</h1>
     <p class="crp-sub">${esc(C.title || "")}</p>
@@ -20613,7 +20773,9 @@ function crPacketHtml(){
     ${crRow2("Date opened", crWhen(C.opened_at))}
     ${crRow2("Date closed", crWhen(C.closed_at))}
     ${crRow2("Packet generated", crWhen(C.generated_at))}
+    ${crRow2("Generated by", C.generated_by)}
     <p class="crp-sub">${esc(C.note || "")}</p>
+    ${tlRows ? `<h2>Record timeline</h2>${tlRows}` : ""}
     <h2>Rate sheet as sent</h2>${sheetSection}
     <h2>Associated acceptance record</h2>${acceptSection}
     <h2>Submitted intake</h2>${intakeSection}
@@ -20622,6 +20784,7 @@ function crPacketHtml(){
     <h2>Work record</h2>${workSection}
     <h2>Send record</h2>${sendSection}
     <h2>Evidence and files</h2>${fileRows || `<p class="crp-none">No files recorded on this matter.</p>`}
+    <h2>Record information</h2>${riRows}
     <p class="crp-foot">${esc(C.case_no || "")} &middot; generated
       ${esc(crWhen(C.generated_at))} &middot; ${esc(C.firm || "")}</p>
   </div>`;
@@ -20636,9 +20799,19 @@ function crPacketHtml(){
         <span class="uibox-s">What this packet contains, and what this matter has no record of.</span></div>
       ${pre}
       <div class="crp-acts">
-        <button class="btn accent" data-act="crPacketPdf">Generate PDF</button>
+        <button class="btn accent" data-act="crPacketPdf">${
+          CR_PACKET_MADE ? "Save / Download PDF again" : "Generate PDF"}</button>
         <button class="btn sm ghost" data-act="crPacketPrint">Print</button>
+        <button class="btn sm ghost" data-act="crPacketClose">Cancel</button>
       </div>
+    </div>
+    ${/* §24 — the history sits under the actions rather than above them: what
+         you are about to do comes before what you have done. */""}
+    <div class="uibox">
+      <div class="uibox-h"><span class="uibox-t">GENERATED PACKETS</span>
+        <span class="uibox-s">Every packet built from this matter. Records are kept; the PDF is
+          not stored by the portal.</span></div>
+      ${packets}
     </div>
     ${doc}
   </div>`;
@@ -22318,6 +22491,17 @@ function billingPanel(s, a){
           ? `<button class="btn sm ghost" data-act="createInvoiceAuth" data-case="${esc(WS_CASE)}">Create from ${s.kind === "claims" ? "authorization" : "retainer"}</button>` : ""}
       </div>
     ${finalCloseoutPanel(s)}
+    ${/* §2 — THE SECOND DOOR, WITHOUT A SECOND FEATURE. The packet is most
+         wanted where a case is being closed or disputed, so Billing & closing
+         gets a way in — but it is the SAME act, the same screen and the same
+         route as the Client Record's, so there is one implementation and two
+         doors. Admin-only by the same test the panels above it use. */""}
+    ${ME.role === "admin" ? `<div class="uibox">
+      <div class="uibox-h"><span class="uibox-t">CLIENT RECORD PACKET</span>
+        <span class="uibox-s">Complete case documentation / dispute record.</span></div>
+      <div class="crp-acts">
+        <button class="btn sm ghost" data-act="crPacket">Build Client Record Packet</button>
+      </div></div>` : ""}
     ${closurePanel()}
     ${retentionPanel()}
     ${archivePanel()}

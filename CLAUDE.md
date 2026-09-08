@@ -955,6 +955,33 @@ send-shaped verbs over every visible control on the screen and requires zero.
 **THE DOOR IS IN THE CLIENT RECORD AREA AND NOT ON HOME** — the packet is about
 one case, and a door on Home would have to ask which. Asserted from both sides.
 
+**EVERY GENERATION IS A ROW, AND A ROW IS NEVER OVERWRITTEN** (the fuller brief,
+D13–D19). `packet_generation` records the packet and not its contents — the
+filename, the digest of the file the operator received, the exact rate-sheet
+document and its hash, the submission, the payment/refund/day ids. A
+regeneration is a NEW row; there is no UPDATE and no DELETE in the route and a
+source pin says so. **The digest is taken in the BROWSER**, because the Worker
+never sees the PDF, and a value that is not a SHA-256 is refused by shape rather
+than stored. **The record is written AFTER the file exists** — a row written
+first would claim a packet the writer then failed to produce — and a failed
+record is reported beside the successful download rather than turning it into an
+error.
+
+**THE PACKET REPRODUCES THE ACCEPTED DOCUMENT, not the newest send.** A packet
+showing a later rate sheet while the signature belongs to an earlier one is the
+single most misleading thing it could do; the other sends stay in the delivery
+record. Proven with two sheets carrying different figures on one case.
+
+**THE CASE TIMELINE GETS ONE LINE AND NO IDS** — what, who, when. The technical
+ids stay in the packet's own record, which is the brief's own distinction, and a
+FAILED generation is kept as a row but is not a case event.
+
+**DOWNLOAD-ONLY, AND THE SCREEN SAYS SO.** The PDF is not stored: the brief's
+own preferred behaviour is generate, hash, save, retain the metadata and source
+ids. **Email is not built and the reason is a fact** — `sendMail` takes
+`{to, subject, text, html}` and has no attachment support, so adding one means
+changing the single sender every send route uses.
+
 **Two defects the suite found in my own composer**, both worth the run: the
 intake's NOT AVAILABLE YET list was built by looking sideways from the value
 keys, so a payload carrying only a `<field>_status` reported nothing; and the

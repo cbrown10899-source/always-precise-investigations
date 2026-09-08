@@ -2108,3 +2108,41 @@ CREATE TABLE IF NOT EXISTS document_record_copy (
   sent_at TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_doccopy_doc ON document_record_copy(doc_id, id DESC);
+
+-- ===========================================================================
+-- EVERY CLIENT RECORD PACKET THAT WAS GENERATED (owner brief 2026-09-08 §16)
+--
+-- APPEND-ONLY, AND A REGENERATION IS A NEW ROW. "Never overwrite historical
+-- packet-generation records" is the owner's own line, and it is the whole
+-- reason this is a table rather than a column on the case: two packets built
+-- from the same case a month apart are two different documents, and the second
+-- one existing must not erase the fact that the first was handed to a bank.
+--
+-- IT RECORDS THE PACKET, NOT THE PACKET'S CONTENTS. The source IDs say which
+-- records the document was compiled from — the exact rate-sheet document, the
+-- submission, the payments, the closeout — so a packet can be tied back to the
+-- rows it reproduced without this table storing a second copy of any of them.
+-- The PDF itself is composed in the operator's own browser and downloaded; the
+-- hash is of the file they actually received.
+--
+-- `status` carries no CHECK, the Unit 7 rule: a fifth outcome is an ordinary
+-- Worker edit rather than the non-idempotent table rebuild schema.sql cannot
+-- perform on a live database.
+CREATE TABLE IF NOT EXISTS packet_generation (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  packet_id     TEXT    NOT NULL UNIQUE,  -- stable public id, 128-bit random
+  case_no       TEXT    NOT NULL,
+  filename      TEXT    NOT NULL,
+  content_hash  TEXT,                     -- SHA-256 of the PDF the owner received
+  status        TEXT    NOT NULL,         -- generated | failed
+  detail        TEXT,                     -- why, when it failed
+  doc_id        TEXT,                     -- the exact rate-sheet document reproduced
+  doc_hash      TEXT,                     -- that document's own content hash
+  submission_id INTEGER,                  -- the intake / acceptance record
+  source_json   TEXT,                     -- payment, refund, day and evidence ids
+  sections_json TEXT,                     -- what the packet said it contained
+  generated_by  INTEGER REFERENCES users(id),
+  generated_name TEXT,                    -- who, as the packet itself printed it
+  generated_at  TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_packetgen_case ON packet_generation(case_no, id DESC);

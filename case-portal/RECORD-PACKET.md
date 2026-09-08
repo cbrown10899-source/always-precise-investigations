@@ -91,12 +91,60 @@ dispute over a deleted case is exactly when this packet is wanted.
 by weight, one instance, and **not on Home** — the packet is about one case, and
 a door on Home would have to ask which. Asserted from both sides.
 
+## The fuller brief (2026-09-08, second pass) — D13–D19
+
+**D13 — EVERY GENERATION IS A ROW, AND A ROW IS NEVER OVERWRITTEN.**
+`packet_generation` records the packet, not its contents: filename, the digest
+of the file the operator received, the exact rate-sheet document and its own
+hash, the submission, the payment/refund/day ids, and what the preview said was
+included. A regeneration is a NEW row — the owner's own line. There is no
+UPDATE and no DELETE in the route, and a source pin says so.
+
+**D14 — THE DIGEST IS TAKEN IN THE BROWSER, because that is where the PDF
+exists.** The Worker never sees the file. A value that is not a SHA-256 is
+refused BY SHAPE and the response answers `hash_recorded: false` rather than
+storing junk as though it were real — the `evidence_integrity` rule.
+
+**D15 — THE RECORD IS WRITTEN AFTER THE FILE EXISTS.** A row written first
+would claim a packet the writer then failed to produce. It also cannot cost the
+download: the file is already on disk when the record is attempted, so a failed
+record is reported beside the successful download rather than turning it into
+an error.
+
+**D16 — THE PACKET REPRODUCES THE ACCEPTED DOCUMENT** (§25F), not the newest
+send. A packet showing a later rate sheet while the signature belongs to an
+earlier one is the single most misleading thing it could do. The other sends
+stay in the delivery record.
+
+**D17 — THE CASE TIMELINE GETS ONE LINE, AND NO IDS** (§22). What, who, when.
+The technical ids stay in the packet's own record, which is the brief's own
+distinction. A FAILED generation is kept as a row but is not a case event —
+"somebody's download did not finish" is not part of the case's story.
+
+**D18 — DOWNLOAD-ONLY, AND SAID SO ON SCREEN** (§17). The brief's *preferred
+behavior* is exactly this: generate, hash, the owner saves it, and the
+generation metadata plus source ids are retained. The PDF itself is not stored,
+because putting a signature-bearing document into Dropbox is a new artifact
+class and a decision of its own. The GENERATED PACKETS box states it in words
+rather than leaving it to be assumed.
+
+**D19 — EMAIL IS NOT BUILT, AND THE REASON IS A FACT** (§20). `sendMail` takes
+`{to, subject, text, html}` and has **no attachment support**. Adding one means
+changing the single sender every send route uses, and uploading the
+browser-built PDF to the Worker so it has bytes to attach. That is the
+disproportionate case §20 anticipates. Building it later is its own unit with
+its own confirmation, and it must never be silent.
+
 ## Filename
 
-`API-CASE-<case number>-Client-Record-Packet-<YYYY-MM-DD>.pdf`
+`<case number>-Client-Record-Packet-<YYYY-MM-DD>.pdf`
 
-The date is the day the packet was generated, which is what the cover says too,
-so the filename and the document agree.
+Case numbers already begin `API-`, so the first cut's own `API-CASE-` prefix
+stuttered it twice; the owner's shape is `API-[CASE-NUMBER]-…`, which the case
+number itself satisfies. The date is the day the packet was generated, which is
+what the cover says too, so the filename and the document agree — and a second
+packet the same day gets `-2`, counted from the generation records, so two
+downloads never land on one name in a folder.
 
 ## Deliberately excluded
 
