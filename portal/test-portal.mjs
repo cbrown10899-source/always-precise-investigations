@@ -20202,6 +20202,11 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
 {
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
+  /* THE STRIP IS HOME'S. `signIn` lands every section on Cases, so a section
+     that measures the launcher has to walk to the screen it lives on — at the
+     default width, before `read()` starts shrinking the viewport, because
+     under 900px the rail is behind the burger. */
+  await goHome(page);
 
   const read = async (w, h) => {
     await page.setViewportSize({ width: w, height: h });
@@ -21747,6 +21752,7 @@ section('My Portal: two sign-ins, two layouts, one shared caseload');
      unhides, the second admin's portal does not move. */
   const pageA = await newPage();
   await signIn(pageA, 'trever', 'AdminPassword1x');
+  await goHome(pageA);          // the quick actions are Home's; signIn lands on Cases
   await pageA.waitForTimeout(900);
 
   /* FACTORY VIEW (CEO charter Mission 2): the Needs-assignment card is not
@@ -21805,6 +21811,7 @@ section('My Portal: two sign-ins, two layouts, one shared caseload');
   /* B signs in on their own context: the FACTORY view, untouched by A. */
   const pageB = await newPage();
   await signIn(pageB, 'brother', 'BrotherPass2026x');
+  await goHome(pageB);
   await pageB.waitForTimeout(900);
   const bView = await pageB.evaluate(() => ({
     strip: [...document.querySelectorAll('.qtapps [data-qt]')].map(b => b.dataset.qt).slice(0, 3),
@@ -21825,6 +21832,7 @@ section('My Portal: two sign-ins, two layouts, one shared caseload');
   await pageA.evaluate(() => { const b = document.querySelector('[data-act="logout"]'); if (b) b.click(); });
   await pageA.waitForTimeout(1500);
   await signIn(pageA, 'brother', 'BrotherPass2026x');
+  await goHome(pageA);
   await pageA.waitForTimeout(900);
   const sameTab = await pageA.evaluate(() =>
     [...document.querySelectorAll('.qtapps [data-qt]')].map(b => b.dataset.qt)[0]);
