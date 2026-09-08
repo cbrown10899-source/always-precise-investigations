@@ -1903,7 +1903,11 @@ section('The private send wizard offers payment options; the carrier one never d
      has(preview, 'does not mark the retainer paid'));
 
   // Unticking payment entirely reads as Not included.
-  await page.locator('.btn', { hasText: 'Back' }).click();
+  /* SCOPED TO THE WIZARD. A bare `.btn` with "Back" in it matched exactly one
+     control until the destination screens gained their own `← Back to Home`,
+     which sits behind this modal on the same page — strict mode then refused
+     the click rather than picking the wrong one, which is the right failure. */
+  await page.locator('.amsheet [data-act="wizStep"]', { hasText: 'Back' }).click();
   await page.waitForTimeout(400);
   await page.locator('#wiz_pay').uncheck();
   await page.waitForTimeout(400);
@@ -2052,7 +2056,11 @@ section('A private retainer is chosen before the sheet goes, and never reset by 
      sits on Custom with that amount in the box, rather than on a preset. The
      property is unchanged and BOTH halves are asserted, because a selector
      reading Custom over an empty box would be no better than the default. */
-  await page.locator('.btn', { hasText: 'Back' }).click();
+  /* SCOPED TO THE WIZARD. A bare `.btn` with "Back" in it matched exactly one
+     control until the destination screens gained their own `← Back to Home`,
+     which sits behind this modal on the same page — strict mode then refused
+     the click rather than picking the wrong one, which is the right failure. */
+  await page.locator('.amsheet [data-act="wizStep"]', { hasText: 'Back' }).click();
   await page.waitForTimeout(600);
   const caught = await page.evaluate(() => ({
     pick: (document.getElementById('wiz_ret') || {}).value,
@@ -19927,7 +19935,7 @@ section('Every direct-launch destination has a visible way back, at the tap floo
     await page.evaluate(() => { SHEET_WIZ = null; VIEW = 'list'; TAB = 'dashboard'; paint(); });
     await page.waitForTimeout(400);
     ok(`${w}: Home itself carries no Back`,
-       await page.locator('#app > .pagebar .close').count() === 0);
+       await page.locator('#app > .pagebar .homeback').count() === 0);
 
     /* ---- the four tab destinations ---------------------------------- */
     for (const [qt, label, tab] of [['newlead', 'New Intake', 'newlead'],
@@ -19938,7 +19946,7 @@ section('Every direct-launch destination has a visible way back, at the tap floo
       await page.locator(`.qtapp[data-qt="${qt}"]`).click();
       await page.waitForTimeout(900);
       const back = await page.evaluate(() => {
-        const b = document.querySelector('#app > .pagebar .close');
+        const b = document.querySelector('#app > .pagebar .homeback');
         if (!b) return null;
         const r = b.getBoundingClientRect();
         return { text: b.textContent.trim(), tab: b.dataset.tab, h: Math.round(r.height),
@@ -19958,11 +19966,11 @@ section('Every direct-launch destination has a visible way back, at the tap floo
       ok(`${w}: ${label} draws it ABOVE the tool's own heading`,
          back && head !== null && back.y < head, JSON.stringify({ back: back && back.y, head }));
 
-      await page.locator('#app > .pagebar .close').click();
+      await page.locator('#app > .pagebar .homeback').click();
       await page.waitForTimeout(800);
       const home = await page.evaluate(() => ({
         tab: TAB, art: document.querySelectorAll('.qtools .qtapp.uiart').length,
-        back: document.querySelectorAll('#app > .pagebar .close').length,
+        back: document.querySelectorAll('#app > .pagebar .homeback').length,
       }));
       ok(`${w}: ${label} -> Back -> art Home, and the Back is gone there`,
          home.tab === 'dashboard' && home.art === 7 && home.back === 0, JSON.stringify(home));
@@ -20083,7 +20091,7 @@ section('An investigator is offered no Back to a screen that is already their Ho
   await page.waitForTimeout(500);
   const onHome = await page.evaluate(() => ({
     tab: TAB, homes: homeTabs(),
-    back: document.querySelectorAll('#app > .pagebar .close').length,
+    back: document.querySelectorAll('#app > .pagebar .homeback').length,
   }));
   ok('their assignments list is a Home, so it carries no Back',
      onHome.back === 0 && onHome.homes.includes(onHome.tab), JSON.stringify(onHome));
@@ -20091,14 +20099,14 @@ section('An investigator is offered no Back to a screen that is already their Ho
   await page.waitForTimeout(600);
   ok('and so is Today, their phone Home',
      await page.evaluate(() => TAB === 'today'
-       && document.querySelectorAll('#app > .pagebar .close').length === 0));
+       && document.querySelectorAll('#app > .pagebar .homeback').length === 0));
   /* AND A SCREEN THAT IS NOT A HOME CARD'S DESTINATION GETS NONE EITHER —
      the control belongs to the launcher's own doors, not to every screen. */
   await page.locator('.tabs button', { hasText: 'Reports' }).first().click();
   await page.waitForTimeout(600);
   ok('a screen no Home card lands on carries none',
      await page.evaluate(() => TAB === 'myreports'
-       && document.querySelectorAll('#app > .pagebar .close').length === 0));
+       && document.querySelectorAll('#app > .pagebar .homeback').length === 0));
   await page.close();
 }
 

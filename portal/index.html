@@ -1998,6 +1998,9 @@
      bug that was somewhere else. Fix what is broken. */
   :not(.casepage) > .pagebar .close{position:static;right:auto;top:auto;
     min-height:44px;display:inline-flex;align-items:center;}
+  /* The Home back carries the same floor and the same in-flow layout without
+     borrowing the dialog X's class for it (owner, 2026-09-08). */
+  .pagebar .homeback{min-height:44px;display:inline-flex;align-items:center;}
   .xrev{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:.8rem;}
   .xrev label{display:flex;gap:4px;align-items:center;white-space:nowrap;}
   .tag.xr{background:var(--ok-bg);color:var(--ok-ink);} .tag.xb{background:var(--info-bg-2);color:var(--info-ink);}
@@ -6334,7 +6337,14 @@ function homeBackHtml(){
   /* `homes[0]` is the screen the boot lands this role on, which is the one the
      Home CARD came from. The phone's own Home button is the second entry and
      is a destination, not a way back. */
-  return `<div class="pagebar"><button class="btn sm ghost close" data-act="tab"
+  /* `.homeback`, NOT `.close` — A CLASS NAME IS A CONTEST, and this one was
+     measured losing. The other pagebar backs wear `.close` because they were
+     written before it was the DIALOG X's class; borrowing it here put a
+     second `.close` on screens that also hold a dialog, and `.close` is a
+     selector sixteen places in the suite click blind. The appearance comes
+     from `.btn sm ghost` either way; all `.close` ever contributed to a
+     pagebar back was an absolute position that the rule below it had to undo. */
+  return `<div class="pagebar"><button class="btn sm ghost homeback" data-act="tab"
     data-tab="${esc(homes[0])}">&larr; Back to Home</button></div>`;
 }
 
