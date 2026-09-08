@@ -993,6 +993,56 @@ you already are. That zero is the owner's complaint stated as a number — the
 strip did render on the Rate Sheets list before this unit, but `onHome` was
 false there, so what came back after Back was a PLAIN copy of Home.
 
+**EVERY DESTINATION HAS A VISIBLE WAY BACK, AND THE SET IS DERIVED** (owner,
+2026-09-08: *"some destination screens do not have a visible Back button and
+rely on the bottom Home nav instead ... do not require the user to hunt for
+Home in the bottom nav"*).
+
+**THE AUDIT SET THE SCOPE, not the brief's list.** Measured at 390 and 320
+before anything was written: three of the seven already had a proper control,
+two had one under the portal's own 44px floor, and two had nothing at all.
+
+| destination | before | after |
+| --- | --- | --- |
+| Rate Sheet wizard | `.amx` **30×28** | floored **44×44** |
+| New Intake chooser | **nothing** | `.pagebar` Back to Home |
+| Private Intake | *Change type* only | Back to Home beside it |
+| View Intakes | **nothing** | `.pagebar` Back to Home |
+| Active Surveillance | `.sv-x` **128×33** | floored **128×44** |
+| Timestamp Photo | `.vst-x` 74×44 | untouched |
+| Timestamp Video | `.vst-x` 74×44 | untouched |
+
+**`homeCardTabs()` READS `QT`, so a card added there gets its way back for
+free** and a card whose destination changes takes its Back with it — the
+`wsMore()`-by-subtraction rule at the navigation layer. `ACT_LANDS` names the
+two acts that land on a screen without navigating by tab id (`sheetQuick` →
+`sheets`, `nlKind` → `newlead`), beside the only thing that reads them. **The
+cards with their own root are deliberately absent**: a `.pagebar` behind a
+full-screen tool is a control nobody can reach.
+
+**IT IS THE PORTAL'S EXISTING BACK, not a new one.** `.pagebar` +
+`.btn sm ghost close` is what the case page and Clients & Firms already draw,
+so `:not(.casepage) > .pagebar .close` supplies the static positioning and the
+44px floor by rule rather than by a fresh declaration. Measured 146×44 in flow
+above the tool's own heading at 390, 320 and 1200.
+
+**TWO FAMILIES, EACH INTERNALLY CONSISTENT, and that is deliberate.** Office
+screens carry a top-LEFT `.pagebar` back; the full-screen dialogs — the send
+wizard, the field view, both timestamp tools — carry a labelled close top-RIGHT
+in their own sticky head. Moving the second family would restyle the field view
+and the timestamp tools, which is not what "add or preserve" asked for.
+
+**THE PADDING PAID FOR THE FIELD FLOOR, so the header did not grow.**
+`.sv-head` went 14px → 8px as `.sv-x` gained its 44px minimum: 14+33+14 = 61
+became 8+44+8 = 60. Measured both ways, because *"it should not have moved"* is
+exactly the claim that goes wrong. At 320 the control already wrapped to 54px,
+so that header got 11px **shorter**.
+
+**NATIVE BACK CANNOT LOOP**, and that is the absence of code rather than a
+guard: this page pushes no history for tabs (`replaceState` appears twice, both
+to strip a token from the address bar). A walk of four destinations is asserted
+to add no history entries.
+
 **ONE STRIP NOW, NOT TWO.** The desktop `.qtool` chip row is gone; the card
 system draws at every width, four across and landscape on desktop, two across
 and square on a phone. §9 asked for it in the owner's own words. The desktop set
