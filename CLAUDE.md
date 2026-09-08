@@ -939,19 +939,42 @@ SUPERSEDES the "doors belong to every screen" half of the decision above).
 
 `quickToolsHtml()` rendered from `shell()`, so tapping an art card landed on a
 screen that **redrew the same grid above the tool** — a duplicate Start
-Something layer between the card and the work. Measured at 390: four of the
-seven — Rate Sheet, New Intake, Private Intake, View Intakes — did exactly
-that. The other three were already direct: Active Surveillance takes its own
-full screen, and both timestamp tools open the file picker itself (the chooser
-fires on the first tap, measured).
+Something layer between the card and the work. Measured with a control — the
+same page, same fixture, with only this rule removed — four of the seven did
+exactly that, and the cost was not taps but **a screen and a half of scroll**:
+New Intake, Private Intake and View Intakes each opened with their own heading
+at **y=790 on a 844-tall phone** and **y=870 on a 568-tall 320px screen**,
+under a duplicate grid **667px / 747px tall**. They open at **y=111** now. The
+Rate Sheet's own form is a modal and always sat at the top (117 / 84,
+unchanged); its defect was the way back.
 
-**`homeTab()` IS PER ROLE, AND THAT IS LOAD-BEARING.** The default tab is
-`cases`, flipped to `dashboard` only for an ADMIN — an investigator has no
-Dashboard at all. Scoping the strip to `"dashboard"` would have withdrawn it
-from that role entirely, leaving the timestamp tools and Active Surveillance
-behind the burger, which is the 2026-09-04 incident verbatim. Each role keeps
-the launcher on the screen it lands on; the ART stays the dashboard's, because
-an investigator's landing screen is the Cases LIST and §3 keeps those plain.
+The other three were already direct and are untouched: Active Surveillance
+takes its own full screen, and both timestamp tools open the file picker itself
+— the chooser fires on the first tap, measured. **A probe once reported those
+two as doing nothing**, which was the probe swallowing the chooser with
+`setFiles([])` rather than the product; do not repeat that reading.
+
+**`homeTabs()` IS PER ROLE AND RETURNS A SET, AND BOTH HALVES WERE PAID FOR.**
+The default tab is `cases`, flipped to `dashboard` only for an ADMIN — an
+investigator has no Dashboard at all. Scoping the strip to `"dashboard"` would
+have withdrawn it from that role entirely, leaving the timestamp tools and
+Active Surveillance behind the burger, which is the 2026-09-04 incident
+verbatim.
+
+**AND `cases` ALONE WAS STILL HALF THE ANSWER.** The field has TWO homes: the
+boot lands them on their assignments list, and the **phone's bottom nav has a
+Home button of its own** which for that role points at **`today`**. So the
+first fix reintroduced the same incident one screen over — press Home on a
+phone, land on a screen with no launcher on it. The second entry is therefore
+**read off `MNAV`** rather than written down again: that table's first item is
+the phone's Home by construction, so the two cannot drift. Measured, both
+branches, five screens each: admin `['dashboard']` draws it on the dashboard
+and nowhere else; investigator `['cases','today']` draws it on both and nowhere
+else. The suite walks the SET per role and presses the phone's own Home button,
+because that is the only control that proves the `MNAV` wiring.
+
+The ART stays the dashboard's, because an investigator's landing screen is the
+Cases LIST and §3 keeps those plain.
 
 **BACK RETURNS TO AN ART HOME, and the rate sheet was the one that did not.**
 `sheetQuick` moves the tab to `sheets` so the wizard has a screen, and closing
@@ -962,6 +985,13 @@ still returns to that list. An absent origin means "stay put", which is what
 every other opener wants. The X and the backdrop are TWO DOORS ON ONE HANDLER
 — `.amwrap` and `.amx` both carry `data-act="wizClose"` — so the restore
 cannot apply to one and not the other; the suite clicks the X.
+
+**MEASURED AGAINST THE OLD HANDLER'S OWN BODY**, at 390 and 320: closing used
+to leave `TAB` on `sheets` with **zero art cards on screen** and **one more tap
+to reach Home**; it now lands on `dashboard` with **seven**, and Home is where
+you already are. That zero is the owner's complaint stated as a number — the
+strip did render on the Rate Sheets list before this unit, but `onHome` was
+false there, so what came back after Back was a PLAIN copy of Home.
 
 **ONE STRIP NOW, NOT TWO.** The desktop `.qtool` chip row is gone; the card
 system draws at every width, four across and landscape on desktop, two across
