@@ -8709,38 +8709,70 @@ section('The four field actions are untouched');
 
 /* OWNER REPORT, 2026-08-18: "the live dashboard does not visibly show the
    timestamp video quick tool". It rendered — but only from `dashView()`, which
-   is a condition that hides it in two real ways: an investigator has no
-   Dashboard at all, and under 900px the navigation rail (the other copy) is
-   behind the burger, so on a phone anywhere but the Dashboard the only door was
-   inside a menu. It is drawn from the shell now. */
-section('Timestamp Video is on every top-level screen, for both roles');
+   hid it in two real ways: an investigator has no Dashboard at all, and under
+   900px the navigation rail (the other copy) is behind the burger, so on a
+   phone anywhere but the Dashboard the only door was inside a menu.
+
+   THE ANSWER TO THAT MOVED ON 2026-09-08, AND THIS SECTION MOVED WITH IT. The
+   fix then was to draw the strip from `shell()` — every top-level screen, both
+   roles. The owner has now corrected the cost of that: tapping an art Home
+   card landed on a screen that REDREW the same launcher above the tool, "which
+   defeats the purpose of the art Home". So the strip renders on the screen
+   each role LANDS ON and nowhere else.
+
+   WHAT STILL PROTECTS THE ORIGINAL INCIDENT, and is what this section asserts
+   now: the tool is on the screen the role opens the portal to — NOT only in a
+   menu — for BOTH roles, which is the half that made it findable. `homeTab()`
+   is per role for exactly this reason: the default tab is `cases`, moved to
+   `dashboard` only for an admin, so scoping to "dashboard" would have taken
+   the door away from the investigator entirely.
+
+   WHAT IS HONESTLY DIFFERENT: away from home, on a phone, the navigation foot
+   is again the only door — behind the burger. That is a real consequence of
+   the owner's own instruction, it is asserted below rather than glossed, and
+   Home is one tap away on the bottom navigation. */
+section('The timestamp tool is on the screen each role lands on, and not redrawn elsewhere');
 {
-  for (const [who, pass, role, tabs] of [
-    ['trever', 'AdminPassword1x', 'admin', ['Dashboard', 'Cases', 'Intakes', 'Rate Sheets']],
-    ['dana', 'FieldWork2026x', 'investigator', ['My assignments', 'Today', 'Reports']],
+  for (const [who, pass, role, home, away] of [
+    ['trever', 'AdminPassword1x', 'admin', 'Dashboard', ['Cases', 'Intakes', 'Rate Sheets']],
+    ['dana', 'FieldWork2026x', 'investigator', 'My assignments', ['Today', 'Reports']],
   ]) {
     const page = await newPage();
     await signIn(page, who, pass);
     await page.waitForTimeout(400);
-    for (const t of tabs) {
-      await page.locator('.tabs button', { hasText: t }).first().click();
-      await page.waitForTimeout(500);
-      /* EXACTLY ONE *VISIBLE* DOOR. Mobile Unit B renders two strips — the
-         desktop chip row and the phone card strip — and hides one at every
-         width, so the raw count is 2 by design and "one visible" is the
-         stronger claim: a hidden element is out of the accessibility tree
-         entirely, so there is one door and one tab stop at any size. */
-      const n = await page.locator('.qtools [data-act="vstOpen"]:visible').count();
-      ok(`${role} · ${t} carries exactly one visible quick tool`, n === 1, String(n));
-    }
+    await page.locator('.tabs button', { hasText: home }).first().click();
+    await page.waitForTimeout(600);
+    /* EXACTLY ONE *VISIBLE* DOOR on the home screen. A hidden element is out
+       of the accessibility tree entirely, so "one visible" is the claim that
+       means one door and one tab stop at any width. */
+    const n = await page.locator('.qtools [data-act="vstOpen"]:visible').count();
+    ok(`${role} · ${home} (their home) carries exactly one visible quick tool`,
+       n === 1, String(n));
     /* ONE WORDING. Two spellings of the same control meant a find-in-page for
-       what the menu says did not match what the screen shows. */
+       what the menu says did not match what the screen shows. Read on HOME,
+       which is the only screen that has it — reading it after walking away is
+       what crashed this section when the strip first moved. */
     const label = await text(page, '.qtools [data-act="vstOpen"]:visible');
     ok(`and the ${role}'s reads Timestamp Video`, /Timestamp Video/.test(label), label);
     const navLabel = await page.locator('.navfoot [data-act="vstOpen"]').innerText();
     ok(`matching the navigation exactly (${role})`,
        label.replace(/\s+/g, ' ').includes('Timestamp Video')
        && navLabel.replace(/\s+/g, ' ').includes('Timestamp Video'), `${label} | ${navLabel}`);
+    /* AND THE LAUNCHER IS NOT REDRAWN ON THE DESTINATIONS — the owner's own
+       correction, asserted as the absence it is. */
+    for (const t of away) {
+      await page.locator('.tabs button', { hasText: t }).first().click();
+      await page.waitForTimeout(500);
+      const away_n = await page.locator('.qtools [data-act="vstOpen"]:visible').count();
+      ok(`${role} · ${t} shows its own content, with no launcher redrawn above it`,
+         away_n === 0, String(away_n));
+      /* THE ALWAYS-AVAILABLE DOOR IS STILL THERE. It is in the navigation
+         foot on every screen for both roles — on a phone that is inside the
+         drawer, which is the honest cost of the change and why the home
+         screen keeps its card. */
+      ok(`${role} · ${t} still reaches the tool from the navigation`,
+         await page.locator('.navfoot [data-act="vstOpen"]').count() === 1);
+    }
     await page.close();
   }
 }
@@ -11870,9 +11902,10 @@ section('The mobile header is a control, not a glyph');
      what would catch a return to a scroller. */
   const qt = await page.evaluate(() => {
     const doc = document.documentElement;
-    /* ONE STRIP AT EVERY WIDTH since the 2026-09-07 HYBRID pass — the desktop
-       chip row is gone and the card strip is what draws everywhere, so there
-       is no longer a pair to choose between. */
+    /* ONE STRIP since the 2026-09-07 HYBRID pass — the desktop chip row is
+       gone, so there is no longer a pair to choose between. It draws on the
+       role's HOME screen only (owner, 2026-09-08); this section signs in as an
+       admin and never leaves the dashboard, which is where it is. */
     const g = document.querySelector('.qtools .qtapps');
     const tools = [...g.children];
     const btns = tools.map(x =>
