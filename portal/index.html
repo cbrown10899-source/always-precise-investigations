@@ -1505,7 +1505,14 @@
       box-shadow:0 6px 18px rgba(9,18,30,.35);}
   }
   .amhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}
-  .amx{background:none;border:0;font-size:1.5rem;line-height:1;cursor:pointer;color:var(--muted);padding:2px 8px;}
+  /* THE WIZARD'S OWN WAY BACK, AT THE TAP FLOOR (owner, 2026-09-08). Measured
+     30×28 at 390 and 320 — under the portal's own 44px floor, on the control
+     that closes the screen the owner opens most. `padding:2px 8px` cannot make
+     a box that size; a min box can, and `inline-flex` centres the glyph inside
+     it so nothing about how it LOOKS changes. The head grows from 28 to 44,
+     which is 16px inside a scrollable sheet. */
+  .amx{background:none;border:0;font-size:1.5rem;line-height:1;cursor:pointer;color:var(--muted);
+    padding:0;min-width:44px;min-height:44px;display:inline-flex;align-items:center;justify-content:center;}
   .amtabs{display:flex;gap:6px;margin-bottom:12px;}
   .amtab{flex:1;font:inherit;font-weight:800;padding:9px;border:1px solid var(--line);
     background:var(--panel);border-radius:9px;cursor:pointer;color:var(--muted);}
@@ -1561,7 +1568,11 @@
   body.surv{background:var(--field-bg);}
   .sv{position:fixed;inset:0;background:var(--field-bg);color:var(--field-ink);overflow-y:auto;
     padding:0 0 96px;-webkit-overflow-scrolling:touch;z-index:70;}
-  .sv-head{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--field-line-2);
+  /* THE PADDING PAYS FOR THE FLOOR, so the header does not grow. `.sv-x` was
+     33px tall at 390 — the field view's own controls carry a 44px floor and
+     this one did not. 14+33+14 = 61; 8+44+8 = 60, so the head is where it was
+     and the target is legal. Measured both ways rather than assumed. */
+  .sv-head{display:flex;align-items:center;gap:10px;padding:8px 16px;border-bottom:1px solid var(--field-line-2);
     position:sticky;top:0;background:var(--field-bg);z-index:2;}
   /* The case number is an identifier and reads as one — it must not break in
      the middle. It was wrapping as "API-20260815-" / "5002" on a phone, which
@@ -1570,7 +1581,8 @@
   .sv-head .case{color:var(--field-label);background:none;padding:0;font-size:.84rem;
     white-space:nowrap;font-variant-numeric:tabular-nums;}
   .sv-x{margin-left:auto;background:none;border:0;color:var(--field-label);font:inherit;font-size:.82rem;
-    font-weight:700;cursor:pointer;padding:6px 4px;}
+    font-weight:700;cursor:pointer;padding:6px 4px;
+    min-height:44px;display:inline-flex;align-items:center;justify-content:flex-end;}
   .sv-body{padding:18px 16px;max-width:640px;margin:0 auto;}
   .sv-day{font-size:.78rem;letter-spacing:.14em;text-transform:uppercase;color:var(--field-label);text-align:center;}
   /* Big enough to read at a glance from the driver's seat, small enough that
@@ -1986,6 +1998,9 @@
      bug that was somewhere else. Fix what is broken. */
   :not(.casepage) > .pagebar .close{position:static;right:auto;top:auto;
     min-height:44px;display:inline-flex;align-items:center;}
+  /* The Home back carries the same floor and the same in-flow layout without
+     borrowing the dialog X's class for it (owner, 2026-09-08). */
+  .pagebar .homeback{min-height:44px;display:inline-flex;align-items:center;}
   .xrev{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:.8rem;}
   .xrev label{display:flex;gap:4px;align-items:center;white-space:nowrap;}
   .tag.xr{background:var(--ok-bg);color:var(--ok-ink);} .tag.xb{background:var(--info-bg-2);color:var(--info-ink);}
@@ -4174,6 +4189,7 @@ function shell(inner){
      the document in order. */
   return `<h1 class="vh">Always Precise Investigations case portal</h1>
     <nav class="tabs" aria-label="Portal sections">${tabs}</nav>${schema}${problem}${
+    homeBackHtml()}${
     greetHtml()}${signedIntakeHtml()}${quickToolsHtml()}${
     summaryCards()}${inner}${
     SHEET_WIZ ? sheetWizardHtml() : ""}${PAY_SEND ? paySendHtml() : ""}${
@@ -6276,6 +6292,60 @@ function homeTabs(){
   const landing = role === "admin" ? "dashboard" : "cases";   // BOOTED, below
   const phone = ((MNAV[role] || [])[0] || [])[0];             // the bottom nav's own Home
   return phone && phone !== landing ? [landing, phone] : [landing];
+}
+
+/* ── BACK TO HOME, ON THE SCREENS A HOME CARD LANDS ON ──────────────────────
+   Owner, 2026-09-08: "some destination screens do not have a visible Back
+   button and rely on the bottom Home nav instead ... do not require the user
+   to hunt for Home in the bottom nav."
+
+   THE SET IS DERIVED FROM THE LAUNCHER, NEVER LISTED AGAIN. A card added to
+   `QT` gets its way back for free, and a card whose destination changes takes
+   its Back with it — the `wsMore()`-by-subtraction rule at the navigation
+   layer. Two lists of destinations is one list that goes stale.
+
+   WHAT IT DOES *NOT* COVER, because a proper control already exists there and
+   the brief says not to duplicate one: the send wizard (its own `.amx`, in the
+   modal head), Active Surveillance (`← The full portal`) and the two timestamp
+   tools (`.vst-x` Close, measured 74×44 at both widths). Those are full-screen
+   dialogs whose close sits top-right in their own sticky head; this is the
+   office screens' top-left `.pagebar` back, the shape the case page and
+   Clients & Firms already use. Each family is internally consistent. */
+/* TWO ACTS LAND ON A SCREEN WITHOUT NAVIGATING BY TAB ID, and both need their
+   way back: `sheetQuick` opens the send wizard over the Rate Sheets screen,
+   and the three intake kinds are the same door one step in. Named here, beside
+   the only thing that reads them, rather than as a second list elsewhere. The
+   acts with no entry — Active Surveillance, the two timestamp tools, the CEO
+   Bot — take over the screen with their own root and their own close, so a
+   `.pagebar` behind them would be a control nobody can reach. */
+const ACT_LANDS = {sheetQuick: "sheets", nlKind: "newlead"};
+function homeCardTabs(){
+  const out = new Set();
+  for(const id of [...QT_PHONE, ...QT_PHONE_MORE]){
+    const t = QT[id]; if(!t) continue;
+    if(t.act === "tab" && t.tab) out.add(t.tab);
+    else if(ACT_LANDS[t.act]) out.add(ACT_LANDS[t.act]);
+  }
+  return out;
+}
+function homeBackHtml(){
+  if(!ME) return "";
+  const homes = homeTabs();
+  /* Never on Home itself — a Back to where you are standing is noise, and for
+     an investigator BOTH of their homes are cards' destinations. */
+  if(homes.includes(TAB) || !homeCardTabs().has(TAB)) return "";
+  /* `homes[0]` is the screen the boot lands this role on, which is the one the
+     Home CARD came from. The phone's own Home button is the second entry and
+     is a destination, not a way back. */
+  /* `.homeback`, NOT `.close` — A CLASS NAME IS A CONTEST, and this one was
+     measured losing. The other pagebar backs wear `.close` because they were
+     written before it was the DIALOG X's class; borrowing it here put a
+     second `.close` on screens that also hold a dialog, and `.close` is a
+     selector sixteen places in the suite click blind. The appearance comes
+     from `.btn sm ghost` either way; all `.close` ever contributed to a
+     pagebar back was an absolute position that the rule below it had to undo. */
+  return `<div class="pagebar"><button class="btn sm ghost homeback" data-act="tab"
+    data-tab="${esc(homes[0])}">&larr; Back to Home</button></div>`;
 }
 
 /* ============ HOME: THE OWNER'S OWN FIRST SCREEN (owner brief 2026-09-06) ===
