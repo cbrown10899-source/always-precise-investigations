@@ -13601,9 +13601,22 @@ section('The timeline print region is its own, and adds no PDF writer');
      file three times, so the timeline's overrides come after everything they
      override — and its class names are its own rather than a contest with the
      activity log's `.tl`, which is what made `.qgrid` the third casualty. */
-  const lastMedia = src.lastIndexOf('@media(max-width:560px)');
-  ok('the timeline phone rules are in the last phone block',
-     lastMedia > 0 && src.indexOf('.tl2-i{grid-template-columns:1fr', lastMedia) > lastMedia);
+  /* THE PROPERTY IS "AFTER WHAT IT OVERRIDES", NOT "LAST IN THE FILE".
+     This asserted that the timeline's override followed the file's LAST
+     `@media(max-width:560px)` block, which was true only because the
+     timeline's block happened to be the last one when it was written — a
+     later unit adding a phone block at that same breakpoint for an unrelated
+     prefix made it fail while nothing about the timeline had moved. What
+     matters is that `.tl2-i`'s phone rule comes after `.tl2-i`'s own base
+     rule, inside a phone block, which is what source order can actually get
+     wrong. Measured that way it cannot be broken by a stranger's CSS. */
+  const tlBase = src.indexOf('.tl2-i{display:grid');
+  const tlPhone = src.indexOf('.tl2-i{grid-template-columns:1fr');
+  ok('the timeline phone rule comes after the base rule it overrides',
+     tlBase > 0 && tlPhone > tlBase, JSON.stringify({ tlBase, tlPhone }));
+  ok('and it is inside a phone block rather than at the top level',
+     tlPhone > 0 && src.lastIndexOf('@media(max-width:560px)', tlPhone) > tlBase,
+     String(src.lastIndexOf('@media(max-width:560px)', tlPhone)));
   const tlCss = (src.match(/UNIT 10 — the case timeline[\s\S]*?\n  @media print\{/) || [''])[0];
   ok('every timeline rule is under its own prefix',
      tlCss.length > 0 && (tlCss.match(/^  \.[a-z0-9-]+/gm) || [])
@@ -20145,6 +20158,232 @@ section('An investigator is offered no Back to a screen that is already their Ho
   ok('a screen no Home card lands on carries none',
      await page.evaluate(() => TAB === 'myreports'
        && document.querySelectorAll('#app > .pagebar .homeback').length === 0));
+  await page.close();
+}
+
+section('The Client Record Packet is built from what was preserved, and sends nothing');
+{
+  /* Owner brief 2026-09-08. The Worker suite proves the RECORDS are the stored
+     ones; this proves the screen — the entry point, the honest preview, a real
+     PDF out of the one writer, and the absence of any way to email it. */
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.evaluate(() => openCase('API-20260812-4002'));
+  await page.waitForTimeout(1400);
+
+  /* ---- §1 THE ENTRY POINT, in the Client Record area and nowhere else ---- */
+  const entry = await page.evaluate(() => {
+    const strip = document.querySelector('.clrec');
+    const btn = strip && strip.querySelector('[data-act="crPacket"]');
+    const r = btn ? btn.getBoundingClientRect() : null;
+    return { inStrip: !!btn, label: btn ? btn.textContent.trim() : '',
+             h: r ? Math.round(r.height) : 0,
+             anywhereElse: document.querySelectorAll('[data-act="crPacket"]').length };
+  });
+  ok('the packet door lives inside the Client Record area',
+     entry.inStrip === true && /Build Client Record Packet/i.test(entry.label),
+     JSON.stringify(entry));
+  ok('and there is exactly one of it', entry.anywhereElse === 1, String(entry.anywhereElse));
+  /* IT IS NOT ON HOME (§1). Asserted as the absence it is, on the screen the
+     brief names. */
+  await page.evaluate(() => { VIEW = 'list'; TAB = 'dashboard'; paint(); });
+  await page.waitForTimeout(500);
+  ok('the packet door is NOT on Home',
+     await page.locator('[data-act="crPacket"]').count() === 0);
+
+  await page.evaluate(() => openCase('API-20260812-4002'));
+  await page.waitForTimeout(1300);
+  await page.locator('[data-act="crPacket"]').click();
+  await page.waitForTimeout(1400);
+
+  /* ---- §13 THE PREVIEW SAYS WHAT IS AND IS NOT THERE -------------------- */
+  const prev = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.crp-pre')].map(r => ({
+      label: (r.querySelector('span:nth-child(2)') || {}).textContent || '',
+      mark: (r.querySelector('.crp-mk') || {}).textContent.trim(),
+      on: !!(r.querySelector('.crp-mk.on')),
+    }));
+    return { rows, sections: (CR_PACKET || {}).sections || null,
+             doc: !!document.getElementById('crpdoc') };
+  });
+  ok('the preview lists every section of the packet', prev.rows.length === 8,
+     JSON.stringify(prev.rows.map(r => r.label)));
+  /* THE TICKS ARE THE WORKER'S OWN ANSWER, not the page's opinion — otherwise
+     a preview could promise a section the document does not contain. */
+  const byLabel = Object.fromEntries(prev.rows.map(r => [r.label.trim(), r.on]));
+  ok('and each tick matches the Worker’s section flag',
+     byLabel['Rate Sheet'] === prev.sections.rate_sheet
+     && byLabel['Intake'] === prev.sections.intake
+     && byLabel['Work Activity'] === prev.sections.work,
+     JSON.stringify({ byLabel, s: prev.sections }));
+  ok('a section with no record shows a dash, never a tick',
+     prev.rows.filter(r => !r.on).every(r => r.mark === '—'),
+     JSON.stringify(prev.rows.filter(r => !r.on)));
+  ok('the document itself is on screen beneath the preview', prev.doc === true);
+
+  /* ---- §2 THE COVER, AND WHAT IT MUST NOT SAY -------------------------- */
+  const docText = await page.evaluate(() =>
+    document.getElementById('crpdoc').innerText);
+  ok('the cover names the firm and the case',
+     /Always Precise Investigations/.test(docText) && /API-20260812-4002/.test(docText),
+     docText.slice(0, 160));
+  ok('and carries the owner’s own note',
+     /This packet compiles records stored by the portal for this matter\./.test(docText));
+  /* NO AGGRESSIVE LANGUAGE (§2). The brief names these by example, and the
+     assertion is over the DOCUMENT rather than the source, because that is
+     what a client's bank would read. */
+  for (const bad of ['proof client is liable', 'chargeback defense', 'legally binding',
+                     'guaranteed']) {
+    ok(`the packet never says "${bad}"`, !new RegExp(bad, 'i').test(docText));
+  }
+  /* §12'S SENTENCE IS NOT PRINTED WHEN THE SNAPSHOT IS THERE — it means one
+     specific state, and a document that always said it would say nothing. */
+  ok('and it does not claim a missing snapshot when one is present',
+     !/Historical document snapshot unavailable/.test(docText)
+     || (await page.evaluate(() => (CR_PACKET || {}).rate_sheet === null)));
+
+  /* ---- §14 THERE IS NO WAY TO EMAIL IT -------------------------------- */
+  /* Counted over the whole screen, by verb, because "never silently send it"
+     is a property of what CAN be pressed rather than of what is wired. */
+  const sendish = await page.evaluate(() => {
+    const card = document.querySelector('.casepage') || document.body;
+    return [...card.querySelectorAll('button, a')]
+      .filter(b => b.getBoundingClientRect().height > 0)
+      .map(b => (b.textContent || '').trim())
+      .filter(t => /\b(send|email|e-mail|deliver|share)\b/i.test(t));
+  });
+  ok('the packet screen offers no send, email or deliver control at all',
+     sendish.length === 0, JSON.stringify(sendish));
+  ok('and no packet act is wired to a send route',
+     await page.evaluate(() => {
+       const src = document.documentElement.innerHTML;
+       return !/crPacket[A-Za-z]*\s*\([^)]*\)\s*\{[^}]*sheets\/[^}]*email/.test(src);
+     }));
+
+  /* ---- §11 THE PDF, THROUGH THE ONE WRITER ---------------------------- */
+  const pdf = await page.evaluate(async () => {
+    const blob = await pdfFromDoc(document.getElementById('crpdoc'),
+      (n, t) => `TEST FOOTER ${n}/${t}`);
+    const buf = new Uint8Array(await blob.arrayBuffer());
+    let all = '';
+    for (let i = 0; i < buf.length; i++) all += String.fromCharCode(buf[i]);
+    return { type: blob.type, size: buf.length, head: all.slice(0, 8),
+             tail: all.slice(-8), pages: (all.match(/\/Type \/Page[^s]/g) || []).length,
+             footer: /TEST FOOTER 1\/\d/.test(all),
+             caseNo: all.includes('API-20260812-4002'),
+             xref: all.includes('\nxref\n') && all.includes('startxref') };
+  });
+  ok('the packet really generates a PDF', pdf.type === 'application/pdf'
+     && pdf.head === '%PDF-1.4' && pdf.tail.includes('EOF'), JSON.stringify(pdf));
+  ok('with at least one page and a valid cross-reference table',
+     pdf.pages >= 1 && pdf.xref === true, JSON.stringify(pdf));
+  ok('the case number is in the file', pdf.caseNo === true);
+  /* THE FOOTER IS WHAT PAGE NUMBERS COST, and it is optional — which is how
+     the shared writer gained it without changing any existing caller. */
+  ok('and the optional per-page footer really reaches the page stream',
+     pdf.footer === true, JSON.stringify(pdf));
+  const noFoot = await page.evaluate(async () => {
+    const blob = await pdfFromDoc(document.getElementById('crpdoc'));
+    const buf = new Uint8Array(await blob.arrayBuffer());
+    let all = ''; for (let i = 0; i < buf.length; i++) all += String.fromCharCode(buf[i]);
+    return /TEST FOOTER/.test(all);
+  });
+  ok('an existing caller that passes none gets none', noFoot === false);
+
+  /* THE FILENAME THE OWNER ASKED FOR. */
+  const name = await page.evaluate(() => crPacketName());
+  ok('the filename is API-CASE-[case]-Client-Record-Packet-[YYYY-MM-DD].pdf',
+     /^API-CASE-API-20260812-4002-Client-Record-Packet-\d{4}-\d{2}-\d{2}\.pdf$/.test(name), name);
+
+  /* ---- BACK RETURNS TO THE CASE, and the packet does not follow it ----- */
+  await page.locator('[data-act="crPacketClose"]').click();
+  await page.waitForTimeout(700);
+  ok('closing returns to the case with the packet dropped',
+     await page.evaluate(() => !CR_PACKET && !document.getElementById('crpdoc')
+       && VIEW === 'case'));
+  /* THE PREVIOUS CASE'S PACKET LEAVES WITH THE CASE — the rule this page keeps
+     for DOC_VIEW, the retainer draft and ASST.case. */
+  await page.evaluate(() => { CR_PACKET = { cover: { case_no: 'STALE' } }; });
+  await page.evaluate(() => openCase('API-20260812-4003'));
+  await page.waitForTimeout(1200);
+  ok('and a packet composed for another case does not follow you to this one',
+     await page.evaluate(() => CR_PACKET === null));
+  await page.close();
+}
+
+section('The packet reads on a phone, at 390 and 320');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  for (const [w, h] of [[390, 844], [320, 568]]) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.waitForTimeout(300);
+    await page.evaluate(() => { CR_PACKET = null; openCase('API-20260812-4002'); });
+    await page.waitForTimeout(1400);
+    /* §16 — THE DOOR IS TAPPABLE. Scrolled into view first: elementFromPoint
+       only sees the viewport, which this suite has already been bitten by. */
+    const door = await page.evaluate(() => {
+      const b = document.querySelector('[data-act="crPacket"]');
+      if (!b) return null;
+      b.scrollIntoView({ block: 'center' });
+      const r = b.getBoundingClientRect();
+      const el = document.elementFromPoint(Math.round(r.left + r.width / 2),
+                                           Math.round(r.top + r.height / 2));
+      return { h: Math.round(r.height), w: Math.round(r.width),
+               onTop: !!(el && (el === b || b.contains(el))) };
+    });
+    ok(`${w}: the packet door is at the tap floor and nothing covers it`,
+       door && door.h >= 44 && door.onTop === true, JSON.stringify(door));
+
+    await page.locator('[data-act="crPacket"]').click();
+    await page.waitForTimeout(1500);
+    const m = await page.evaluate(() => {
+      const doc = document.getElementById('crpdoc');
+      const gen = document.querySelector('[data-act="crPacketPdf"]');
+      gen && gen.scrollIntoView({ block: 'center' });
+      const gr = gen ? gen.getBoundingClientRect() : null;
+      /* Every row must fit its own panel — a label column squeezed to nothing
+         is the `.rs-l` defect this suite already measures for. */
+      const rows = [...document.querySelectorAll('.crp-r')].slice(0, 40);
+      const overflowing = rows.filter(r => r.scrollWidth - r.clientWidth > 1).length;
+      return {
+        docOverflow: doc ? doc.scrollWidth - doc.clientWidth : null,
+        pageOverflow: document.documentElement.scrollWidth
+          - document.documentElement.clientWidth,
+        genH: gr ? Math.round(gr.height) : 0,
+        genOn: gr ? (() => { const el = document.elementFromPoint(
+          Math.round(gr.left + gr.width / 2), Math.round(gr.top + gr.height / 2));
+          return !!(el && (el === gen || gen.contains(el))); })() : false,
+        overflowing, rows: rows.length,
+      };
+    });
+    ok(`${w}: nothing scrolls sideways — not the page, not the document`,
+       m.pageOverflow === 0 && m.docOverflow === 0, JSON.stringify(m));
+    ok(`${w}: and no record row hides behind an inner sideways scroll`,
+       m.rows > 0 && m.overflowing === 0, JSON.stringify(m));
+    ok(`${w}: Generate PDF is a clear, uncovered control`,
+       m.genH >= 44 && m.genOn === true, JSON.stringify(m));
+    /* NO COLLISION WITH THE TWO BOTS OR THE BOTTOM NAV (§16). */
+    const clash = await page.evaluate(() => {
+      const gen = document.querySelector('[data-act="crPacketPdf"]');
+      const gr = gen.getBoundingClientRect();
+      const hits = [];
+      for (const sel of ['.asst-pill', '.ceo-fab', '.mnav']) {
+        const el = document.querySelector(sel);
+        if (!el) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width < 1) continue;
+        if (gr.right > r.left + 1 && gr.left < r.right - 1
+            && gr.bottom > r.top + 1 && gr.top < r.bottom - 1) hits.push(sel);
+      }
+      return hits;
+    });
+    ok(`${w}: Generate PDF collides with neither bot nor the bottom nav`,
+       clash.length === 0, JSON.stringify(clash));
+    await page.locator('[data-act="crPacketClose"]').click();
+    await page.waitForTimeout(500);
+  }
+  await page.setViewportSize({ width: 1200, height: 900 });
   await page.close();
 }
 

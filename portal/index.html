@@ -550,6 +550,42 @@
      its own: a test matches the first print block in the file and asserts it
      isolates every document region, so a stray second block ahead of it makes
      that assertion read the wrong rules. */
+  /* ==== THE CLIENT RECORD PACKET (owner brief 2026-09-08) =================
+     `.crp-`, NOT `.cr-` and not `.clrec-`. `.cr-h`/`.cr-m` are the compensation
+     rates editor's inputs and `.clrec-` is the Client Record strip this packet
+     is opened FROM — the two classes it would most easily collide with. Checked
+     by grep before the first render, which is the cheap way round.
+
+     PLAIN ON PURPOSE (§11): navy and white, a thin gold rule under each
+     heading, no art-card treatment and no decorative graphic. This is a record,
+     not a brochure. */
+  .crp-doc{background:var(--card);color:var(--ink);padding:20px 22px;border:1px solid var(--line);
+    border-radius:10px;line-height:1.5;}
+  .crp-h1{margin:0;font-size:1.25rem;letter-spacing:.01em;color:var(--navy-2);}
+  .crp-sub{margin:2px 0 14px;font-size:.9rem;color:var(--muted);}
+  .crp-doc h2{margin:20px 0 8px;font-size:1.02rem;color:var(--navy-2);
+    border-bottom:2px solid var(--gold-2);padding-bottom:4px;}
+  .crp-doc h3{margin:14px 0 5px;font-size:.92rem;color:var(--navy-2);}
+  .crp-r{display:flex;gap:10px;padding:3px 0;font-size:.88rem;}
+  .crp-k{min-width:150px;font-weight:700;color:var(--navy-2);}
+  .crp-v{flex:1;min-width:0;overflow-wrap:anywhere;}
+  .crp-none{font-size:.88rem;color:var(--muted);font-style:italic;}
+  /* The preserved document is printed as the text the client was sent, so its
+     own newlines are the paragraphing — the same `pre-line` the report bodies
+     use, which is what the PDF collector reads them by. */
+  .crp-body{white-space:pre-line;font-size:.86rem;background:var(--paper);
+    border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:8px 0;}
+  .crp-sig{max-width:280px;border:1px solid var(--line);border-radius:6px;
+    background:var(--card);margin:6px 0;}
+  .crp-foot{margin-top:18px;padding-top:8px;border-top:1px solid var(--line);
+    font-size:.78rem;color:var(--muted);}
+  /* The preview (§13): what is in, what is not, and one action. */
+  .crp-pre{display:flex;align-items:center;gap:10px;padding:8px 0;
+    border-bottom:1px solid var(--line);font-size:.92rem;}
+  .crp-pre:last-of-type{border-bottom:0;}
+  .crp-mk{font-weight:800;min-width:18px;text-align:center;}
+  .crp-mk.on{color:var(--ok-ink);} .crp-mk.off{color:var(--muted);}
+  .crp-acts{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;}
   .rs-ident{display:none;}
   .rs-close{margin:14px 0 4px;padding:13px 15px;background:var(--gold-soft);border-left:3px solid var(--gold-2);border-radius:0 8px 8px 0;}
   .rs-close b{display:block;margin-bottom:3px;}
@@ -1831,6 +1867,13 @@
     body.printing-package *{visibility:hidden !important;}
     body.printing-package #pkgdoc, body.printing-package #pkgdoc *{visibility:visible !important;}
     body.printing-package #pkgdoc{position:absolute;left:0;top:0;width:100%;border:0;padding:0;}
+    /* THE PACKET PRINTS THE SAME DOCUMENT THE PDF IS BUILT FROM, so the paper
+       and the file cannot disagree. The preview, the actions and everything
+       else on the screen are the office's own and do not print. */
+    body.printing-packet *{visibility:hidden !important;}
+    body.printing-packet #crpdoc, body.printing-packet #crpdoc *{visibility:visible !important;}
+    body.printing-packet #crpdoc{position:absolute;left:0;top:0;width:100%;border:0;padding:0;}
+    body.printing-packet .crp-r{break-inside:avoid;}
     body.printing-report *{visibility:hidden !important;}
     body.printing-report #repdoc, body.printing-report #repdoc *{visibility:visible !important;}
     body.printing-report #repdoc{position:absolute;left:0;top:0;width:100%;border:0;padding:0;}
@@ -3362,6 +3405,29 @@
   /* 320px: stacked, the chip has no horizontal neighbour to meet, so it keeps
      its word. The rule that hid the label existed for a side-by-side pair. */
   @media(max-width:359px){ .ceo-fab{padding:8px 11px;font-size:.76rem;} }
+
+  /* ==== THE CLIENT RECORD PACKET ON A PHONE (owner brief 2026-09-08 §16) ===
+     AT THE END OF THE STYLESHEET, after everything it overrides — the source-
+     order casualty this project has now recorded seven times.
+
+     MEASURED, NOT GUESSED. At 320 every one of the forty record rows was
+     scrolling INSIDE ITSELF: `.crp-k` holds a 150px label column and the value
+     beside it, which is 150 plus a value plus the gap against roughly 250px of
+     usable width. The page did not scroll sideways and the document did not
+     either, so nothing on screen said so — the row just clipped its own value,
+     which is the `.rs-l` defect one panel over. Stacking the label above the
+     value is what a stacked record already does everywhere else in this
+     portal, and it gives the value the whole width. */
+  @media(max-width:560px){
+    .crp-r{flex-direction:column;gap:0;}
+    .crp-k{min-width:0;font-size:.82rem;}
+    .crp-doc{padding:16px 14px;}
+    .crp-body{font-size:.82rem;padding:10px 11px;}
+    /* One action per row, at the tap floor, so neither is a thumb-width sliver
+       next to the other. */
+    .crp-acts{flex-direction:column;align-items:stretch;}
+    .crp-acts .btn{width:100%;}
+  }
 
 </style>
 </head>
@@ -15234,6 +15300,7 @@ async function openCase(caseNo, tab){
      defect already paid for twice. The DOCS cache is keyed BY case, so it
      survives correctly; only the open view is dropped. */
   DOC_VIEW = null;
+  CR_PACKET = null; CR_PACKET_ERR = ""; CR_PACKET_MSG = "";
   /* THE RETAINER FORM BELONGS TO THE CASE IT WAS OPENED ON. All of its state is
      page-level, so without this an unfinished payment followed the admin to the
      next case: the form still open, still carrying the FIGURE they typed for
@@ -19626,7 +19693,15 @@ function pdfCollectOps(el, ops){
   }
 }
 
-async function pdfFromDoc(root){
+/* `foot` IS OPTIONAL AND DEFAULTS TO NOTHING, so every existing caller emits
+   byte-identical output and there is still exactly ONE PDF writer in this file
+   — the guard for that counts the header literal, and a comment quoting it
+   would break the guard as surely as a second writer would, which is the
+   class-name contest in a different costume. The client record packet passes
+   a footer because its brief asks for page
+   numbers and a case reference on the page; adding a second writer to get them
+   is the thing a test in this suite forbids, and rightly. */
+async function pdfFromDoc(root, foot){
   const M = PDF_PAGE.m, PW = PDF_PAGE.w, PH = PDF_PAGE.h, CW = PW - M * 2;
   const ops = [];
   pdfCollectOps(root, ops);
@@ -19703,6 +19778,15 @@ async function pdfFromDoc(root){
   });
 
   pages.forEach((pg, i) => {
+    /* The footer is composed per page and sits BELOW the text margin, so it
+       cannot collide with content: `flush()` never lets a line below `M`. */
+    if(typeof foot === "function"){
+      const line = String(foot(i + 1, pages.length) || "");
+      if(line){
+        pg.stream += "BT /F1 8 Tf " + M + " " + (M / 2).toFixed(2)
+          + " Td (" + pdfLatin(line) + ") Tj ET\n";
+      }
+    }
     const body = pdfChunk(pg.stream);
     objects.push({ num: firstPage + i * 2, parts: [
       "<< /Length " + body.length + " >>\nstream\n", body, "\nendstream" ] });
@@ -19912,6 +19996,9 @@ function caseBodyHtml(){
      Its Back control returns to the tab underneath, which is still whatever it
      was — nothing about the case was navigated away from. */
   if(DOC_VIEW) return docViewHtml();
+  /* THE PACKET TAKES THE WHOLE BODY TOO, and for the same reason: it is a
+     document being read, not a dialog over a screen. */
+  if(CR_PACKET || CR_PACKET_ERR) return crPacketHtml();
   if(!WS) return `<div class="empty">Loading the case&hellip;</div>`;
   const s = WS.submission || {};
   const a = WS.authorization || {};
@@ -20138,6 +20225,11 @@ function wsPkgShape(){
 let DOCS = {};        // case_no -> {documents:[…]} once fetched
 let DOCS_ERR = {};    // case_no -> the reason a fetch failed
 let DOC_VIEW = null;  // the preserved document currently open
+/* THE CLIENT RECORD PACKET, while it is open on a case. Page-level like
+   DOC_VIEW, and cleared in `openCase` for the same reason: a packet composed
+   for one client standing over another case number is the stale-context defect
+   this file has already paid for three times. */
+let CR_PACKET = null, CR_PACKET_ERR = "", CR_PACKET_MSG = "";
 
 async function loadCaseDocs(caseNo){
   if(!caseNo) return;
@@ -20227,9 +20319,328 @@ function clientRecordHtml(s){
         : crRow("Acceptance", "no", "Not signed", null),
     ].join("");
 
+  /* §1 — SECONDARY BUT EASY TO FIND, inside the Client Record area and nowhere
+     else. It is deliberately NOT on Home: the packet is about one case, and a
+     door on Home would have to ask which. */
+  const packetBtn = failed || !loaded ? "" : `<div class="crp-acts">
+    <button class="btn sm ghost" data-act="crPacket">Build Client Record Packet</button></div>`;
+
   return `<div class="uibox clrec">
     <div class="uibox-h"><span class="uibox-t">CLIENT RECORD</span></div>
-    ${rows}
+    ${rows}${packetBtn}
+  </div>`;
+}
+
+/* ==== THE CLIENT RECORD PACKET (owner brief 2026-09-08) ===================
+
+   ONE DOCUMENT COMPOSED FROM WHAT THE PORTAL ALREADY PRESERVED, for a client
+   dispute, a chargeback file or an accountant. Everything on it comes from
+   `GET /cases/:no/record-packet`, which reads and writes nothing; this half
+   only renders it.
+
+   THE RATE SHEET SECTION PRINTS THE STORED BYTES (§12). `body_text` is what
+   the provider was handed, and it goes into the document as `pre-line` text
+   — the same shape the report narratives use, which is how the PDF collector
+   reads their paragraphing. Nothing here calls a rate-sheet renderer, so
+   there is no path by which today's figures could be printed over yesterday's
+   document.
+
+   IT IS NOT EMAILED (§14). There is no send control on this screen and no
+   route behind one; the packet is built, previewed and downloaded. */
+async function crPacketOpen(){
+  CR_PACKET = null; CR_PACKET_ERR = ""; CR_PACKET_MSG = "";
+  const want = WS_CASE;
+  paintCase();
+  try{
+    const r = await api(`/cases/${encodeURIComponent(want)}/record-packet`);
+    /* THE ANSWER BELONGS TO THE CASE IT WAS ASKED ABOUT. Leaving a case while
+       this is in flight is an ordinary tap, and writing a stale packet over
+       the new case is the defect `openCase` already guards. */
+    if(WS_CASE !== want) return;
+    CR_PACKET = r;
+  }catch(e){
+    if(WS_CASE !== want) return;
+    CR_PACKET_ERR = e.message || "The packet could not be built.";
+  }
+  paintCase();
+}
+function crPacketClose(){
+  CR_PACKET = null; CR_PACKET_ERR = ""; CR_PACKET_MSG = "";
+  paintCase();
+}
+
+/* API-CASE-[case-number]-Client-Record-Packet-[YYYY-MM-DD].pdf — the owner's
+   own shape. The date is the day the packet was GENERATED, which is what the
+   cover says too, so the filename and the document agree. */
+function crPacketName(){
+  const gen = (CR_PACKET && CR_PACKET.cover && CR_PACKET.cover.generated_at) || "";
+  const day = /^\d{4}-\d{2}-\d{2}/.test(gen) ? gen.slice(0, 10)
+    : new Date().toISOString().slice(0, 10);
+  return `API-CASE-${WS_CASE || "case"}-Client-Record-Packet-${day}.pdf`;
+}
+
+async function crPacketPdf(){
+  CR_PACKET_MSG = "";
+  const root = document.getElementById("crpdoc");
+  if(!root){ CR_PACKET_ERR = "The packet document is not on screen."; paintCase(); return; }
+  try{
+    const caseNo = WS_CASE || "";
+    const gen = crWhen((CR_PACKET.cover || {}).generated_at);
+    /* THE FOOTER IS THE ONE THING THE DOCUMENT CANNOT SAY FOR ITSELF: which
+       page this is. It rides the shared writer's optional hook rather than a
+       second writer. */
+    const blob = await pdfFromDoc(root,
+      (n, total) => `${caseNo}  ·  Client Record Packet  ·  ${gen}  ·  Page ${n} of ${total}`);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = crPacketName();
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    CR_PACKET_MSG = "Packet PDF downloaded.";
+  }catch(e){ CR_PACKET_ERR = "The PDF could not be built: " + (e.message || "unknown"); }
+  paintCase();
+}
+
+/* A DATE THE WAY A DOCUMENT SAYS ONE. Absent is absent — never today's date
+   standing in for a record that has none. */
+function crWhen(v){
+  if(!v) return "";
+  const t = Date.parse(v);
+  if(!Number.isFinite(t)) return String(v);
+  return new Date(t).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
+}
+function crDay(v){ return v ? String(v).slice(0, 10) : ""; }
+function crMoney(v){
+  return (v === null || v === undefined || v === "") ? ""
+    : "$" + Number(v).toLocaleString("en-US", { minimumFractionDigits: 2,
+                                                maximumFractionDigits: 2 });
+}
+function crRow2(k, v){
+  return v === "" || v === null || v === undefined ? ""
+    : `<div class="crp-r"><span class="crp-k">${esc(k)}</span>
+        <span class="crp-v">${esc(String(v))}</span></div>`;
+}
+/* A FIELD NAME AS A PERSON READS IT. The intake's keys are snake_case; nothing
+   here renames a field, it only spaces it out. */
+function crLabel(k){
+  return String(k).replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function crPacketHtml(){
+  if(CR_PACKET_ERR && !CR_PACKET){
+    return `<div class="card">
+      <div class="pagebar"><h2 style="margin:0">Client Record Packet</h2>
+        <button class="btn sm ghost close" data-act="crPacketClose">&larr; Back</button></div>
+      <div class="err">${esc(CR_PACKET_ERR)}
+        &mdash; that is not the same as there being nothing on file.</div>
+      <button class="btn sm" data-act="crPacket">Try again</button></div>`;
+  }
+  if(!CR_PACKET){
+    return `<div class="card">
+      <div class="pagebar"><h2 style="margin:0">Client Record Packet</h2>
+        <button class="btn sm ghost close" data-act="crPacketClose">&larr; Back</button></div>
+      <div class="empty">Composing the packet&hellip;</div></div>`;
+  }
+  const P = CR_PACKET, C = P.cover || {}, S = P.sections || {};
+
+  /* ---- §13 THE PREVIEW, derived from the sections the Worker reported --- */
+  const pre = [
+    ["Rate Sheet", S.rate_sheet], ["Acceptance", S.acceptance], ["Intake", S.intake],
+    ["Retainer", S.retainer], ["Closeout", S.closeout], ["Work Activity", S.work],
+    ["Evidence & Files", S.files], ["Send Record", S.sends],
+  ].map(([label, on]) => `<div class="crp-pre">
+      <span class="crp-mk ${on ? "on" : "off"}" aria-hidden="true">${on ? "&#10003;" : "&mdash;"}</span>
+      <span>${esc(label)}</span>
+      <span class="clrec-d">${on ? "included" : "no record on this case"}</span></div>`).join("");
+
+  /* ---- the document itself ---------------------------------------------- */
+  const rs = P.rate_sheet;
+  const rsLines = ((rs && rs.terms) || {}).lines || [];
+  const acc = P.acceptance || {};
+  const intake = P.intake || {};
+  const ret = P.retainer || {};
+  const co = P.closeout || {};
+  const work = P.work || {};
+  const files = P.files || {};
+
+  const sheetSection = rs ? `
+    ${crRow2("Document ID", rs.doc_id)}
+    ${crRow2("Rate sheet", rs.sheet_id)}
+    ${crRow2("Context", rs.send_context)}
+    ${crRow2("Recipient", rs.recipient)}
+    ${crRow2("Client name", rs.client_name)}
+    ${crRow2("Sent", crWhen(rs.sent_at))}
+    ${crRow2("Delivered to the client", rs.ok ? "Yes" : "No — the provider refused it")}
+    ${crRow2("Retainer", crMoney(rs.retainer_amount))}
+    ${crRow2("Non-refundable portion", crMoney(rs.non_refundable))}
+    ${crRow2("Flat fee", crMoney(rs.flat_fee))}
+    ${rsLines.length ? crRow2("Stated terms", rsLines.map(l => l.text).join("  |  ")) : ""}
+    ${crRow2("Intake included", rs.intake_included ? "Yes" : "No")}
+    ${crRow2("Content reference", rs.content_hash)}
+    <h3>The document as sent</h3>
+    <div class="crp-body">${esc(rs.body_text || "")}</div>`
+    /* §12'S EXACT SENTENCE, and only in the state it describes. A case that was
+       never sent a rate sheet is a different and ordinary answer. */
+    : P.rate_sheet_missing === "snapshot_unavailable"
+    ? `<p class="crp-none">Historical document snapshot unavailable.</p>`
+    : `<p class="crp-none">No rate sheet was sent from the portal for this matter.</p>`;
+
+  const acceptSection = acc.linked || acc.signed_not_linked ? `
+    ${crRow2("Linked document ID", acc.doc_id)}
+    ${crRow2("Submission ID", acc.submission_id)}
+    ${crRow2("Name given", acc.signed_name)}
+    ${crRow2("Received", crWhen(acc.signed_at))}
+    ${crRow2("Client email", acc.client_email)}
+    ${crRow2("Client phone", acc.client_phone)}
+    ${acc.signed_not_linked
+      ? `<p class="crp-none">This intake was signed but is not linked to a document
+           the portal sent.</p>` : ""}
+    ${acc.signature ? `<h3>Signature as captured</h3>
+      <img class="crp-sig" src="${esc(acc.signature)}" alt="Client signature as captured">` : ""}`
+    : `<p class="crp-none">No associated acceptance record.</p>`;
+
+  const intakeSection = intake.present ? `
+    ${crRow2("Received", crWhen(intake.received_at))}
+    ${crRow2("Intake type", intake.matter_type)}
+    ${crRow2("Client", intake.client_name)}
+    ${crRow2("Subject", intake.subject_name)}
+    <h3>Provided information</h3>
+    ${(intake.provided || []).length
+      ? intake.provided.map(f => crRow2(crLabel(f.field), f.value)).join("")
+      : `<p class="crp-none">Nothing further was provided.</p>`}
+    ${(intake.not_available || []).length ? `<h3>Not available yet</h3>
+      ${intake.not_available.map(f => crRow2(crLabel(f.field), "Not available yet")).join("")}` : ""}`
+    : `<p class="crp-none">No submitted intake on this matter.</p>`;
+
+  const payRows = (ret.payments || []).map(p => `
+    ${crRow2("Amount", crMoney(p.amount))}
+    ${crRow2("Method", p.method)}
+    ${crRow2("Date", crDay(p.paid_on))}
+    ${crRow2("Reference", p.reference)}
+    ${crRow2("Recorded by", p.recorded_by_name)}
+    ${crRow2("Recorded", crWhen(p.recorded_at))}
+    ${p.voided ? crRow2("Voided", `${crWhen(p.voided_at)}${p.void_reason
+      ? " — " + p.void_reason : ""}`) : ""}
+    <div style="height:6px"></div>`).join("");
+  const retainerSection = (ret.payments || []).length || ret.agreed_amount != null ? `
+    ${crRow2("Agreed retainer", crMoney(ret.agreed_amount))}
+    ${crRow2("Amount the document stated", crMoney(ret.document_amount))}
+    ${crRow2("Non-refundable portion stated", crMoney(ret.non_refundable))}
+    ${payRows ? `<h3>Payments recorded</h3>${payRows}`
+      : `<p class="crp-none">No payment has been recorded on this matter.</p>`}`
+    : `<p class="crp-none">No retainer or payment recorded on this matter.</p>`;
+
+  /* §7 — REQUESTED IS NOT COMPLETED, and the portal never moved the money. The
+     status word is printed as the record holds it. */
+  const refundRows = (co.refunds || []).map(r => `
+    ${crRow2("Refund amount", crMoney(r.amount))}
+    ${crRow2("Refund date", crDay(r.refunded_on))}
+    ${crRow2("Method", r.method)}
+    ${crRow2("Reference", r.reference)}
+    ${crRow2("Recorded by", r.recorded_by_name)}
+    <div style="height:6px"></div>`).join("");
+  const hasCloseout = !!(co.closeout || (co.refunds || []).length || co.refund_status
+                         || co.retained != null);
+  const closeoutSection = hasCloseout ? `
+    ${crRow2("Retainer received", crMoney(co.retainer_received))}
+    ${crRow2("Non-refundable retained", crMoney(co.retained))}
+    ${crRow2("Refunded", crMoney(co.refunded))}
+    ${crRow2("Final balance", crMoney(co.final_balance))}
+    ${crRow2("Refund status", co.refund_status
+      ? (co.refund_status === "completed"
+         ? "Refund completed outside portal" : crLabel(co.refund_status)) : "")}
+    ${crRow2("Refund date", crDay(co.refund_date))}
+    ${crRow2("Work performed", co.work_performed ? crLabel(co.work_performed) : "")}
+    ${crRow2("Closeout reason", co.closeout && co.closeout.reason ? crLabel(co.closeout.reason) : "")}
+    ${crRow2("Closed", crWhen(co.closeout && co.closeout.closed_at))}
+    ${refundRows ? `<h3>Refunds recorded</h3>${refundRows}` : ""}
+    <p class="crp-none">The portal records refunds; it does not move money.</p>`
+    : `<p class="crp-none">No closeout or refund recorded on this matter.</p>`;
+
+  const dayRows = (work.days || []).map(d => `
+    <h3>${esc(crDay(d.day_date) || "Investigation day")}</h3>
+    ${crRow2("Started", d.start_time)}
+    ${crRow2("Ended", d.end_time)}
+    ${crRow2("Hours recorded", d.hours == null ? "" : String(d.hours))}
+    ${crRow2("Investigator", d.investigator)}
+    ${d.narrative ? `<div class="crp-body">${esc(d.narrative)}</div>`
+      : d.summary ? `<div class="crp-body">${esc(d.summary)}</div>` : ""}
+    ${(d.entries || []).map(e => crRow2(
+        `${crDay(e.at_date)} ${e.at_time || ""}`.trim(), e.description || e.kind)).join("")}`).join("");
+  /* §8 — NOTHING IS TOTALLED FROM INCOMPLETE DATA, and an empty case is not
+     drawn as a broken one. */
+  const workSection = (work.days_total || 0) || (work.unassigned_entries || []).length ? `
+    ${crRow2("Days recorded", String(work.days_total || 0))}
+    ${crRow2("Hours recorded", work.hours_recorded == null ? "" : String(work.hours_recorded))}
+    ${work.days_without_hours
+      ? crRow2("Days with no hours recorded", String(work.days_without_hours)) : ""}
+    ${dayRows}
+    ${(work.unassigned_entries || []).length ? `<h3>Other recorded activity</h3>
+      ${work.unassigned_entries.map(e => crRow2(
+          `${crDay(e.at_date)} ${e.at_time || ""}`.trim(), e.description || e.kind)).join("")}` : ""}`
+    : `<p class="crp-none">No surveillance/work activity recorded.</p>`;
+
+  const docRows = (P.documents || []).map(d => `
+    ${crRow2(`${crLabel(d.kind)} sent`, `${crWhen(d.sent_at)} to ${d.recipient}`
+      + (d.ok ? "" : " — not delivered"))}`).join("");
+  const copyRows = (P.record_copies || []).map(c => crRow2(
+    c.resend ? "Owner copy resent" : "Owner copy",
+    `${crWhen(c.sent_at)}${c.sent_to ? " to " + c.sent_to : ""} — `
+      + (c.ok ? "sent" : "failed" + (c.reason ? ": " + c.reason : "")))).join("");
+  const sendRows = (P.sends || []).map(x => crRow2(
+    `${crLabel(x.kind)} sent`, `${crWhen(x.sent_at)} to ${x.recipient}`
+      + (x.ok ? "" : " — not delivered"))).join("");
+  const sendSection = docRows || sendRows || copyRows
+    ? `${docRows}${sendRows}${copyRows}`
+    : `<p class="crp-none">No send record on this matter.</p>`;
+
+  const fileRows = [
+    ...(files.evidence || []).map(f => crRow2("File", `${f.filename}`
+      + (f.classification ? ` — ${crLabel(f.classification)}` : ""))),
+    ...(files.reports || []).map(r => crRow2("Report", `${crDay(r.report_date)} — ${crLabel(r.status)}`)),
+    ...(files.builds || []).map(b => crRow2("Package", `v${b.version} — ${crLabel(b.status)}`)),
+    (files.stamps || {}).photo ? crRow2("Timestamped photographs", String(files.stamps.photo)) : "",
+    (files.stamps || {}).video ? crRow2("Timestamped video copies", String(files.stamps.video)) : "",
+  ].join("");
+
+  const doc = `<div id="crpdoc" class="crp-doc">
+    <h1 class="crp-h1">${esc(C.firm || "")}</h1>
+    <p class="crp-sub">${esc(C.title || "")}</p>
+    ${crRow2("Case number", C.case_no)}
+    ${crRow2("Client", C.client_name)}
+    ${crRow2("Matter type", C.matter_type)}
+    ${crRow2("Subject", C.subject)}
+    ${crRow2("Date opened", crWhen(C.opened_at))}
+    ${crRow2("Date closed", crWhen(C.closed_at))}
+    ${crRow2("Packet generated", crWhen(C.generated_at))}
+    <p class="crp-sub">${esc(C.note || "")}</p>
+    <h2>Rate sheet as sent</h2>${sheetSection}
+    <h2>Associated acceptance record</h2>${acceptSection}
+    <h2>Submitted intake</h2>${intakeSection}
+    <h2>Retainer and payments</h2>${retainerSection}
+    <h2>Refund and closeout</h2>${closeoutSection}
+    <h2>Work record</h2>${workSection}
+    <h2>Send record</h2>${sendSection}
+    <h2>Evidence and files</h2>${fileRows || `<p class="crp-none">No files recorded on this matter.</p>`}
+    <p class="crp-foot">${esc(C.case_no || "")} &middot; generated
+      ${esc(crWhen(C.generated_at))} &middot; ${esc(C.firm || "")}</p>
+  </div>`;
+
+  return `<div class="card">
+    <div class="pagebar"><h2 style="margin:0">Client Record Packet</h2>
+      <button class="btn sm ghost close" data-act="crPacketClose">&larr; Back</button></div>
+    ${CR_PACKET_ERR ? `<div class="err">${esc(CR_PACKET_ERR)}</div>` : ""}
+    ${CR_PACKET_MSG ? `<div class="note">${esc(CR_PACKET_MSG)}</div>` : ""}
+    <div class="uibox">
+      <div class="uibox-h"><span class="uibox-t">INCLUDED</span>
+        <span class="uibox-s">What this packet contains, and what this matter has no record of.</span></div>
+      ${pre}
+      <div class="crp-acts">
+        <button class="btn accent" data-act="crPacketPdf">Generate PDF</button>
+        <button class="btn sm ghost" data-act="crPacketPrint">Print</button>
+      </div>
+    </div>
+    ${doc}
   </div>`;
 }
 
@@ -24641,6 +25052,18 @@ document.addEventListener("click", ev => {
   else if(act === "resendCopy"){ resendOwnerCopy(el.dataset.doc); }
   else if(act === "docOpen"){ docOpen(el.dataset.doc); }
   else if(act === "docClose"){ DOC_VIEW = null; paint(); }
+  /* THE CLIENT RECORD PACKET. Four acts, and none of them sends anything —
+     there is no send route behind this screen and no control for one (§14). */
+  else if(act === "crPacket"){ crPacketOpen(); }
+  else if(act === "crPacketClose"){ crPacketClose(); }
+  else if(act === "crPacketPdf"){ crPacketPdf(); }
+  else if(act === "crPacketPrint"){
+    /* The paper and the PDF come from the same `#crpdoc`, so they cannot
+       disagree — the shape `pkgPrint` already uses. */
+    document.body.classList.add("printing-packet");
+    window.print();
+    setTimeout(() => document.body.classList.remove("printing-packet"), 400);
+  }
   else if(act === "crRetry"){ delete DOCS_ERR[WS_CASE]; loadCaseDocs(WS_CASE); }
   else if(act === "sheetQuick"){
     /* `origin` IS WHERE CLOSING PUTS YOU BACK (owner, 2026-09-08: "actual tool

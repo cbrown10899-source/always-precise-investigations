@@ -21664,6 +21664,263 @@ section('Client sent, owner copy failed — and the resend that fixes only that'
   globalThis.fetch = realFetch;
 }
 
+/* ==== THE CLIENT RECORD PACKET (owner brief 2026-09-08) ==================
+
+   The unit's whole promise is that the packet reproduces WHAT WAS SENT, so the
+   test is written the only way that can prove it: send a real document with a
+   custom retainer and a custom non-refundable amount, sign it through the
+   public ingest, then read the packet and compare byte for byte against what
+   the provider was actually handed. Re-rendering the template and comparing
+   would test the renderer against itself. */
+section('The client record packet reproduces what was sent, and invents nothing');
+{
+  const realFetch = globalThis.fetch;
+  let mails = [];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      mails.push(JSON.parse(init.body));
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const row = (sql, ...b) => env.DB.prepare(sql).bind(...b).first();
+  const packet = async (caseNo, cookie = admin) =>
+    jsonOf(await call(env, `/cases/${caseNo}/record-packet`, { cookie }));
+
+  /* ---- A: THE FULL CASE ------------------------------------------------ */
+  mails = [];
+  const sent = await jsonOf(await call(env, '/sheets/private_retainer/email', {
+    method: 'POST', cookie: admin,
+    body: { to: 'dana@example.com', client_name: 'Dana Reeve',
+            client_phone: '(540) 555-0188', retainer_amount: 2500, non_refundable: 900,
+            include_intake: true, attempt_key: 'att-pk-1' } }));
+  ok('the rate sheet really went', sent.ok === true && /^DOC-/.test(sent.doc_id || ''));
+  const emailed = mails.find(m => String(m.to).includes('dana@example.com'));
+
+  await ingest(env, { case_no: 'API-PK-1', client_name: 'Dana Reeve',
+    client_email: 'dana@example.com', client_phone: '5405550188',
+    subject_name: 'Martin Reeve', objective: 'Document weekday movements',
+    address: '14 Elm Street', signed_name: 'Dana Reeve',
+    signature: 'data:image/png;base64,iVBORw0KGgo=',
+    claim_number_status: 'not_available_yet', doc_ref: sent.doc_id });
+  /* THE AGREED FIGURE AND THE ARRIVAL ARE TWO DIFFERENT WRITERS, which is the
+     portal's own rule: `/retainer` records what the client agreed to,
+     `/retainer/payment` records that money came in. The packet has to show
+     both, so the fixture does both. */
+  await call(env, '/cases/API-PK-1/retainer', { method: 'POST', cookie: admin,
+    body: { retainer_amount: 2500 } });
+  await call(env, '/cases/API-PK-1/retainer/payment', { method: 'POST', cookie: admin,
+    body: { amount: 2500, method: 'check', paid_on: '2026-09-01',
+            reference: 'cheque 8812', client_token: 'pk-pay-1' } });
+
+  const beforeRead = mails.length;
+  const p1 = await packet('API-PK-1');
+  ok('the packet reads', p1.ok === true, JSON.stringify(p1).slice(0, 160));
+  /* IT EMAILS NOBODY. §14 is explicit and this is the assertion that holds it:
+     building a packet is a READ, and the transport is where that is proven. */
+  ok('and building it sends no mail at all', mails.length === beforeRead);
+
+  /* ---- THE SNAPSHOT, BYTE FOR BYTE (§3/§12) ---------------------------- */
+  ok('the packet carries the stored document, not a re-render',
+     !!p1.rate_sheet && !!emailed
+     && p1.rate_sheet.body_text === emailed.text
+     && p1.rate_sheet.body_html === emailed.html
+     && p1.rate_sheet.subject === emailed.subject,
+     JSON.stringify({ has: !!p1.rate_sheet,
+                      text: !!emailed && p1.rate_sheet.body_text === emailed.text }));
+  ok('with the document id and the content hash the send recorded',
+     p1.rate_sheet.doc_id === sent.doc_id && /^[0-9a-f]{64}$/.test(p1.rate_sheet.content_hash));
+  ok('the recipient, client name and sent instant are the send’s own',
+     p1.rate_sheet.recipient === 'dana@example.com'
+     && p1.rate_sheet.client_name === 'Dana Reeve' && !!p1.rate_sheet.sent_at,
+     JSON.stringify({ to: p1.rate_sheet.recipient, who: p1.rate_sheet.client_name }));
+  ok('and whether an intake rode with it', p1.rate_sheet.intake_included === true);
+
+  /* THE TWO FIGURES THE OWNER NAMED, PRESERVED EXACTLY. */
+  ok('the OWNER-SELECTED non-refundable amount is the packet’s, not the default',
+     Number(p1.rate_sheet.non_refundable) === 900 && Number(p1.rate_sheet.non_refundable) !== 500,
+     String(p1.rate_sheet.non_refundable));
+  ok('and the agreed retainer is the one that document carried',
+     Number(p1.rate_sheet.retainer_amount) === 2500, String(p1.rate_sheet.retainer_amount));
+  /* THE PER-DAY MINIMUM IS SUBSTANTIVE — a client must not be able to read one
+     four-hour minimum across a three-day case — so it is pinned in the packet
+     as well as in the record it comes from. */
+  const lines = ((p1.rate_sheet.terms || {}).lines || []).map(l => l.text);
+  ok('the preserved terms still state the minimum PER SURVEILLANCE DAY',
+     lines.some(t => /4-HOUR MINIMUM PER SURVEILLANCE DAY/.test(t)), JSON.stringify(lines));
+  ok('and the non-refundable line is there in the document’s own words',
+     lines.some(t => /NON-REFUNDABLE PORTION: \$900/.test(t)), JSON.stringify(lines));
+  /* AND THE SAME WORDS ARE IN THE BYTES THE CLIENT READ, which is the claim
+     that would still be false if only the metadata were right. */
+  ok('the stored body itself carries the per-day minimum',
+     /4-HOUR MINIMUM PER SURVEILLANCE DAY/.test(p1.rate_sheet.body_text));
+
+  /* ---- ACCEPTANCE IS LINKED, NEVER INFERRED (§4) ----------------------- */
+  ok('the acceptance names the exact document it came from',
+     p1.acceptance.linked === true && p1.acceptance.doc_id === sent.doc_id,
+     JSON.stringify(p1.acceptance).slice(0, 200));
+  ok('and carries the signature as stored, plus the name they typed',
+     /^data:image\/png/.test(p1.acceptance.signature || '')
+     && p1.acceptance.signed_name === 'Dana Reeve');
+  ok('with the client identity fields the intake captured',
+     p1.acceptance.client_email === 'dana@example.com'
+     && p1.acceptance.client_phone === '5405550188', JSON.stringify(p1.acceptance).slice(0, 200));
+
+  /* ---- THE INTAKE, SPLIT THE WAY THE SCREEN ALREADY SPLITS IT (§5) ----- */
+  ok('the intake section is present with its received instant',
+     p1.intake.present === true && !!p1.intake.received_at);
+  ok('provided information is what was actually given',
+     p1.intake.provided.some(f => f.field === 'address' && f.value === '14 Elm Street'),
+     JSON.stringify(p1.intake.provided.map(f => f.field)));
+  ok('and NOT AVAILABLE YET is the field’s own status, not an empty value',
+     p1.intake.not_available.some(f => f.field === 'claim_number'),
+     JSON.stringify(p1.intake.not_available));
+  /* NO WALL OF EMPTY LABELS (§5). A field that was never answered and carries
+     no status appears in neither list. */
+  ok('a field with neither a value nor a status appears in neither list',
+     !p1.intake.provided.some(f => f.value === '')
+     && !p1.intake.provided.some(f => f.field === 'vehicle_make'),
+     JSON.stringify(p1.intake.provided.map(f => f.field)));
+  ok('and the signature image is not repeated into the field list',
+     !p1.intake.provided.some(f => f.field === 'signature'));
+
+  /* ---- PAYMENTS (§6) --------------------------------------------------- */
+  ok('the payment is on the packet exactly as recorded',
+     p1.retainer.payments.length === 1 && Number(p1.retainer.payments[0].amount) === 2500
+     && p1.retainer.payments[0].method === 'check'
+     && p1.retainer.payments[0].reference === 'cheque 8812',
+     JSON.stringify(p1.retainer.payments));
+  ok('with who recorded it', !!p1.retainer.payments[0].recorded_by_name);
+  ok('and the two retainer figures are kept apart — agreed and quoted',
+     Number(p1.retainer.agreed_amount) === 2500
+     && Number(p1.retainer.document_amount) === 2500,
+     JSON.stringify({ a: p1.retainer.agreed_amount, d: p1.retainer.document_amount }));
+
+  /* ---- WORK: A CASE WITH NONE SAYS SO, AND TOTALS NOTHING (§8) --------- */
+  ok('a case with no day recorded reports none rather than zero hours',
+     p1.work.days_total === 0 && p1.work.hours_recorded === null,
+     JSON.stringify(p1.work).slice(0, 160));
+  ok('and the preview marks work as absent rather than present-and-empty',
+     p1.sections.work === false, JSON.stringify(p1.sections));
+
+  /* ---- THE PREVIEW TICKS ARE DERIVED FROM THE SECTIONS (§13) ----------- */
+  ok('the preview says exactly what the packet contains',
+     p1.sections.rate_sheet === true && p1.sections.acceptance === true
+     && p1.sections.intake === true && p1.sections.retainer === true
+     && p1.sections.sends === true, JSON.stringify(p1.sections));
+
+  /* ---- THE SEND RECORD, FAILURES KEPT (§9) ----------------------------- */
+  /* A PRE-CASE SEND HAS NO `send_log.case_no`, BY THIS PROJECT'S OWN RULE —
+     that column is null unless the typed reference resolved to a case, and a
+     client is ordinarily quoted before the case exists. So the send record for
+     that document is the DOCUMENT, which learns its case at acceptance. Both
+     are on the packet and the preview ticks on either; asserting only
+     `send_log` here would have demanded the portal misattribute a send. */
+  ok('the pre-case send is on the packet as the document it produced',
+     p1.documents.length >= 1 && p1.documents.some(d => d.recipient === 'dana@example.com'),
+     JSON.stringify(p1.documents.map(d => d.recipient)));
+  ok('and send_log carries no case for it, which is why the document must',
+     p1.sends.length === 0, JSON.stringify(p1.sends));
+  ok('the preview still marks the send record as present',
+     p1.sections.sends === true);
+  ok('and the office record-copy attempts ride with it',
+     Array.isArray(p1.record_copies));
+
+  /* ---- COVER (§2) ------------------------------------------------------ */
+  ok('the cover names the firm, the case and the matter type',
+     p1.cover.firm === 'Always Precise Investigations' && p1.cover.case_no === 'API-PK-1'
+     && p1.cover.matter_type === 'Private client' && !!p1.cover.generated_at,
+     JSON.stringify(p1.cover));
+  ok('with the owner’s own note and no claim about outcomes',
+     p1.cover.note === 'This packet compiles records stored by the portal for this matter.');
+  const coverText = JSON.stringify(p1.cover).toLowerCase();
+  ok('and no aggressive language anywhere on it',
+     !/liable|guarantee|legally binding|chargeback defense/.test(coverText), coverText.slice(0, 200));
+
+  /* ---- C: NO PAYMENT, NO WORK, NO CLOSEOUT (§17C/D) -------------------- */
+  const sent2 = await jsonOf(await call(env, '/sheets/private_retainer/email', {
+    method: 'POST', cookie: admin,
+    body: { to: 'quiet@example.com', client_name: 'Quiet Client',
+            attempt_key: 'att-pk-2' } }));
+  await ingest(env, { case_no: 'API-PK-2', client_name: 'Quiet Client',
+    client_email: 'quiet@example.com', objective: 'Nothing happened yet',
+    doc_ref: sent2.doc_id });
+  const p2 = await packet('API-PK-2');
+  ok('a case with a sheet and an intake and nothing else still builds',
+     p2.ok === true && p2.sections.rate_sheet === true && p2.sections.intake === true);
+  ok('and says plainly that there is no retainer, no work and no closeout',
+     p2.sections.retainer === false && p2.sections.work === false
+     && p2.sections.closeout === false, JSON.stringify(p2.sections));
+  /* A LINK IS NOT A SIGNATURE. This submission carried its door's token, so it
+     IS linked to the document — and it was never signed, so the preview must
+     not tick Acceptance. Both facts are asserted, because collapsing them is
+     how a packet ends up showing a tick over a document nobody signed. */
+  ok('an unsigned submission still links to the document it came from',
+     p2.acceptance.linked === true, JSON.stringify(p2.acceptance).slice(0, 160));
+  ok('but the preview does NOT tick Acceptance for it',
+     p2.sections.acceptance === false, JSON.stringify(p2.sections));
+
+  /* ---- E: NO LINKED RATE SHEET AT ALL (§17E) --------------------------- */
+  await ingest(env, { case_no: 'API-PK-3', client_name: 'Walk In',
+    objective: 'Came in off the street' });
+  const p3 = await packet('API-PK-3');
+  ok('a case with no document says none was sent — an ordinary missing state',
+     p3.rate_sheet === null && p3.rate_sheet_missing === 'none_sent',
+     JSON.stringify({ rs: p3.rate_sheet, why: p3.rate_sheet_missing }));
+
+  /* ---- F: THE LINK EXISTS AND THE SNAPSHOT DOES NOT (§12) -------------- */
+  /* TWO ABSENT STATES, KEPT APART. "Nothing was ever sent" and "the document
+     this client signed is gone" are different facts, and rounding the second
+     into the first is exactly what §12 forbids. Reached by deleting the
+     document row under an acceptance that already names it, which is the only
+     way that state can exist. */
+  await env.DB.prepare('DELETE FROM sent_document WHERE doc_id = ?').bind(sent2.doc_id).run();
+  const p4 = await packet('API-PK-2');
+  ok('a link whose snapshot is gone says SO, and is not rounded to none-sent',
+     p4.rate_sheet === null && p4.rate_sheet_missing === 'snapshot_unavailable',
+     JSON.stringify({ rs: p4.rate_sheet, why: p4.rate_sheet_missing }));
+  ok('and nothing is substituted from the current template',
+     p4.rate_sheet === null && !JSON.stringify(p4).includes('RETAINER:'),
+     JSON.stringify(p4).slice(0, 200));
+
+  /* ---- ACCESS (§15) ---------------------------------------------------- */
+  const inv = await jsonOf(await call(env, '/invites', { method: 'POST', cookie: admin,
+    body: { username: 'fieldpk', display_name: 'Field PK', role: 'investigator' } }));
+  const tok = new URL(inv.url, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${tok}/accept`, { method: 'POST',
+    body: { password: 'FieldPkPass12' } });
+  const field = (await login(env, 'fieldpk', 'FieldPkPass12')).cookie;
+  ok('an investigator is refused the packet outright',
+     (await call(env, '/cases/API-PK-1/record-packet', { cookie: field })).status === 403);
+  ok('and it is refused with no session at all',
+     (await call(env, '/cases/API-PK-1/record-packet')).status === 401);
+  ok('a case that does not exist is not found rather than composed',
+     (await call(env, '/cases/API-NOPE-9/record-packet', { cookie: admin })).status === 404);
+
+  /* ---- THE SOURCE PIN: NO RENDERER, NO SENDER, NO WRITE (§12/§14/§15) -- */
+  const src = fs.readFileSync(new URL('./worker.js', import.meta.url), 'utf8');
+  const blk = src.slice(src.indexOf('async function recordPacket'),
+                        src.indexOf('/* THE CHECKLIST IS STILL THE ONLY DOOR'));
+  ok('the packet block exists to be checked', blk.length > 500);
+  /* THE RULE THE UNIT RESTS ON. A packet that could call the sheet renderer
+     could rebuild yesterday's document from today's figures, and the output
+     would look perfect. */
+  ok('it calls no rate-sheet renderer',
+     !/\brateSheets\s*\(|\bsheetCards\s*\(|\bengagementBlock\s*\(|\blegalFixedSheet\s*\(/.test(blk),
+     blk.slice(0, 120));
+  ok('it never reaches the mail sender', !/\bsendMail\s*\(|ownerRecordCopy\s*\(/.test(blk));
+  ok('and it writes nothing at all',
+     !/\bINSERT\b|\bUPDATE\b|\bDELETE\b/.test(blk.toUpperCase().replace(/DELETED_AT/g, '')),
+     (blk.match(/\b(INSERT|UPDATE|DELETE)\b/g) || []).join(','));
+
+  globalThis.fetch = realFetch;
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));

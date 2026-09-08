@@ -901,6 +901,69 @@ there, and so does a rehearsal that starts inventing one.
 merge.** Until it runs, sends work exactly as before and every new route
 degrades by name.
 
+## The client record packet compiles records and asserts no outcome
+
+Owner brief 2026-09-08; derived decisions D1–D12 in
+`case-portal/RECORD-PACKET.md`. One packet from a case, for a client dispute, a
+chargeback file, the office's own records or an accountant.
+
+`GET /cases/:no/record-packet` is admin-only, reads nine tables that already
+existed and **writes nothing and emails nobody**. **No schema change, so no
+`portal-setup.yml` dispatch.** The page renders it twice — a preview of what is
+and is not included, and the document in `#crpdoc`, which is what both the PDF
+and the print dialog are made from, so paper and file cannot disagree.
+
+**THE SNAPSHOT IS THE PRODUCT.** The rate-sheet section returns
+`sent_document.body_text`/`body_html` — the bytes the provider was handed — and
+the block **calls no rate-sheet renderer**, which a source pin enforces. A
+packet that could call the renderer could rebuild yesterday's document from
+today's figures, and the output would look perfect.
+
+**TWO ABSENT STATES, KEPT APART.** "No rate sheet was ever sent" is ordinary. An
+acceptance naming a document whose row is gone is a different fact, and only
+that one prints the brief's exact sentence, *"Historical document snapshot
+unavailable."*
+
+**A LINK IS NOT A SIGNATURE.** A submission can carry its own door's token and
+never have been signed, so the Acceptance tick means a SIGNED acceptance is
+linked while the raw link stays readable beside it. The first build ticked on
+the link, which would have put a tick over a document nobody signed.
+
+**A PRE-CASE SEND HAS NO `send_log.case_no`** — that column is null unless the
+typed reference resolved, and a client is ordinarily quoted before the case
+exists. So for the commonest path the DOCUMENT is the send record; both are on
+the packet and the preview ticks on either. The tests taught me this rather
+than the reverse: asserting only `send_log` would have demanded the portal
+misattribute a send.
+
+**NOTHING IS TOTALLED FROM INCOMPLETE DATA.** `hours_recorded` sums only the
+days that carry a number and is **null** when none do, with the count of days
+that do not beside it. A case with no work says so and is not drawn as broken.
+
+**THE PDF GOES THROUGH THE ONE WRITER.** `pdfFromDoc` gained an OPTIONAL footer
+argument for the page number and case reference; every existing caller passes
+none and emits byte-identical output, so the guard counting PDF writers still
+counts one — and **a comment of mine quoting that header literal would have
+broken it as surely as a second writer would**, which is the class-name contest
+in a different costume, caught before running.
+
+**IT IS NOT EMAILED AND THERE IS NO CONTROL FOR IT.** §14 makes email a *may*,
+and a packet carrying a signature and the whole case narrative is not something
+to wire into a send path in the unit that invents it. The suite counts
+send-shaped verbs over every visible control on the screen and requires zero.
+
+**THE DOOR IS IN THE CLIENT RECORD AREA AND NOT ON HOME** — the packet is about
+one case, and a door on Home would have to ask which. Asserted from both sides.
+
+**Two defects the suite found in my own composer**, both worth the run: the
+intake's NOT AVAILABLE YET list was built by looking sideways from the value
+keys, so a payload carrying only a `<field>_status` reported nothing; and the
+anti-drift budget caught four invented colour literals, one used three times,
+every one of which already had a token. **And at 320 all forty record rows were
+scrolling INSIDE THEMSELVES** while neither the page nor the document
+overflowed — the `.rs-l` defect one panel over, which is why that assertion
+measures the row rather than the viewport.
+
 ## The hybrid visual pass — a scrim is a property of the ART, not of the card
 
 Owner brief 2026-09-07, against an approved art sheet sent the same day.
