@@ -398,6 +398,18 @@ async function signIn(page, u, p) {
   if (await cases.count()) { await cases.first().click(); await page.waitForTimeout(400); }
 }
 
+/* The quick-actions strip belongs to HOME — the Dashboard for an admin, Cases
+   for an investigator, who has no Dashboard. `signIn` deliberately lands every
+   section on Cases, so a section whose subject is a TOOL rather than a door has
+   to walk to the screen the door lives on first. The nav foot carries the two
+   timestamp doors everywhere and would also work; going Home is what the owner
+   does, so it is what the suite does. */
+async function goHome(page, role = 'admin') {
+  const label = role === 'admin' ? 'Dashboard' : 'Cases';
+  const tab = page.locator('.tabs button', { hasText: label });
+  if (await tab.count()) { await tab.first().click(); await page.waitForTimeout(400); }
+}
+
 /* ------------------------------------------------------------------ tests */
 
 section('Sign-in');
@@ -8709,38 +8721,100 @@ section('The four field actions are untouched');
 
 /* OWNER REPORT, 2026-08-18: "the live dashboard does not visibly show the
    timestamp video quick tool". It rendered — but only from `dashView()`, which
-   is a condition that hides it in two real ways: an investigator has no
-   Dashboard at all, and under 900px the navigation rail (the other copy) is
-   behind the burger, so on a phone anywhere but the Dashboard the only door was
-   inside a menu. It is drawn from the shell now. */
-section('Timestamp Video is on every top-level screen, for both roles');
+   hid it in two real ways: an investigator has no Dashboard at all, and under
+   900px the navigation rail (the other copy) is behind the burger, so on a
+   phone anywhere but the Dashboard the only door was inside a menu.
+
+   THE ANSWER TO THAT MOVED ON 2026-09-08, AND THIS SECTION MOVED WITH IT. The
+   fix then was to draw the strip from `shell()` — every top-level screen, both
+   roles. The owner has now corrected the cost of that: tapping an art Home
+   card landed on a screen that REDREW the same launcher above the tool, "which
+   defeats the purpose of the art Home". So the strip renders on the screen
+   each role LANDS ON and nowhere else.
+
+   WHAT STILL PROTECTS THE ORIGINAL INCIDENT, and is what this section asserts
+   now: the tool is on the screen the role opens the portal to — NOT only in a
+   menu — for BOTH roles, which is the half that made it findable. `homeTab()`
+   is per role for exactly this reason: the default tab is `cases`, moved to
+   `dashboard` only for an admin, so scoping to "dashboard" would have taken
+   the door away from the investigator entirely.
+
+   WHAT IS HONESTLY DIFFERENT: away from home, on a phone, the navigation foot
+   is again the only door — behind the burger. That is a real consequence of
+   the owner's own instruction, it is asserted below rather than glossed, and
+   Home is one tap away on the bottom navigation. */
+section('The timestamp tool is on the screen each role lands on, and not redrawn elsewhere');
 {
-  for (const [who, pass, role, tabs] of [
-    ['trever', 'AdminPassword1x', 'admin', ['Dashboard', 'Cases', 'Intakes', 'Rate Sheets']],
-    ['dana', 'FieldWork2026x', 'investigator', ['My assignments', 'Today', 'Reports']],
+  /* AN INVESTIGATOR HAS TWO HOMES AND AN ADMIN HAS ONE, which is the whole
+     reason `homeTabs()` returns a SET. The boot lands the field on their
+     assignments list; the PHONE'S BOTTOM NAV has a Home button of its own and
+     for that role it points at Today. A first build answered `cases` alone,
+     so pressing Home on a phone landed a field investigator on a screen with
+     no launcher on it — the 2026-09-04 incident, reintroduced by the fix for
+     a different one. Both are asserted, per role, by name. */
+  for (const [who, pass, role, homes, away] of [
+    ['trever', 'AdminPassword1x', 'admin', ['Dashboard'],
+     ['Cases', 'Intakes', 'Rate Sheets']],
+    ['dana', 'FieldWork2026x', 'investigator', ['My assignments', 'Today'],
+     ['Reports', 'File queue']],
   ]) {
     const page = await newPage();
     await signIn(page, who, pass);
     await page.waitForTimeout(400);
-    for (const t of tabs) {
+    for (const home of homes) {
+      await page.locator('.tabs button', { hasText: home }).first().click();
+      await page.waitForTimeout(600);
+      /* EXACTLY ONE *VISIBLE* DOOR on the home screen. A hidden element is out
+         of the accessibility tree entirely, so "one visible" is the claim that
+         means one door and one tab stop at any width. */
+      const n = await page.locator('.qtools [data-act="vstOpen"]:visible').count();
+      ok(`${role} · ${home} (a home for this role) carries exactly one visible quick tool`,
+         n === 1, String(n));
+      /* ONE WORDING. Two spellings of the same control meant a find-in-page for
+         what the menu says did not match what the screen shows. Read on HOME,
+         which is the only screen that has it — reading it after walking away is
+         what crashed this section when the strip first moved. */
+      const label = await text(page, '.qtools [data-act="vstOpen"]:visible');
+      ok(`and on ${home} it reads Timestamp Video`, /Timestamp Video/.test(label), label);
+      const navLabel = await page.locator('.navfoot [data-act="vstOpen"]').innerText();
+      ok(`matching the navigation exactly (${role} · ${home})`,
+         label.replace(/\s+/g, ' ').includes('Timestamp Video')
+         && navLabel.replace(/\s+/g, ' ').includes('Timestamp Video'), `${label} | ${navLabel}`);
+    }
+    /* AND THE LAUNCHER IS NOT REDRAWN ON THE DESTINATIONS — the owner's own
+       correction, asserted as the absence it is. */
+    for (const t of away) {
       await page.locator('.tabs button', { hasText: t }).first().click();
       await page.waitForTimeout(500);
-      /* EXACTLY ONE *VISIBLE* DOOR. Mobile Unit B renders two strips — the
-         desktop chip row and the phone card strip — and hides one at every
-         width, so the raw count is 2 by design and "one visible" is the
-         stronger claim: a hidden element is out of the accessibility tree
-         entirely, so there is one door and one tab stop at any size. */
-      const n = await page.locator('.qtools [data-act="vstOpen"]:visible').count();
-      ok(`${role} · ${t} carries exactly one visible quick tool`, n === 1, String(n));
+      const away_n = await page.locator('.qtools [data-act="vstOpen"]:visible').count();
+      ok(`${role} · ${t} shows its own content, with no launcher redrawn above it`,
+         away_n === 0, String(away_n));
+      /* THE ALWAYS-AVAILABLE DOOR IS STILL THERE. It is in the navigation
+         foot on every screen for both roles — on a phone that is inside the
+         drawer, which is the honest cost of the change and why the home
+         screen keeps its card. */
+      ok(`${role} · ${t} still reaches the tool from the navigation`,
+         await page.locator('.navfoot [data-act="vstOpen"]').count() === 1);
     }
-    /* ONE WORDING. Two spellings of the same control meant a find-in-page for
-       what the menu says did not match what the screen shows. */
-    const label = await text(page, '.qtools [data-act="vstOpen"]:visible');
-    ok(`and the ${role}'s reads Timestamp Video`, /Timestamp Video/.test(label), label);
-    const navLabel = await page.locator('.navfoot [data-act="vstOpen"]').innerText();
-    ok(`matching the navigation exactly (${role})`,
-       label.replace(/\s+/g, ' ').includes('Timestamp Video')
-       && navLabel.replace(/\s+/g, ' ').includes('Timestamp Video'), `${label} | ${navLabel}`);
+
+    /* THE PHONE'S OWN HOME BUTTON, PRESSED. The rail walk above cannot catch
+       this: `homeTabs()` reads its second entry off `MNAV`, so the assertion
+       that matters is the one that goes through the control the owner's thumb
+       actually uses. */
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(350);
+    const mHome = page.locator('.mnav button', { hasText: 'Home' });
+    ok(`${role} · the phone bottom nav has a Home button`, await mHome.count() === 1);
+    await mHome.first().click();
+    await page.waitForTimeout(700);
+    const phoneHome = await page.evaluate(() => ({
+      tab: TAB,
+      tools: document.querySelectorAll('.qtools [data-act="vstOpen"]').length,
+      photo: document.querySelectorAll('.qtools [data-act="pstLaunch"]').length,
+    }));
+    ok(`${role} · pressing Home on a phone lands on a screen WITH the launcher`,
+       phoneHome.tools === 1 && phoneHome.photo === 1, JSON.stringify(phoneHome));
+    await page.setViewportSize({ width: 1200, height: 900 });
     await page.close();
   }
 }
@@ -9861,6 +9935,7 @@ section('Timestamp Photo under the policy the site actually serves');
   })));
 
   await signIn(page, 'trever', 'AdminPassword1x');
+  await goHome(page);
   const b64 = await page.evaluate(() => {
     const c = document.createElement('canvas');
     c.width = 400; c.height = 300;
@@ -9926,6 +10001,7 @@ section('Timestamp Photo decodes the operator’s own file, not a relabelled cop
      bytes still reaches the question this tool exists to ask. */
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
+  await goHome(page);
   const b64 = await page.evaluate(() => {
     const c = document.createElement('canvas');
     c.width = 320; c.height = 240;
@@ -9960,6 +10036,7 @@ section('Timestamp Photo asks for a picture first, and for a case only to file i
 
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
+  await goHome(page);
 
   /* BOTH UTILITIES, IN BOTH PLACES. Asserted as a pair rather than by name
      alone: the rule is that these two are siblings, and a door that exists for
@@ -11870,9 +11947,10 @@ section('The mobile header is a control, not a glyph');
      what would catch a return to a scroller. */
   const qt = await page.evaluate(() => {
     const doc = document.documentElement;
-    /* ONE STRIP AT EVERY WIDTH since the 2026-09-07 HYBRID pass — the desktop
-       chip row is gone and the card strip is what draws everywhere, so there
-       is no longer a pair to choose between. */
+    /* ONE STRIP since the 2026-09-07 HYBRID pass — the desktop chip row is
+       gone, so there is no longer a pair to choose between. It draws on the
+       role's HOME screen only (owner, 2026-09-08); this section signs in as an
+       admin and never leaves the dashboard, which is where it is. */
     const g = document.querySelector('.qtools .qtapps');
     const tools = [...g.children];
     const btns = tools.map(x =>
@@ -19673,6 +19751,129 @@ section('Mobile shell: the bottom nav appears on a phone and nowhere else');
      colour: an art-less card carries no `has-art`, and a scrim painted over
      nothing is what turned the previous build into ten dark slabs.
    ========================================================================= */
+/* ==========================================================================
+   THE ART CARDS ARE DIRECT LAUNCHERS (owner, 2026-09-08).
+
+   "Tapping an art Home card can lead to another plain landing/quick-action
+   layer before reaching the actual tool. That defeats the purpose of the art
+   Home." Measured before the change, at 390: four of the seven — Rate Sheet,
+   New Intake, Private Intake, View Intakes — landed on a shell screen that
+   REDREW the Start Something grid above the tool. The other three were
+   already direct.
+
+   WHAT IS ASSERTED HERE IS THE ROUTE, NOT THE PIXELS: each card lands on its
+   own tool with no second launcher above it, and Back from a tool returns to
+   an art Home. Both at 390 and 320, because a duplicate layer is a phone
+   problem first.
+   ========================================================================= */
+section('Every art card is a direct launcher, and Back returns to an art Home');
+{
+  for (const [w, h] of [[390, 844], [320, 568]]) {
+    const page = await newPage();
+    await signIn(page, 'trever', 'AdminPassword1x');
+    /* GO HOME AT THE DEFAULT WIDTH, THEN SHRINK. Under 900px the rail is
+       behind the burger, so `.tabs button` is in the DOM and not visible —
+       clicking it there is a 30-second timeout, not a failure with a name. */
+    await page.locator('.tabs button', { hasText: 'Dashboard' }).first().click();
+    await page.waitForTimeout(500);
+    await page.setViewportSize({ width: w, height: h });
+    await page.waitForTimeout(700);
+
+    /* HOME IS THE ONE SCREEN WITH THE LAUNCHER ON IT. */
+    const home = await page.evaluate(() => ({
+      strip: document.querySelectorAll('.qtools .qtapps').length,
+      art: document.querySelectorAll('.qtools .qtapp.uiart').length,
+    }));
+    ok(`${w}: Home draws the art launcher`,
+       home.strip >= 1 && home.art === 7, JSON.stringify(home));
+
+    /* ---- the four that used to pass through a duplicate layer ---------- */
+    const land = async (qt, expect) => {
+      await page.evaluate(() => { TAB = 'dashboard'; SHEET_WIZ = null; paint(); });
+      await page.waitForTimeout(500);
+      await page.locator(`.qtapp[data-qt="${qt}"]`).click();
+      await page.waitForTimeout(1100);
+      return page.evaluate(e => ({
+        tab: TAB, wiz: !!SHEET_WIZ,
+        /* THE DUPLICATE LAYER, MEASURED: is the Home grid drawn again? */
+        strip: document.querySelectorAll('.qtools .qtapps').length,
+        ovf: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        hit: e,
+      }), expect);
+    };
+    for (const [qt, tab, label] of [['sheets', 'sheets', 'Rate Sheet'],
+                                    ['newlead', 'newlead', 'New Intake'],
+                                    ['priv', 'newlead', 'Private Intake'],
+                                    ['leads', 'leads', 'View Intakes']]) {
+      const r = await land(qt, tab);
+      ok(`${w}: ${label} lands on its own screen with NO second launcher above it`,
+         r.tab === tab && r.strip === 0 && r.ovf === 0, JSON.stringify(r));
+    }
+    /* Rate Sheet's endpoint is the FORM, not the Rate Sheets list. */
+    await page.evaluate(() => { TAB = 'dashboard'; SHEET_WIZ = null; paint(); });
+    await page.waitForTimeout(500);
+    await page.locator('.qtapp[data-qt="sheets"]').click();
+    await page.waitForTimeout(1100);
+    ok(`${w}: and Rate Sheet opens Prepare & Send itself, with its recipient field`,
+       await page.evaluate(() => !!SHEET_WIZ && !!document.getElementById('wiz_to')));
+
+    /* ---- BACK RETURNS TO AN ART HOME ---------------------------------- */
+    /* The owner's own test, and it failed before this unit: closing the
+       wizard left you standing on the Rate Sheets LIST — a screen nobody
+       asked for, one tap further from Home than where you started. The
+       wizard remembers where it was opened from, so a send opened from a
+       sheet card still returns to that list. */
+    await page.locator('.amx[data-act="wizClose"]').click();
+    await page.waitForTimeout(800);
+    const back = await page.evaluate(() => ({
+      tab: TAB, wiz: !!SHEET_WIZ,
+      art: document.querySelectorAll('.qtools .qtapp.uiart').length,
+    }));
+    ok(`${w}: Home art -> Rate Sheet -> Back -> art Home`,
+       back.tab === 'dashboard' && back.wiz === false && back.art === 7, JSON.stringify(back));
+
+    /* Active Surveillance takes its own full screen — no shell, so no strip
+       could be drawn over it — and its back control returns to art Home. */
+    await page.locator('.qtapp[data-qt="field"]').click();
+    await page.waitForTimeout(1200);
+    const sv = await page.evaluate(() => ({
+      launcher: !!(typeof SV !== 'undefined' && SV) && SV.tab === 'launcher',
+      strip: document.querySelectorAll('.qtools .qtapps').length,
+    }));
+    ok(`${w}: Active Surveillance opens its working screen directly`,
+       sv.launcher === true && sv.strip === 0, JSON.stringify(sv));
+    await page.locator('[data-act="svLeaveLauncher"]').click();
+    await page.waitForTimeout(800);
+    const svBack = await page.evaluate(() => ({
+      tab: TAB, sv: !!(typeof SV !== 'undefined' && SV),
+      art: document.querySelectorAll('.qtools .qtapp.uiart').length,
+    }));
+    ok(`${w}: Home art -> Active Surveillance -> Back -> art Home`,
+       svBack.tab === 'dashboard' && svBack.sv === false && svBack.art === 7,
+       JSON.stringify(svBack));
+
+    /* THE TWO TIMESTAMP TOOLS OPEN THE PICKER ITSELF — one tap, no landing
+       screen. `filechooser` firing IS the assertion: it is what a direct
+       launcher does, and it is why these two were already correct. Cancelling
+       leaves the page where it was, which is an art Home. */
+    for (const [qt, label] of [['photo', 'Timestamp Photo'], ['video', 'Timestamp Video']]) {
+      let fired = false;
+      const onChooser = () => { fired = true; };
+      page.on('filechooser', onChooser);
+      await page.evaluate(q => document.querySelector(`.qtapp[data-qt="${q}"]`).click(), qt);
+      await page.waitForTimeout(1200);
+      page.off('filechooser', onChooser);
+      const after = await page.evaluate(() => ({
+        tab: TAB, art: document.querySelectorAll('.qtools .qtapp.uiart').length,
+      }));
+      ok(`${w}: ${label} opens its file picker directly, and cancelling leaves art Home`,
+         fired === true && after.tab === 'dashboard' && after.art === 7,
+         JSON.stringify({ fired, ...after }));
+    }
+    await page.close();
+  }
+}
+
 section('The hybrid pass: seven art cards on Home, and nothing else touched');
 {
   const page = await newPage();
@@ -19966,14 +20167,21 @@ section('The hybrid pass: seven art cards on Home, and nothing else touched');
   }
   ok('no operational screen carries a single art card',
      Object.values(walk).every(n => n === 0), JSON.stringify(walk));
-  /* AND THE DOORS ARE STILL THERE — withdrawing the treatment must not
-     withdraw the strip, or the 2026-09-04 "could not find the tool" incident
-     comes straight back. */
-  const stillThere = await page.evaluate(() =>
-    [...document.querySelectorAll('.qtools .qtapps:not(.qtapps-more) > .qtapp')].map(c => c.dataset.qt));
-  ok('and every door is still on the screen, just plain',
-     stillThere.length === 7 && stillThere.includes('photo') && stillThere.includes('video'),
-     JSON.stringify(stillThere));
+  /* THE STRIP ITSELF IS GONE FROM THESE SCREENS NOW, AND THAT IS THE OWNER'S
+     OWN CORRECTION (2026-09-08). This asserted the opposite — that the seven
+     doors stay drawn on every screen, plain — which was the previous unit's
+     decision and the reason the treatment rather than the strip was withdrawn.
+
+     Tapping an art card then landed on a screen that REDREW the same grid
+     above the tool: a duplicate Start Something layer between the card and the
+     work. "The art card grid belongs on Home. Operational destinations should
+     immediately show the operational content." So the strip renders on the
+     role's home screen and nowhere else, and what is asserted here is the
+     stronger property — the destination shows its own content, nothing else. */
+  const stripOff = await page.evaluate(() =>
+    [...document.querySelectorAll('.qtools .qtapps')].length);
+  ok('and the Start Something grid is not redrawn above them either',
+     stripOff === 0, String(stripOff));
 
   /* ---- the case screen never had one, and must not gain one ------------- */
   await page.evaluate(() => openCase('API-20260812-4002'));
@@ -19994,6 +20202,11 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
 {
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
+  /* THE STRIP IS HOME'S. `signIn` lands every section on Cases, so a section
+     that measures the launcher has to walk to the screen it lives on — at the
+     default width, before `read()` starts shrinking the viewport, because
+     under 900px the rail is behind the burger. */
+  await goHome(page);
 
   const read = async (w, h) => {
     await page.setViewportSize({ width: w, height: h });
@@ -21539,6 +21752,7 @@ section('My Portal: two sign-ins, two layouts, one shared caseload');
      unhides, the second admin's portal does not move. */
   const pageA = await newPage();
   await signIn(pageA, 'trever', 'AdminPassword1x');
+  await goHome(pageA);          // the quick actions are Home's; signIn lands on Cases
   await pageA.waitForTimeout(900);
 
   /* FACTORY VIEW (CEO charter Mission 2): the Needs-assignment card is not
@@ -21597,6 +21811,7 @@ section('My Portal: two sign-ins, two layouts, one shared caseload');
   /* B signs in on their own context: the FACTORY view, untouched by A. */
   const pageB = await newPage();
   await signIn(pageB, 'brother', 'BrotherPass2026x');
+  await goHome(pageB);
   await pageB.waitForTimeout(900);
   const bView = await pageB.evaluate(() => ({
     strip: [...document.querySelectorAll('.qtapps [data-qt]')].map(b => b.dataset.qt).slice(0, 3),
@@ -21617,6 +21832,7 @@ section('My Portal: two sign-ins, two layouts, one shared caseload');
   await pageA.evaluate(() => { const b = document.querySelector('[data-act="logout"]'); if (b) b.click(); });
   await pageA.waitForTimeout(1500);
   await signIn(pageA, 'brother', 'BrotherPass2026x');
+  await goHome(pageA);
   await pageA.waitForTimeout(900);
   const sameTab = await pageA.evaluate(() =>
     [...document.querySelectorAll('.qtapps [data-qt]')].map(b => b.dataset.qt)[0]);
