@@ -13601,9 +13601,22 @@ section('The timeline print region is its own, and adds no PDF writer');
      file three times, so the timeline's overrides come after everything they
      override — and its class names are its own rather than a contest with the
      activity log's `.tl`, which is what made `.qgrid` the third casualty. */
-  const lastMedia = src.lastIndexOf('@media(max-width:560px)');
-  ok('the timeline phone rules are in the last phone block',
-     lastMedia > 0 && src.indexOf('.tl2-i{grid-template-columns:1fr', lastMedia) > lastMedia);
+  /* THE PROPERTY IS "AFTER WHAT IT OVERRIDES", NOT "LAST IN THE FILE".
+     This asserted that the timeline's override followed the file's LAST
+     `@media(max-width:560px)` block, which was true only because the
+     timeline's block happened to be the last one when it was written — a
+     later unit adding a phone block at that same breakpoint for an unrelated
+     prefix made it fail while nothing about the timeline had moved. What
+     matters is that `.tl2-i`'s phone rule comes after `.tl2-i`'s own base
+     rule, inside a phone block, which is what source order can actually get
+     wrong. Measured that way it cannot be broken by a stranger's CSS. */
+  const tlBase = src.indexOf('.tl2-i{display:grid');
+  const tlPhone = src.indexOf('.tl2-i{grid-template-columns:1fr');
+  ok('the timeline phone rule comes after the base rule it overrides',
+     tlBase > 0 && tlPhone > tlBase, JSON.stringify({ tlBase, tlPhone }));
+  ok('and it is inside a phone block rather than at the top level',
+     tlPhone > 0 && src.lastIndexOf('@media(max-width:560px)', tlPhone) > tlBase,
+     String(src.lastIndexOf('@media(max-width:560px)', tlPhone)));
   const tlCss = (src.match(/UNIT 10 — the case timeline[\s\S]*?\n  @media print\{/) || [''])[0];
   ok('every timeline rule is under its own prefix',
      tlCss.length > 0 && (tlCss.match(/^  \.[a-z0-9-]+/gm) || [])
