@@ -1012,13 +1012,32 @@ two had one under the portal's own 44px floor, and two had nothing at all.
 | Timestamp Photo | `.vst-x` 74×44 | untouched |
 | Timestamp Video | `.vst-x` 74×44 | untouched |
 
-**`homeCardTabs()` READS `QT`, so a card added there gets its way back for
-free** and a card whose destination changes takes its Back with it — the
+**`homeCardTabs()` READS `QT_PHONE`, so a card added there gets its way back
+for free** and a card whose destination changes takes its Back with it — the
 `wsMore()`-by-subtraction rule at the navigation layer. `ACT_LANDS` names the
 two acts that land on a screen without navigating by tab id (`sheetQuick` →
 `sheets`, `nlKind` → `newlead`), beside the only thing that reads them. **The
 cards with their own root are deliberately absent**: a `.pagebar` behind a
 full-screen tool is a control nobody can reach.
+
+**AND IT IS `QT_PHONE` ALONE — THE SEVEN PRIMARY LAUNCHERS** (owner,
+2026-09-08, narrowing the first build: *"keep the new Home-return behavior
+scoped to the seven primary Home launchers only ... do not add the new
+Back-to-Home pagebar to Cases or Reports & Packages"*). Deriving from the More
+list as well put the control on two **ordinary portal sections** — Cases is in
+the bottom navigation on every screen and Reports & Packages is on the rail, so
+neither is a screen anyone can be stranded on, and a Back there is exactly the
+unnecessary control the narrowing removes. **Reading `QT_PHONE` rather than
+naming three tabs keeps the derivation**: promote a card out of More and its
+destination gains a Back with it. The suite asserts BOTH halves, because a set
+that is merely smaller would satisfy the first one on its own — and it checks
+the two sections live as well, since the derivation can be right while the
+render puts one there anyway.
+
+**So the whole rule is four screens: `sheets`, `newlead` and `leads`** (the
+Rate Sheet, New Intake, Private Intake and View Intakes cards), plus nothing
+else — Active Surveillance and the two timestamp tools keep the close in their
+own head, and Cases and Reports & Packages keep the doors they already had.
 
 **IT IS THE PORTAL'S EXISTING BACK, not a new one.** `.pagebar` +
 `.btn sm ghost close` is what the case page and Clients & Firms already draw,
