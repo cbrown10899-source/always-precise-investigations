@@ -559,26 +559,26 @@
      PLAIN ON PURPOSE (§11): navy and white, a thin gold rule under each
      heading, no art-card treatment and no decorative graphic. This is a record,
      not a brochure. */
-  .crp-doc{background:#fff;color:#1c2530;padding:20px 22px;border:1px solid var(--line);
+  .crp-doc{background:var(--card);color:var(--ink);padding:20px 22px;border:1px solid var(--line);
     border-radius:10px;line-height:1.5;}
   .crp-h1{margin:0;font-size:1.25rem;letter-spacing:.01em;color:var(--navy-2);}
-  .crp-sub{margin:2px 0 14px;font-size:.9rem;color:#55606d;}
+  .crp-sub{margin:2px 0 14px;font-size:.9rem;color:var(--muted);}
   .crp-doc h2{margin:20px 0 8px;font-size:1.02rem;color:var(--navy-2);
     border-bottom:2px solid var(--gold-2);padding-bottom:4px;}
   .crp-doc h3{margin:14px 0 5px;font-size:.92rem;color:var(--navy-2);}
   .crp-r{display:flex;gap:10px;padding:3px 0;font-size:.88rem;}
-  .crp-k{min-width:150px;font-weight:700;color:#3a4653;}
+  .crp-k{min-width:150px;font-weight:700;color:var(--navy-2);}
   .crp-v{flex:1;min-width:0;overflow-wrap:anywhere;}
-  .crp-none{font-size:.88rem;color:#55606d;font-style:italic;}
+  .crp-none{font-size:.88rem;color:var(--muted);font-style:italic;}
   /* The preserved document is printed as the text the client was sent, so its
      own newlines are the paragraphing — the same `pre-line` the report bodies
      use, which is what the PDF collector reads them by. */
   .crp-body{white-space:pre-line;font-size:.86rem;background:var(--paper);
     border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:8px 0;}
   .crp-sig{max-width:280px;border:1px solid var(--line);border-radius:6px;
-    background:#fff;margin:6px 0;}
+    background:var(--card);margin:6px 0;}
   .crp-foot{margin-top:18px;padding-top:8px;border-top:1px solid var(--line);
-    font-size:.78rem;color:#55606d;}
+    font-size:.78rem;color:var(--muted);}
   /* The preview (§13): what is in, what is not, and one action. */
   .crp-pre{display:flex;align-items:center;gap:10px;padding:8px 0;
     border-bottom:1px solid var(--line);font-size:.92rem;}
@@ -3405,6 +3405,29 @@
   /* 320px: stacked, the chip has no horizontal neighbour to meet, so it keeps
      its word. The rule that hid the label existed for a side-by-side pair. */
   @media(max-width:359px){ .ceo-fab{padding:8px 11px;font-size:.76rem;} }
+
+  /* ==== THE CLIENT RECORD PACKET ON A PHONE (owner brief 2026-09-08 §16) ===
+     AT THE END OF THE STYLESHEET, after everything it overrides — the source-
+     order casualty this project has now recorded seven times.
+
+     MEASURED, NOT GUESSED. At 320 every one of the forty record rows was
+     scrolling INSIDE ITSELF: `.crp-k` holds a 150px label column and the value
+     beside it, which is 150 plus a value plus the gap against roughly 250px of
+     usable width. The page did not scroll sideways and the document did not
+     either, so nothing on screen said so — the row just clipped its own value,
+     which is the `.rs-l` defect one panel over. Stacking the label above the
+     value is what a stacked record already does everywhere else in this
+     portal, and it gives the value the whole width. */
+  @media(max-width:560px){
+    .crp-r{flex-direction:column;gap:0;}
+    .crp-k{min-width:0;font-size:.82rem;}
+    .crp-doc{padding:16px 14px;}
+    .crp-body{font-size:.82rem;padding:10px 11px;}
+    /* One action per row, at the tap floor, so neither is a thumb-width sliver
+       next to the other. */
+    .crp-acts{flex-direction:column;align-items:stretch;}
+    .crp-acts .btn{width:100%;}
+  }
 
 </style>
 </head>
