@@ -968,7 +968,29 @@
     background-image:var(--c-scrim),
       var(--art,linear-gradient(rgba(0,0,0,0),rgba(0,0,0,0)));
     background-size:cover;background-position:var(--art-pos,center);}
-  .uiart.has-art{--c-scrim:linear-gradient(180deg,rgba(10,18,30,.28) 0%,rgba(10,18,30,.82) 84%);}
+  /* THE SCRIM IS TUNED TO THE PHOTOGRAPHS THAT ARRIVED, and the top and the
+     bottom stops do different jobs — which is why they were swept separately.
+
+     The BOTTOM stop protects the text and cannot move: at `.74` the worst card
+     measures 4.82 desktop / 4.65 phone, which passes by 0.15 and is the same
+     razor-thin margin this project already rejected once on the public site
+     ("one brighter photograph later it would fail with nothing on screen to
+     say so"). It stays at .82.
+
+     The TOP stop is pure dimming of the part of the card the text never
+     reaches, and it was at .28 for no measured reason. Halving it to .14 makes
+     the artwork roughly twice as bright where it is actually visible and costs
+     almost nothing at the text: worst card 5.27 desktop / 5.01 phone, against
+     6.2 / 5.97 before. That is owner §4 exactly — "only enough scrim to make
+     the title, subtitle and badges clearly readable", and "do not make the
+     cards look like dark black slabs".
+
+     Measured across ALL SEVEN cards against PAINTED PIXELS, not against the
+     ground token, because with a photograph in place no computed style can
+     answer what is behind the text. Re-run that sweep before touching either
+     number; the binding card is Private Intake on desktop and Timestamp Photo
+     on a phone, and they are not the same card. */
+  .uiart.has-art{--c-scrim:linear-gradient(180deg,rgba(10,18,30,.14) 0%,rgba(10,18,30,.82) 84%);}
   .uiart .uiact-n,.uiart .uiwide-n{color:#fff;}
   .uiart .uiact-s,.uiart .uiwide-s{color:rgba(255,255,255,.88);}
   /* A NEAR-WHITE TILE, BECAUSE THE ICONS ARE COLOUR EMOJI. The reference
@@ -6117,7 +6139,19 @@ const QT = {
             sub:"Legal matter", admin:true},
   delivery:{fam:"asst", art:"reports", act:"tab", tab:"delivery", icon:"&#128230;", label:"Reports &amp; Packages",
             sub:"View all", admin:true},
-  photo:   {fam:"case", ground:"photo", art:"timestamp-photo", act:"pstLaunch", caseless:true, pair:true, icon:"&#128247;",
+  /* THE ONE CROP ADJUSTMENT IN THE SET, AND IT IS A MEASURED ONE. This
+     photograph is golden light on marble, and centred it put the brightest
+     part of the frame directly under the title: painted white contrast 4.54:1
+     at the desktop crop — above the 4.5 bar, but by 0.04, which is the same
+     razor-thin margin this project already rejected once on the public site
+     ("one brighter photograph later it would fail with nothing on screen to
+     say so"). Swept against the real render: 0% 4.72, 20% 4.84, 35% 5.99,
+     65% 7.87, 80% 6.83, 100% 5.16 on desktop, with the phone comfortable
+     throughout. `center 65%` is the best of both — desktop 7.87, phone 5.97 —
+     and it keeps the camera in frame at every width. The other six needed
+     nothing and carry no `pos`. */
+  photo:   {fam:"case", ground:"photo", art:"timestamp-photo", pos:"center 65%",
+            act:"pstLaunch", caseless:true, pair:true, icon:"&#128247;",
             label:"Timestamp Photo", sub:"Burn the moment"},
   video:   {fam:"case", ground:"video", art:"timestamp-video", act:"vstOpen",   caseless:true, pair:true, icon:"&#127909;",
             label:"Timestamp Video", sub:"Burn the moment"},
@@ -6137,11 +6171,26 @@ const QT = {
   ceo:     {fam:"ceo", art:"ceo-bot", act:"ceoOpen", icon:"&#9733;", label:"CEO Bot",
             sub:"Improve the portal"},
 };
-/* THE ARTWORK THAT EXISTS. Empty until the owner's own card art is made —
-   see case-portal/ART-ASSET-MANIFEST.md for the fifteen specifications. A
-   name here without `portal/cards/<name>.webp` beside it draws a dark card
-   with no picture, so the two are added together. */
-const CARD_ART = new Set([]);
+/* THE ARTWORK THAT EXISTS — INSTALLED 2026-09-07 from the owner's approved
+   hybrid art pack. A name here without `portal/cards/<name>.webp` beside it
+   draws a card with no picture, and a file without its name here is never
+   requested, so the two are added together — plus the file's line in
+   `.github/deploy-manifest.txt`, or it is not published at all.
+
+   These seven and no more. The five doors under More carry no `ground`, so
+   they are not art cards and would ignore a file anyway (owner §2); the wide
+   signed-intake alert keeps its own separate slot and is untouched by this
+   list (owner §5). Specifications and per-card provenance:
+   case-portal/ART-ASSET-MANIFEST.md */
+const CARD_ART = new Set([
+  "rate-sheet",       // elegant_contract_desk_still_life
+  "new-intake",       // golden_hour_executive_file_tray
+  "private-intake",   // cinematic_executive_office_at_sunset
+  "signed-intakes",   // signed_approval_on_marble_desk
+  "surveillance",     // cinematic_surveillance_camera_interior
+  "timestamp-photo",  // cinematic_camera_on_marble_tabletop
+  "timestamp-video",  // cinematic_camera_in_golden_studio_light
+]);
 /* THE CACHE-BUST, IN ONE PLACE. `_headers` caches these seven days and the
    files will be replaced IN PLACE at stable URLs — the public site paid a full
    round for exactly this, where every deploy was green and the browser went on
@@ -6363,8 +6412,12 @@ function quickToolsHtml(){
        photograph is the restrained placeholder §7 asks for: the same box, the
        same safe zone, the same badge corner, waiting for one file. */
     const hasArt = t.art && CARD_ART.has(t.art);
+    /* `pos` IS PER-CARD AND OPTIONAL (owner §3: "adjust object-position only
+       where required to protect the title, subtitle, badge"). Six of the seven
+       photographs need nothing; the seventh is measured and named in `QT`. */
     const art = hasArt && onHome
-      ? ` style="--art:url('cards/${t.art}.webp?v=${CARD_ART_V}')"` : "";
+      ? ` style="--art:url('cards/${t.art}.webp?v=${CARD_ART_V}')${
+          t.pos ? `;--art-pos:${t.pos}` : ""}"` : "";
     const cls = ["qtapp", "uiact", `fam-${t.fam || "case"}`];
     if(t.ground && onHome) cls.push("uiart", `art-${t.ground}`);
     if(hasArt && onHome) cls.push("has-art");

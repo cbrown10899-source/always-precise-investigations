@@ -19823,18 +19823,71 @@ section('The hybrid pass: seven art cards on Home, and nothing else touched');
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.waitForTimeout(300);
 
-  /* ---- §7: the art SLOT, and the cache-bust that is not optional -------- */
+  /* ---- §7: THE ARTWORK IS INSTALLED, AND EVERY GATE AGREES ---------------
+
+     THIS ASSERTION IS INVERTED BY THE EVENT IT WAS WAITING FOR. It required
+     that no card claim a file and no scrim be painted, which was exactly right
+     while `CARD_ART` was empty: a scrim over no photograph is the previous
+     build's whole failure. The owner's approved art pack landed on 2026-09-07,
+     so the state it described is gone and the state worth pinning is the one
+     that replaced it.
+
+     THREE GATES HAVE TO AGREE OR A CARD IS BROKEN IN A WAY NOTHING SAYS. The
+     name must be in `CARD_ART` (or the URL is never emitted), the file must be
+     in `portal/cards/` (or the request 404s and the card silently falls back
+     to its ground), and the path must be in `.github/deploy-manifest.txt` (or
+     it is simply not published — the deploy guard's own default-deny). The
+     first two are asserted here from the rendered page; the third is asserted
+     by `.github/test-deploy.mjs` over the staged bytes, which is where the
+     manifest is actually applied. */
   const slot = await page.evaluate(() => ({
-    /* No asset has landed yet, so nothing may claim one. `has-art` is what
-       turns the scrim on, and a scrim over no photograph is the previous
-       build's whole failure. */
+    art: [...document.querySelectorAll('.qtools .qtapps:not(.qtapps-more) > .qtapp.uiart')].length,
     hasArt: [...document.querySelectorAll('.uiart.has-art')].length,
-    inlineArt: [...document.querySelectorAll('.uiart')].filter(e => e.style.getPropertyValue('--art')).length,
-    scrim: [...document.querySelectorAll('.uiart')]
-      .every(e => getComputedStyle(e).backgroundImage.includes('rgba(0, 0, 0, 0)')),
+    inlineArt: [...document.querySelectorAll('.uiart')]
+      .filter(e => e.style.getPropertyValue('--art')).length,
+    /* The scrim is painted now, and only where there is a photograph — the
+       art-less state must still resolve to a transparent gradient, because
+       that is what a future eighth card with no asset will render as. */
+    scrimOnArt: [...document.querySelectorAll('.uiart.has-art')]
+      .every(e => !getComputedStyle(e).backgroundImage.includes('rgba(0, 0, 0, 0),')),
+    urls: [...document.querySelectorAll('.uiart')]
+      .map(e => e.style.getPropertyValue('--art')).filter(Boolean),
+    allUiart: [...document.querySelectorAll('.uiart')].length,
+    wideHasArt: !!document.querySelector('.uiwide.has-art'),
   }));
-  ok('with no artwork installed no card claims any, and no scrim is painted',
-     slot.hasArt === 0 && slot.inlineArt === 0 && slot.scrim === true, JSON.stringify(slot));
+  ok('all seven Home cards claim their photograph and paint the scrim over it',
+     slot.art === 7 && slot.hasArt === 7 && slot.inlineArt === 7 && slot.scrimOnArt === true,
+     JSON.stringify({ ...slot, urls: slot.urls.length }));
+  /* §5 — THE WIDE SIGNED-INTAKE ALERT IS NOT DISTURBED. It is an `.uiart` and
+     always was, but the owner's pack contains no wide asset and `§5` says the
+     alert keeps its existing behaviour and hierarchy — so it stays on its
+     green ground with no photograph. `signed-intakes.webp` belongs to the
+     ordinary View Intakes CARD; the two are different files for different
+     crops and this pins that they have not been confused. Eight `.uiart`
+     elements, seven of them with art. */
+  ok('and the wide signed-intake alert keeps its green ground, no photograph',
+     slot.allUiart === 8 && slot.wideHasArt === false, JSON.stringify(slot));
+  /* THE CACHE-BUST IS NOT OPTIONAL, and now it is a live URL rather than a
+     template. `_headers` caches these seven days and they will be replaced in
+     place; the public site paid a full round for exactly that. */
+  ok('and every emitted art URL carries the version token',
+     slot.urls.length >= 7 && slot.urls.every(u => /\?v=\d+/.test(u)),
+     JSON.stringify(slot.urls.slice(0, 2)));
+  /* EVERY FILE ACTUALLY RESOLVES. A name in `CARD_ART` with no file beside it
+     404s and the card falls back to its ground with nothing on screen saying
+     so — which is precisely the failure a missing manifest line also produces,
+     and the reason all three gates are checked rather than one. */
+  const fetched = await page.evaluate(async urls => {
+    const out = [];
+    for (const u of urls) {
+      const path = u.replace(/^url\(["']?/, '').replace(/["']?\)$/, '');
+      try { const r = await fetch(path); out.push([path.split('/').pop(), r.status]); }
+      catch (e) { out.push([path, 'threw']); }
+    }
+    return out;
+  }, slot.urls);
+  ok('and every one of them is really on disk and served',
+     fetched.length >= 7 && fetched.every(([, st]) => st === 200), JSON.stringify(fetched));
   /* The cache-bust is REQUIRED — `_headers` caches these seven days and the
      files are replaced in place. The public site paid a full round for this. */
   const src = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
@@ -22345,8 +22398,12 @@ section("Home says good morning, and a signed intake is impossible to miss");
     grounds: Object.values(QT).filter(t => t.ground).length,
     slots: Object.values(QT).filter(t => t.art).length }));
   ok('every quick-action door declares an art slot', art.slots >= 10, JSON.stringify(art));
-  ok('the seven ground-bearing doors wear the treatment, and no file is claimed',
-     art.known === 0 && art.grounds === 7 && art.dark === 7 && art.withFile === 0,
+  /* INVERTED WITH ITS SIBLING ABOVE — the artwork landed. `known` is
+     `CARD_ART.size`, and it is pinned to exactly the seven the owner's pack
+     supplies: an eighth name added without an asset, or a `ground` added to a
+     door §2 keeps plain, fails here rather than on someone's phone. */
+  ok('the seven ground-bearing doors wear the treatment, and each has its file',
+     art.known === 7 && art.grounds === 7 && art.dark === 7 && art.withFile === 7,
      JSON.stringify(art));
   await page.close();
 }
