@@ -19901,25 +19901,42 @@ section('Every direct-launch destination has a visible way back, at the tap floo
   await signIn(page, 'trever', 'AdminPassword1x');
 
   /* THE SET IS DERIVED FROM THE LAUNCHER, NOT LISTED TWICE. This is the
-     assertion that keeps it that way: every Home card whose act lands on a
-     TAB must have that tab in the set, and the cards that take over the
-     screen with their own root must not be in it. */
-  const derived = await page.evaluate(() => ({
-    set: [...homeCardTabs()].sort(),
-    landing: [...QT_PHONE, ...QT_PHONE_MORE].map(id => {
-      const t = QT[id]; return t && (t.act === 'tab' ? t.tab : (ACT_LANDS[t.act] || null));
-    }).filter(Boolean).sort(),
-    ownRoot: [...QT_PHONE, ...QT_PHONE_MORE].filter(id => {
-      const t = QT[id]; return t && t.act !== 'tab' && !ACT_LANDS[t.act];
-    }),
-  }));
-  ok('the back-able set is exactly what the Home cards land on',
-     JSON.stringify(derived.set) === JSON.stringify([...new Set(derived.landing)].sort()),
+     assertion that keeps it that way: every PRIMARY Home card whose act lands
+     on a TAB must have that tab in the set, and the cards that take over the
+     screen with their own root must not be in it.
+
+     AND IT IS THE SEVEN PRIMARY LAUNCHERS ALONE (owner, 2026-09-08, narrowing
+     the first build). Deriving from the More list as well put the control on
+     two ORDINARY sections — Cases, which is in the bottom navigation on every
+     screen, and Reports & Packages, which is on the rail. Neither is a screen
+     anyone can be stranded on, so a Back there is the unnecessary control the
+     narrowing removes. Both halves are asserted, because a set that is merely
+     SMALLER would also satisfy the first one. */
+  const derived = await page.evaluate(() => {
+    const lands = id => { const t = QT[id];
+      return t && (t.act === 'tab' ? t.tab : (ACT_LANDS[t.act] || null)); };
+    return {
+      set: [...homeCardTabs()].sort(),
+      primary: QT_PHONE.map(lands).filter(Boolean).sort(),
+      more: QT_PHONE_MORE.map(lands).filter(Boolean),
+      ownRoot: QT_PHONE.filter(id => !lands(id)),
+    };
+  });
+  ok('the back-able set is exactly what the SEVEN PRIMARY cards land on',
+     JSON.stringify(derived.set) === JSON.stringify([...new Set(derived.primary)].sort()),
      JSON.stringify(derived));
   ok('and the full-screen tools are NOT in it — they carry their own close',
      derived.ownRoot.length > 0
-     && derived.ownRoot.every(id => ['field', 'photo', 'video', 'ceo'].includes(id)),
+     && derived.ownRoot.every(id => ['field', 'photo', 'video'].includes(id)),
      JSON.stringify(derived.ownRoot));
+  /* THE NARROWING, STATED AS THE ABSENCE IT IS. A More destination that no
+     primary card also lands on must not be in the set — `newlead` is shared
+     (Insurance and Law Firm Intake sit behind More, New Intake does not), so
+     the test is per-destination rather than "no More destination at all". */
+  const onlyMore = derived.more.filter(t => !derived.primary.includes(t));
+  ok('a More-only destination is NOT given a Back to Home',
+     onlyMore.length > 0 && onlyMore.every(t => !derived.set.includes(t)),
+     JSON.stringify({ onlyMore, set: derived.set }));
 
   for (const [w, h] of [[390, 844], [320, 568]]) {
     /* Go Home at the default width first — under 900px the rail is behind the
@@ -19936,6 +19953,27 @@ section('Every direct-launch destination has a visible way back, at the tap floo
     await page.waitForTimeout(400);
     ok(`${w}: Home itself carries no Back`,
        await page.locator('#app > .pagebar .homeback').count() === 0);
+
+    /* ---- THE TWO ORDINARY SECTIONS THE OWNER TOOK BACK OUT ---------- */
+    /* Reached the way they are ordinarily reached, not through a card: Cases
+       is a bottom-navigation destination on every screen and Reports &
+       Packages is on the rail, so neither is a screen anyone can be stranded
+       on. Asserted live rather than only through the derivation, because the
+       derivation could be right while the render put one there anyway. */
+    for (const [tab, label] of [['cases', 'Cases'], ['delivery', 'Reports & Packages']]) {
+      await page.evaluate(t => { SHEET_WIZ = null; VIEW = 'list'; TAB = t; paint(); }, tab);
+      await page.waitForTimeout(600);
+      ok(`${w}: ${label} is an ordinary section and carries no Back to Home`,
+         await page.evaluate(() => TAB) === tab
+         && await page.locator('#app > .pagebar .homeback').count() === 0, tab);
+    }
+    /* And each still has its own permanent door, which is why it needs none. */
+    ok(`${w}: Cases is still one press away in the bottom navigation`,
+       await page.evaluate(() => [...document.querySelectorAll('.mnav button')]
+         .some(b => b.dataset.tab === 'cases')));
+    ok(`${w}: and Reports & Packages is still on the rail`,
+       await page.evaluate(() => [...document.querySelectorAll('.tabs button')]
+         .some(b => b.dataset.tab === 'delivery')));
 
     /* ---- the four tab destinations ---------------------------------- */
     for (const [qt, label, tab] of [['newlead', 'New Intake', 'newlead'],

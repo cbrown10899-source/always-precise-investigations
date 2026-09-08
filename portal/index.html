@@ -6300,9 +6300,20 @@ function homeTabs(){
    to hunt for Home in the bottom nav."
 
    THE SET IS DERIVED FROM THE LAUNCHER, NEVER LISTED AGAIN. A card added to
-   `QT` gets its way back for free, and a card whose destination changes takes
-   its Back with it — the `wsMore()`-by-subtraction rule at the navigation
-   layer. Two lists of destinations is one list that goes stale.
+   `QT_PHONE` gets its way back for free, and a card whose destination changes
+   takes its Back with it — the `wsMore()`-by-subtraction rule at the
+   navigation layer. Two lists of destinations is one list that goes stale.
+
+   AND IT IS `QT_PHONE` ALONE — THE SEVEN PRIMARY LAUNCHERS (owner, 2026-09-08,
+   narrowing the first build): "keep the new Home-return behavior scoped to the
+   seven primary Home launchers only ... do not add the new Back-to-Home
+   pagebar to Cases or Reports & Packages." Deriving from the More list as well
+   put the control on two ORDINARY portal sections — Cases is in the bottom
+   navigation on every screen and Reports & Packages is on the rail, so neither
+   was a screen anyone could be stranded on, and a Back there is the
+   unnecessary control the narrowing removes. Reading `QT_PHONE` rather than
+   naming three tabs keeps the derivation: promote a card out of More and its
+   destination gains a Back with it.
 
    WHAT IT DOES *NOT* COVER, because a proper control already exists there and
    the brief says not to duplicate one: the send wizard (its own `.amx`, in the
@@ -6321,7 +6332,7 @@ function homeTabs(){
 const ACT_LANDS = {sheetQuick: "sheets", nlKind: "newlead"};
 function homeCardTabs(){
   const out = new Set();
-  for(const id of [...QT_PHONE, ...QT_PHONE_MORE]){
+  for(const id of QT_PHONE){
     const t = QT[id]; if(!t) continue;
     if(t.act === "tab" && t.tab) out.add(t.tab);
     else if(ACT_LANDS[t.act]) out.add(ACT_LANDS[t.act]);
