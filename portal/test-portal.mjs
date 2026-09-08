@@ -398,6 +398,18 @@ async function signIn(page, u, p) {
   if (await cases.count()) { await cases.first().click(); await page.waitForTimeout(400); }
 }
 
+/* The quick-actions strip belongs to HOME — the Dashboard for an admin, Cases
+   for an investigator, who has no Dashboard. `signIn` deliberately lands every
+   section on Cases, so a section whose subject is a TOOL rather than a door has
+   to walk to the screen the door lives on first. The nav foot carries the two
+   timestamp doors everywhere and would also work; going Home is what the owner
+   does, so it is what the suite does. */
+async function goHome(page, role = 'admin') {
+  const label = role === 'admin' ? 'Dashboard' : 'Cases';
+  const tab = page.locator('.tabs button', { hasText: label });
+  if (await tab.count()) { await tab.first().click(); await page.waitForTimeout(400); }
+}
+
 /* ------------------------------------------------------------------ tests */
 
 section('Sign-in');
@@ -9893,6 +9905,7 @@ section('Timestamp Photo under the policy the site actually serves');
   })));
 
   await signIn(page, 'trever', 'AdminPassword1x');
+  await goHome(page);
   const b64 = await page.evaluate(() => {
     const c = document.createElement('canvas');
     c.width = 400; c.height = 300;
@@ -9958,6 +9971,7 @@ section('Timestamp Photo decodes the operator’s own file, not a relabelled cop
      bytes still reaches the question this tool exists to ask. */
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
+  await goHome(page);
   const b64 = await page.evaluate(() => {
     const c = document.createElement('canvas');
     c.width = 320; c.height = 240;
@@ -9992,6 +10006,7 @@ section('Timestamp Photo asks for a picture first, and for a case only to file i
 
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
+  await goHome(page);
 
   /* BOTH UTILITIES, IN BOTH PLACES. Asserted as a pair rather than by name
      alone: the rule is that these two are siblings, and a door that exists for
