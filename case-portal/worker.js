@@ -6112,6 +6112,365 @@ async function closeoutMoney(env, caseNo) {
   };
 }
 
+/* ==== THE CLIENT RECORD PACKET (owner brief 2026-09-08) ===================
+
+   ONE READ THAT COMPOSES WHAT THE PORTAL ALREADY PRESERVED, for a client
+   dispute, a chargeback file, the office's own records or an accountant.
+   It writes NOTHING, it emails NOBODY, and it invents nothing: every section
+   is either a record that exists or an honest statement that it does not.
+
+   THE RULE THE WHOLE UNIT RESTS ON (§12): a client-facing document comes back
+   as the STORED BYTES. `sent_document.body_text` / `body_html` are what the
+   provider was handed, and this route returns them verbatim. It never calls
+   `rateSheets`, `sheetCards` or any renderer — re-composing yesterday's sheet
+   from today's figures is exactly the thing the snapshot exists to prevent,
+   and it would be undetectable in the output.
+
+   NO SCHEMA CHANGE. Every table here already exists, and every read is guarded
+   through `missingTables` so a database that has not had the setup workflow run
+   degrades section by section rather than failing the whole packet.
+
+   ADMIN-ONLY at the door, and the route sits under /cases/:no/ so it inherits
+   the router's own deleted/archived chokepoint for writes; reads stay open on
+   a tombstoned case deliberately — that is where the office goes to decide
+   whether to put it back, and a dispute over a deleted case is exactly when
+   this packet is wanted. */
+async function recordPacket(env, user, caseNo) {
+  if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  const miss = await missingTables(env);
+  const have = t => !miss.includes(t);
+
+  const sub = await env.DB.prepare(
+    `SELECT id, case_no, kind, status, client_name, client_email, client_phone,
+            subject_name, carrier, claim_number, payload, created_at
+       FROM submissions WHERE case_no = ?`).bind(caseNo).first();
+  if (!sub) return json({ error: 'not found' }, 404);
+  let payload = {};
+  try { payload = JSON.parse(sub.payload || '{}'); } catch { payload = {}; }
+
+  /* ---- COVER (§2) ------------------------------------------------------ */
+  const legal = payload.assignment === 'legal';
+  const matter = legal ? 'Legal / Law Firm'
+    : sub.kind === 'claims' ? 'Insurance / Claim assignment' : 'Private client';
+  let closedAt = null;
+  if (have('case_closeout')) {
+    const c = await env.DB.prepare('SELECT closed_at FROM case_closeout WHERE case_no = ?')
+      .bind(caseNo).first();
+    closedAt = (c && c.closed_at) || null;
+  }
+  const cover = {
+    firm: 'Always Precise Investigations',
+    title: 'Client Record Packet',
+    case_no: sub.case_no,
+    client_name: sub.client_name || payload.client_name || '',
+    matter_type: matter,
+    subject: sub.subject_name || payload.subject_name || '',
+    opened_at: sub.created_at || null,
+    closed_at: closedAt,
+    status: sub.status || '',
+    generated_at: new Date().toISOString(),
+    /* THE OWNER'S OWN WORDING, and the limit it states is deliberate: this
+       packet compiles records, it does not assert an outcome. */
+    note: 'This packet compiles records stored by the portal for this matter.',
+  };
+
+  /* ---- THE DOCUMENTS THIS CASE WAS SENT (§3) --------------------------- */
+  /* Newest first. The rate sheet the packet REPRODUCES is the newest one that
+     actually reached the client; the rest are listed in the send record so a
+     resend or an earlier failure is visible rather than quietly dropped. */
+  let docs = [];
+  if (have('sent_document')) {
+    docs = (await env.DB.prepare(
+      `SELECT doc_id, kind, sheet_id, send_context, legal_service, client_name,
+              client_email, recipient, retainer_amount, non_refundable, flat_fee,
+              terms_json, intake_included, intake_kind, intake_label, subject,
+              content_hash, ok, detail, record_copy, record_reason, record_at, sent_at
+         FROM sent_document WHERE case_no = ? ORDER BY id DESC LIMIT 50`)
+      .bind(caseNo).all()).results || [];
+  }
+  const parseTerms = r => { try { return r.terms_json ? JSON.parse(r.terms_json) : null; }
+                            catch { return null; } };
+
+  /* ---- ACCEPTANCE (§4) ------------------------------------------------- */
+  let acceptances = [];
+  if (have('document_acceptance')) {
+    acceptances = (await env.DB.prepare(
+      `SELECT doc_id, submission_id, signed_name, signed, accepted_at, linked_at
+         FROM document_acceptance WHERE case_no = ? ORDER BY id DESC LIMIT 20`)
+      .bind(caseNo).all()).results || [];
+  }
+  const acceptedFor = new Map(acceptances.map(a => [a.doc_id, a]));
+
+  /* WHICH DOCUMENT THE PACKET REPRODUCES, and the two absent states kept
+     apart (§17E vs §12). A case with no rate-sheet document at all is an
+     ordinary missing state. A case whose ACCEPTANCE names a document whose row
+     is gone is the other thing entirely — the link exists and the snapshot
+     does not — and it says so in the brief's own words rather than being
+     rounded down to "none sent". */
+  const sheetRows = docs.filter(d => d.kind === 'rate_sheet');
+  const delivered = sheetRows.find(d => d.ok) || null;
+  const chosen = delivered || sheetRows[0] || null;
+  const orphanAccept = acceptances.find(a => !docs.some(d => d.doc_id === a.doc_id)) || null;
+
+  let rateSheet = null;
+  if (chosen) {
+    /* THE STORED BYTES, fetched by id in their own statement so the list above
+       never has to carry three copies of an email. */
+    const body = await env.DB.prepare(
+      'SELECT body_text, body_html FROM sent_document WHERE doc_id = ?')
+      .bind(chosen.doc_id).first();
+    const a = acceptedFor.get(chosen.doc_id) || null;
+    rateSheet = {
+      ...chosen, terms_json: undefined, terms: parseTerms(chosen),
+      intake_included: !!chosen.intake_included, ok: !!chosen.ok,
+      record_copy: !!chosen.record_copy,
+      body_text: (body && body.body_text) || '',
+      body_html: (body && body.body_html) || '',
+      accepted: a ? { submission_id: a.submission_id, signed_name: a.signed_name,
+                      signed: !!a.signed, accepted_at: a.accepted_at } : null,
+    };
+  }
+
+  /* ---- THE SIGNATURE ITSELF (§4) --------------------------------------- */
+  /* The image lives in the intake payload, which is where the client drew it.
+     `signature` is a data URL; it is returned as stored so the packet can show
+     the same mark the intake screen shows, and nothing composes a description
+     of it in words. */
+  const acceptance = {
+    linked: !!(rateSheet && rateSheet.accepted),
+    doc_id: rateSheet && rateSheet.accepted ? rateSheet.doc_id : null,
+    submission_id: sub.id,
+    signed_name: payload.signed_name || (rateSheet && rateSheet.accepted
+      ? rateSheet.accepted.signed_name : '') || '',
+    signature: payload.signature || '',
+    signed_at: (rateSheet && rateSheet.accepted && rateSheet.accepted.accepted_at)
+      || sub.created_at || null,
+    client_name: sub.client_name || '',
+    client_email: sub.client_email || '',
+    client_phone: sub.client_phone || '',
+    /* An intake signed with no document link is its own state, not a tick and
+       not an absence — the Client Record strip already says this in words and
+       the packet must not round it up. */
+    signed_not_linked: !!(payload.signature || payload.signed_name)
+                       && !(rateSheet && rateSheet.accepted),
+    snapshot_unavailable: !!orphanAccept,
+  };
+
+  /* ---- THE INTAKE, THE WAY THE SCREEN ALREADY SHOWS IT (§5) ------------ */
+  /* PROVIDED and NOT AVAILABLE YET are the intake's own two lists — the
+     `<field>_status` convention this portal already uses — so a packet never
+     prints a wall of empty labels. */
+  /* THE STATUS KEYS ARE READ FIRST, ON THEIR OWN. A first cut walked the value
+     keys and looked sideways for `<field>_status`, which only ever finds a
+     status whose BASE key is also present — and a payload that carried
+     `claim_number_status` with no `claim_number` at all reported nothing at
+     all. The status is the record of unavailability and it is not conditional
+     on an empty sibling existing. */
+  const provided = [], notAvailable = [];
+  const statusOf = new Map();
+  for (const [k, v] of Object.entries(payload)) {
+    const m2 = /^(.+)_status$/.exec(k);
+    if (m2 && v !== null && v !== undefined && String(v) !== '') {
+      statusOf.set(m2[1], String(v));
+    }
+  }
+  for (const [field, status] of statusOf) notAvailable.push({ field, status });
+  for (const [k, v] of Object.entries(payload)) {
+    /* The signature is rendered as the mark it is, in its own section; the
+       internal markers are not intake answers and are not printed as if a
+       client had given them. */
+    if (k === 'signature' || k === 'payload' || /_status$/.test(k)) continue;
+    if (k === 'manual_intake' || k === 'entered_by' || k === 'doc_ref') continue;
+    if (statusOf.has(k)) continue;
+    if (v === null || v === undefined || v === '') continue;
+    if (typeof v === 'object') continue;
+    provided.push({ field: k, value: String(v) });
+  }
+  const intake = {
+    present: !!sub.created_at,
+    submission_id: sub.id,
+    received_at: sub.created_at || null,
+    kind: sub.kind, legal, matter_type: matter,
+    client_name: sub.client_name || '', subject_name: sub.subject_name || '',
+    provided, not_available: notAvailable,
+  };
+
+  /* ---- RETAINER AND PAYMENTS (§6) -------------------------------------- */
+  /* THE VOID IS SHOWN, NEVER APPLIED BY DELETION. A corrected payment stays on
+     the ledger with its reason and its actor beside it — the office's own
+     rule, and the only honest way to answer "what changed and when". */
+  let payments = [];
+  if (have('retainer_payment')) {
+    payments = (await env.DB.prepare(
+      `SELECT p.id, p.amount, p.method, p.paid_on, p.reference, p.recorded_at,
+              u.display_name AS recorded_by_name${have('retainer_payment_void')
+                ? `, v.reason AS void_reason, v.voided_at,
+                   vu.display_name AS voided_by_name` : ''}
+         FROM retainer_payment p
+         LEFT JOIN users u ON u.id = p.recorded_by${have('retainer_payment_void')
+           ? ` LEFT JOIN retainer_payment_void v ON v.payment_id = p.id
+               LEFT JOIN users vu ON vu.id = v.voided_by` : ''}
+        WHERE p.case_no = ? ORDER BY p.id`).bind(caseNo).all()).results || [];
+  }
+  let agreed = null;
+  if (have('case_retainer')) {
+    const r = await env.DB.prepare(
+      'SELECT retainer_amount FROM case_retainer WHERE case_no = ?').bind(caseNo).first();
+    agreed = r && r.retainer_amount != null ? money2(r.retainer_amount) : null;
+  }
+  const retainer = {
+    agreed_amount: agreed,
+    /* The document's own figure is kept beside it deliberately: what the client
+       was QUOTED is the snapshot's, what the case AGREED is the ledger's, and
+       a packet that showed one number could not tell a dispute which it was. */
+    document_amount: rateSheet ? rateSheet.retainer_amount : null,
+    non_refundable: rateSheet ? rateSheet.non_refundable : null,
+    payments: payments.map(p => ({ ...p, voided: !!(p.voided_at) })),
+  };
+
+  /* ---- REFUND AND CLOSEOUT (§7) ---------------------------------------- */
+  /* `closeoutMoney` is the ONE composer of this ledger and it is reused rather
+     than restated: received, refunds actually issued, the balance, and the
+     office's own closeout detail. REQUESTED IS NOT COMPLETED — the status word
+     rides on `detail.refund_status` and the packet prints it as it is. */
+  const money = await closeoutMoney(env, caseNo);
+
+  /* ---- WORK (§8) -------------------------------------------------------- */
+  let days = [];
+  if (have('case_days')) {
+    days = (await env.DB.prepare(
+      `SELECT d.id, d.day_date, d.start_time, d.end_time, d.hours, d.miles, d.summary,
+              u.display_name AS investigator${have('case_day_summary')
+                ? ', s.narrative' : ''}
+         FROM case_days d LEFT JOIN users u ON u.id = d.investigator_id${
+           have('case_day_summary')
+             ? ' LEFT JOIN case_day_summary s ON s.day_id = d.id' : ''}
+        WHERE d.case_no = ? ORDER BY d.day_date, d.id LIMIT 60`)
+      .bind(caseNo).all()).results || [];
+  }
+  let entries = [];
+  if (have('activity_log')) {
+    entries = (await env.DB.prepare(
+      `SELECT id, day_id, at_date, at_time, kind, description
+         FROM activity_log WHERE case_no = ?${have('activity_removed')
+           ? ' AND id NOT IN (SELECT entry_id FROM activity_removed)' : ''}
+        ORDER BY at_date, at_time, id LIMIT 400`).bind(caseNo).all()).results || [];
+  }
+  const byDay = new Map();
+  for (const e of entries) {
+    const k = e.day_id == null ? 'none' : String(e.day_id);
+    if (!byDay.has(k)) byDay.set(k, []);
+    byDay.get(k).push(e);
+  }
+  const work = {
+    /* NOTHING IS TOTALLED FROM INCOMPLETE DATA (§8). `hours` is summed only
+       over the days that actually carry a number, and the count of days that
+       do not is reported beside it — a total that quietly treated a running
+       day as zero would be the packet inventing a figure. */
+    days: days.map(d => ({ ...d, entries: byDay.get(String(d.id)) || [] })),
+    unassigned_entries: byDay.get('none') || [],
+    days_total: days.length,
+    hours_recorded: days.some(d => d.hours != null)
+      ? money2(days.reduce((a, d) => a + Number(d.hours || 0), 0)) : null,
+    days_without_hours: days.filter(d => d.hours == null).length,
+  };
+
+  /* ---- SENDS (§9) ------------------------------------------------------- */
+  let sends = [];
+  if (have('send_log')) {
+    sends = (await env.DB.prepare(
+      `SELECT s.id, s.kind, s.sheet_id, s.recipient, s.ok, s.sent_at,
+              u.display_name AS sent_by_name
+         FROM send_log s LEFT JOIN users u ON u.id = s.sent_by
+        WHERE s.case_no = ? ORDER BY s.id DESC LIMIT 50`).bind(caseNo).all()).results || [];
+  }
+  /* EVERY ATTEMPT TO FILE THE OFFICE'S OWN COPY, failures kept — that is the
+     state §9 asks to be shown truthfully, and a trail of successes could not
+     show it. Scoped to this case's documents in one statement. */
+  let recordCopies = [];
+  if (have('document_record_copy') && docs.length) {
+    const ids = docs.map(d => d.doc_id);
+    const marks = ids.map(() => '?').join(',');
+    recordCopies = (await env.DB.prepare(
+      `SELECT doc_id, ok, reason, sent_to, resend, sent_at FROM document_record_copy
+        WHERE doc_id IN (${marks}) ORDER BY id DESC LIMIT 50`).bind(...ids).all()).results || [];
+  }
+
+  /* ---- EVIDENCE AND FILES: AN INDEX, NOT THE FILES (§10) ---------------- */
+  let files = [];
+  if (have('case_evidence')) {
+    files = (await env.DB.prepare(
+      `SELECT id, filename, content_type, size_bytes, classification, uploaded_at
+         FROM case_evidence WHERE case_no = ? AND deleted_at IS NULL
+        ORDER BY id LIMIT 200`).bind(caseNo).all()).results || [];
+  }
+  let reports = [];
+  if (have('case_reports')) {
+    reports = (await env.DB.prepare(
+      `SELECT id, report_date, status, status_at FROM case_reports
+        WHERE case_no = ? ORDER BY report_date, id LIMIT 60`).bind(caseNo).all()).results || [];
+  }
+  let builds = [];
+  if (have('case_builds')) {
+    builds = (await env.DB.prepare(
+      `SELECT id, version, status, package_type, finalized_at, delivered_at
+         FROM case_builds WHERE case_no = ? ORDER BY id LIMIT 20`).bind(caseNo).all()).results || [];
+  }
+  let stamps = { photo: 0, video: 0 };
+  if (have('photo_stamp')) {
+    const r = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM photo_stamp WHERE case_no = ? AND superseded_at IS NULL')
+      .bind(caseNo).first();
+    stamps.photo = (r && r.n) || 0;
+  }
+  if (have('video_stamp')) {
+    const r = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM video_stamp WHERE case_no = ? AND superseded_at IS NULL')
+      .bind(caseNo).first();
+    stamps.video = (r && r.n) || 0;
+  }
+
+  /* ---- WHAT THE PREVIEW TICKS (§13) ------------------------------------- */
+  /* Derived from the sections themselves, so a preview can never claim
+     something the document does not contain. */
+  const sections = {
+    rate_sheet: !!rateSheet,
+    /* A LINK IS NOT A SIGNATURE. A submission can carry its door's token and
+       still have been sent unsigned, so the tick means "a signed acceptance is
+       linked to a document" and the raw link stays readable beside it. Rounding
+       the two together would put a tick over a document nobody signed. */
+    acceptance: acceptance.linked && !!(acceptance.signature || acceptance.signed_name),
+    intake: intake.present,
+    retainer: retainer.payments.length > 0 || retainer.agreed_amount != null,
+    /* `closeoutMoney` FLATTENS ITS DETAIL, so these are its own key names and
+       not a nested object — reading a `detail` that does not exist would have
+       made this tick false on every case that has one. */
+    closeout: !!(money.closeout || (money.refunds && money.refunds.length)
+                 || money.refund_status || money.retained != null),
+    work: work.days_total > 0 || work.unassigned_entries.length > 0,
+    files: files.length > 0 || reports.length > 0 || builds.length > 0
+           || stamps.photo > 0 || stamps.video > 0,
+    sends: sends.length > 0 || docs.length > 0,
+  };
+
+  return json({
+    ok: true, cover, sections,
+    rate_sheet: rateSheet,
+    /* THE BRIEF'S OWN SENTENCE, and only in the state it describes: a link
+       that exists whose snapshot does not. It is never used for "nothing was
+       ever sent", which is a different and ordinary answer. */
+    rate_sheet_missing: rateSheet ? null
+      : orphanAccept ? 'snapshot_unavailable' : 'none_sent',
+    acceptance, intake, retainer,
+    closeout: { ...money },
+    work, sends, documents: docs.map(d => ({
+      ...d, terms_json: undefined, terms: parseTerms(d),
+      intake_included: !!d.intake_included, ok: !!d.ok, record_copy: !!d.record_copy })),
+    record_copies: recordCopies,
+    files: { evidence: files, reports, builds, stamps },
+  });
+}
+
 /* THE CHECKLIST IS STILL THE ONLY DOOR, and the closeout screen says so BEFORE
    the button rather than after it. `closeCase` refuses while items are open —
    an owner decision this unit does not touch — so a financial closeout that
@@ -20338,6 +20697,17 @@ async function route(request, env) {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     if (!(await caseFor(env, user, m[1]))) return json({ error: 'not found' }, 404);
     return closeoutRead(env, user, m[1]);
+  }
+  /* THE CLIENT RECORD PACKET (owner brief 2026-09-08). One read, no write, no
+     send — and `caseFor` first, like every other case-scoped route, so a case
+     the caller may not open answers 404 rather than composing a packet about
+     it. Admin-only twice over: at the door here and inside the composer, the
+     shape `closeout-money` above already uses. */
+  m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/record-packet$/);
+  if (m && method === 'GET') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    if (!(await caseFor(env, user, m[1]))) return json({ error: 'not found' }, 404);
+    return recordPacket(env, user, m[1]);
   }
   m = p.match(/^\/cases\/([A-Za-z0-9-]{3,64})\/closeout\/prepare$/);
   if (m && method === 'POST') {
