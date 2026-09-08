@@ -19874,6 +19874,234 @@ section('Every art card is a direct launcher, and Back returns to an art Home');
   }
 }
 
+section('Every direct-launch destination has a visible way back, at the tap floor');
+{
+  /* Owner, 2026-09-08: "some destination screens do not have a visible Back
+     button and rely on the bottom Home nav instead." Audited before it was
+     fixed, and the audit is what set the scope — three of the seven already
+     had a proper control and were left alone:
+
+       Rate Sheet wizard   `.amx`     30x28  -> floored to 44x44
+       New Intake chooser  NONE              -> `.pagebar` Back to Home
+       Private Intake      Change type only  -> `.pagebar` Back to Home beside it
+       View Intakes        NONE              -> `.pagebar` Back to Home
+       Active Surveillance `.sv-x`    128x33 -> floored to 128x44
+       Timestamp Photo     `.vst-x`   74x44  -> already correct, untouched
+       Timestamp Video     `.vst-x`   74x44  -> already correct, untouched  */
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+
+  /* THE SET IS DERIVED FROM THE LAUNCHER, NOT LISTED TWICE. This is the
+     assertion that keeps it that way: every Home card whose act lands on a
+     TAB must have that tab in the set, and the cards that take over the
+     screen with their own root must not be in it. */
+  const derived = await page.evaluate(() => ({
+    set: [...homeCardTabs()].sort(),
+    landing: [...QT_PHONE, ...QT_PHONE_MORE].map(id => {
+      const t = QT[id]; return t && (t.act === 'tab' ? t.tab : (ACT_LANDS[t.act] || null));
+    }).filter(Boolean).sort(),
+    ownRoot: [...QT_PHONE, ...QT_PHONE_MORE].filter(id => {
+      const t = QT[id]; return t && t.act !== 'tab' && !ACT_LANDS[t.act];
+    }),
+  }));
+  ok('the back-able set is exactly what the Home cards land on',
+     JSON.stringify(derived.set) === JSON.stringify([...new Set(derived.landing)].sort()),
+     JSON.stringify(derived));
+  ok('and the full-screen tools are NOT in it — they carry their own close',
+     derived.ownRoot.length > 0
+     && derived.ownRoot.every(id => ['field', 'photo', 'video', 'ceo'].includes(id)),
+     JSON.stringify(derived.ownRoot));
+
+  for (const [w, h] of [[390, 844], [320, 568]]) {
+    /* Go Home at the default width first — under 900px the rail is behind the
+       burger, and clicking a tab there is a timeout, not a failure. */
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await page.locator('.tabs button', { hasText: 'Dashboard' }).first().click();
+    await page.waitForTimeout(400);
+    await page.setViewportSize({ width: w, height: h });
+    await page.waitForTimeout(400);
+
+    /* HOME CARRIES NO BACK. A control pointing at the screen you are standing
+       on is noise, and it would be the duplicate the brief forbids. */
+    await page.evaluate(() => { SHEET_WIZ = null; VIEW = 'list'; TAB = 'dashboard'; paint(); });
+    await page.waitForTimeout(400);
+    ok(`${w}: Home itself carries no Back`,
+       await page.locator('#app > .pagebar .close').count() === 0);
+
+    /* ---- the four tab destinations ---------------------------------- */
+    for (const [qt, label, tab] of [['newlead', 'New Intake', 'newlead'],
+                                    ['priv', 'Private Intake', 'newlead'],
+                                    ['leads', 'View Intakes', 'leads']]) {
+      await page.evaluate(() => { SHEET_WIZ = null; NL = null; VIEW = 'list'; TAB = 'dashboard'; paint(); });
+      await page.waitForTimeout(400);
+      await page.locator(`.qtapp[data-qt="${qt}"]`).click();
+      await page.waitForTimeout(900);
+      const back = await page.evaluate(() => {
+        const b = document.querySelector('#app > .pagebar .close');
+        if (!b) return null;
+        const r = b.getBoundingClientRect();
+        return { text: b.textContent.trim(), tab: b.dataset.tab, h: Math.round(r.height),
+                 w: Math.round(r.width), y: Math.round(r.top + scrollY),
+                 x: Math.round(r.left), pos: getComputedStyle(b).position };
+      });
+      ok(`${w}: ${label} carries a visible Back to Home, in flow and at the tap floor`,
+         back && /Back to Home/.test(back.text) && back.h >= 44 && back.pos === 'static',
+         JSON.stringify(back));
+      /* NEAR THE TOP, and on the left where this portal's other back buttons
+         are. Asserted against the tool's own heading rather than a pixel
+         constant, so a change to the header does not need this number edited. */
+      const head = await page.evaluate(() => {
+        const hh = [...document.querySelectorAll('#app h2')].find(e => e.offsetParent);
+        return hh ? Math.round(hh.getBoundingClientRect().top + scrollY) : null;
+      });
+      ok(`${w}: ${label} draws it ABOVE the tool's own heading`,
+         back && head !== null && back.y < head, JSON.stringify({ back: back && back.y, head }));
+
+      await page.locator('#app > .pagebar .close').click();
+      await page.waitForTimeout(800);
+      const home = await page.evaluate(() => ({
+        tab: TAB, art: document.querySelectorAll('.qtools .qtapp.uiart').length,
+        back: document.querySelectorAll('#app > .pagebar .close').length,
+      }));
+      ok(`${w}: ${label} -> Back -> art Home, and the Back is gone there`,
+         home.tab === 'dashboard' && home.art === 7 && home.back === 0, JSON.stringify(home));
+    }
+
+    /* ---- the Rate Sheet wizard: its own close, floored ---------------- */
+    await page.evaluate(() => { SHEET_WIZ = null; VIEW = 'list'; TAB = 'dashboard'; paint(); });
+    await page.waitForTimeout(400);
+    await page.locator('.qtapp[data-qt="sheets"]').click();
+    await page.waitForTimeout(900);
+    const amx = await page.evaluate(() => {
+      const b = document.querySelector('.amx');
+      const r = b.getBoundingClientRect();
+      return { w: Math.round(r.width), h: Math.round(r.height),
+               label: b.getAttribute('aria-label') };
+    });
+    /* NO SECOND CONTROL INSIDE THE SHEET. The brief's own rule: do not create a
+       duplicate Back where a proper one exists. */
+    const inSheet = await page.evaluate(() =>
+      document.querySelectorAll('.amsheet .pagebar .close').length);
+    ok(`${w}: the wizard's own close clears the tap floor`,
+       amx.w >= 44 && amx.h >= 44, JSON.stringify(amx));
+    ok(`${w}: and no second Back was added inside the sheet`, inSheet === 0, String(inSheet));
+    await page.locator('.amx[data-act="wizClose"]').click();
+    await page.waitForTimeout(800);
+    ok(`${w}: the wizard's close returns to an art Home`,
+       await page.evaluate(() => TAB === 'dashboard'
+         && document.querySelectorAll('.qtools .qtapp.uiart').length === 7));
+
+    /* ---- Active Surveillance: its own back, floored ------------------- */
+    await page.evaluate(() => { SHEET_WIZ = null; VIEW = 'list'; TAB = 'dashboard'; paint(); });
+    await page.waitForTimeout(400);
+    await page.locator('.qtapp[data-qt="field"]').click();
+    await page.waitForTimeout(1100);
+    const svx = await page.evaluate(() => {
+      const b = document.querySelector('.sv-x');
+      const hd = document.querySelector('.sv-head');
+      const r = b.getBoundingClientRect();
+      return { text: b.textContent.trim(), w: Math.round(r.width), h: Math.round(r.height),
+               head: Math.round(hd.getBoundingClientRect().height) };
+    });
+    /* THE PADDING PAID FOR THE FLOOR. 14+33+14 = 61 became 8+44+8 = 60, so the
+       control is legal and the sticky header did not grow — measured, because
+       "it should not have moved" is exactly the claim that goes wrong. */
+    ok(`${w}: Active Surveillance's back clears the tap floor without growing its header`,
+       svx.h >= 44 && svx.head <= 72, JSON.stringify(svx));
+    await page.locator('[data-act="svLeaveLauncher"]').click();
+    await page.waitForTimeout(800);
+    ok(`${w}: and it returns to an art Home`,
+       await page.evaluate(() => TAB === 'dashboard'
+         && document.querySelectorAll('.qtools .qtapp.uiart').length === 7));
+
+    /* ---- Timestamp Photo: the tool's own close, measured live -------- */
+    await page.evaluate(() => { SHEET_WIZ = null; VIEW = 'list'; TAB = 'dashboard'; paint(); });
+    await page.waitForTimeout(400);
+    const jpg = await page.evaluate(() => {
+      const c = document.createElement('canvas');
+      c.width = 320; c.height = 240;
+      const cx = c.getContext('2d'); cx.fillStyle = '#2d5f8a'; cx.fillRect(0, 0, 320, 240);
+      return c.toDataURL('image/jpeg', 0.9).split(',')[1];
+    });
+    const [chooser] = await Promise.all([
+      page.waitForEvent('filechooser'),
+      page.evaluate(() => document.querySelector('.qtapp[data-qt="photo"]').click()),
+    ]);
+    await chooser.setFiles({ name: 'back.jpg', mimeType: 'image/jpeg',
+      buffer: Buffer.from(jpg, 'base64') });
+    await page.waitForTimeout(1600);
+    const vstx = await page.evaluate(() => {
+      const b = document.querySelector('#pstamp .vst-x');
+      if (!b) return null;
+      const r = b.getBoundingClientRect();
+      return { text: b.textContent.trim(), act: b.dataset.act,
+               w: Math.round(r.width), h: Math.round(r.height),
+               y: Math.round(r.top) };
+    });
+    ok(`${w}: Timestamp Photo's own Close is near the top and at the tap floor`,
+       vstx && vstx.h >= 44 && vstx.w >= 44 && vstx.y < 60, JSON.stringify(vstx));
+    await page.locator('#pstamp .vst-x').click();
+    await page.waitForTimeout(700);
+    ok(`${w}: and closing it leaves an art Home`,
+       await page.evaluate(() => !document.querySelector('#pstamp .vst')
+         && TAB === 'dashboard'
+         && document.querySelectorAll('.qtools .qtapp.uiart').length === 7));
+  }
+
+  /* TIMESTAMP VIDEO SHARES THE CLASS, and the class is what was measured
+     above. A decodable clip cannot be synthesised here, so the video tool's
+     half is asserted at the source: the same `.vst-x` head control, wired to
+     its own close. Cancelling its chooser leaves an art Home, which the
+     direct-launcher section already proves. */
+  const src = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
+  ok('Timestamp Video carries the same head close, wired to its own handler',
+     /<button class="vst-x" data-act="vstClose">Close<\/button>/.test(src));
+  ok('and Timestamp Photo carries its twin',
+     /<button class="vst-x" data-act="pstClose">Close<\/button>/.test(src));
+
+  /* NO HISTORY IS PUSHED, so native Back cannot loop between tabs — it leaves
+     the portal, which is what it did before this unit. Asserted as the absence
+     it is: walking four destinations adds no history entries. */
+  await page.setViewportSize({ width: 390, height: 844 });
+  const before = await page.evaluate(() => history.length);
+  for (const t of ['newlead', 'leads', 'cases', 'dashboard']) {
+    await page.evaluate(x => { VIEW = 'list'; TAB = x; paint(); }, t);
+    await page.waitForTimeout(250);
+  }
+  const after = await page.evaluate(() => history.length);
+  ok('walking the destinations pushes no browser history, so native Back cannot loop',
+     after === before, `${before} -> ${after}`);
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.close();
+}
+
+section('An investigator is offered no Back to a screen that is already their Home');
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');   // lands on Cases, which IS their Home
+  await page.waitForTimeout(500);
+  const onHome = await page.evaluate(() => ({
+    tab: TAB, homes: homeTabs(),
+    back: document.querySelectorAll('#app > .pagebar .close').length,
+  }));
+  ok('their assignments list is a Home, so it carries no Back',
+     onHome.back === 0 && onHome.homes.includes(onHome.tab), JSON.stringify(onHome));
+  await page.locator('.tabs button', { hasText: 'Today' }).first().click();
+  await page.waitForTimeout(600);
+  ok('and so is Today, their phone Home',
+     await page.evaluate(() => TAB === 'today'
+       && document.querySelectorAll('#app > .pagebar .close').length === 0));
+  /* AND A SCREEN THAT IS NOT A HOME CARD'S DESTINATION GETS NONE EITHER —
+     the control belongs to the launcher's own doors, not to every screen. */
+  await page.locator('.tabs button', { hasText: 'Reports' }).first().click();
+  await page.waitForTimeout(600);
+  ok('a screen no Home card lands on carries none',
+     await page.evaluate(() => TAB === 'myreports'
+       && document.querySelectorAll('#app > .pagebar .close').length === 0));
+  await page.close();
+}
+
 section('The hybrid pass: seven art cards on Home, and nothing else touched');
 {
   const page = await newPage();
