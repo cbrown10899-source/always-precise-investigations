@@ -8745,31 +8745,42 @@ section('The four field actions are untouched');
    Home is one tap away on the bottom navigation. */
 section('The timestamp tool is on the screen each role lands on, and not redrawn elsewhere');
 {
-  for (const [who, pass, role, home, away] of [
-    ['trever', 'AdminPassword1x', 'admin', 'Dashboard', ['Cases', 'Intakes', 'Rate Sheets']],
-    ['dana', 'FieldWork2026x', 'investigator', 'My assignments', ['Today', 'Reports']],
+  /* AN INVESTIGATOR HAS TWO HOMES AND AN ADMIN HAS ONE, which is the whole
+     reason `homeTabs()` returns a SET. The boot lands the field on their
+     assignments list; the PHONE'S BOTTOM NAV has a Home button of its own and
+     for that role it points at Today. A first build answered `cases` alone,
+     so pressing Home on a phone landed a field investigator on a screen with
+     no launcher on it — the 2026-09-04 incident, reintroduced by the fix for
+     a different one. Both are asserted, per role, by name. */
+  for (const [who, pass, role, homes, away] of [
+    ['trever', 'AdminPassword1x', 'admin', ['Dashboard'],
+     ['Cases', 'Intakes', 'Rate Sheets']],
+    ['dana', 'FieldWork2026x', 'investigator', ['My assignments', 'Today'],
+     ['Reports', 'File queue']],
   ]) {
     const page = await newPage();
     await signIn(page, who, pass);
     await page.waitForTimeout(400);
-    await page.locator('.tabs button', { hasText: home }).first().click();
-    await page.waitForTimeout(600);
-    /* EXACTLY ONE *VISIBLE* DOOR on the home screen. A hidden element is out
-       of the accessibility tree entirely, so "one visible" is the claim that
-       means one door and one tab stop at any width. */
-    const n = await page.locator('.qtools [data-act="vstOpen"]:visible').count();
-    ok(`${role} · ${home} (their home) carries exactly one visible quick tool`,
-       n === 1, String(n));
-    /* ONE WORDING. Two spellings of the same control meant a find-in-page for
-       what the menu says did not match what the screen shows. Read on HOME,
-       which is the only screen that has it — reading it after walking away is
-       what crashed this section when the strip first moved. */
-    const label = await text(page, '.qtools [data-act="vstOpen"]:visible');
-    ok(`and the ${role}'s reads Timestamp Video`, /Timestamp Video/.test(label), label);
-    const navLabel = await page.locator('.navfoot [data-act="vstOpen"]').innerText();
-    ok(`matching the navigation exactly (${role})`,
-       label.replace(/\s+/g, ' ').includes('Timestamp Video')
-       && navLabel.replace(/\s+/g, ' ').includes('Timestamp Video'), `${label} | ${navLabel}`);
+    for (const home of homes) {
+      await page.locator('.tabs button', { hasText: home }).first().click();
+      await page.waitForTimeout(600);
+      /* EXACTLY ONE *VISIBLE* DOOR on the home screen. A hidden element is out
+         of the accessibility tree entirely, so "one visible" is the claim that
+         means one door and one tab stop at any width. */
+      const n = await page.locator('.qtools [data-act="vstOpen"]:visible').count();
+      ok(`${role} · ${home} (a home for this role) carries exactly one visible quick tool`,
+         n === 1, String(n));
+      /* ONE WORDING. Two spellings of the same control meant a find-in-page for
+         what the menu says did not match what the screen shows. Read on HOME,
+         which is the only screen that has it — reading it after walking away is
+         what crashed this section when the strip first moved. */
+      const label = await text(page, '.qtools [data-act="vstOpen"]:visible');
+      ok(`and on ${home} it reads Timestamp Video`, /Timestamp Video/.test(label), label);
+      const navLabel = await page.locator('.navfoot [data-act="vstOpen"]').innerText();
+      ok(`matching the navigation exactly (${role} · ${home})`,
+         label.replace(/\s+/g, ' ').includes('Timestamp Video')
+         && navLabel.replace(/\s+/g, ' ').includes('Timestamp Video'), `${label} | ${navLabel}`);
+    }
     /* AND THE LAUNCHER IS NOT REDRAWN ON THE DESTINATIONS — the owner's own
        correction, asserted as the absence it is. */
     for (const t of away) {
@@ -8785,6 +8796,25 @@ section('The timestamp tool is on the screen each role lands on, and not redrawn
       ok(`${role} · ${t} still reaches the tool from the navigation`,
          await page.locator('.navfoot [data-act="vstOpen"]').count() === 1);
     }
+
+    /* THE PHONE'S OWN HOME BUTTON, PRESSED. The rail walk above cannot catch
+       this: `homeTabs()` reads its second entry off `MNAV`, so the assertion
+       that matters is the one that goes through the control the owner's thumb
+       actually uses. */
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(350);
+    const mHome = page.locator('.mnav button', { hasText: 'Home' });
+    ok(`${role} · the phone bottom nav has a Home button`, await mHome.count() === 1);
+    await mHome.first().click();
+    await page.waitForTimeout(700);
+    const phoneHome = await page.evaluate(() => ({
+      tab: TAB,
+      tools: document.querySelectorAll('.qtools [data-act="vstOpen"]').length,
+      photo: document.querySelectorAll('.qtools [data-act="pstLaunch"]').length,
+    }));
+    ok(`${role} · pressing Home on a phone lands on a screen WITH the launcher`,
+       phoneHome.tools === 1 && phoneHome.photo === 1, JSON.stringify(phoneHome));
+    await page.setViewportSize({ width: 1200, height: 900 });
     await page.close();
   }
 }
@@ -19741,8 +19771,12 @@ section('Every art card is a direct launcher, and Back returns to an art Home');
   for (const [w, h] of [[390, 844], [320, 568]]) {
     const page = await newPage();
     await signIn(page, 'trever', 'AdminPassword1x');
-    await page.setViewportSize({ width: w, height: h });
+    /* GO HOME AT THE DEFAULT WIDTH, THEN SHRINK. Under 900px the rail is
+       behind the burger, so `.tabs button` is in the DOM and not visible —
+       clicking it there is a 30-second timeout, not a failure with a name. */
     await page.locator('.tabs button', { hasText: 'Dashboard' }).first().click();
+    await page.waitForTimeout(500);
+    await page.setViewportSize({ width: w, height: h });
     await page.waitForTimeout(700);
 
     /* HOME IS THE ONE SCREEN WITH THE LAUNCHER ON IT. */

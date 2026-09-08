@@ -959,8 +959,9 @@ left you standing on the Rate Sheets LIST — a screen nobody asked for, one tap
 further from Home than where you started. `SHEET_WIZ.origin` records where it
 was opened from and `wizClose` restores it, so a send opened from a sheet card
 still returns to that list. An absent origin means "stay put", which is what
-every other opener wants. Both close paths — the X and the backdrop — were
-measured.
+every other opener wants. The X and the backdrop are TWO DOORS ON ONE HANDLER
+— `.amwrap` and `.amx` both carry `data-act="wizClose"` — so the restore
+cannot apply to one and not the other; the suite clicks the X.
 
 **ONE STRIP NOW, NOT TWO.** The desktop `.qtool` chip row is gone; the card
 system draws at every width, four across and landscape on desktop, two across

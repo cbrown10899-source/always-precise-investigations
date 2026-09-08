@@ -6255,11 +6255,28 @@ const QT_PHONE = ["sheets", "newlead", "priv", "leads", "field", "photo", "video
    list. */
 const QT_PHONE_MORE = ["cases", "claims", "legal", "delivery", "ceo"];
 
-/* WHICH SCREEN EACH ROLE LANDS ON. The boot sets `TAB` to `cases` and moves an
-   ADMIN to `dashboard`; an investigator has no Dashboard item in the rail at
-   all. Named once because two readers of "where is Home" is one of them going
-   stale — the quick-action strip renders here and nowhere else. */
-function homeTab(){ return ME && ME.role === "admin" ? "dashboard" : "cases"; }
+/* WHICH SCREENS EACH ROLE CALLS HOME — the quick-action strip renders on these
+   and nowhere else, so getting the SET right is the whole of it.
+
+   THERE ARE TWO HOMES FOR AN INVESTIGATOR, and a first version of this missed
+   the second. The boot lands every account on `cases` and moves an ADMIN to
+   `dashboard` (see BOOTED below), so `cases` is where the field signs in — but
+   the PHONE'S BOTTOM NAV has its own Home button, and for that role it is
+   `today`, not `cases`. Answering `cases` alone meant an investigator pressing
+   Home on a phone landed on a screen with no launcher on it at all: the
+   2026-09-04 incident, reintroduced by the fix for a different one.
+
+   So the phone's Home is READ OFF `MNAV` rather than written down again — it is
+   that table's first entry by construction, the one labelled Home — and the
+   landing screen mirrors the BOOTED line beside it. Two readers of "where is
+   Home" is one of them going stale, and this is the file where that keeps
+   happening. */
+function homeTabs(){
+  const role = ME && ME.role === "admin" ? "admin" : "investigator";
+  const landing = role === "admin" ? "dashboard" : "cases";   // BOOTED, below
+  const phone = ((MNAV[role] || [])[0] || [])[0];             // the bottom nav's own Home
+  return phone && phone !== landing ? [landing, phone] : [landing];
+}
 
 /* ============ HOME: THE OWNER'S OWN FIRST SCREEN (owner brief 2026-09-06) ===
 
@@ -6424,7 +6441,7 @@ function quickToolsHtml(){
      takes its own full screen, and the two timestamp tools open the file
      picker itself — measured, the chooser fires on the first tap.
 
-     `homeTab()` IS PER ROLE, AND THAT IS LOAD-BEARING. The default tab is
+     `homeTabs()` IS PER ROLE, AND THAT IS LOAD-BEARING. The default tab is
      `cases`, flipped to `dashboard` only for an admin — so an INVESTIGATOR has
      no Dashboard at all. Scoping this to `"dashboard"` alone would withdraw
      the strip from that role entirely, leaving the timestamp tools and Active
@@ -6432,8 +6449,9 @@ function quickToolsHtml(){
      behind the burger. That is the 2026-09-04 incident exactly, in the words
      this file already records: "if the only copy lived there, the door would
      be in a menu, which the owner ruled out by name". Each role keeps the
-     launcher on the screen it lands on. */
-  if(TAB !== homeTab()) return "";
+     launcher on the screen (or screens) it calls Home — TWO for the field,
+     because the phone's bottom nav has a Home of its own. */
+  if(!homeTabs().includes(TAB)) return "";
   /* THE ART IS THE DASHBOARD'S. "The artwork remains ONLY on Home" — an
      investigator's landing screen is the Cases LIST, an operational surface
      the same brief says to keep plain, so their three doors draw as the light
