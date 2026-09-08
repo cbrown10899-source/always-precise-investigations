@@ -6255,6 +6255,12 @@ const QT_PHONE = ["sheets", "newlead", "priv", "leads", "field", "photo", "video
    list. */
 const QT_PHONE_MORE = ["cases", "claims", "legal", "delivery", "ceo"];
 
+/* WHICH SCREEN EACH ROLE LANDS ON. The boot sets `TAB` to `cases` and moves an
+   ADMIN to `dashboard`; an investigator has no Dashboard item in the rail at
+   all. Named once because two readers of "where is Home" is one of them going
+   stale — the quick-action strip renders here and nowhere else. */
+function homeTab(){ return ME && ME.role === "admin" ? "dashboard" : "cases"; }
+
 /* ============ HOME: THE OWNER'S OWN FIRST SCREEN (owner brief 2026-09-06) ===
 
    "The mockup Home does NOT begin with a wall of statistics." It begins with
@@ -6403,6 +6409,35 @@ function quickToolsHtml(){
      strip was rendering seven art cards on Cases, Intakes, Rate Sheets, the
      Delivery Center and Settings, which is precisely the "image-heavy" §3
      forbids. Only the ground changes; nothing about reachability does. */
+  /* THE LAUNCHER BELONGS TO HOME (owner, 2026-09-08: "the art card grid
+     belongs on Home ... operational destinations should immediately show the
+     operational content").
+
+     It used to render from `shell()` on EVERY top-level screen, so tapping an
+     art card landed on a screen that redrew the same grid above the tool — a
+     duplicate Start Something layer between the card and the work, which is
+     the whole thing this brief is about. Measured before the change: four of
+     the seven cards (Rate Sheet, New Intake, Private Intake, View Intakes)
+     landed on a shell screen with the strip drawn again above them.
+
+     THE OTHER THREE WERE ALREADY DIRECT and are untouched: Active Surveillance
+     takes its own full screen, and the two timestamp tools open the file
+     picker itself — measured, the chooser fires on the first tap.
+
+     `homeTab()` IS PER ROLE, AND THAT IS LOAD-BEARING. The default tab is
+     `cases`, flipped to `dashboard` only for an admin — so an INVESTIGATOR has
+     no Dashboard at all. Scoping this to `"dashboard"` alone would withdraw
+     the strip from that role entirely, leaving the timestamp tools and Active
+     Surveillance reachable only from the navigation rail, which on a phone is
+     behind the burger. That is the 2026-09-04 incident exactly, in the words
+     this file already records: "if the only copy lived there, the door would
+     be in a menu, which the owner ruled out by name". Each role keeps the
+     launcher on the screen it lands on. */
+  if(TAB !== homeTab()) return "";
+  /* THE ART IS THE DASHBOARD'S. "The artwork remains ONLY on Home" — an
+     investigator's landing screen is the Cases LIST, an operational surface
+     the same brief says to keep plain, so their three doors draw as the light
+     cards they were before any of this. */
   const onHome = TAB === "dashboard";
   const appCard = id => { const t = QT[id];
     const n = id === "leads" ? waitingIntakes() : null;
@@ -24509,8 +24544,19 @@ document.addEventListener("click", ev => {
   else if(act === "docClose"){ DOC_VIEW = null; paint(); }
   else if(act === "crRetry"){ delete DOCS_ERR[WS_CASE]; loadCaseDocs(WS_CASE); }
   else if(act === "sheetQuick"){
+    /* `origin` IS WHERE CLOSING PUTS YOU BACK (owner, 2026-09-08: "actual tool
+       -> Home", and "Home must render with the artwork still active").
+
+       This door moves the tab to `sheets` so the wizard has its screen, and
+       closing used to leave you standing on the Rate Sheets LIST — a screen
+       nobody asked for, one tap further from Home than where you started.
+       Opened from a sheet card on that list instead, closing must still return
+       to the list; so the wizard remembers where it came from rather than
+       either destination being hard-coded. */
+    const wizFrom = TAB;
     TAB = "sheets"; SHEET_MSG = ""; LAST_SEND = null;
     SHEET_WIZ = {sheet: "private_retainer", context: "private", legal: false,
+                 origin: wizFrom,
                  attemptKey: newAttemptKey(),
                  step: 1, to: "", caseNo: "", note: "", include: true,
                  clientName: "", clientPhone: "",
@@ -24521,7 +24567,16 @@ document.addEventListener("click", ev => {
     noteUse("qt:sheets");
     wizSheetLoad(); wizPaymentLoad(); paint();
   }
-  else if(act === "wizClose"){ SHEET_WIZ = null; paint(); }
+  else if(act === "wizClose"){
+    /* Back goes where the wizard was opened from. Only `sheetQuick` sets an
+       origin — every other opener is already standing on the screen it should
+       return to, so an absent origin means "stay put", which is what this
+       always did. */
+    const back = SHEET_WIZ && SHEET_WIZ.origin;
+    SHEET_WIZ = null;
+    if(back) TAB = back;
+    paint();
+  }
   else if(act === "wizStep"){
     wizCollect();
     const s2 = Number(el.dataset.s);

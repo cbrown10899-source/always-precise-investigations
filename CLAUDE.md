@@ -934,15 +934,33 @@ That also gives the strip its hierarchy for free — the seven are rich, the fiv
 behind More are quiet. `art` is a separate gate: `ground` is the colour today,
 `art` the photograph tomorrow, and a card may have a ground with no art.
 
-**THE ART BELONGS TO HOME, THE DOORS BELONG TO EVERY SCREEN.**
-`quickToolsHtml()` renders from `shell()` — the 2026-09-04 decision that exists
-because the timestamp tools went missing once — so the strip cannot be
-withdrawn from Cases or Settings. What is withdrawn is the TREATMENT: off Home
-the same seven draw exactly as before this unit. **Measured, not assumed** — the
-first build put seven dark cards on Cases, Intakes, Rate Sheets, the Delivery
-Center and Settings, which is precisely the "image-heavy" §3 forbids. A test
-walks six screens and requires zero, and a second requires the seven doors to
-still be there.
+**THE LAUNCHER BELONGS TO HOME, AND ONLY HOME** (owner, 2026-09-08 — this
+SUPERSEDES the "doors belong to every screen" half of the decision above).
+
+`quickToolsHtml()` rendered from `shell()`, so tapping an art card landed on a
+screen that **redrew the same grid above the tool** — a duplicate Start
+Something layer between the card and the work. Measured at 390: four of the
+seven — Rate Sheet, New Intake, Private Intake, View Intakes — did exactly
+that. The other three were already direct: Active Surveillance takes its own
+full screen, and both timestamp tools open the file picker itself (the chooser
+fires on the first tap, measured).
+
+**`homeTab()` IS PER ROLE, AND THAT IS LOAD-BEARING.** The default tab is
+`cases`, flipped to `dashboard` only for an ADMIN — an investigator has no
+Dashboard at all. Scoping the strip to `"dashboard"` would have withdrawn it
+from that role entirely, leaving the timestamp tools and Active Surveillance
+behind the burger, which is the 2026-09-04 incident verbatim. Each role keeps
+the launcher on the screen it lands on; the ART stays the dashboard's, because
+an investigator's landing screen is the Cases LIST and §3 keeps those plain.
+
+**BACK RETURNS TO AN ART HOME, and the rate sheet was the one that did not.**
+`sheetQuick` moves the tab to `sheets` so the wizard has a screen, and closing
+left you standing on the Rate Sheets LIST — a screen nobody asked for, one tap
+further from Home than where you started. `SHEET_WIZ.origin` records where it
+was opened from and `wizClose` restores it, so a send opened from a sheet card
+still returns to that list. An absent origin means "stay put", which is what
+every other opener wants. Both close paths — the X and the backdrop — were
+measured.
 
 **ONE STRIP NOW, NOT TWO.** The desktop `.qtool` chip row is gone; the card
 system draws at every width, four across and landscape on desktop, two across

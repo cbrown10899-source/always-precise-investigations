@@ -19673,6 +19673,125 @@ section('Mobile shell: the bottom nav appears on a phone and nowhere else');
      colour: an art-less card carries no `has-art`, and a scrim painted over
      nothing is what turned the previous build into ten dark slabs.
    ========================================================================= */
+/* ==========================================================================
+   THE ART CARDS ARE DIRECT LAUNCHERS (owner, 2026-09-08).
+
+   "Tapping an art Home card can lead to another plain landing/quick-action
+   layer before reaching the actual tool. That defeats the purpose of the art
+   Home." Measured before the change, at 390: four of the seven — Rate Sheet,
+   New Intake, Private Intake, View Intakes — landed on a shell screen that
+   REDREW the Start Something grid above the tool. The other three were
+   already direct.
+
+   WHAT IS ASSERTED HERE IS THE ROUTE, NOT THE PIXELS: each card lands on its
+   own tool with no second launcher above it, and Back from a tool returns to
+   an art Home. Both at 390 and 320, because a duplicate layer is a phone
+   problem first.
+   ========================================================================= */
+section('Every art card is a direct launcher, and Back returns to an art Home');
+{
+  for (const [w, h] of [[390, 844], [320, 568]]) {
+    const page = await newPage();
+    await signIn(page, 'trever', 'AdminPassword1x');
+    await page.setViewportSize({ width: w, height: h });
+    await page.locator('.tabs button', { hasText: 'Dashboard' }).first().click();
+    await page.waitForTimeout(700);
+
+    /* HOME IS THE ONE SCREEN WITH THE LAUNCHER ON IT. */
+    const home = await page.evaluate(() => ({
+      strip: document.querySelectorAll('.qtools .qtapps').length,
+      art: document.querySelectorAll('.qtools .qtapp.uiart').length,
+    }));
+    ok(`${w}: Home draws the art launcher`,
+       home.strip >= 1 && home.art === 7, JSON.stringify(home));
+
+    /* ---- the four that used to pass through a duplicate layer ---------- */
+    const land = async (qt, expect) => {
+      await page.evaluate(() => { TAB = 'dashboard'; SHEET_WIZ = null; paint(); });
+      await page.waitForTimeout(500);
+      await page.locator(`.qtapp[data-qt="${qt}"]`).click();
+      await page.waitForTimeout(1100);
+      return page.evaluate(e => ({
+        tab: TAB, wiz: !!SHEET_WIZ,
+        /* THE DUPLICATE LAYER, MEASURED: is the Home grid drawn again? */
+        strip: document.querySelectorAll('.qtools .qtapps').length,
+        ovf: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        hit: e,
+      }), expect);
+    };
+    for (const [qt, tab, label] of [['sheets', 'sheets', 'Rate Sheet'],
+                                    ['newlead', 'newlead', 'New Intake'],
+                                    ['priv', 'newlead', 'Private Intake'],
+                                    ['leads', 'leads', 'View Intakes']]) {
+      const r = await land(qt, tab);
+      ok(`${w}: ${label} lands on its own screen with NO second launcher above it`,
+         r.tab === tab && r.strip === 0 && r.ovf === 0, JSON.stringify(r));
+    }
+    /* Rate Sheet's endpoint is the FORM, not the Rate Sheets list. */
+    await page.evaluate(() => { TAB = 'dashboard'; SHEET_WIZ = null; paint(); });
+    await page.waitForTimeout(500);
+    await page.locator('.qtapp[data-qt="sheets"]').click();
+    await page.waitForTimeout(1100);
+    ok(`${w}: and Rate Sheet opens Prepare & Send itself, with its recipient field`,
+       await page.evaluate(() => !!SHEET_WIZ && !!document.getElementById('wiz_to')));
+
+    /* ---- BACK RETURNS TO AN ART HOME ---------------------------------- */
+    /* The owner's own test, and it failed before this unit: closing the
+       wizard left you standing on the Rate Sheets LIST — a screen nobody
+       asked for, one tap further from Home than where you started. The
+       wizard remembers where it was opened from, so a send opened from a
+       sheet card still returns to that list. */
+    await page.locator('.amx[data-act="wizClose"]').click();
+    await page.waitForTimeout(800);
+    const back = await page.evaluate(() => ({
+      tab: TAB, wiz: !!SHEET_WIZ,
+      art: document.querySelectorAll('.qtools .qtapp.uiart').length,
+    }));
+    ok(`${w}: Home art -> Rate Sheet -> Back -> art Home`,
+       back.tab === 'dashboard' && back.wiz === false && back.art === 7, JSON.stringify(back));
+
+    /* Active Surveillance takes its own full screen — no shell, so no strip
+       could be drawn over it — and its back control returns to art Home. */
+    await page.locator('.qtapp[data-qt="field"]').click();
+    await page.waitForTimeout(1200);
+    const sv = await page.evaluate(() => ({
+      launcher: !!(typeof SV !== 'undefined' && SV) && SV.tab === 'launcher',
+      strip: document.querySelectorAll('.qtools .qtapps').length,
+    }));
+    ok(`${w}: Active Surveillance opens its working screen directly`,
+       sv.launcher === true && sv.strip === 0, JSON.stringify(sv));
+    await page.locator('[data-act="svLeaveLauncher"]').click();
+    await page.waitForTimeout(800);
+    const svBack = await page.evaluate(() => ({
+      tab: TAB, sv: !!(typeof SV !== 'undefined' && SV),
+      art: document.querySelectorAll('.qtools .qtapp.uiart').length,
+    }));
+    ok(`${w}: Home art -> Active Surveillance -> Back -> art Home`,
+       svBack.tab === 'dashboard' && svBack.sv === false && svBack.art === 7,
+       JSON.stringify(svBack));
+
+    /* THE TWO TIMESTAMP TOOLS OPEN THE PICKER ITSELF — one tap, no landing
+       screen. `filechooser` firing IS the assertion: it is what a direct
+       launcher does, and it is why these two were already correct. Cancelling
+       leaves the page where it was, which is an art Home. */
+    for (const [qt, label] of [['photo', 'Timestamp Photo'], ['video', 'Timestamp Video']]) {
+      let fired = false;
+      const onChooser = () => { fired = true; };
+      page.on('filechooser', onChooser);
+      await page.evaluate(q => document.querySelector(`.qtapp[data-qt="${q}"]`).click(), qt);
+      await page.waitForTimeout(1200);
+      page.off('filechooser', onChooser);
+      const after = await page.evaluate(() => ({
+        tab: TAB, art: document.querySelectorAll('.qtools .qtapp.uiart').length,
+      }));
+      ok(`${w}: ${label} opens its file picker directly, and cancelling leaves art Home`,
+         fired === true && after.tab === 'dashboard' && after.art === 7,
+         JSON.stringify({ fired, ...after }));
+    }
+    await page.close();
+  }
+}
+
 section('The hybrid pass: seven art cards on Home, and nothing else touched');
 {
   const page = await newPage();
@@ -19966,14 +20085,21 @@ section('The hybrid pass: seven art cards on Home, and nothing else touched');
   }
   ok('no operational screen carries a single art card',
      Object.values(walk).every(n => n === 0), JSON.stringify(walk));
-  /* AND THE DOORS ARE STILL THERE — withdrawing the treatment must not
-     withdraw the strip, or the 2026-09-04 "could not find the tool" incident
-     comes straight back. */
-  const stillThere = await page.evaluate(() =>
-    [...document.querySelectorAll('.qtools .qtapps:not(.qtapps-more) > .qtapp')].map(c => c.dataset.qt));
-  ok('and every door is still on the screen, just plain',
-     stillThere.length === 7 && stillThere.includes('photo') && stillThere.includes('video'),
-     JSON.stringify(stillThere));
+  /* THE STRIP ITSELF IS GONE FROM THESE SCREENS NOW, AND THAT IS THE OWNER'S
+     OWN CORRECTION (2026-09-08). This asserted the opposite — that the seven
+     doors stay drawn on every screen, plain — which was the previous unit's
+     decision and the reason the treatment rather than the strip was withdrawn.
+
+     Tapping an art card then landed on a screen that REDREW the same grid
+     above the tool: a duplicate Start Something layer between the card and the
+     work. "The art card grid belongs on Home. Operational destinations should
+     immediately show the operational content." So the strip renders on the
+     role's home screen and nowhere else, and what is asserted here is the
+     stronger property — the destination shows its own content, nothing else. */
+  const stripOff = await page.evaluate(() =>
+    [...document.querySelectorAll('.qtools .qtapps')].length);
+  ok('and the Start Something grid is not redrawn above them either',
+     stripOff === 0, String(stripOff));
 
   /* ---- the case screen never had one, and must not gain one ------------- */
   await page.evaluate(() => openCase('API-20260812-4002'));
