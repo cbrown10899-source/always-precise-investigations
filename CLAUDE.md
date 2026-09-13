@@ -246,6 +246,88 @@ and Farmville — deliberately scoped to about an hour's drive. An earlier
 version generated 27 near-duplicate city pages; that was consolidated on
 purpose, so resist re-expanding it without a reason.
 
+## Six location pages were one template with the name swapped
+
+Owner question 2026-09-12: *"How is the search results doing? Anything we can
+beef up to get more clicks."* Audit, baseline measurements and the Search
+Console setup are in `SEO.md` (root, internal — the manifest allow-list keeps
+every `.md` off the public site, and a test proves it).
+
+**THERE IS STILL NO SEARCH DATA IN THIS REPOSITORY, AND THAT IS WORTH SAYING
+BEFORE ANY CLAIM ABOUT RANKINGS.** The `/watch/` beacon keeps a referrer host in
+KV on a **600-second TTL** — a live view, not a history — so impressions, clicks
+and positions cannot be answered from the code. They need Google Search Console,
+and the setup is DNS TXT on purpose: **the HTML-file verification method would
+break the deploy**, because the stager fails the build when a path listed in the
+manifest is missing, so a placeholder entry for `google<token>.html` freezes
+every deploy until the real file lands.
+
+**THE DUPLICATION WAS MEASURED, NOT ASSERTED.** Stripped of tags and compared
+sentence by sentence, **28 of 33 sentences were byte-identical once the city name
+was substituted**, and Roanoke and Danville shared **305 of 327 words** of
+vocabulary. Six pages at ~700 words each, competing to be the one Google does not
+filter — which is six of the site's thirteen URLs.
+
+**`PLACES` IS DICTS CARRYING FACTS, AND THE PAGE IS COMPOSED FROM THEM.** Roads,
+courts, adjacent localities, and a `ground` field for what working that locality
+actually involves — Bedford's rural sightlines, Roanoke's four jurisdictions in
+one valley, Charlottesville's city/county confusion, Danville's state line,
+Farmville's small-town conspicuousness, Lynchburg being where the office is.
+Every field is a **verifiable geographic or civic fact, or a statement about what
+this firm does**; nothing asserts case volume, named clients or unevidenced work,
+because this is a public page and the standing rule is that a page must not
+assert something untrue. Result: ~700 → **~1,250 words**, unique main content
+**~6% → 44% average** (38–50%).
+
+**THE FIRST METRIC WAS MISLEADING AND WAS REPLACED RATHER THAN CHASED.** Counting
+identical sentences across the whole document counts the header, the footer, the
+Virginia adultery-law explanation and the ethics statement — all of which
+*should* be identical, and two of which are compliance text that would be wrong
+to vary. Measured that way the number only moved 85% → 73% and the temptation was
+to pad. The honest metric is **unique main content with header and footer
+stripped**, and against that the same work reads 6% → 44%. Do not pad a page to
+move a number that is counting the wrong thing.
+
+**INSURANCE AND LEGAL HAD NO LOCAL FOOTPRINT AT ALL** — every city page sold
+cheating and surveillance, so "workers comp surveillance Roanoke" and
+"investigator for law firms Lynchburg" had nothing to rank. Each city page now
+carries its own insurance and legal section, routed to
+`?assignment=insurance` and `?assignment=legal` — never a bare or wrong door, the
+standing pairing rule.
+
+**LEGAL WAS THE WEAKEST-LINKED PAGE ON THE SITE** despite being a primary
+business line: not linked from any of the six city pages (all six linked
+Insurance), **no `BreadcrumbList` while every sibling had one**, sitemap priority
+`0.5 / yearly` — the vendor sub-page's — and an H1 (*"Investigative support built
+for the file, not the headline"*) carrying neither "legal", "law firm",
+"attorney" nor "Virginia". All four corrected; the original line survives as the
+standfirst, because it is good writing and only the H1 needed the keywords.
+
+**FIVE DESCRIPTIONS WERE BEING TRUNCATED**, including both new pages — insurance
+at 230 characters and legal at 220 against a ~155–160 display limit, so **the
+phone number ending both never appeared in the result**. All thirteen pages fit
+now, and the six city descriptions differ from each other.
+
+**`lastmod` IS A HAND-EDITED CONSTANT, AND THE REASON IS A TRAP WORTH
+REMEMBERING.** It is the one sitemap hint Google says it uses (`priority` and
+`changefreq` it ignores). A build date would lie on every unchanged
+regeneration. **A git date is worse than a lie — it is a delayed build break:**
+`test-deploy.mjs` asserts the committed sitemap is byte-for-byte what the
+generator produces, and a date read from `git log` moves the moment the file is
+committed, so the sitemap generated before the commit stops matching the one
+generated after it. It would have passed on the day it shipped and failed the
+next. `CONTENT_REVISED` is bumped by hand when the content actually changes.
+
+**THREE LEVERS THAT DO NOT WORK, RECORDED SO THEY ARE NOT PAID FOR TWICE:**
+**review stars** — Google dropped self-serving `LocalBusiness`/`ProfessionalService`
+review markup in 2019, so `AggregateRating` on our own pages produces no stars
+and risks a manual action (stars come from Google Business Profile);
+**more FAQ schema** — restricted to government and health sites in 2023, so the
+content still earns "People also ask" and AI-Overview pickup but the markup draws
+no rich result here; and **sitemap `priority`/`changefreq`**, ignored outright.
+**The biggest lever is not in this repository at all** — the map pack, driven by
+Google Business Profile, which is an account the owner logs into.
+
 ## CI pushes to master
 
 `build-locations.yml` commits and pushes to `master` as `github-actions[bot]`.
