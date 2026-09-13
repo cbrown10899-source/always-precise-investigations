@@ -461,7 +461,7 @@ section('The manifest describes the site honestly');
      wide.length === 0, wide.join(' | '));
 
   /* And the radius is actually stated where papers are offered. */
-  const RADIUS = /about an hour of Rustburg, Lynchburg (?:and|or) Bedford/i;
+  const RADIUS = /about an hour of Lynchburg/i;
   const silent = [];
   for (const f of publicPages) {
     const raw = readAll(f);
@@ -469,6 +469,28 @@ section('The manifest describes the site honestly');
   }
   ok('every public page that offers process service states the service radius',
      silent.length === 0, silent.join(' | '));
+
+  /* --- THE RETIRED BRAND LINE AND THE FORBIDDEN REGION NAME ----------------
+     Owner, 2026-09-13: the line is "Serving Greater Lynchburg and Central
+     Virginia since 2014", the old "serving all of Virginia" is gone, and the
+     area is never to be called the "Lynchburg Metropolitan Area". Checked over
+     the STAGED bytes, so a page fixed in the repo but absent from the manifest
+     is not counted as fixed — and comments ship in View Source, which is how
+     the insurance page's own "to go statewide" note was caught. */
+  const retired = [];
+  for (const f of publicPages) {
+    const t = readAll(f);
+    if (/serving\s+all\s+of\s+virginia/i.test(t)) retired.push(`${path.relative(site, f)}: all-of-Virginia brand line`);
+    if (/lynchburg\s+metropolitan\s+area/i.test(t)) retired.push(`${path.relative(site, f)}: "Lynchburg Metropolitan Area"`);
+  }
+  ok('the retired all-of-Virginia line and "Lynchburg Metropolitan Area" appear nowhere',
+     retired.length === 0, retired.join(' | '));
+
+  /* And the brand line that replaced it is actually on the homepage and the 404. */
+  for (const p of ['index.html', '404.html']) {
+    ok(`${p} carries the current brand line`,
+       /Serving Greater Lynchburg and Central Virginia since 2014/i.test(readAll(path.join(site, p))));
+  }
 }
 
 /* UNIT 37A — every public content route gets the same header treatment.

@@ -120,7 +120,50 @@ Worth knowing before spending money on any of them:
 
 ---
 
-## 6. The biggest lever is not in this repository
+## 6. The service-area hierarchy (owner, 2026-09-13)
+
+| Level | Value |
+| --- | --- |
+| Primary umbrella | Central Virginia |
+| Core local region | Greater Lynchburg Region |
+| Core communities | Lynchburg, Forest, Rustburg, Bedford, Amherst, Appomattox, Altavista, Smith Mountain Lake / Moneta |
+| Extended | Roanoke, Farmville, Danville, Charlottesville, Staunton, Waynesboro |
+
+**Brand line:** *Serving Greater Lynchburg and Central Virginia since 2014.* The
+old "serving all of Virginia" is retired and a deploy guard fails if it returns.
+The region is never called the "Lynchburg Metropolitan Area".
+
+**Radii differ by service, deliberately** — insurance runs roughly 100 miles from
+Lynchburg, investigation and legal work travel across Central Virginia, and
+**process service is about an hour of Lynchburg**. Do not write one radius over
+all three.
+
+**Process service wording**, used on every page that offers it:
+
+> Process service is available throughout the Greater Lynchburg region and
+> surrounding Central Virginia communities, generally within about an hour of
+> Lynchburg. Contact us to confirm availability for locations farther out.
+
+**Full service-area paragraph**, on the homepage and the service-area hub:
+
+> Always Precise Investigations serves Lynchburg and surrounding Central Virginia
+> communities, including Forest, Rustburg, Bedford, Amherst, Appomattox,
+> Altavista, and the Smith Mountain Lake area. Process service is generally
+> available throughout this Greater Lynchburg region, with additional locations
+> considered based on distance and availability.
+
+Extended markets keep their pages and their coverage, and are never described as
+Greater Lynchburg. `PLACES` carries a `region` field; the placement sentence is
+composed from it.
+
+**Open questions for the owner:** whether Charlottesville and Danville are inside
+the process hour (both currently carry no process card), and whether Richmond
+should stay in the homepage `areaServed` list — it is pre-existing, plausibly
+Central Virginia, and was not in the owner's named extended list.
+
+---
+
+## 7. The biggest lever is not in this repository
 
 For a local investigation firm the **map pack** drives most calls, and it is
 driven by **Google Business Profile**: correct primary category, service areas

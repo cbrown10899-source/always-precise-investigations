@@ -328,6 +328,76 @@ no rich result here; and **sitemap `priority`/`changefreq`**, ignored outright.
 **The biggest lever is not in this repository at all** — the map pack, driven by
 Google Business Profile, which is an account the owner logs into.
 
+## The service-area hierarchy, and why process service is scoped tighter
+
+Owner, 2026-09-13 (a scope correction, then a finalization the same day). This
+**supersedes the geography half of the section above** and closes the ledger gap
+left by PR #317, which shipped the first correction without writing it down.
+
+| Level | Value |
+| --- | --- |
+| Primary umbrella | **Central Virginia** |
+| Core local region | **Greater Lynchburg Region** |
+| Core communities | Lynchburg, Forest, Rustburg, Bedford, Amherst, Appomattox, Altavista, Smith Mountain Lake / Moneta |
+| Extended | Roanoke, Farmville, Danville, Charlottesville, Staunton, Waynesboro and other reasonable Central Virginia markets |
+
+**THE EXTENDED MARKETS ARE KEPT AND ARE NOT THE CORE REGION.** Both halves are
+the rule: a page for a market outside the hour is not deleted for being outside
+it, and it is never described as Greater Lynchburg either. `PLACES` carries a
+`region` field and the placement sentence is composed from it, so a locality
+cannot be promoted by someone editing prose.
+
+**NOT EVERY SERVICE HAS THE SAME RADIUS, AND THE SITE MUST NOT FLATTEN THEM.**
+Insurance runs roughly 100 miles from Lynchburg (the Insurance page's own copy,
+which was already correct and was left alone); investigation and legal work
+travel across Central Virginia; **process service is about an hour of
+Lynchburg**. Writing one radius over all of them would be as untrue as the
+statewide claim it replaced.
+
+**THE STATEWIDE PROCESS-SERVICE CLAIMS WERE NEVER ON THE CITY PAGES.** The audit
+expected to find them there and found them on the homepage service card, the
+homepage JSON-LD `Offer` (*"Service of legal process throughout Virginia"*), the
+Legal page's Locate & Process Support card, and **the intake form's own service
+picker** — the screen where a client commits. Audit by CLAIM, not by the page
+you suspect.
+
+**`BRAND_LINE`, `PROCESS_AREA`, `PROCESS_CARD` and `SERVICE_AREA_PARA` are the
+one writer** in `build-locations.py` for everything generated; the hand-written
+pages carry the same strings, and three deploy guards hold them together rather
+than a promise to keep them in step:
+
+1. no page may offer process service **beside** a statewide phrase;
+2. any page offering process service must state the radius;
+3. the retired *"serving all of Virginia"* line and the forbidden name
+   **"Lynchburg Metropolitan Area"** appear nowhere, and the current brand line
+   is present on the homepage and the 404.
+
+**THE FIRST GUARD WAS WRONG BEFORE IT WAS RIGHT, AND IT WAS FIXED RATHER THAN
+RELAXED.** It chunked on tag boundaries, so an entire `ld+json` block became one
+unit — pairing the organisation's general description with the process-serving
+`Offer` beside it and **failing a page that was correct**. It parses structured
+data per node now and reads visible copy per sentence with the data stripped
+out. Both it and the brand guard are negative-tested against the exact original
+wording, because a guard nobody has watched fail is a guard nobody knows works.
+
+**AND TWO OF THEM FIRED ON MY OWN COMMENT** — the third time this project has
+recorded that shape. A note added to the Insurance page explaining the rule
+quoted *"serving all of Virginia"* and named process service, and comments ship
+in View Source, so the page really did contain both. **The prose was reworded;
+neither guard was loosened.**
+
+**WHAT THE 2026-09-12 UNIT GOT WRONG, KEPT ON THE RECORD.** To break up six
+near-duplicate city pages it invented local colour — Bedford roads carrying "a
+few dozen vehicles an hour", Farmville noticing a strange vehicle "within a day
+or so", Roanoke holding "the heaviest concentration of claim activity",
+Charlottesville supporting "a dense legal sector" — none measured, none the
+owner's. All of it is gone, along with the `court` field, whose sentence
+(*"cases here are typically filed through X, and every report we produce is
+written to be usable there"*) was a courthouse-familiarity claim on all six
+pages. **Unique main content fell 44% → 23% as a result, and that is the right
+trade**: the way to raise it again is the owner's own answers about their own
+business, never invention.
+
 ## CI pushes to master
 
 `build-locations.yml` commits and pushes to `master` as `github-actions[bot]`.

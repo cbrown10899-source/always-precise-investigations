@@ -44,17 +44,38 @@ GBP_URL = "https://maps.google.com/?cid=1285488950812777376"
 CONTENT_REVISED = "2026-09-12"
 FACEBOOK = "https://www.facebook.com/AlwaysPreciseInvestigations/"
 
-# THE PROCESS-SERVICE COVERAGE STATEMENT HAS ONE WRITER (owner, 2026-09-13).
-# Central Virginia is the umbrella for the firm; PROCESS SERVICE specifically is
-# narrower, and the site must not imply we serve papers all over the state. Any
-# page that offers process service states this radius or does not claim an area
-# at all. `test-deploy.mjs` fails if process-service wording appears beside a
-# statewide phrase on any public page.
-PROCESS_AREA = ("Process service is offered in Central Virginia &mdash; generally within "
-                "about an hour of Rustburg, Lynchburg and Bedford. Ask about anywhere "
-                "else and we will tell you honestly whether we can take it.")
-PROCESS_CARD = ("Service of legal papers in Central Virginia, generally within about an "
-                "hour of Rustburg, Lynchburg and Bedford.")
+# THE GEOGRAPHY HIERARCHY HAS ONE WRITER (owner, 2026-09-13, finalization).
+#
+#   PRIMARY UMBRELLA      Central Virginia
+#   CORE LOCAL REGION     Greater Lynchburg Region
+#   CORE COMMUNITIES      Lynchburg, Forest, Rustburg, Bedford, Amherst,
+#                         Appomattox, Altavista, Smith Mountain Lake / Moneta
+#   EXTENDED              Roanoke, Farmville, Danville, Charlottesville and
+#                         other reasonable Central Virginia markets — kept for
+#                         coverage, NEVER described as Greater Lynchburg.
+#
+# Two rules ride on top of it. The brand line is no longer "all of Virginia".
+# And PROCESS SERVICE IS SCOPED MORE TIGHTLY THAN EVERY OTHER SERVICE: the
+# investigation, insurance and legal work legitimately travels farther, so this
+# file must not flatten them all to one radius — "do not imply every service has
+# identical geographic limits" is the owner's own line.
+#
+# `test-deploy.mjs` holds three guards over this: no page may offer process
+# service beside a statewide phrase, any page offering it must state the radius,
+# and the retired brand line may not return.
+BRAND_LINE = "Serving Greater Lynchburg and Central Virginia since 2014"
+
+PROCESS_AREA = ("Process service is available throughout the Greater Lynchburg region and "
+                "surrounding Central Virginia communities, generally within about an hour of "
+                "Lynchburg. Contact us to confirm availability for locations farther out.")
+PROCESS_CARD = ("Service of legal papers throughout the Greater Lynchburg region and surrounding "
+                "Central Virginia communities, generally within about an hour of Lynchburg.")
+SERVICE_AREA_PARA = ("Always Precise Investigations serves Lynchburg and surrounding Central "
+                     "Virginia communities, including Forest, Rustburg, Bedford, Amherst, "
+                     "Appomattox, Altavista, and the Smith Mountain Lake area. Process service is "
+                     "generally available throughout this Greater Lynchburg region, with additional "
+                     "locations considered based on distance and availability.")
+
 
 # Each locality carries VERIFIABLE FACTS ONLY — which localities are covered from
 # it and the roads it is reached on. That is the whole list, and it is deliberate.
@@ -86,7 +107,9 @@ PLACES = [
         "detail": "the Hill City on the James River, bordered by Campbell, "
                   "Bedford and Amherst counties",
         "corridor": "US 29, US 460 and Route 501",
-        "covers": "Campbell, Bedford, Amherst and Appomattox counties",
+        "covers": "Forest, Rustburg, Amherst, Appomattox, Altavista and the "
+                  "Smith Mountain Lake area",
+        "region": "greater_lynchburg",
         # The one locality fact that is unrepeatable and needs no research: the
         # office is here. Verifiable from the address already on every page.
         "note": "Lynchburg is where our office is, so work in the city and the "
@@ -98,7 +121,8 @@ PLACES = [
         "county": "Bedford County",
         "detail": "the county seat below the Peaks of Otter",
         "corridor": "US 460 and Route 122",
-        "covers": "Bedford County, from the Peaks of Otter toward Smith Mountain Lake",
+        "covers": "Bedford County and the Smith Mountain Lake / Moneta area",
+        "region": "greater_lynchburg",
         "note": "",
         "process": True,
     },
@@ -109,6 +133,7 @@ PLACES = [
                   "out Route 460",
         "corridor": "I-81, US 220 and US 460",
         "covers": "Roanoke City, Roanoke County, Salem and Vinton",
+        "region": "central_virginia",
         # Four separate localities sharing one valley and a lot of Roanoke mailing
         # addresses is a civic fact, not a claim about us.
         "note": "Roanoke City, Roanoke County, Salem and Vinton are four separate "
@@ -122,6 +147,7 @@ PLACES = [
         "detail": "the independent city surrounded by Albemarle County",
         "corridor": "US 29 and I-64",
         "covers": "Charlottesville and Albemarle County",
+        "region": "central_virginia",
         "note": "Charlottesville is an independent city completely surrounded by "
                 "Albemarle County, so a great many addresses that read as "
                 "Charlottesville sit in the county.",
@@ -135,6 +161,7 @@ PLACES = [
         "detail": "the Prince Edward County seat",
         "corridor": "US 460 and US 15",
         "covers": "Prince Edward, Cumberland and Buckingham counties",
+        "region": "central_virginia",
         "note": "",
         "process": True,
     },
@@ -144,6 +171,7 @@ PLACES = [
         "detail": "the Dan River city on the North Carolina line",
         "corridor": "US 29 and US 58",
         "covers": "Danville and Pittsylvania County",
+        "region": "central_virginia",
         # A licence boundary is a fact about the licence, not a story about a case.
         "note": "Danville sits on the North Carolina line, and a Virginia "
                 "investigator's authority stops at that line.",
@@ -324,6 +352,15 @@ def page(p):
         f'<div class="card"><h3>{CARDS[k][0]}</h3><p>{CARDS[k][1]}</p></div>' for k in order)
 
     note_html = f"  <p>{esc(p['note'])}</p>\n" if p["note"] else ""
+    # WHERE THIS LOCALITY SITS IN THE HIERARCHY, said in its own words. The
+    # extended markets are kept for coverage and are NOT the core region; saying
+    # otherwise would be the fake-familiarity claim one layer up.
+    placed = ("It sits in the Greater Lynchburg region, and there is no separate mileage or "
+              "travel charge anywhere in it."
+              if p["region"] == "greater_lynchburg" else
+              "It sits in the wider Central Virginia area we cover beyond the Greater Lynchburg "
+              "region, and there is no separate mileage or travel charge anywhere in our service "
+              "area.")
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -370,8 +407,7 @@ def page(p):
 
 <section><div class="wrap">
   <h2>Investigations in {esc(place)}</h2>
-  <p>{esc(place)} is {esc(detail)}, reached on {esc(corridor)}. It sits inside our Central Virginia
-  service area, and there is no separate mileage or travel charge anywhere in it.</p>
+  <p>{esc(place)} is {esc(detail)}, reached on {esc(corridor)}. {placed}</p>
   <div class="grid">
     {cards_html}
   </div>
@@ -438,7 +474,7 @@ def page(p):
 <footer><div class="wrap">
   <div class="row"><strong>Always Precise Investigations, LLC</strong></div>
   <div class="row"><a href="tel:{PHONE_LINK}">{PHONE_DISPLAY}</a> &middot; <a href="mailto:{EMAIL}">{EMAIL}</a></div>
-  <div class="row">{LICENSE} &middot; Licensed and Insured &middot; Serving Virginia since 2014</div>
+  <div class="row">{LICENSE} &middot; Licensed and Insured &middot; {BRAND_LINE}</div>
   <div class="row"><a href="{DOMAIN}/">Home</a> &middot; <a href="{DOMAIN}/private-investigator/">Service areas</a> &middot; <a href="{DOMAIN}/infidelity-investigations/">Infidelity</a> &middot; <a href="{DOMAIN}/child-custody-investigations/">Child custody</a> &middot; <a href="{DOMAIN}/insurance-investigations/">Insurance claims</a> &middot; <a href="{DOMAIN}/legal-investigations/">Legal</a> &middot; <a href="{DOMAIN}/privacy">Privacy</a></div>
 </div></footer>
 <script src="/beacon.js" defer></script>
@@ -455,17 +491,19 @@ def hub():
     # near me". Each area now carries what it actually covers and where its
     # cases are heard, so the link says something and the page has a reason to
     # rank on its own rather than only as a signpost.
-    items = "".join(
-        f'<div class="card"><h3><a href="{DOMAIN}/private-investigator/{q["slug"]}/">'
-        f'{esc(q["place"])}, VA</a></h3>'
-        f'<p>{esc(q["covers"])}. Reached on {esc(q["corridor"])}.</p></div>'
-        for q in PLACES)
+    def _cards(which):
+        return "".join(
+            f'<div class="card"><h3><a href="{DOMAIN}/private-investigator/{q["slug"]}/">'
+            f'{esc(q["place"])}, VA</a></h3>'
+            f'<p>{esc(q["covers"])}. Reached on {esc(q["corridor"])}.</p></div>'
+            for q in PLACES if q["region"] == which)
+    core_items = _cards("greater_lynchburg")
+    wider_items = _cards("central_virginia")
     hub_faqs = [
         ("What areas of Virginia do you cover?",
-         "Our regular service area runs from Roanoke east to Charlottesville and south to the North "
-         "Carolina line — Lynchburg, Bedford, Roanoke, Charlottesville, Farmville and Danville, plus "
-         "the counties around each. There is no separate mileage or travel charge anywhere inside "
-         "it. Work outside the area is quoted and agreed before the assignment is accepted."),
+         SERVICE_AREA_PARA + " Beyond that we also cover Roanoke, Farmville, Danville and "
+         "Charlottesville for investigation, insurance and legal work, with no separate mileage or "
+         "travel charge anywhere in our service area."),
         ("Do you charge travel or mileage to reach my area?",
          "No. Anywhere in the service area listed on this page, travel and mileage are inside the "
          "quoted price rather than added afterwards. The same applies to tolls, parking, database "
@@ -572,11 +610,17 @@ def hub():
 </div></section>
 
 <section><div class="wrap">
-  <h2>Service areas</h2>
-  <p>Every area below is inside the regular service area — no separate travel or mileage charge
-  anywhere in it. Pick the one nearest you for local detail, or call and we will tell you which
-  applies.</p>
-  <div class="grid">{items}</div>
+  <h2>Greater Lynchburg region</h2>
+  <p>{SERVICE_AREA_PARA}</p>
+  <div class="grid">{core_items}</div>
+</div></section>
+
+<section><div class="wrap">
+  <h2>Wider Central Virginia</h2>
+  <p>We also cover these Central Virginia markets for investigation, insurance and legal work.
+  They sit beyond the Greater Lynchburg region, so process service there is confirmed case by
+  case &mdash; everything else is quoted with no separate travel or mileage charge.</p>
+  <div class="grid">{wider_items}</div>
 </div></section>
 
 <section><div class="wrap faq">
@@ -596,7 +640,7 @@ def hub():
 <footer><div class="wrap">
   <div class="row"><strong>Always Precise Investigations, LLC</strong></div>
   <div class="row"><a href="tel:{PHONE_LINK}">{PHONE_DISPLAY}</a> &middot; <a href="mailto:{EMAIL}">{EMAIL}</a></div>
-  <div class="row">{LICENSE} &middot; Licensed and Insured &middot; Serving Virginia since 2014</div>
+  <div class="row">{LICENSE} &middot; Licensed and Insured &middot; {BRAND_LINE}</div>
   <div class="row"><a href="{DOMAIN}/">Home</a> &middot; <a href="{DOMAIN}/infidelity-investigations/">Infidelity</a> &middot; <a href="{DOMAIN}/child-custody-investigations/">Child custody</a> &middot; <a href="{DOMAIN}/insurance-investigations/">Insurance claims</a> &middot; <a href="{DOMAIN}/legal-investigations/">Legal</a> &middot; <a href="{DOMAIN}/privacy">Privacy</a></div>
 </div></footer>
 <script src="/beacon.js" defer></script>
