@@ -65,16 +65,21 @@ FACEBOOK = "https://www.facebook.com/AlwaysPreciseInvestigations/"
 # and the retired brand line may not return.
 BRAND_LINE = "Serving Greater Lynchburg and Central Virginia since 2014"
 
-PROCESS_AREA = ("Process service is available throughout the Greater Lynchburg region and "
-                "surrounding Central Virginia communities, generally within about an hour of "
-                "Lynchburg. Contact us to confirm availability for locations farther out.")
-PROCESS_CARD = ("Service of legal papers throughout the Greater Lynchburg region and surrounding "
-                "Central Virginia communities, generally within about an hour of Lynchburg.")
+PROCESS_AREA = ("Process service is available throughout Greater Lynchburg and nearby Central "
+                "Virginia communities, with additional locations considered based on distance and "
+                "availability.")
+# The card carries the SAME sentence rather than a shortened twin. A second
+# phrasing of one coverage claim is a second thing to drift, and this claim has
+# now been corrected three times.
+PROCESS_CARD = PROCESS_AREA
+# The localities where process service is a normal market. Schema and visible
+# copy both read this list, so a city cannot appear as a process market in
+# structured data while the page says otherwise (owner, 2026-09-13 §8).
+PROCESS_MARKETS = ["Lynchburg", "Forest", "Rustburg", "Bedford", "Amherst", "Appomattox",
+                   "Altavista", "Moneta", "Smith Mountain Lake", "Roanoke", "Farmville"]
 SERVICE_AREA_PARA = ("Always Precise Investigations serves Lynchburg and surrounding Central "
                      "Virginia communities, including Forest, Rustburg, Bedford, Amherst, "
-                     "Appomattox, Altavista, and the Smith Mountain Lake area. Process service is "
-                     "generally available throughout this Greater Lynchburg region, with additional "
-                     "locations considered based on distance and availability.")
+                     "Appomattox, Altavista, and the Smith Mountain Lake area. " + PROCESS_AREA)
 
 
 # Each locality carries VERIFIABLE FACTS ONLY — which localities are covered from
@@ -281,8 +286,6 @@ def page(p):
          f"{place} sits inside our regular service area and is reached on {corridor}, so most cases "
          "can be scheduled within a few days — and urgent matters sooner. Timing often matters more "
          "than people expect: patterns are easiest to document while they are still active."),
-        (f"Do you serve legal papers in {place}?",
-         PROCESS_AREA.replace("&mdash;", "—")),
         (f"Do you take insurance claim assignments in {place}?",
          "Yes. We work with carriers, third-party administrators, self-insured employers and defense "
          f"firms on claims across {covers} — surveillance, activity documentation and factual "
@@ -293,6 +296,9 @@ def page(p):
          "the responsible attorney and the day-to-day contact are recorded separately so all three "
          "stay on the file. Firms are billed by invoice."),
     ]
+    # Asked only where the answer is yes — see PROCESS_MARKETS.
+    if p["process"]:
+        faqs.insert(4, (f"Do you serve legal papers in {place}?", PROCESS_AREA))
     faq_ld = {
         "@context": "https://schema.org", "@type": "FAQPage",
         "mainEntity": [{"@type": "Question", "name": q,
@@ -352,6 +358,10 @@ def page(p):
         f'<div class="card"><h3>{CARDS[k][0]}</h3><p>{CARDS[k][1]}</p></div>' for k in order)
 
     note_html = f"  <p>{esc(p['note'])}</p>\n" if p["note"] else ""
+    # A locality outside the process markets says NOTHING about process service
+    # rather than carrying the general availability sentence, which on its own
+    # page reads as a claim about that place (owner, 2026-09-13 §1 and §2).
+    proc_html = f"  <p>{PROCESS_AREA}</p>\n" if p["process"] else ""
     # WHERE THIS LOCALITY SITS IN THE HIERARCHY, said in its own words. The
     # extended markets are kept for coverage and are NOT the core region; saying
     # otherwise would be the fake-familiarity claim one layer up.
@@ -416,7 +426,7 @@ def page(p):
 <section><div class="wrap">
   <h2>What we cover from {esc(place)}</h2>
   <p>Our regular service area here takes in {esc(covers)}, reached on {esc(corridor)}.</p>
-{note_html}  <p>{PROCESS_AREA}</p>
+{note_html}{proc_html}
 </div></section>
 
 <section><div class="wrap">
@@ -499,6 +509,13 @@ def hub():
             for q in PLACES if q["region"] == which)
     core_items = _cards("greater_lynchburg")
     wider_items = _cards("central_virginia")
+    _wp = [q["place"] for q in PLACES if q["region"] == "central_virginia" and q["process"]]
+    _wn = [q["place"] for q in PLACES if q["region"] == "central_virginia" and not q["process"]]
+    _join = lambda xs: xs[0] if len(xs) == 1 else " and ".join([", ".join(xs[:-1]), xs[-1]])
+    wider_proc = (f"Process service also covers {_join(_wp)}; in {_join(_wn)} we do not offer it."
+                  if _wp and _wn else
+                  f"Process service also covers {_join(_wp)}." if _wp else
+                  "Process service is not offered in these markets.")
     hub_faqs = [
         ("What areas of Virginia do you cover?",
          SERVICE_AREA_PARA + " Beyond that we also cover Roanoke, Farmville, Danville and "
@@ -617,9 +634,8 @@ def hub():
 
 <section><div class="wrap">
   <h2>Wider Central Virginia</h2>
-  <p>We also cover these Central Virginia markets for investigation, insurance and legal work.
-  They sit beyond the Greater Lynchburg region, so process service there is confirmed case by
-  case &mdash; everything else is quoted with no separate travel or mileage charge.</p>
+  <p>We also cover these Central Virginia markets for investigation, insurance and legal work,
+  quoted with no separate travel or mileage charge. {wider_proc}</p>
   <div class="grid">{wider_items}</div>
 </div></section>
 

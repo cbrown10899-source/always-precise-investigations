@@ -460,15 +460,45 @@ section('The manifest describes the site honestly');
   ok('no public page offers process service and claims the whole state in one breath',
      wide.length === 0, wide.join(' | '));
 
-  /* And the radius is actually stated where papers are offered. */
-  const RADIUS = /about an hour of Lynchburg/i;
+  /* And the ONE approved sentence is what every such page says. The travel-time
+     anchor it replaced ("about an hour of Lynchburg") was retired on the owner's
+     instruction of 2026-09-13 — a hard number invites edge-case argument about
+     localities that are a few minutes either side of it. */
+  const STMT = /Process service is available throughout Greater Lynchburg and nearby Central Virginia communities, with additional locations considered based on distance and availability\./;
   const silent = [];
   for (const f of publicPages) {
-    const raw = readAll(f);
-    if (PROC.test(raw) && !RADIUS.test(raw)) silent.push(path.relative(site, f));
+    const raw = readAll(f).replace(/\s+/g, ' ');
+    if (PROC.test(raw) && !STMT.test(raw)) silent.push(path.relative(site, f));
   }
-  ok('every public page that offers process service states the service radius',
+  ok('every public page that offers process service carries the approved statement',
      silent.length === 0, silent.join(' | '));
+
+  /* --- A CITY IS A PROCESS MARKET IN BOTH PLACES OR IN NEITHER (§8) --------
+     Charlottesville and Danville are not process markets. Before this ran they
+     carried no process CARD and no schema offer — and still asked "Do you serve
+     legal papers in Charlottesville?" in the visible FAQ and in FAQPage schema,
+     answered with the general availability sentence, which reads as yes. The
+     card was the only thing anyone had checked. */
+  const NOT_PROCESS = ['charlottesville-va', 'danville-va'];
+  const bothWays = [];
+  for (const f of html.filter(x => /private-investigator[\\/][a-z-]+-va[\\/]index\.html$/.test(x))) {
+    const raw = readAll(f);
+    const rel = path.relative(site, f);
+    const excluded = NOT_PROCESS.some(s => rel.includes(s));
+    const inSchema = /"name"\s*:\s*"Process serving"/.test(raw);
+    const visible = /<h3>Process serving<\/h3>/.test(raw);
+    const anyWord = PROC.test(raw);
+    if (excluded && anyWord) bothWays.push(`${rel}: excluded city still mentions process service`);
+    if (!excluded && !(inSchema && visible)) bothWays.push(`${rel}: process market missing card or schema offer`);
+    if (inSchema !== visible) bothWays.push(`${rel}: schema and visible card disagree`);
+  }
+  ok('every city page is a process market in BOTH its schema and its visible copy, or in neither',
+     bothWays.length === 0, bothWays.join(' | '));
+
+  /* --- Richmond is not part of the normal footprint (§3) ------------------- */
+  const rich = publicPages.filter(f => /"name"\s*:\s*"Richmond"/.test(readAll(f)))
+                          .map(f => path.relative(site, f));
+  ok('Richmond appears in no areaServed list', rich.length === 0, rich.join(' | '));
 
   /* --- THE RETIRED BRAND LINE AND THE FORBIDDEN REGION NAME ----------------
      Owner, 2026-09-13: the line is "Serving Greater Lynchburg and Central

@@ -340,6 +340,7 @@ left by PR #317, which shipped the first correction without writing it down.
 | Core local region | **Greater Lynchburg Region** |
 | Core communities | Lynchburg, Forest, Rustburg, Bedford, Amherst, Appomattox, Altavista, Smith Mountain Lake / Moneta |
 | Extended | Roanoke, Farmville, Danville, Charlottesville, Staunton, Waynesboro and other reasonable Central Virginia markets |
+| **Process markets** | Lynchburg, Forest, Rustburg, Bedford, Amherst, Appomattox, Altavista, Smith Mountain Lake / Moneta, **Roanoke, Farmville** — and nowhere else |
 
 **THE EXTENDED MARKETS ARE KEPT AND ARE NOT THE CORE REGION.** Both halves are
 the rule: a page for a market outside the hour is not deleted for being outside
@@ -350,9 +351,29 @@ cannot be promoted by someone editing prose.
 **NOT EVERY SERVICE HAS THE SAME RADIUS, AND THE SITE MUST NOT FLATTEN THEM.**
 Insurance runs roughly 100 miles from Lynchburg (the Insurance page's own copy,
 which was already correct and was left alone); investigation and legal work
-travel across Central Virginia; **process service is about an hour of
-Lynchburg**. Writing one radius over all of them would be as untrue as the
-statewide claim it replaced.
+travel across Central Virginia; **process service is a NAMED LIST of markets**.
+Writing one radius over all of them would be as untrue as the statewide claim it
+replaced.
+
+**REGION AND PROCESS MARKET ARE TWO DIFFERENT AXES, and conflating them is the
+mistake this unit found in its own work.** Roanoke and Farmville sit BEYOND the
+Greater Lynchburg region and ARE normal process markets; Charlottesville and
+Danville sit in the same wider group and are NOT. The hub's wider-area sentence
+had asserted "process service there is confirmed case by case" over all four,
+which was untrue of half of them; it is derived from `PROCESS_MARKETS` now and
+names both sets out loud.
+
+**THE HARD TRAVEL-TIME CLAIM IS RETIRED** (owner, 2026-09-13 final): "about an
+hour of Lynchburg" invited argument about localities a few minutes either side
+of it. The approved sentence names no number:
+
+> Process service is available throughout Greater Lynchburg and nearby Central
+> Virginia communities, with additional locations considered based on distance
+> and availability.
+
+**`PROCESS_CARD` IS `PROCESS_AREA`** — literally the same constant, not a
+shortened twin. A second phrasing of one coverage claim is a second thing to
+drift, and this claim has been corrected three times in two days.
 
 **THE STATEWIDE PROCESS-SERVICE CLAIMS WERE NEVER ON THE CITY PAGES.** The audit
 expected to find them there and found them on the homepage service card, the
@@ -370,7 +391,19 @@ than a promise to keep them in step:
 2. any page offering process service must state the radius;
 3. the retired *"serving all of Virginia"* line and the forbidden name
    **"Lynchburg Metropolitan Area"** appear nowhere, and the current brand line
-   is present on the homepage and the 404.
+   is present on the homepage and the 404;
+4. every city page is a process market in BOTH its schema and its visible copy
+   or in NEITHER, and an excluded city carries no process wording at all;
+5. **Richmond** appears in no `areaServed` list.
+
+**GUARD 4 EXISTS BECAUSE THE CARD WAS THE ONLY THING ANYONE CHECKED.**
+Charlottesville and Danville had no process card and no schema offer, and went
+on asking *"Do you serve legal papers in Charlottesville?"* in the visible FAQ
+**and in FAQPage schema**, answered with the general availability sentence —
+which on that page reads as yes. An excluded city now says nothing about process
+service at all. The homepage's process `Offer` also carries **its own
+`areaServed`**, so the schema names the eleven markets rather than inheriting
+the firm's whole footprint, which includes the two cities we do not serve.
 
 **THE FIRST GUARD WAS WRONG BEFORE IT WAS RIGHT, AND IT WAS FIXED RATHER THAN
 RELAXED.** It chunked on tag boundaries, so an entire `ld+json` block became one
