@@ -135,22 +135,35 @@ The region is never called the "Lynchburg Metropolitan Area".
 
 **Radii differ by service, deliberately** — insurance runs roughly 100 miles from
 Lynchburg, investigation and legal work travel across Central Virginia, and
-**process service is about an hour of Lynchburg**. Do not write one radius over
-all three.
+**process service is a named list of markets**. Do not write one radius over all
+three.
+
+**Process markets** (and nowhere else): Lynchburg, Forest, Rustburg, Bedford,
+Amherst, Appomattox, Altavista, Smith Mountain Lake / Moneta, Roanoke, Farmville.
+**Not process markets:** Charlottesville, Danville — they keep every other
+service and carry no process wording at all.
 
 **Process service wording**, used on every page that offers it:
 
-> Process service is available throughout the Greater Lynchburg region and
-> surrounding Central Virginia communities, generally within about an hour of
-> Lynchburg. Contact us to confirm availability for locations farther out.
+> Process service is available throughout Greater Lynchburg and nearby Central
+> Virginia communities, with additional locations considered based on distance
+> and availability.
+
+The earlier "about an hour of Lynchburg" is retired: a hard travel-time number
+invites argument about localities a few minutes either side of it.
 
 **Full service-area paragraph**, on the homepage and the service-area hub:
 
 > Always Precise Investigations serves Lynchburg and surrounding Central Virginia
 > communities, including Forest, Rustburg, Bedford, Amherst, Appomattox,
-> Altavista, and the Smith Mountain Lake area. Process service is generally
-> available throughout this Greater Lynchburg region, with additional locations
-> considered based on distance and availability.
+> Altavista, and the Smith Mountain Lake area. Process service is available
+> throughout Greater Lynchburg and nearby Central Virginia communities, with
+> additional locations considered based on distance and availability.
+
+**Richmond is out** of every `areaServed` list. **Staunton and Waynesboro** stay
+in the firm's `areaServed` as broader Central Virginia geography, carry no
+process-service claim, and deliberately have **no city pages** — thin pages for
+distant cities are the thing this site already consolidated away from.
 
 Extended markets keep their pages and their coverage, and are never described as
 Greater Lynchburg. `PLACES` carries a `region` field; the placement sentence is

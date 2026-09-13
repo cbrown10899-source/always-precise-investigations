@@ -538,7 +538,7 @@ function view(step){
     </label>
     <label class="opt" id="opt-process" onclick="pickSvc('process')">
       <input type="radio" name="svc" ${S.svc==="process"?"checked":""}><b>Process Serving</b>
-      <div class="desc">Service of legal papers throughout the Greater Lynchburg region and surrounding Central Virginia communities, generally within about an hour of Lynchburg. We confirm the fee with you before we go.</div>
+      <div class="desc">Process service is available throughout Greater Lynchburg and nearby Central Virginia communities, with additional locations considered based on distance and availability. We confirm the fee with you before we go.</div>
     </label>
     ${PRIVATE_ONLY ? "" : `<label class="opt" id="opt-claims" onclick="pickSvc('claims')">
       <input type="radio" name="svc" ${S.svc==="claims"?"checked":""}><b>Insurance Claim Assignment</b>
