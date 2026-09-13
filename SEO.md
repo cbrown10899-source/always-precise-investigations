@@ -141,7 +141,7 @@ three.
 **Process markets** (and nowhere else): Lynchburg, Forest, Rustburg, Bedford,
 Amherst, Appomattox, Altavista, Smith Mountain Lake / Moneta, Roanoke, Farmville.
 **Not process markets:** Charlottesville, Danville — they keep every other
-service and carry no process wording at all.
+service, stay in the firm-wide `areaServed`, and **say the exclusion out loud**.
 
 **Process service wording**, used on every page that offers it:
 
@@ -151,6 +151,18 @@ service and carry no process wording at all.
 
 The earlier "about an hour of Lynchburg" is retired: a hard travel-time number
 invites argument about localities a few minutes either side of it.
+
+**Exclusion wording**, on the two city pages that are not process markets — the
+whole of what those pages say about process service, and never beside the
+sentence above:
+
+> Process service is not currently offered in this market. Other investigative
+> services may still be available.
+
+It deliberately offers no case-by-case door. Both sentences are picked by the
+same `p["process"]` flag in `build-locations.py`, so the visible paragraph, the
+visible FAQ and the FAQPage schema always answer together; a deploy guard fails
+if the two copies of that FAQ ever disagree.
 
 **Full service-area paragraph**, on the homepage and the service-area hub:
 

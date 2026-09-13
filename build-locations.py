@@ -41,7 +41,7 @@ GBP_URL = "https://maps.google.com/?cid=1285488950812777376"
 # would stop matching the one generated after it, and the deploy guard would
 # fail on the NEXT day rather than this one. Bump this by hand when the location
 # content actually changes.
-CONTENT_REVISED = "2026-09-12"
+CONTENT_REVISED = "2026-09-13"
 FACEBOOK = "https://www.facebook.com/AlwaysPreciseInvestigations/"
 
 # THE GEOGRAPHY HIERARCHY HAS ONE WRITER (owner, 2026-09-13, finalization).
@@ -77,6 +77,14 @@ PROCESS_CARD = PROCESS_AREA
 # structured data while the page says otherwise (owner, 2026-09-13 §8).
 PROCESS_MARKETS = ["Lynchburg", "Forest", "Rustburg", "Bedford", "Amherst", "Appomattox",
                    "Altavista", "Moneta", "Smith Mountain Lake", "Roanoke", "Farmville"]
+# AND A LOCALITY OUTSIDE THAT LIST SAYS SO (owner, 2026-09-13, final clarity
+# change). Silence was the earlier answer and it left the visitor to guess. This
+# is the whole statement those pages may make about process service: it states
+# the exclusion, it keeps the rest of the page's services open, and it carries
+# no "considered based on distance and availability" clause, because the owner's
+# brief forbids implying process service can be requested case by case there.
+PROCESS_EXCLUDED = ("Process service is not currently offered in this market. Other investigative "
+                    "services may still be available.")
 SERVICE_AREA_PARA = ("Always Precise Investigations serves Lynchburg and surrounding Central "
                      "Virginia communities, including Forest, Rustburg, Bedford, Amherst, "
                      "Appomattox, Altavista, and the Smith Mountain Lake area. " + PROCESS_AREA)
@@ -296,9 +304,12 @@ def page(p):
          "the responsible attorney and the day-to-day contact are recorded separately so all three "
          "stay on the file. Firms are billed by invoice."),
     ]
-    # Asked only where the answer is yes — see PROCESS_MARKETS.
-    if p["process"]:
-        faqs.insert(4, (f"Do you serve legal papers in {place}?", PROCESS_AREA))
+    # ASKED EVERYWHERE, ANSWERED HONESTLY. The question used to be omitted on an
+    # excluded market, which left the page silent on the one thing a visitor
+    # searching "process server <city>" came to ask. The answer is read off
+    # PROCESS_MARKETS, so the visible FAQ and its FAQPage twin cannot disagree.
+    faqs.insert(4, (f"Do you serve legal papers in {place}?",
+                    PROCESS_AREA if p["process"] else PROCESS_EXCLUDED))
     faq_ld = {
         "@context": "https://schema.org", "@type": "FAQPage",
         "mainEntity": [{"@type": "Question", "name": q,
@@ -358,10 +369,12 @@ def page(p):
         f'<div class="card"><h3>{CARDS[k][0]}</h3><p>{CARDS[k][1]}</p></div>' for k in order)
 
     note_html = f"  <p>{esc(p['note'])}</p>\n" if p["note"] else ""
-    # A locality outside the process markets says NOTHING about process service
-    # rather than carrying the general availability sentence, which on its own
-    # page reads as a claim about that place (owner, 2026-09-13 §1 and §2).
-    proc_html = f"  <p>{PROCESS_AREA}</p>\n" if p["process"] else ""
+    # ONE SENTENCE OR THE OTHER, NEVER BOTH AND NEVER NEITHER. A process market
+    # states its coverage; an excluded market states the exclusion. Carrying the
+    # availability sentence on an excluded page would read as a claim about that
+    # place, and carrying both would imply a case-by-case door the owner's brief
+    # forbids (owner, 2026-09-13, final clarity change).
+    proc_html = f"  <p>{PROCESS_AREA if p['process'] else PROCESS_EXCLUDED}</p>\n"
     # WHERE THIS LOCALITY SITS IN THE HIERARCHY, said in its own words. The
     # extended markets are kept for coverage and are NOT the core region; saying
     # otherwise would be the fake-familiarity claim one layer up.
@@ -686,7 +699,14 @@ def main():
     # The sitemap is regenerated wholesale below, so every non-generated page has
     # to be listed here too — otherwise a rebuild silently drops it. The three
     # service pages are hand-written and live outside PLACES.
-    urls = [(f"{DOMAIN}/", "1.0", "monthly", "2026-09-04"),
+    # THE HOMEPAGE READS THE SAME CONSTANT AS EVERY OTHER URL. It carried a
+    # frozen literal of its own and went stale: the three geography units of
+    # 2026-09-13 each edited index.html — the brand line, the process card, the
+    # areaServed list and the process Offer's own areaServed — while its lastmod
+    # still said 2026-09-04. lastmod is the one sitemap hint Google says it uses,
+    # and this is the site's most important URL, so a second date to keep in step
+    # by hand is the drift the one-writer rule exists to stop.
+    urls = [(f"{DOMAIN}/", "1.0", "monthly", CONTENT_REVISED),
             (f"{DOMAIN}/infidelity-investigations/", "0.9", "monthly", CONTENT_REVISED),
             (f"{DOMAIN}/child-custody-investigations/", "0.9", "monthly", CONTENT_REVISED),
             (f"{DOMAIN}/insurance-investigations/", "0.9", "monthly", CONTENT_REVISED),
