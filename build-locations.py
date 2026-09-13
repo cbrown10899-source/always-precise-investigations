@@ -44,212 +44,110 @@ GBP_URL = "https://maps.google.com/?cid=1285488950812777376"
 CONTENT_REVISED = "2026-09-12"
 FACEBOOK = "https://www.facebook.com/AlwaysPreciseInvestigations/"
 
-# Each locality carries its OWN facts and the page is COMPOSED from them, rather
-# than being one template with the city name swapped in. That is not a style
-# preference. Measured 2026-09-12, before this change: 28 of the 33 sentences on
-# a location page were byte-identical once the city name was substituted, and
-# Roanoke and Danville shared 305 of 327 words of vocabulary — which is the
-# shape a search engine treats as near-duplicate and filters, so five of the six
-# pages were competing to be the one that survived.
+# THE PROCESS-SERVICE COVERAGE STATEMENT HAS ONE WRITER (owner, 2026-09-13).
+# Central Virginia is the umbrella for the firm; PROCESS SERVICE specifically is
+# narrower, and the site must not imply we serve papers all over the state. Any
+# page that offers process service states this radius or does not claim an area
+# at all. `test-deploy.mjs` fails if process-service wording appears beside a
+# statewide phrase on any public page.
+PROCESS_AREA = ("Process service is offered in Central Virginia &mdash; generally within "
+                "about an hour of Rustburg, Lynchburg and Bedford. Ask about anywhere "
+                "else and we will tell you honestly whether we can take it.")
+PROCESS_CARD = ("Service of legal papers in Central Virginia, generally within about an "
+                "hour of Rustburg, Lynchburg and Bedford.")
+
+# Each locality carries VERIFIABLE FACTS ONLY — which localities are covered from
+# it and the roads it is reached on. That is the whole list, and it is deliberate.
 #
-# Every field below is a VERIFIABLE geographic or civic fact — roads, courts,
-# adjacent localities — or a statement about what this firm actually does.
-# Nothing here asserts case volume, named clients, or work we cannot evidence.
-# "ground" is the operational reality of working that locality and is the field
-# that makes each page genuinely its own; "ins" and "legal" give the two newest
-# business lines a presence in local search, which they previously had nowhere.
+# THE 2026-09-12 VERSION OF THIS FILE WENT FURTHER AND WAS WRONG TO. It carried a
+# `ground` field describing what working each place "actually involves" — Bedford
+# roads carrying "a few dozen vehicles an hour", Farmville noticing a strange
+# vehicle "within a day or so", Roanoke holding "the heaviest concentration of
+# claim activity", Charlottesville supporting "a dense legal sector". None of that
+# was measured and none of it was the owner's. It was written to make six pages
+# read differently from each other, which is the exact motive the owner ruled out
+# on 2026-09-13: do not invent hyper-local stories, neighborhood details,
+# courthouse familiarity, case examples, client outcomes or "we frequently work
+# in..." claims to make city pages unique.
+#
+# The court name went with it. Naming a circuit court is a public fact, but the
+# sentence it sat in — "cases here are typically filed through X, and every report
+# we produce is written to be usable there" — is a familiarity claim about us, and
+# it was on all six pages. There is no `court` field now, so it cannot come back
+# by being filled in.
+#
+# ACCURACY COSTS UNIQUENESS HERE AND THAT IS THE RIGHT TRADE. Unique main content
+# drops from ~44% to what plain geography can honestly carry. The way to raise it
+# again is the owner's own answers about their own business, not invention.
 PLACES = [
     {
         "slug": "lynchburg-va", "place": "Lynchburg", "kind": "city",
-        "county": "Central Virginia", "court": "Lynchburg Circuit Court",
+        "county": "Central Virginia",
         "detail": "the Hill City on the James River, bordered by Campbell, "
                   "Bedford and Amherst counties",
         "corridor": "US 29, US 460 and Route 501",
         "covers": "Campbell, Bedford, Amherst and Appomattox counties",
-        "ground": "Lynchburg is our home city — the office is here — so work in "
-                  "the city and the four counties around it starts without "
-                  "travel time, and short notice is usually a scheduling "
-                  "question rather than a distance one. The city's geography "
-                  "does shape the work: the hills and the river crossings mean "
-                  "there are only so many ways between two points, which helps "
-                  "when a route has to be documented and hurts when a subject "
-                  "doubles back.",
-        "ins": "Claim assignments here are filed through Lynchburg Circuit "
-               "Court or the Campbell and Bedford county courts next door, and "
-               "the US 29 and 460 corridors put most of the region's warehouse, "
-               "distribution and light-manufacturing employment within a short "
-               "drive — which is where a good deal of Central Virginia workers' "
-               "compensation activity originates.",
-        "legal": "Counsel working out of Lynchburg and the surrounding county "
-                 "seats can open an assignment and have an investigator on it "
-                 "without a travel line on the invoice. Reports come back "
-                 "dated, factual and built to go straight into the file.",
-        "faq": ("Do you cover the counties around Lynchburg as well as the city?",
-                "Yes. Campbell, Bedford, Amherst and Appomattox are all inside "
-                "our regular service area, and there is no separate travel or "
-                "mileage charge anywhere in it. A matter that starts in the "
-                "city and moves into a county does not become a second case."),
+        # The one locality fact that is unrepeatable and needs no research: the
+        # office is here. Verifiable from the address already on every page.
+        "note": "Lynchburg is where our office is, so work in the city and the "
+                "counties around it starts without travel time.",
+        "process": True,
     },
     {
         "slug": "bedford-va", "place": "Bedford", "kind": "town",
-        "county": "Bedford County", "court": "Bedford County Circuit Court",
+        "county": "Bedford County",
         "detail": "the county seat below the Peaks of Otter",
         "corridor": "US 460 and Route 122",
-        "covers": "Bedford County, from the Peaks of Otter down to Smith Mountain Lake",
-        "ground": "Bedford County is rural, and rural changes the method. On a "
-                  "county road carrying a few dozen vehicles an hour, a parked "
-                  "car is the most interesting thing in the landscape — so "
-                  "distance, sightlines and the honest question of whether a "
-                  "position can be held at all matter far more here than they "
-                  "do in a city. Around Smith Mountain Lake the seasonal "
-                  "traffic cuts both ways: more cover in summer, none at all in "
-                  "February.",
-        "ins": "Bedford County claim work is filed through Bedford County "
-               "Circuit Court, and a great deal of the activity worth "
-               "documenting here happens outdoors and on private "
-               "property — which is precisely where the line between what may "
-               "and may not be documented has to be understood before anyone "
-               "goes out, not afterwards.",
-        "legal": "Bedford is a county seat, so the courthouse is the centre of "
-                 "the matter as well as its venue. Assignments for firms "
-                 "working Bedford County are scheduled against the dates on the "
-                 "file rather than open-ended.",
-        "faq": ("Can surveillance actually work in a rural part of Bedford County?",
-                "Often, but it is an honest conversation first. On a quiet "
-                "county road a stationary vehicle is conspicuous, so the answer "
-                "is usually a different approach rather than a longer sit — and "
-                "if a location genuinely cannot be covered, we say so before "
-                "you spend anything rather than after."),
+        "covers": "Bedford County, from the Peaks of Otter toward Smith Mountain Lake",
+        "note": "",
+        "process": True,
     },
     {
         "slug": "roanoke-va", "place": "Roanoke", "kind": "city",
-        "county": "Roanoke County", "court": "Roanoke City Circuit Court",
-        "detail": "the Star City of the Roanoke Valley, the largest metro west "
-                  "of Lynchburg and an easy run out Route 460 or the Blue Ridge "
-                  "Parkway",
+        "county": "Roanoke County",
+        "detail": "the Star City of the Roanoke Valley, reached from Lynchburg "
+                  "out Route 460",
         "corridor": "I-81, US 220 and US 460",
         "covers": "Roanoke City, Roanoke County, Salem and Vinton",
-        "ground": "The Roanoke Valley is the largest urban area we work, and it "
-                  "is the one place in our service area where traffic is an "
-                  "asset — a vehicle in moving traffic or a full parking deck "
-                  "is invisible in a way it never is in a county. The "
-                  "complication here is jurisdictional rather than physical: "
-                  "Roanoke City, Roanoke County, Salem and Vinton sit inside "
-                  "one valley and are four separate localities, so the address "
-                  "decides the venue and it is worth confirming which court a "
-                  "matter is actually headed for.",
-        "ins": "Roanoke carries the heaviest concentration of claim activity in "
-               "the western half of our service area, and I-81 makes it "
-               "reachable the same day from Lynchburg. Assignments are filed "
-               "through Roanoke City or Roanoke County Circuit Court depending "
-               "on where the claimant actually lives — a distinction that is "
-               "easy to get wrong from out of the area.",
-        "legal": "Roanoke has the largest bar west of Lynchburg, and firms here "
-                 "generally want the same two things: coverage that can be "
-                 "scheduled against a hearing date, and a report that does not "
-                 "need rewriting before it goes in the file.",
-        "faq": ("Which Roanoke court will my matter be in?",
-                "That depends on the address, not the mailing city. Roanoke "
-                "City, Roanoke County, Salem and Vinton are separate "
-                "jurisdictions sharing one valley and a lot of Roanoke mailing "
-                "addresses, so a matter people assume is a city case is often a "
-                "county one. Your attorney settles venue; we simply make sure "
-                "the report names the right locality."),
+        # Four separate localities sharing one valley and a lot of Roanoke mailing
+        # addresses is a civic fact, not a claim about us.
+        "note": "Roanoke City, Roanoke County, Salem and Vinton are four separate "
+                "localities in one valley, so the address decides which one a "
+                "matter belongs to.",
+        "process": True,
     },
     {
         "slug": "charlottesville-va", "place": "Charlottesville", "kind": "city",
-        "county": "Central Virginia", "court": "Charlottesville Circuit Court",
-        "detail": "the independent city surrounded by Albemarle County and home "
-                  "to the University of Virginia",
+        "county": "Central Virginia",
+        "detail": "the independent city surrounded by Albemarle County",
         "corridor": "US 29 and I-64",
         "covers": "Charlottesville and Albemarle County",
-        "ground": "Charlottesville is an independent city completely "
-                  "surrounded by Albemarle County, and that single fact causes "
-                  "more confusion here than anywhere else we work: an address "
-                  "with a Charlottesville postmark is frequently in the county, "
-                  "which puts the matter in a different court. The university "
-                  "also gives the city a traffic and population rhythm that "
-                  "changes completely between term and summer — worth planning "
-                  "around rather than discovering.",
-        "ins": "Claim work in the area splits between Charlottesville Circuit "
-               "Court and Albemarle County Circuit Court on the strength of the "
-               "address, and US 29 and I-64 make it a straight run from "
-               "Lynchburg. Carriers and TPAs opening a file here are quoted per "
-               "assignment with no separate travel charge.",
-        "legal": "Charlottesville supports a dense legal sector for a city its "
-                 "size, and a good deal of what firms here need is unglamorous: "
-                 "locate and process support, activity documentation, and a "
-                 "factual report that holds together.",
-        "faq": ("Is a Charlottesville address always in the city?",
-                "No, and it catches people out regularly. Charlottesville is an "
-                "independent city ringed by Albemarle County, and a great many "
-                "addresses that read as Charlottesville sit in the county — "
-                "which changes the court the matter belongs in. We work both "
-                "and will tell you which one an address falls in."),
+        "note": "Charlottesville is an independent city completely surrounded by "
+                "Albemarle County, so a great many addresses that read as "
+                "Charlottesville sit in the county.",
+        # OUTSIDE the process radius on the owner's own rule until they say
+        # otherwise. The page still offers every other service.
+        "process": False,
     },
     {
         "slug": "farmville-va", "place": "Farmville", "kind": "town",
         "county": "Prince Edward County",
-        "court": "Prince Edward County Circuit Court",
-        "detail": "the Prince Edward County seat and home of Longwood University",
+        "detail": "the Prince Edward County seat",
         "corridor": "US 460 and US 15",
         "covers": "Prince Edward, Cumberland and Buckingham counties",
-        "ground": "Farmville is a small town at the crossing of two US routes, "
-                  "with Longwood University in the middle of it and "
-                  "Hampden-Sydney just down the road. A town this size notices "
-                  "an unfamiliar vehicle within a day or so — genuinely, not as "
-                  "a figure of speech — so work here is planned around that "
-                  "rather than against it. The student calendar also swings the "
-                  "population hard enough that the same street is a different "
-                  "problem in October and in July.",
-        "ins": "Prince Edward, Cumberland and Buckingham are rural counties "
-               "reached out US 460 and US 15, and claim files here are heard in "
-               "Prince Edward County Circuit Court. Rural claim work usually "
-               "means outdoor activity and long approaches, which is a planning "
-               "question rather than an obstacle.",
-        "legal": "Farmville is the county seat, so firms working Prince Edward "
-                 "and the counties either side of it are working out of the "
-                 "same courthouse. Assignments are scheduled against the dates "
-                 "on the matter.",
-        "faq": ("Can an investigator work discreetly in a town the size of Farmville?",
-                "It takes a different approach, and we would rather say so than "
-                "pretend otherwise. In a small town an unfamiliar parked "
-                "vehicle is conspicuous quickly, so coverage here is built "
-                "around movement and timing instead of a long static sit. Where "
-                "a location cannot be worked discreetly, you are told before "
-                "anything is spent."),
+        "note": "",
+        "process": True,
     },
     {
         "slug": "danville-va", "place": "Danville", "kind": "city",
-        "county": "Southside Virginia", "court": "Danville Circuit Court",
+        "county": "Southside Virginia",
         "detail": "the Dan River city on the North Carolina line",
         "corridor": "US 29 and US 58",
         "covers": "Danville and Pittsylvania County",
-        "ground": "Danville sits on the North Carolina line, and that is the "
-                  "single most important operational fact about working here: a "
-                  "subject can be in another state in a matter of minutes, and "
-                  "the authority a Virginia investigator carries stops at that "
-                  "line. It is worth knowing before surveillance is planned and "
-                  "before papers are issued — not as a limitation we discovered "
-                  "halfway through a case.",
-        "ins": "Danville and Pittsylvania County claim files are heard in "
-               "Danville Circuit Court and the Pittsylvania County courts, "
-               "reached out US 29 and US 58. On a claim near the state line it "
-               "is worth establishing early where the claimant actually spends "
-               "their time, because a file that crosses into North Carolina "
-               "changes what can be done and by whom.",
-        "legal": "For firms with a matter on the state line, the useful thing "
-                 "we can offer is usually a straight answer about what is "
-                 "workable on the Virginia side and where the limit falls, "
-                 "before a plan is built on an assumption.",
-        "faq": ("What happens if the subject crosses into North Carolina?",
-                "Our licence is a Virginia licence and our authority stops at "
-                "the state line — we do not represent otherwise. On a Danville "
-                "matter that is a planning question rather than a surprise: we "
-                "establish early where the subject actually spends their time, "
-                "document what can properly be documented in Virginia, and tell "
-                "you plainly where the boundary falls so your attorney can "
-                "decide what to do about it."),
+        # A licence boundary is a fact about the licence, not a story about a case.
+        "note": "Danville sits on the North Carolina line, and a Virginia "
+                "investigator's authority stops at that line.",
+        "process": False,
     },
 ]
 NEARBY = {
@@ -318,17 +216,14 @@ def pick(candidates, limit):
 
 def page(p):
     slug, place, kind = p["slug"], p["place"], p["kind"]
-    county, court, detail = p["county"], p["court"], p["detail"]
+    county, detail = p["county"], p["detail"]
     corridor, covers, nearby = p["corridor"], p["covers"], p["nearby"]
     url = f"{DOMAIN}/private-investigator/{slug}/"
-    # Pick the longest title/description that still fits search-display limits.
     title = pick([
         f"Private Investigator {place}, VA | Cheating & Surveillance",
         f"Private Investigator {place}, VA | Surveillance",
         f"Private Investigator {place}, VA",
     ], 62)
-    # The description names what this locality actually covers, so the six
-    # snippets differ from each other in the result page as well as on the page.
     desc = pick([
         f"Licensed PI covering {covers}. Surveillance, cheating spouse, custody, "
         f"insurance claims and legal support. Free consult: {PHONE_DISPLAY}.",
@@ -345,46 +240,40 @@ def page(p):
          f"with no mileage or travel charge anywhere in our service area, which takes in {covers}. "
          "Call for a free, confidential quote."),
         (f"Can you prove adultery for a divorce case in {place}?",
-         "Virginia treats adultery as a fault ground for divorce, and courts there apply a high evidentiary "
+         "Virginia treats adultery as a fault ground for divorce, and courts apply a high evidentiary "
          "standard — a spouse's own suspicion or testimony is generally not enough on its own, so "
          "independent corroboration matters. We document activity with time-stamped video and detailed "
-         f"written reports prepared to be usable by your attorney and, if needed, in {court}. Work can "
-         f"run anywhere across {covers} without the case being split or re-quoted. "
+         "written reports prepared to be usable by your attorney. "
          "We do not give legal advice; your attorney decides how evidence is used."),
         (f"Will my spouse or the subject know I hired an investigator in {place}?",
          "No. Surveillance is covert by design, and our work with you is confidential. Investigators use "
          "unmarked vehicles and keep their distance; the goal is documentation without any change in the "
-         + ("subject's behavior. In a built-up area like " + place + " that is mostly a question of "
-            "blending into normal traffic."
-            if kind == "city" else
-            "subject's behavior. " + place + " is small enough that an unfamiliar parked vehicle gets "
-            "noticed, so coverage here is planned around movement and timing rather than a long "
-            "static sit.")),
+         "subject's behavior."),
         (f"How quickly can an investigator get to {place}?",
          f"{place} sits inside our regular service area and is reached on {corridor}, so most cases "
          "can be scheduled within a few days — and urgent matters sooner. Timing often matters more "
          "than people expect: patterns are easiest to document while they are still active."),
-        # The locality's own question — the one thing about working here that is
-        # genuinely not true of the other five pages.
-        p["faq"],
+        (f"Do you serve legal papers in {place}?",
+         PROCESS_AREA.replace("&mdash;", "—")),
         (f"Do you take insurance claim assignments in {place}?",
          "Yes. We work with carriers, third-party administrators, self-insured employers and defense "
          f"firms on claims across {covers} — surveillance, activity documentation and factual "
-         f"reporting, invoiced against a written authorization. Files in this area are heard in "
-         f"{court}. Assignments are submitted through the secure assignment intake and confirmed in "
-         "writing before any work begins."),
+         "reporting, invoiced against a written authorization. Assignments are submitted through the "
+         "secure assignment intake and confirmed in writing before any work begins."),
         (f"Can law firms in {place} open an assignment?",
-         f"Yes, and a paralegal can open it — most matters across {covers} are opened by the person "
-         "running the file rather than by the attorney, so the firm, the responsible attorney and the "
-         "day-to-day contact are recorded separately and all three stay on the matter. The "
-         "investigator who does the work is the one who can speak to what they observed in "
-         f"{court}."),
+         "Yes. Attorneys, paralegals and legal departments can open a matter directly, and the firm, "
+         "the responsible attorney and the day-to-day contact are recorded separately so all three "
+         "stay on the file. Firms are billed by invoice."),
     ]
     faq_ld = {
         "@context": "https://schema.org", "@type": "FAQPage",
         "mainEntity": [{"@type": "Question", "name": q,
                         "acceptedAnswer": {"@type": "Answer", "text": a}} for q, a in faqs]
     }
+    services = ["Surveillance", "Infidelity investigation", "Child custody documentation",
+                "Background checks", "Insurance claim investigation", "Legal investigation support"]
+    if p["process"]:
+        services.append("Process serving")
     biz_ld = {
         "@context": "https://schema.org", "@type": "ProfessionalService",
         "name": "Always Precise Investigations, LLC",
@@ -397,10 +286,7 @@ def page(p):
         "hasOfferCatalog": {
             "@type": "OfferCatalog", "name": f"Investigation services in {place}, Virginia",
             "itemListElement": [{"@type": "Offer", "itemOffered": {"@type": "Service", "name": n}}
-                                for n in ("Surveillance", "Infidelity investigation",
-                                          "Child custody documentation", "Background checks",
-                                          "Insurance claim investigation",
-                                          "Legal investigation support", "Process serving")]},
+                                for n in services]},
         "sameAs": [FACEBOOK, GBP_URL]
     }
     crumb_ld = {
@@ -416,10 +302,6 @@ def page(p):
 
     faq_html = "".join(f"<h3>{esc(q)}</h3><p>{esc(a)}</p>" for q, a in faqs)
 
-    # The card order follows what the locality's own prose emphasises: a city
-    # carries more claim and litigation activity, a rural county seat more
-    # domestic and custody work. Same seven services either way — only the order
-    # of the first two changes, and it changes for a stated reason.
     CARDS = {
         "cheating": ("Cheating &amp; infidelity", "Discreet documentation when you need to know — time-stamped video, written timelines, and photographs."),
         "adultery": ("Adultery evidence for divorce", "Independent corroboration prepared for your attorney, meeting the standard Virginia courts expect."),
@@ -427,14 +309,21 @@ def page(p):
         "custody": ("Child custody", "Documentation of conditions, conduct and third-party contact relevant to custody proceedings."),
         "bg": ("Background checks", "For employers, landlords, volunteer organizations, and personal peace of mind."),
         "ins": ("Insurance claims", "Workers' comp and liability claim surveillance for insurers, employers, and defense attorneys."),
-        "legal": ("Legal support", "Surveillance, locate and process support and court-ready reporting for law firms and attorneys."),
-        "serve": ("Process serving", "Prompt, documented service of legal papers throughout the area."),
+        "legal": ("Legal support", "Surveillance, locate and process support and reporting prepared for law firms and attorneys."),
+        # THE PROCESS CARD CARRIES ITS OWN RADIUS. It is the one service whose
+        # area is narrower than the firm's, so it says so where it is offered
+        # and is absent where it is not — rather than claiming "the area".
+        "serve": ("Process serving", PROCESS_CARD),
     }
-    order = (["ins", "legal", "surv", "cheating", "adultery", "custody", "bg", "serve"]
+    order = (["ins", "legal", "surv", "cheating", "adultery", "custody", "bg"]
              if kind == "city" else
-             ["cheating", "adultery", "surv", "custody", "ins", "legal", "bg", "serve"])
+             ["cheating", "adultery", "surv", "custody", "ins", "legal", "bg"])
+    if p["process"]:
+        order.append("serve")
     cards_html = "".join(
         f'<div class="card"><h3>{CARDS[k][0]}</h3><p>{CARDS[k][1]}</p></div>' for k in order)
+
+    note_html = f"  <p>{esc(p['note'])}</p>\n" if p["note"] else ""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -481,27 +370,24 @@ def page(p):
 
 <section><div class="wrap">
   <h2>Investigations in {esc(place)}</h2>
-  <p>{esc(place)} is {esc(detail)}, reached on {esc(corridor)}. We work this area regularly, which
-  matters more than it sounds: effective surveillance depends on knowing the roads, the traffic
-  patterns, and where a vehicle can sit without drawing attention. Cases here are typically filed
-  through {esc(court)}, and every report we produce is written to be usable there.</p>
+  <p>{esc(place)} is {esc(detail)}, reached on {esc(corridor)}. It sits inside our Central Virginia
+  service area, and there is no separate mileage or travel charge anywhere in it.</p>
   <div class="grid">
     {cards_html}
   </div>
 </div></section>
 
 <section><div class="wrap">
-  <h2>What working {esc(place)} actually involves</h2>
-  <p>{esc(p["ground"])}</p>
+  <h2>What we cover from {esc(place)}</h2>
+  <p>Our regular service area here takes in {esc(covers)}, reached on {esc(corridor)}.</p>
+{note_html}  <p>{PROCESS_AREA}</p>
 </div></section>
 
 <section><div class="wrap">
   <h2>Insurance claim investigations in {esc(place)}</h2>
-  <p>{esc(p["ins"])}</p>
   <p>We take assignments from carriers, third-party administrators, self-insured employers and
   defense firms — surveillance, activity documentation and factual investigative reporting, worked
-  to a written authorization and invoiced against it. {esc(place)} is reached on {esc(corridor)},
-  so coverage here does not carry a travel line. Nothing is charged at assignment, and rates
+  to a written authorization and invoiced against it. Nothing is charged at assignment, and rates
   are confirmed with you before the work is accepted.
   <a href="{DOMAIN}/insurance-investigations/">How we work claims</a> &middot;
   <a href="{DOMAIN}/intake/?assignment=insurance">Submit an assignment</a></p>
@@ -509,7 +395,6 @@ def page(p):
 
 <section><div class="wrap">
   <h2>Support for {esc(place)} law firms and attorneys</h2>
-  <p>{esc(p["legal"])}</p>
   <p>Attorneys, paralegals and legal departments open a matter through the legal assignment intake,
   which records the firm, the responsible attorney and the day-to-day contact separately and issues
   a request number immediately. Firms are billed by invoice.
@@ -519,11 +404,11 @@ def page(p):
 
 <section><div class="wrap">
   <h2>Suspecting a cheating spouse in {esc(place)}</h2>
-  <p>Most people who call us about infidelity in {esc(place)} have already been sure for a while —
-  what they lack is something other than their own certainty. That gap matters in Virginia, because
-  adultery is a fault ground for divorce here and courts apply a demanding evidentiary standard: a
-  spouse's testimony alone is generally not treated as sufficient, and independent corroboration is
-  what makes the difference.</p>
+  <p>Most people who call us about infidelity have already been sure for a while — what they lack is
+  something other than their own certainty. That gap matters in Virginia, because adultery is a fault
+  ground for divorce here and courts apply a demanding evidentiary standard: a spouse's testimony
+  alone is generally not treated as sufficient, and independent corroboration is what makes the
+  difference.</p>
   <p>What we provide is documentation, not opinion — dated, time-stamped video and a written report of
   what was observed, prepared so your attorney can use it. What we do not do is trespass, record private
   conversations we have no right to record, place tracking devices on vehicles we have no authority to
@@ -573,8 +458,7 @@ def hub():
     items = "".join(
         f'<div class="card"><h3><a href="{DOMAIN}/private-investigator/{q["slug"]}/">'
         f'{esc(q["place"])}, VA</a></h3>'
-        f'<p>{esc(q["covers"])}. Reached on {esc(q["corridor"])}; cases heard in '
-        f'{esc(q["court"])}.</p></div>'
+        f'<p>{esc(q["covers"])}. Reached on {esc(q["corridor"])}.</p></div>'
         for q in PLACES)
     hub_faqs = [
         ("What areas of Virginia do you cover?",
@@ -587,6 +471,8 @@ def hub():
          "quoted price rather than added afterwards. The same applies to tolls, parking, database "
          "and record fees, video review and report preparation — the quoted price is the invoiced "
          "price."),
+        ("Do you serve legal papers everywhere you investigate?",
+         PROCESS_AREA.replace("&mdash;", "—")),
         ("Do you work for insurance carriers and law firms as well as private clients?",
          "Yes — those are three separate intake paths, deliberately. Carriers, third-party "
          "administrators and self-insured employers submit claim assignments; law firms, attorneys "

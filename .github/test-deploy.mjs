@@ -411,6 +411,64 @@ section('The manifest describes the site honestly');
      !/canvass|interview|recorded statement/i.test(ins));
   ok('and it still describes what we do present publicly',
      /surveillance/i.test(ins) && /documentation/i.test(ins) && /reporting/i.test(ins));
+
+  /* --- PROCESS SERVICE IS NARROWER THAN THE FIRM (owner, 2026-09-13) ---------
+     "Do not make the site sound like we routinely serve papers all over
+     Virginia." Process service runs about an hour from Rustburg, Lynchburg and
+     Bedford; every other PI service may legitimately reach further, which is
+     exactly why this cannot be a blanket ban on the word "Virginia".
+
+     So the check is the PAIRING: a sentence that offers service of process may
+     not also claim the state. It reads sentence by sentence rather than per
+     page, because a page can say both truthfully in different places — the
+     homepage names the state for surveillance and the radius for papers. Four
+     pages carried the pairing before this ran: the homepage card, the homepage
+     structured data, the Legal page's Locate & Process Support card and the
+     intake form's own service picker. */
+  const PROC = /process serv|serve papers|service of legal (?:papers|documents|process)|process service/i;
+  const WIDE = /(?:across|throughout|anywhere in|all of)\s+virginia|statewide|virginia-wide/i;
+  const wide = [];
+
+  /* THE UNIT OF JUDGEMENT IS ONE CLAIM, AND THE FIRST VERSION OF THIS CHECK GOT
+     THAT WRONG. It chunked on tag boundaries, so an entire ld+json block became
+     one chunk — pairing the ORGANISATION's own description (which may say the
+     state, for surveillance) with the process-serving OFFER beside it, and
+     failing on a page that was correct. The guard was reading the wrong unit,
+     so the guard was fixed rather than relaxed: structured data is parsed and
+     judged per node, visible copy per sentence with the data stripped out. */
+  const walk = (node, hit) => {
+    if (Array.isArray(node)) return node.forEach(n => walk(n, hit));
+    if (!node || typeof node !== 'object') return;
+    const own = [node.name, node.description].filter(v => typeof v === 'string').join(' ');
+    if (PROC.test(own) && WIDE.test(own)) hit(own);
+    for (const v of Object.values(node)) walk(v, hit);
+  };
+  for (const f of publicPages) {
+    const raw = readAll(f);
+    const rel = path.relative(site, f);
+    for (const m of raw.matchAll(/<script[^>]*application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)) {
+      let data; try { data = JSON.parse(m[1]); } catch { continue; }
+      walk(data, own => wide.push(`${rel} (ld+json): ${own.slice(0, 90)}`));
+    }
+    const visible = raw.replace(/<script[\s\S]*?<\/script>/gi, ' ');
+    for (const chunk of visible.split(/(?<=[.!?])\s+|<\/(?:p|li|div|h[1-6])>/i)) {
+      if (PROC.test(chunk) && WIDE.test(chunk)) {
+        wide.push(`${rel}: ${chunk.replace(/\s+/g, ' ').trim().slice(0, 90)}`);
+      }
+    }
+  }
+  ok('no public page offers process service and claims the whole state in one breath',
+     wide.length === 0, wide.join(' | '));
+
+  /* And the radius is actually stated where papers are offered. */
+  const RADIUS = /about an hour of Rustburg, Lynchburg (?:and|or) Bedford/i;
+  const silent = [];
+  for (const f of publicPages) {
+    const raw = readAll(f);
+    if (PROC.test(raw) && !RADIUS.test(raw)) silent.push(path.relative(site, f));
+  }
+  ok('every public page that offers process service states the service radius',
+     silent.length === 0, silent.join(' | '));
 }
 
 /* UNIT 37A — every public content route gets the same header treatment.
