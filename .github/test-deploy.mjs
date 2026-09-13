@@ -460,18 +460,30 @@ section('The manifest describes the site honestly');
   ok('no public page offers process service and claims the whole state in one breath',
      wide.length === 0, wide.join(' | '));
 
-  /* And the ONE approved sentence is what every such page says. The travel-time
-     anchor it replaced ("about an hour of Lynchburg") was retired on the owner's
-     instruction of 2026-09-13 — a hard number invites edge-case argument about
-     localities that are a few minutes either side of it. */
+  /* And ONE OF TWO APPROVED SENTENCES is what every such page says. The
+     travel-time anchor STMT replaced ("about an hour of Lynchburg") was retired
+     on the owner's instruction of 2026-09-13 — a hard number invites edge-case
+     argument about localities a few minutes either side of it. EXCL arrived the
+     same day in the final clarity change: a market we do not serve says so,
+     where it used to say nothing at all and leave the visitor to guess. */
   const STMT = /Process service is available throughout Greater Lynchburg and nearby Central Virginia communities, with additional locations considered based on distance and availability\./;
+  const EXCL = /Process service is not currently offered in this market\. Other investigative services may still be available\./;
   const silent = [];
+  const bothStatements = [];
   for (const f of publicPages) {
     const raw = readAll(f).replace(/\s+/g, ' ');
-    if (PROC.test(raw) && !STMT.test(raw)) silent.push(path.relative(site, f));
+    const rel = path.relative(site, f);
+    if (!PROC.test(raw)) continue;
+    if (!STMT.test(raw) && !EXCL.test(raw)) silent.push(rel);
+    /* NEVER BOTH, and that is the owner's own line rather than tidiness: a page
+       stating the refusal while the availability sentence stands somewhere else
+       on it is the case-by-case door the brief forbids, said in two halves. */
+    if (STMT.test(raw) && EXCL.test(raw)) bothStatements.push(rel);
   }
-  ok('every public page that offers process service carries the approved statement',
+  ok('every public page that mentions process service carries an approved statement',
      silent.length === 0, silent.join(' | '));
+  ok('no page carries both the coverage statement and the refusal',
+     bothStatements.length === 0, bothStatements.join(' | '));
 
   /* --- A CITY IS A PROCESS MARKET IN BOTH PLACES OR IN NEITHER (§8) --------
      Charlottesville and Danville are not process markets. Before this ran they
@@ -481,19 +493,55 @@ section('The manifest describes the site honestly');
      card was the only thing anyone had checked. */
   const NOT_PROCESS = ['charlottesville-va', 'danville-va'];
   const bothWays = [];
+  const faqDisagree = [];
   for (const f of html.filter(x => /private-investigator[\\/][a-z-]+-va[\\/]index\.html$/.test(x))) {
     const raw = readAll(f);
+    const flat = raw.replace(/\s+/g, ' ');
     const rel = path.relative(site, f);
     const excluded = NOT_PROCESS.some(s => rel.includes(s));
     const inSchema = /"name"\s*:\s*"Process serving"/.test(raw);
     const visible = /<h3>Process serving<\/h3>/.test(raw);
-    const anyWord = PROC.test(raw);
-    if (excluded && anyWord) bothWays.push(`${rel}: excluded city still mentions process service`);
-    if (!excluded && !(inSchema && visible)) bothWays.push(`${rel}: process market missing card or schema offer`);
     if (inSchema !== visible) bothWays.push(`${rel}: schema and visible card disagree`);
+
+    if (excluded) {
+      /* SILENCE WAS THE OLD ANSWER AND THE OWNER REPLACED IT (2026-09-13, final
+         clarity change). The page states the exclusion out loud, keeps the rest
+         of its services, and carries NO process offer — in the card or in the
+         structured data. */
+      if (!EXCL.test(flat)) bothWays.push(`${rel}: excluded city does not state the exclusion`);
+      if (STMT.test(flat)) bothWays.push(`${rel}: excluded city carries the coverage statement`);
+      if (inSchema || visible) bothWays.push(`${rel}: excluded city carries a process offer`);
+    } else {
+      if (!(inSchema && visible)) bothWays.push(`${rel}: process market missing card or schema offer`);
+      if (!STMT.test(flat)) bothWays.push(`${rel}: process market does not state its coverage`);
+      if (EXCL.test(flat)) bothWays.push(`${rel}: process market states the exclusion`);
+    }
+
+    /* AND THE FAQ IS WHERE THIS WENT WRONG LAST TIME, so it is pinned on its own.
+       Both cities asked "Do you serve legal papers in X?" and answered with the
+       general availability sentence — visibly AND in FAQPage schema, which is as
+       public as the paragraph above it. The question is asked on every city page
+       now; what has to agree is the ANSWER, in both copies, with the market. */
+    const want = excluded ? EXCL : STMT;
+    const shown = flat.match(/<h3>Do you serve legal papers in [^<]*<\/h3><p>([^<]*)<\/p>/);
+    if (!shown) faqDisagree.push(`${rel}: no visible process-service FAQ`);
+    else if (!want.test(shown[1])) faqDisagree.push(`${rel}: visible FAQ answer is not the approved one`);
+
+    let answered = null;
+    for (const m of raw.matchAll(/<script[^>]*application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)) {
+      let data; try { data = JSON.parse(m[1]); } catch { continue; }
+      if (data['@type'] !== 'FAQPage') continue;
+      for (const q of data.mainEntity || []) {
+        if (/serve legal papers/i.test(q.name || '')) answered = q.acceptedAnswer?.text || '';
+      }
+    }
+    if (answered === null) faqDisagree.push(`${rel}: no process-service FAQ in FAQPage schema`);
+    else if (!want.test(answered)) faqDisagree.push(`${rel}: FAQPage answer is not the approved one`);
   }
   ok('every city page is a process market in BOTH its schema and its visible copy, or in neither',
      bothWays.length === 0, bothWays.join(' | '));
+  ok('the process-service FAQ answers the same way in visible copy and in FAQPage schema',
+     faqDisagree.length === 0, faqDisagree.join(' | '));
 
   /* --- Richmond is not part of the normal footprint (§3) ------------------- */
   const rich = publicPages.filter(f => /"name"\s*:\s*"Richmond"/.test(readAll(f)))

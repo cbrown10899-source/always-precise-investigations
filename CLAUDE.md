@@ -384,26 +384,55 @@ you suspect.
 
 **`BRAND_LINE`, `PROCESS_AREA`, `PROCESS_CARD` and `SERVICE_AREA_PARA` are the
 one writer** in `build-locations.py` for everything generated; the hand-written
-pages carry the same strings, and three deploy guards hold them together rather
+pages carry the same strings, and seven deploy guards hold them together rather
 than a promise to keep them in step:
 
 1. no page may offer process service **beside** a statewide phrase;
-2. any page offering process service must state the radius;
-3. the retired *"serving all of Virginia"* line and the forbidden name
+2. any page mentioning process service carries one of the **two** approved
+   statements — the coverage sentence or `PROCESS_EXCLUDED`;
+3. **no page carries both of them**;
+4. the retired *"serving all of Virginia"* line and the forbidden name
    **"Lynchburg Metropolitan Area"** appear nowhere, and the current brand line
    is present on the homepage and the 404;
-4. every city page is a process market in BOTH its schema and its visible copy
-   or in NEITHER, and an excluded city carries no process wording at all;
-5. **Richmond** appears in no `areaServed` list.
+5. every city page is a process market in BOTH its schema and its visible copy
+   or in NEITHER, and an excluded city states the exclusion, carries no coverage
+   sentence, and carries no card and no schema offer;
+6. the process-service FAQ answers **the same way in the visible copy and in the
+   FAQPage schema**, on every city page;
+7. **Richmond** appears in no `areaServed` list.
 
-**GUARD 4 EXISTS BECAUSE THE CARD WAS THE ONLY THING ANYONE CHECKED.**
+**GUARD 5 EXISTS BECAUSE THE CARD WAS THE ONLY THING ANYONE CHECKED.**
 Charlottesville and Danville had no process card and no schema offer, and went
 on asking *"Do you serve legal papers in Charlottesville?"* in the visible FAQ
 **and in FAQPage schema**, answered with the general availability sentence —
-which on that page reads as yes. An excluded city now says nothing about process
-service at all. The homepage's process `Offer` also carries **its own
-`areaServed`**, so the schema names the eleven markets rather than inheriting
-the firm's whole footprint, which includes the two cities we do not serve.
+which on that page reads as yes. The homepage's process `Offer` also carries
+**its own `areaServed`**, so the schema names the eleven markets rather than
+inheriting the firm's whole footprint, which includes the two cities we do not
+serve.
+
+**AND SILENCE WAS THE WRONG ANSWER — THE OWNER REPLACED IT** (2026-09-13, final
+clarity change, after the correction above shipped). Dropping the question left
+the page saying nothing at all on the one thing somebody searching *"process
+server Charlottesville"* arrived to ask, so they were left to guess. Those two
+pages state it:
+
+> Process service is not currently offered in this market. Other investigative
+> services may still be available.
+
+**`PROCESS_EXCLUDED` IS A SECOND APPROVED SENTENCE, NOT A SECOND VOICE.** It is
+one constant beside `PROCESS_AREA`, and `p["process"]` picks between them in
+both places at once — the coverage paragraph and the FAQ answer — so the visible
+copy and the FAQPage twin cannot answer differently. **The question is now asked
+on every city page**; what varies is the answer.
+
+**IT CARRIES NO "CONSIDERED BASED ON DISTANCE AND AVAILABILITY" CLAUSE, AND THAT
+IS THE POINT.** The owner's brief forbids implying process service can be
+requested case by case there, so the two sentences are mutually exclusive rather
+than complementary: a page states its coverage or states the exclusion, and
+guard 3 fails a page carrying both. **Nothing else on those pages moved** — all
+seven service cards, all six schema offers, and both cities' place in the
+firm-wide `areaServed` are exactly as they were. A market we do not serve papers
+in is still a market we investigate in.
 
 **THE FIRST GUARD WAS WRONG BEFORE IT WAS RIGHT, AND IT WAS FIXED RATHER THAN
 RELAXED.** It chunked on tag boundaries, so an entire `ld+json` block became one
