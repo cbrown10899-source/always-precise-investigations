@@ -2219,6 +2219,237 @@ section('Closeout: the form offers no upload it cannot honour');
   await page.close();
 }
 
+/* ------------------------------------------------- Child Custody, private */
+
+/* Owner, 2026-09-14: "It is simply a service-selection label." So what this
+   section proves is BOTH halves — that the label can be chosen, submitted,
+   stored and read back, AND that choosing it changes nothing else. The second
+   half is the one worth the run: a service that quietly added a step, a fee or
+   a different agreement would be the thing the brief ruled out, and it would
+   look perfect on the screen that shows the label. */
+section('Child Custody is a private service the public form offers');
+{
+  submitted = null; stored = null;
+  const page = await newPage();
+
+  await set(page, 'c_name', 'Dana Parent');
+  await set(page, 'c_phone', '4345550144');
+  await advance(page);
+
+  const services = await page.locator('.card').innerText();
+  ok('the service step offers Child Custody', services.includes('Child Custody'));
+  ok('and still offers Surveillance and Process Serving beside it',
+     services.includes('Surveillance') && services.includes('Process Serving'));
+  ok('it is offered exactly once',
+     await page.locator('#opt-custody').count() === 1);
+  ok('and no price is attached to it', !/\$\s?\d/.test(services), services);
+
+  /* THE VISIBLE LABEL AND THE STORED ONE ARE ONE STRING, for every PRIVATE
+     service. They were two literals until this unit, and a negative test proved
+     it: renaming FEES.custody.label alone changed what the portal receives
+     while the card on screen went on saying something else. The class is scoped
+     to the private services on purpose — the legal card deliberately says
+     "Legal / Law Firm" (the door) over a stored "Legal Investigation
+     Assignment" (the product), and that difference is not drift. */
+  const labelDrift = await page.evaluate(() => PRIVATE_SVCS
+    .map(k => [k, (document.querySelector('#opt-' + k + ' b') || {}).innerText, FEES[k].label])
+    .filter(([, shown, stored]) => shown !== stored));
+  ok('every private service shows the label it stores',
+     Array.isArray(labelDrift) && labelDrift.length === 0, JSON.stringify(labelDrift));
+
+  /* The card must not promise an outcome or an admissibility the firm cannot
+     promise — the same rule the public custody page is held to. */
+  /* READ IT WITHOUT ASSUMING IT EXISTS. A removed option must make every
+     assertion about it FAIL, not throw and take the rest of the run with it —
+     which is what the first draft of this section did, and why the suite
+     carries a crash handler at all. */
+  const custodyCard = await page.evaluate(() =>
+    (document.querySelector('#opt-custody') || {}).innerText || '');
+  ok('the Child Custody card promises no custody outcome',
+     !/\b(win|guarantee|guaranteed|prove unfit|award|ensure)\b/i.test(custodyCard), custodyCard);
+  ok('and claims nothing about admissibility',
+     !/admissib/i.test(custodyCard), custodyCard);
+
+  await page.evaluate(() => pickSvc('custody'));
+  await page.waitForTimeout(80);
+  ok('choosing it checks its own radio and nothing else',
+     await page.evaluate(() =>
+       document.querySelectorAll('input[name="svc"]:checked').length === 1
+       && !!(document.querySelector('#opt-custody input') || {}).checked));
+  ok('it adds no step to the flow', await dots(page) === 5);
+  await advance(page);
+
+  ok('the next step is the ordinary subject step',
+     await heading(page) === 'Subject of the investigation');
+  await set(page, 's_name', 'Other Parent');
+  await advance(page);
+  await set(page, 'o_goal', 'Document the exchanges and who is present for them.');
+  await advance(page);
+
+  ok('and the step after that is the ordinary agreement',
+     (await heading(page)).includes('Agreement'));
+  const fees = await page.locator('.feebox').innerText();
+  ok('the fee box is the ordinary private one, quoting nothing',
+     !/\$\s?\d/.test(fees) && /sent to you in writing/i.test(fees), fees);
+  ok('no retainer is named', !/retainer/i.test(fees), fees);
+  const terms = await page.locator('.agree').innerText();
+  ok('the terms are the ordinary private terms',
+     /work begins only once the client has agreed/i.test(terms));
+  ok('and they add no custody-specific legal wording',
+     !/\b(court will|judge will|custody will|admissib)/i.test(terms), terms);
+
+  await page.locator('[data-k="a_consent"]').check();
+  await set(page, 'a_typed', 'Dana Parent');
+  await sign(page);
+  await advance(page);
+  await page.waitForTimeout(500);
+
+  ok('the intake reached the portal', stored !== null);
+  ok('the stored service is exactly "Child Custody"',
+     stored && stored.service === 'Child Custody', stored && String(stored.service));
+  ok('it is stored as an ordinary private intake — no carrier, no claim',
+     stored && !stored.carrier && !stored.claim_number);
+  ok('and it is not a legal assignment',
+     stored && stored.assignment !== 'legal');
+  ok('nothing is charged at intake', stored && stored.fee_due === 0);
+  ok('the signature is on the record', stored && !!stored.signature);
+
+  /* The relay boundary is unchanged: the notice names the service and the
+     contact, and nothing about the subject. */
+  ok('the third-party notice names the service', submitted && submitted.service === 'Child Custody');
+  ok('and still carries no subject name',
+     submitted && !JSON.stringify(submitted).includes('Other Parent'),
+     submitted && JSON.stringify(submitted));
+
+  const rec = await page.locator('.record').innerText();
+  ok('the signed record reads back Child Custody', rec.includes('Child Custody'));
+  ok('and it is titled Client Intake, not a new kind of form', rec.includes('Client Intake'));
+  await page.close();
+}
+
+section('Child Custody on the private door, and the preselect');
+{
+  const page = await newPage();
+  await page.goto(BASE + '?assignment=private');
+  await page.waitForTimeout(120);
+  await set(page, 'c_name', 'Dana Parent');
+  await set(page, 'c_phone', '4345550144');
+  await advance(page);
+  const svc = await page.locator('.card').innerText();
+  ok('the private door offers Child Custody', svc.includes('Child Custody'));
+  ok('and still refuses the carrier and legal paths',
+     !svc.includes('Insurance Claim Assignment') && !svc.includes('Legal / Law Firm'), svc);
+  await page.close();
+
+  /* ?service= is the parameter the LEGAL door has used since 2026-09-02. On the
+     private door it resolves a PRIVATE service — same parameter, no new
+     routing. It is an OPENING CHOICE: the picker still renders and the visitor
+     can still change it. */
+  const p2 = await newPage();
+  await p2.goto(BASE + '?assignment=private&service=custody');
+  await p2.waitForTimeout(120);
+  ok('?service=custody opens the form on Child Custody',
+     await p2.evaluate(() => S.svc === 'custody'));
+  await set(p2, 'c_name', 'Dana Parent');
+  await set(p2, 'c_phone', '4345550144');
+  await advance(p2);
+  ok('and the picker is still shown, already on that choice',
+     await p2.evaluate(() => !!(document.querySelector('#opt-custody input') || {}).checked)
+     && await p2.locator('#opt-surveillance').count() === 1);
+  ok('the visitor can still change it',
+     await p2.evaluate(async () => { pickSvc('surveillance'); return S.svc === 'surveillance'; }));
+  await p2.close();
+
+  /* THE SET IS DERIVED BY SUBTRACTION, so the two halves are asserted: every
+     private service preselects, and no billed one can. A parameter that could
+     open the private door on a carrier or legal service would be a route past
+     `pickSvc`'s own refusal. */
+  for (const [q, want] of [['surveillance', 'surveillance'], ['process', 'process'],
+                           ['custody', 'custody'], ['CUSTODY', 'custody'],
+                           ['claims', null], ['legal', null], ['nonsense', null]]) {
+    const p3 = await newPage();
+    await p3.goto(BASE + '?assignment=private&service=' + q);
+    await p3.waitForTimeout(80);
+    ok(`?service=${q} opens on ${want === null ? 'nothing' : want}`,
+       await p3.evaluate(() => S.svc) === want);
+    await p3.close();
+  }
+
+  /* And the carrier and legal doors are untouched by it: their service is
+     fixed by the door itself and the parameter means what it always meant. */
+  const p4 = await newPage();
+  await p4.goto(BASE + '?assignment=insurance&service=custody');
+  await p4.waitForTimeout(80);
+  ok('the carrier door ignores it and stays a claim assignment',
+     await p4.evaluate(() => S.svc) === 'claims');
+  await p4.close();
+
+  const p5 = await newPage();
+  await p5.goto(BASE + '?assignment=legal&service=custody');
+  await p5.waitForTimeout(80);
+  ok('the legal door stays legal, and the parameter still means a legal service',
+     await p5.evaluate(() => S.svc) === 'legal'
+     && await p5.evaluate(() => S.lsvc) === null);
+  await p5.close();
+}
+
+section('Child Custody reads and fits on a phone');
+{
+  for (const w of [390, 320]) {
+    const ctx = await browser.newContext({ viewport: { width: w, height: 760 } });
+    const page = await ctx.newPage();
+    await page.route('**api.web3forms.com/**', r => r.fulfill({ status: 200, body: '{}' }));
+    await page.route('**/portal-api/ingest', r => r.fulfill({ status: 200, body: '{"ok":true}' }));
+    await page.goto(BASE);
+    await page.waitForTimeout(120);
+    await set(page, 'c_name', 'Dana Parent');
+    await set(page, 'c_phone', '4345550144');
+    await advance(page);
+
+    const m = await page.evaluate(() => {
+      const el = document.querySelector('#opt-custody');
+      const r = el ? el.getBoundingClientRect() : { right: 1e6, width: 0, height: 0 };
+      const b = el && el.querySelector('b');
+      const label = b ? b.getBoundingClientRect() : { height: 0 };
+      return { right: r.right, w: r.width, h: r.height,
+               labelH: label.height, doc: document.documentElement.clientWidth,
+               scroll: document.documentElement.scrollWidth,
+               opts: document.querySelectorAll('.opt').length,
+               custody: document.querySelectorAll('#opt-custody').length };
+    });
+    ok(`at ${w} the Child Custody card stays inside the viewport`,
+       m.right <= m.doc + 0.5, JSON.stringify(m));
+    ok(`at ${w} the page does not scroll sideways`, m.scroll <= m.doc + 0.5, JSON.stringify(m));
+    ok(`at ${w} the card clears the 44px tap floor`, m.h >= 44, String(m.h));
+    ok(`at ${w} its label is on one line and readable`, m.labelH > 0 && m.labelH < 44, String(m.labelH));
+    /* The BARE door offers all five — the three private services plus the
+       carrier and legal doors. The first draft of this assertion said four and
+       was wrong about the product, not about the page. */
+    ok(`at ${w} the bare door still offers all five services`, m.opts === 5, String(m.opts));
+    ok(`at ${w} Child Custody appears exactly once`, m.custody === 1, String(m.custody));
+    await page.close(); await ctx.close();
+  }
+}
+
+/* The portal's Quick private intake has offered this since Unit 36. The brief
+   says not to duplicate it, so the assertion is that it is still exactly one
+   option there — a second one added here would be two writers of one choice. */
+section('The portal picker was already right and stays single');
+{
+  const portal = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
+  /* `["Surveillance", …]` alone matches the LEGAL assignment-type list as well,
+     which is a different control on a different form. Pin the private lead's
+     own list by its own members. */
+  const PICKER = '["Surveillance", "Child custody", "Process serving", "Other"]';
+  ok('the portal private-lead picker exists exactly once',
+     portal.split(PICKER).length - 1 === 1, String(portal.split(PICKER).length - 1));
+  ok('and it already carried the child-custody option before this unit',
+     portal.includes(PICKER));
+  ok('no second child-custody option was added to the portal',
+     (portal.match(/Child custody/g) || []).length === 1,
+     String((portal.match(/Child custody/g) || []).length));
+}
+
 await browser.close();
 server.close();
 
