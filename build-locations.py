@@ -371,7 +371,19 @@ def page(p):
     faq_html = "".join(f"<h3>{esc(q)}</h3><p>{esc(a)}</p>" for q, a in faqs)
 
     CARDS = {
-        "cheating": ("Cheating &amp; infidelity", "Discreet documentation when you need to know — time-stamped video, written timelines, and photographs."),
+        # THE ONE CONTEXTUAL LINK TO THE INFIDELITY PAGE, and it is here because
+        # Search Console said so (owner, 2026-09-14). "cheating spouse
+        # investigations virginia" drew 67 impressions in 28 days and 63 of them
+        # landed on the BEDFORD page rather than the infidelity authority page —
+        # because a city page carries this card, an adultery card and an adultery
+        # FAQ, while its ONLY link to /infidelity-investigations/ was in the
+        # FOOTER, beside Privacy. A boilerplate footer link is not a topical
+        # signal. The anchor names the city, so the six differ from each other
+        # rather than being one sentence repeated.
+        "cheating": ("Cheating &amp; infidelity",
+                     "Discreet documentation when you need to know — time-stamped video, written "
+                     f'timelines, and photographs. <a href="{DOMAIN}/infidelity-investigations/">'
+                     f'How we document infidelity in {esc(place)} &rarr;</a>'),
         "adultery": ("Adultery evidence for divorce", "Independent corroboration prepared for your attorney, meeting the standard Virginia courts expect."),
         "surv": ("Surveillance", "Covert, documented, and quoted by the hour — no hidden mileage or travel fees in our service area."),
         "custody": ("Child custody", "Documentation of conditions, conduct and third-party contact relevant to custody proceedings."),
