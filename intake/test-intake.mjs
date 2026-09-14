@@ -960,9 +960,27 @@ section('Carrier pages link to the carrier door');
 section('The homepage leads with the two client paths');
 {
   const src = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
-  const h1 = (src.match(/<h1>([^<]+)<\/h1>/) || [])[1] || '';
+  /* OWNER, 2026-09-14: the H1 is now the local-SEO headline
+     ("Private Investigator & Surveillance Services in Lynchburg and
+     Surrounding Areas"), so the three audiences are named by the supporting
+     line and the three CTA cards instead of by the headline. The PROPERTY this
+     guards is unchanged — a redesign must not quietly drop an audience — so it
+     reads the whole HERO rather than the H1 alone. Narrowing it back to the H1
+     would make it assert a shape the owner has replaced; deleting it would stop
+     guarding the doors. */
+  const hero = (src.match(/<div class="hero"[\s\S]*?<\/div>\s*(?=<section)/) || [src.slice(src.indexOf('<div class="hero"'))])[0]
+                 .replace(/<!--[\s\S]*?-->/g, ' ');   // comments are not content
+  /* IT CHECKS THE DOORS, NOT THE WORDS. The first version of this widening
+     matched the word "legal" anywhere in the hero and was TRIVIALLY TRUE:
+     removing the Legal card entirely still passed, because Unit 40's own
+     explanatory COMMENT says `pickSvc` refuses `legal`. That is this project's
+     recorded comment-matching failure, caught by negative-testing rather than
+     by the run. Each audience is now proven by its own intake door, which is
+     the property the section comment above actually claims. */
+  const doors = ['insurance', 'legal', 'private']
+    .filter(k => hero.includes(`/intake/?assignment=${k}`));
   ok('the hero names insurance, legal and private clients',
-     /insurance/i.test(h1) && /legal/i.test(h1) && /private/i.test(h1), h1);
+     doors.length === 3, `doors found: ${doors.join(', ') || 'none'}`);
   /* WIDENED AND LOOSENED IN UNIT 40, on purpose.
 
      These asserted the LABEL immediately followed the href — `href="…">Submit
@@ -1934,9 +1952,15 @@ section('Unit 40 — contrast, focus, and what the hero kept');
     stars: (document.querySelector('.hero .stars') || {}).textContent || '',
     nav: document.querySelectorAll('nav a').length,
   }));
-  ok('the hero headline is unchanged',
-     /Surveillance & Investigation Services for Insurance, Legal and Private Clients/.test(kept.h1), kept.h1);
-  ok('the hero description is unchanged', /Licensed, insured, and discreet/.test(kept.lede));
+  /* THESE TWO PINNED UNIT 40's HEADLINE AND LEDE, and the owner replaced both
+     on 2026-09-14 with exact wording for local search. The pin is RE-AIMED, not
+     dropped: it still fails if the hero copy drifts from what the owner
+     approved — which is the whole job — and now records the current approved
+     strings rather than the superseded ones. */
+  ok('the hero headline is the owner-approved local headline',
+     /^Private Investigator & Surveillance Services in Lynchburg and Surrounding Areas$/.test(kept.h1.trim()), kept.h1);
+  ok('the hero supporting line is the owner-approved one',
+     /^Serving private clients, attorneys and insurance companies throughout Greater Lynchburg and Central Virginia\.$/.test(kept.lede.trim()), kept.lede);
   ok('Contact Us is still there and still wired', kept.contact === true);
   ok('Call (434) 907-0975 is still there', kept.call === true);
   ok('the 5-star / DCJS line is still there',
