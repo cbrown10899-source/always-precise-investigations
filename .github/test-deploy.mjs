@@ -659,6 +659,41 @@ section('The manifest describes the site honestly');
   ok('every public service page links to at least one local market page',
      svcNoCity.length === 0, svcNoCity.join(' | '));
 
+  /* --- FAQPage SCHEMA MATCHES THE VISIBLE FAQ, ON EVERY PAGE THAT HAS ONE ----
+     The city pages already have this pinned for the ONE process-service
+     question (guard 6). This is the same rule as a class, across the eleven
+     pages carrying FAQPage, and it exists because the hand-written pages had no
+     such guard at all: on 2026-09-14 a seventh question was added to the
+     Infidelity page and had to be written into BOTH copies by hand. Schema that
+     answers differently from the page is the drift this project keeps
+     recording, and hidden schema-only questions are against Google's own rules
+     for the markup. */
+  const faqBad = [];
+  for (const f of publicPages) {
+    const raw = readAll(f), rel = path.relative(site, f);
+    let schema = null;
+    for (const m of raw.matchAll(/<script[^>]*application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)) {
+      let data; try { data = JSON.parse(m[1]); } catch { continue; }
+      if (data['@type'] === 'FAQPage') schema = (data.mainEntity || []).map(q => q.name);
+    }
+    if (!schema) continue;
+    const decode = (t) => t.replace(/&amp;/g, '&').replace(/&#x27;|&#39;/g, "'")
+                           .replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+                           .replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+    /* The visible questions are the h3s that ask something. Every page here
+       renders its FAQ that way, which is why the schema can be compared to it
+       at all — and if a page stops doing so this fails loudly rather than
+       quietly comparing nothing. */
+    const visible = [...raw.matchAll(/<h3[^>]*>([^<]*\?)<\/h3>/g)].map(m => decode(m[1]));
+    if (visible.length === 0) { faqBad.push(`${rel}: FAQPage schema but no visible questions`); continue; }
+    const miss = schema.map(decode).filter(q => !visible.includes(q));
+    if (miss.length) faqBad.push(`${rel}: schema-only question "${miss[0].slice(0, 54)}"`);
+    if (schema.length !== visible.length)
+      faqBad.push(`${rel}: ${schema.length} in schema vs ${visible.length} visible`);
+  }
+  ok('every FAQPage question is also asked in the visible copy',
+     faqBad.length === 0, faqBad.join(' | '));
+
   /* --- THE RETIRED BRAND LINE AND THE FORBIDDEN REGION NAME ----------------
      Owner, 2026-09-13: the line is "Serving Greater Lynchburg and Central
      Virginia since 2014", the old "serving all of Virginia" is gone, and the

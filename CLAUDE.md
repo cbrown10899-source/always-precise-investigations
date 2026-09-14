@@ -516,6 +516,34 @@ on the site is ≤60. **Neither was a site defect; both were my instrument.**
 The orphan guard has the same shape built in — it resolves `/privacy` against
 `privacy.html` before judging, because its first run cried wolf on exactly that.
 
+## A footer link is not a topical signal — the first real search data
+
+Owner, 2026-09-14, with Search Console figures at last. Full record in
+`SEO.md` §12; the durable part is short.
+
+*"cheating spouse investigations virginia"* drew 67 impressions in 28 days at
+position 27.3, and **63 of them landed on the BEDFORD city page** rather than
+`/infidelity-investigations/`. The obvious read — the authority page is missing
+the keywords — **was wrong**: that page's H1 was literally *"Cheating Spouse
+Investigations in Virginia"*, the query almost verbatim. Adding vocabulary to a
+page that already had it would have been stuffing.
+
+**The city pages' ONLY link to the Infidelity page was in the FOOTER**, anchor
+"Infidelity", beside Privacy — while Bedford carried a cheating card, an
+adultery card and an adultery FAQ, 26 cheating-related terms, and pointed
+nowhere better. The fix is one contextual link from the card already about that
+topic, its anchor naming the city so the six differ from each other.
+
+**And the Infidelity page's title, H1 and description still said flat
+"Virginia"** while its own H2 said *Serving Greater Lynchburg and Central
+Virginia* — the statewide framing five units had removed everywhere else, on a
+primary service page, disagreeing with itself.
+
+**BEDFORD WAS NOT TOUCHED.** It is the page actually earning the impressions;
+retargeting it would have destroyed the only measured asset to chase one with
+none. It gained a single line. **67 impressions aligns a query to a page; it
+does not rebuild a site.**
+
 ## CI pushes to master
 
 `build-locations.yml` commits and pushes to `master` as `github-actions[bot]`.

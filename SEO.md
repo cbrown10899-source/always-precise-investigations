@@ -322,3 +322,58 @@ nothing in this file may be read as a ranking claim.
 No ranking, traffic or click claim appears anywhere in this file, because none
 could be supported.
 
+## 12. The first real Search Console data, and what it actually showed (2026-09-14)
+
+**§1 of this file has said since it was written that there is no search data in
+this repository. There is now, for one query, and it changed a decision.**
+
+| | |
+| --- | --- |
+| Query | `cheating spouse investigations virginia` |
+| Last 28 days | **67 impressions, 0 clicks, average position 27.3** |
+| Attributed to | **63 of 67 on `/private-investigator/bedford-va/`** |
+
+**THE OBVIOUS READ WAS WRONG.** "Google picked the wrong page, so the Infidelity
+page must be missing the keywords" — except that page's H1 was *literally*
+"Cheating Spouse Investigations in Virginia", the query almost verbatim. A page
+holding the exact phrase was losing to a city page. So the gap was never
+vocabulary, and adding more of it would have been keyword-stuffing a page that
+already had the words.
+
+**WHAT THE AUDIT FOUND INSTEAD, and it is the durable lesson: the city pages'
+only link to the Infidelity page was in the FOOTER.** Anchor text "Infidelity",
+in the row beside Privacy. Meanwhile Bedford carries a *Cheating & infidelity*
+card, an *Adultery evidence for divorce* card and an adultery FAQ — 26
+cheating-related terms in all. It is a place page that is also a substantial
+cheating-spouse page, **and it pointed nowhere better**. A boilerplate footer
+link is not a topical signal; Google had no reason to prefer the authority page
+because nothing on the topically-rich page said one existed.
+
+So the fix was a contextual link from the card that is already about that
+topic, with an anchor naming the city — six links that differ from each other
+rather than one sentence repeated six times.
+
+**THE SECOND FINDING WAS GEOGRAPHY, AND IT WAS A STANDING INCONSISTENCY.** The
+Infidelity page's title, H1 and description all said flat **"Virginia"** — the
+statewide framing five units have removed everywhere else, still sitting on a
+primary service page. Its own H2 already said *Serving Greater Lynchburg and
+Central Virginia*, so the page disagreed with itself. The geography did not get
+deleted from the headline so much as MOVED to where it can be specific.
+
+| | before | after |
+| --- | --- | --- |
+| Title | Cheating Spouse & Adultery Investigator in Virginia | Infidelity & Cheating Spouse Investigator \| Lynchburg VA |
+| H1 | Cheating Spouse Investigations in Virginia | Infidelity & Cheating Spouse Investigations |
+
+**BEDFORD WAS NOT TOUCHED, AND THAT WAS THE POINT.** It is the page currently
+earning the impressions; retargeting or thinning it would destroy the only
+measured asset in this whole exercise to chase a page with none. Its title, H1,
+canonical and all 26 cheating-related terms are unchanged — it gained one line,
+the contextual link.
+
+**67 IMPRESSIONS IS ENOUGH TO ALIGN A QUERY TO A PAGE AND NOT ENOUGH TO REBUILD
+ANYTHING.** No page was created, no URL changed, no city page retargeted. What
+to watch next is whether the attribution moves from Bedford to
+`/infidelity-investigations/` and whether position 27.3 changes — **and that is
+a question only Search Console can answer**, not this file.
+
