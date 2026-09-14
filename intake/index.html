@@ -211,6 +211,14 @@ const authPreset = id => AUTH_PRESETS.find(a => a.id === id) || null;
 /* Labels only. Every one of these used to carry a figure; none does now. */
 const FEES = {
   surveillance: { label:"Surveillance" },
+  /* A PRIVATE SERVICE LABEL AND NOTHING MORE (owner, 2026-09-14). The portal's
+     Quick private intake has offered "Child custody" since Unit 36; the public
+     form did not, so a client whose matter is a custody case had to file it as
+     Surveillance. It takes the SAME step list as every other private service —
+     `steps()` branches only on claims and legal — so it forces no surveillance
+     day, no fee, no retainer, no extra step and no different wording. What it
+     changes is the one string the office reads off the submission. */
+  custody:      { label:"Child Custody" },
   process:      { label:"Process Serving" },
   claims:       { label:"Insurance Claim Assignment", billed:true },
   legal:        { label:"Legal Investigation Assignment", billed:true }
@@ -305,7 +313,26 @@ const LEGAL_SVC_PARAM = (legalSvcById(new URLSearchParams(location.search).get("
 const DOC_REF = (r => /^DOC-[0-9a-f]{32}$/.test(r) ? r : null)(
   String(new URLSearchParams(location.search).get("ref") || "").trim());
 
-const S = { step:0, svc:CARRIER_ONLY ? "claims" : LEGAL_ONLY ? "legal" : null,
+/* THE PRIVATE DOOR'S PRESELECT, ON THE PARAMETER THAT ALREADY EXISTS.
+   `?service=` has opened the LEGAL door on a legal service since 2026-09-02.
+   On the private and bare doors it opens the picker on a PRIVATE one, so a
+   page that knows what the visitor came for does not make them pick it again.
+   No new routing: same parameter, resolved against this page's own catalogue.
+
+   THE SET IS DERIVED BY SUBTRACTION rather than listed a second time. `billed`
+   is what already separates a service invoiced to a carrier or a firm from one
+   a private client is quoted for, so a private service added to FEES gains the
+   preselect with it and a billed one can never acquire it by being added.
+
+   IT IS AN OPENING CHOICE AND NOTHING ELSE. The picker still renders, the
+   visitor can still change it, and an unknown or billed value is ignored —
+   which leaves the form exactly as it opens with no parameter at all. */
+const PRIVATE_SVCS = Object.keys(FEES).filter(k => !FEES[k].billed);
+const PRIVATE_SVC_PARAM = (k => PRIVATE_SVCS.includes(k) ? k : null)(
+  String(new URLSearchParams(location.search).get("service") || "").toLowerCase());
+
+const S = { step:0,
+            svc:CARRIER_ONLY ? "claims" : LEGAL_ONLY ? "legal" : PRIVATE_SVC_PARAM,
             lsvc:LEGAL_ONLY ? LEGAL_SVC_PARAM : null, sig:null, files:[] };
 
 /* ============ Required / optional markers ============
@@ -535,6 +562,10 @@ function view(step){
     <label class="opt" id="opt-surveillance" onclick="pickSvc('surveillance')">
       <input type="radio" name="svc" ${S.svc==="surveillance"?"checked":""}><b>Surveillance</b>
       <div class="desc">Documented surveillance for personal or legal matters. We confirm the fee with you in writing before any work begins.</div>
+    </label>
+    <label class="opt" id="opt-custody" onclick="pickSvc('custody')">
+      <input type="radio" name="svc" ${S.svc==="custody"?"checked":""}><b>${FEES.custody.label}</b>
+      <div class="desc">Documentation of conditions, conduct and third-party contact relevant to custody proceedings. We confirm the fee with you in writing before any work begins.</div>
     </label>
     <label class="opt" id="opt-process" onclick="pickSvc('process')">
       <input type="radio" name="svc" ${S.svc==="process"?"checked":""}><b>Process Serving</b>
@@ -942,6 +973,7 @@ function view(step){
 function pickSvc(k){
   // The private door does not offer the carrier or legal paths; refusing here
   // too means a stale link or a hand-typed value cannot reach them either.
+  if(!FEES[k]) return;
   if(PRIVATE_ONLY && (k === "claims" || k === "legal")) return;
   capture(); S.svc=k; render();
 }

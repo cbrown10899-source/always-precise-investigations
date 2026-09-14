@@ -2562,6 +2562,71 @@ this cannot quietly drift out of date again; a second test plants a row in
 every one of those tables plus fifteen child tables, clears, and asserts
 nothing survives while an identically-shaped real case is untouched.
 
+## Child Custody is a private service the public form offers
+
+Owner, 2026-09-14: *"It is simply a service-selection label."* The portal's
+Quick private intake has offered **Child custody** since Unit 36; the PUBLIC
+form did not, so a client whose matter was a custody case had to file it as
+Surveillance. One option, on one picker.
+
+**THE BRIEF DESCRIBED A LIST THIS FORM DOES NOT HAVE, AND THE AUDIT IS WHY
+THAT COST NOTHING.** It asked to preserve *Surveillance / Infidelity / Locate a
+Person / Background Check / Other*. The public picker's private side is
+**Surveillance and Process Serving** and always has been — those other names
+live on the marketing pages, not in the form. Nothing was "preserved" that did
+not exist and nothing was invented to match the brief.
+
+**IT REALLY IS ONLY A LABEL, AND THAT IS A PROPERTY OF `steps()`.** The private
+path is `STEPS` — info, service, subject, objective, agreement — and `steps()`
+branches on **claims and legal only**, so every private service shares one flow.
+`S.svc` is read in eight places and the private value reaches exactly one of
+them: `svc()` → `FEES[k].label` → `payload.service`. The ingest writes that
+column with `pick(p, 'service')`, free text, no CHECK, no allow-list. So the
+case is an ordinary `kind='consumer'` private case: private retainer pricing,
+surveillance workflow available if surveillance is later performed, no extra
+step, no fee, no retainer, no different agreement wording. **No schema change
+and no portal-setup dispatch.**
+
+**THE VISIBLE LABEL AND THE STORED LABEL WERE TWO LITERALS, AND A NEGATIVE TEST
+FOUND IT.** Renaming `FEES.custody.label` alone changed what the portal receives
+while the card on screen went on saying something else — and the suite passed.
+The card interpolates `${FEES.custody.label}` now, and a guard asserts the class
+over **`PRIVATE_SVCS`**: every private service shows the label it stores. Scoped
+to the private ones on purpose — the legal card says *Legal / Law Firm* (the
+door) over a stored *Legal Investigation Assignment* (the product), and that
+difference is deliberate, not drift.
+
+**`?service=` IS THE PARAMETER THAT ALREADY EXISTED.** It has opened the LEGAL
+door on a legal service since 2026-09-02; on the private and bare doors it opens
+the picker on a private one. No new routing system, and it is an OPENING CHOICE
+— the picker still renders and the visitor can still change it.
+
+**THE SET IS DERIVED BY SUBTRACTION — `Object.keys(FEES).filter(k =>
+!FEES[k].billed)`.** `billed` already separates a service invoiced to a carrier
+or a firm from one a private client is quoted for, so a private service added to
+`FEES` gains the preselect with it and a billed one can never acquire it by
+being added. **The negative test is what proves this is load-bearing**: without
+the filter, `?assignment=private&service=claims` opens the private door on a
+carrier assignment — a route straight past `pickSvc`'s own refusal. `pickSvc`
+also refuses any key `FEES` does not hold, which it did not before.
+
+**THE PUBLIC CUSTODY PAGE HAS NO INTAKE LINK TO PRESERVE.** Its only call to
+action is the phone number, and that is true of every service page here — the
+homepage's three door cards are the only public links into `/intake/`. So the
+preselect has no caller yet and adding one is a public-site decision nobody has
+asked for. Recorded rather than done.
+
+**WHAT WAS DELIBERATELY NOT CHANGED.** `tmplDefaultFor()` suggests the
+Domestic / Custody report template from a case's `case_type` and reads `service`
+only for process and surveillance, so a custody-service case with no case type
+opens the picker on General. Extending it is one word — and a report template is
+"special forms", which the brief rules out. It is a question for the owner.
+The portal's own picker keeps its sentence case (*Child custody*, beside
+*Process serving*); the public form keeps Title Case (*Child Custody*, beside
+*Process Serving*). Each is internally consistent and the column is free text
+read back verbatim, which is how *Process Serving* and *Process serving* have
+always coexisted.
+
 ## The rate card
 
 `PACKAGES` and `HOURLY` near the top of `intake/index.html` are **the only place
