@@ -41,7 +41,7 @@ GBP_URL = "https://maps.google.com/?cid=1285488950812777376"
 # would stop matching the one generated after it, and the deploy guard would
 # fail on the NEXT day rather than this one. Bump this by hand when the location
 # content actually changes.
-CONTENT_REVISED = "2026-09-13"
+CONTENT_REVISED = "2026-09-14"
 FACEBOOK = "https://www.facebook.com/AlwaysPreciseInvestigations/"
 
 # THE GEOGRAPHY HIERARCHY HAS ONE WRITER (owner, 2026-09-13, finalization).

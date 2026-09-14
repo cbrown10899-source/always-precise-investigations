@@ -460,6 +460,62 @@ pages. **Unique main content fell 44% → 23% as a result, and that is the right
 trade**: the way to raise it again is the owner's own answers about their own
 business, never invention.
 
+## A community is not a process market, and the schema says both
+
+Owner brief 2026-09-14 (overnight local SEO, preservation-first). Baseline in
+`SEO.md` §8–§11: the page map, the retired-page evidence, and the owner's own
+GBP and Search Console checklists.
+
+**`communities` IS DATA; `covers` IS PROSE.** Each `PLACES` entry now carries
+the localities that page actually answers for, and `areaServed` is composed
+from it — so a community named to a reader cannot be withheld from structured
+data. Lynchburg went from one `Place` to nine.
+
+**AND THAT IS EXACTLY WHY THE PROCESS OFFER NEEDED ITS OWN `areaServed`.**
+Enriching `areaServed` alone would have offered process service in every
+community on the page. **Madison Heights is the case that proves it**: a real
+investigation market, in the homepage `areaServed`, and NOT in
+`PROCESS_MARKETS` — so the first page to gain the richer footprint would have
+regressed the 2026-09-13 geography rule on its first render. The homepage's
+own pattern is applied one level down: Lynchburg's Offer names 8 of its 9
+communities, Roanoke's names 1 of 3 (**Salem and Vinton are not markets**), and
+the two excluded cities carry no Offer at all. A guard fails on any name in a
+process Offer that is not an approved market, negative-tested against all
+three of those leaks.
+
+**DO NOT REBUILD THE RETIRED CITY PAGES — `_redirects` HOLDS THE EVIDENCE.** On
+2026-08-10, 27 near-duplicate city pages became 6, and the comment records why:
+*"Every page below earned 0 clicks from 195 impressions at avg position 37.5."*
+The pages 301'd into Lynchburg are **exactly the Tier-1 towns** a later brief
+will ask for — Forest, Madison Heights, Rustburg, Amherst, Altavista,
+Brookneal, Appomattox. So "add a Forest page" is not a new idea, it is an undo:
+it removes redirects that consolidate signal into Lynchburg and rebuilds pages
+that measurably earned nothing. Measured again 2026-09-14, the six survivors
+still share **78–87% of their main-content sentences** (unique content
+13–22%), so five more off the same template makes that worse. **The way to win
+those towns is to strengthen the page they redirect to**, which is what this
+unit did — the coverage sentence, the `areaServed`, and Madison Heights named
+at last on its own 301 target.
+
+**THE HERO HEADLINE IS PINNED, AND THE SUITE SAID SO.** The brief asked for an
+H1 carrying the entity and the geography. I wrote one and two assertions
+failed: the hero headline is Unit 40 owner-approved copy, and this file already
+records *"what Unit 40 did not touch: the hero headline and copy"*. The H1 was
+**reverted and the proposal sent to the owner** rather than the tests being
+loosened. The homepage's TITLE, description, `og:title` and twitter pair were
+the real stragglers — `og:description` already carried the approved brand line,
+so this was a consistency correction, not a new strategy.
+
+**TWO READING TRAPS THIS UNIT PAID FOR, BOTH IN THE AUDIT RATHER THAN THE
+CODE.** Links on this site are **absolute**, so a root-relative link scan
+reports every city page as linking to nothing — I nearly reported the internal
+linking as broken when it is healthy. And title lengths must be measured on
+**decoded** text: `&amp;` is five characters in the source and one on screen,
+which made three city titles look like they were truncating when every title
+on the site is ≤60. **Neither was a site defect; both were my instrument.**
+The orphan guard has the same shape built in — it resolves `/privacy` against
+`privacy.html` before judging, because its first run cried wolf on exactly that.
+
 ## CI pushes to master
 
 `build-locations.yml` commits and pushes to `master` as `github-actions[bot]`.
