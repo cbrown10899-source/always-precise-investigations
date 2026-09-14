@@ -2450,6 +2450,134 @@ section('The portal picker was already right and stays single');
      String((portal.match(/Child custody/g) || []).length));
 }
 
+/* ------------------------------ the Child Custody page's door to the intake */
+
+/* Owner, 2026-09-14: from the public Child Custody page, give the visitor a way
+   into the EXISTING private intake with Child Custody already selected. The
+   mechanism is the one that already existed — ?assignment=private&service=
+   — so what this section proves is the whole chain end to end, because every
+   link in it was built separately and a preselect with a broken caller is worth
+   nothing. */
+const ORIGIN = new URL(BASE).origin;
+const CUSTODY = ORIGIN + '/child-custody-investigations/';
+
+section('Child Custody page → CTA → private intake, preselected');
+{
+  submitted = null; stored = null;
+  const page = await newPage();
+  await page.goto(CUSTODY);
+  await page.waitForTimeout(120);
+
+  /* READ THE DOOR WITHOUT ASSUMING IT IS THERE. A removed door must fail every
+     assertion about it rather than throwing on the first one and taking the
+     rest of the chain with it — the lesson the section above already paid for. */
+  const door = await page.evaluate(() => {
+    const a = document.querySelector('.cta a[href*="/intake/"]');
+    return { n: document.querySelectorAll('.cta a[href*="/intake/"]').length,
+             href: a ? a.getAttribute('href') : null,
+             text: a ? a.innerText : '',
+             tel: document.querySelectorAll('.cta a[href^="tel:"]').length };
+  });
+  ok('the page carries exactly one door into the intake', door.n === 1, String(door.n));
+  ok('and it is the PRIVATE door, carrying the custody preselect',
+     door.href === '/intake/?assignment=private&service=custody', String(door.href));
+  ok('the label names the action in client language',
+     /child custody/i.test(door.text), door.text);
+  ok('the Call button is still there beside it', door.tel === 1, String(door.tel));
+
+  if (door.n) { await page.locator('.cta a[href*="/intake/"]').first().click(); }
+  else { await page.goto(BASE + '?assignment=private'); }
+  await page.waitForTimeout(200);
+  ok('it lands on the intake', page.url().includes('/intake/'));
+  ok('the family is the private intake, not the carrier or legal door',
+     await page.evaluate(() => PRIVATE_ONLY === true
+                            && CARRIER_ONLY === false && LEGAL_ONLY === false));
+  ok('with Child Custody already the chosen service',
+     await page.evaluate(() => S.svc) === 'custody');
+
+  /* It is a preselect and not a lock: the picker still renders and still
+     offers the other private services. */
+  await set(page, 'c_name', 'Dana Parent');
+  await set(page, 'c_phone', '4345550144');
+  await advance(page);
+  ok('the service step still renders, already on Child Custody',
+     await page.evaluate(() => !!(document.querySelector('#opt-custody input') || {}).checked));
+  ok('and the visitor can still choose something else',
+     await page.locator('#opt-surveillance').count() === 1
+     && await page.locator('#opt-process').count() === 1);
+  ok('the carrier and legal doors are not offered on this path',
+     await page.locator('#opt-claims').count() === 0
+     && await page.locator('#opt-legal').count() === 0);
+
+  /* The preselect is asserted above. Choose it explicitly before walking on, so
+     that a BROKEN preselect fails exactly the assertions about the preselect
+     and the rest of the chain — submit, store, read back — still runs and still
+     says whether IT is right. A walk that stalls proves nothing about the half
+     it never reached. */
+  await page.evaluate(() => pickSvc('custody'));
+  await page.waitForTimeout(80);
+  await advance(page);
+  ok('the flow is the ordinary private one', await dots(page) === 5);
+  await set(page, 's_name', 'Other Parent');
+  await advance(page);
+  await set(page, 'o_goal', 'Document the exchanges and who is present for them.');
+  await advance(page);
+  await page.locator('[data-k="a_consent"]').check();
+  await set(page, 'a_typed', 'Dana Parent');
+  await sign(page);
+  await advance(page);
+  await page.waitForTimeout(500);
+
+  ok('the intake reached the portal', stored !== null);
+  ok('stored as exactly "Child Custody"',
+     stored && stored.service === 'Child Custody', stored && String(stored.service));
+  ok('and as an ordinary private case — no carrier, no claim, not legal',
+     stored && !stored.carrier && !stored.claim_number && stored.assignment !== 'legal');
+  const rec = await page.locator('.record').innerText();
+  ok('the review the client signs displays Child Custody', rec.includes('Child Custody'));
+  await page.close();
+}
+
+section('The Child Custody door at 1200, 390 and 320');
+{
+  for (const w of [1200, 390, 320]) {
+    const ctx = await browser.newContext({ viewport: { width: w, height: 800 } });
+    const page = await ctx.newPage();
+    await page.route('**api.web3forms.com/**', r => r.fulfill({ status: 200, body: '{}' }));
+    await page.route('**/portal-api/ingest', r => r.fulfill({ status: 200, body: '{"ok":true}' }));
+    await page.goto(CUSTODY);
+    await page.waitForTimeout(140);
+
+    const m = await page.evaluate(() => {
+      const a = document.querySelector('.cta a[href*="/intake/"]');
+      const r = a ? a.getBoundingClientRect() : { left: -1e6, right: 1e6, height: 0 };
+      const tel = document.querySelector('.cta a[href^="tel:"]');
+      const t = tel ? tel.getBoundingClientRect() : null;
+      return { left: r.left, right: r.right, h: r.height,
+               telH: t ? t.height : 0,
+               overlap: !!(t && r.bottom > t.top + 0.5 && r.top < t.bottom - 0.5
+                           && r.right > t.left + 0.5 && r.left < t.right - 0.5),
+               doc: document.documentElement.clientWidth,
+               scroll: document.documentElement.scrollWidth };
+    });
+    ok(`at ${w} the door sits inside the viewport`,
+       m.left >= -0.5 && m.right <= m.doc + 0.5, JSON.stringify(m));
+    ok(`at ${w} the page does not scroll sideways`, m.scroll <= m.doc + 0.5, JSON.stringify(m));
+    ok(`at ${w} the door clears the 44px tap floor`, m.h >= 44, String(m.h));
+    ok(`at ${w} it does not overlap the Call button`, !m.overlap, JSON.stringify(m));
+    ok(`at ${w} the Call button also clears the floor`, m.telH >= 44, String(m.telH));
+
+    /* Follow it through at this width too — a door that is only measured is a
+       door nobody has opened. */
+    const present = await page.locator('.cta a[href*="/intake/"]').count() === 1;
+    if (present) { await page.locator('.cta a[href*="/intake/"]').click(); await page.waitForTimeout(200); }
+    ok(`at ${w} following it opens the intake on Child Custody`,
+       present && page.url().includes('/intake/')
+       && await page.evaluate(() => typeof S !== 'undefined' && S.svc === 'custody'));
+    await page.close(); await ctx.close();
+  }
+}
+
 await browser.close();
 server.close();
 
