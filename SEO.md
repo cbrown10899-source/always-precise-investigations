@@ -439,3 +439,18 @@ geography, and no legal conclusion or custody-outcome promise added to the copy.
 - `custody exchange documentation investigator`
 - and the attribution question the infidelity unit raised: whether these land on
   `/child-custody-investigations/` or get absorbed by a city page.
+
+
+### The page now has a door into the intake (2026-09-14, same day)
+
+The authority work above is discovery; this is what happens after it. The
+`.cta` box carries **Request a Child Custody Investigation** →
+`/intake/?assignment=private&service=custody`, beside the unchanged Call button.
+
+**IT IS THE FIRST SERVICE PAGE ON THIS SITE WITH AN INTAKE LINK.** Every other
+one ends at the phone number, and the homepage's three door cards were the only
+public links into `/intake/`. That is worth watching rather than copying: if
+this page's own conversion behaves differently from Infidelity's, the phone-only
+CTA on the other service pages is the variable, and **that comparison needs
+Search Console and the office's own record of where enquiries came from** — it
+cannot be read off this repository.

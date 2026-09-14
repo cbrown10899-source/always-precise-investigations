@@ -2610,11 +2610,32 @@ the filter, `?assignment=private&service=claims` opens the private door on a
 carrier assignment — a route straight past `pickSvc`'s own refusal. `pickSvc`
 also refuses any key `FEES` does not hold, which it did not before.
 
-**THE PUBLIC CUSTODY PAGE HAS NO INTAKE LINK TO PRESERVE.** Its only call to
-action is the phone number, and that is true of every service page here — the
-homepage's three door cards are the only public links into `/intake/`. So the
-preselect has no caller yet and adding one is a public-site decision nobody has
-asked for. Recorded rather than done.
+**THE PUBLIC CUSTODY PAGE HAD NO INTAKE LINK, AND NOW IT DOES** (owner,
+2026-09-14, the following unit). When this unit shipped, that page's only call
+to action was the phone number — as it is on every service page here; the
+homepage's three door cards were the only public links into `/intake/`. The
+preselect therefore had no caller, which was recorded rather than acted on
+because adding a CTA is a public-site decision. The owner asked for it next, so
+the `.cta` box carries **Request a Child Custody Investigation** →
+`/intake/?assignment=private&service=custody` beside the unchanged Call button.
+
+**THE CHAIN IS ASSERTED END TO END, because every link in it was built
+separately.** Page → CTA → private intake → Child Custody preselected → submit →
+stored `"Child Custody"` → the signed review reads it back, at 1200, 390 and
+320. A preselect with a broken caller is worth nothing, and so is a caller
+pointing at a preselect that no longer resolves — the negative tests are exactly
+those two: removing the door fails **14** named assertions, and dropping
+`&service=custody` from the href alone fails **6**, neither crashing the run.
+
+**IT IS A PRESELECT, NOT A LOCK**, and the suite says so: the picker still
+renders, Surveillance and Process Serving are still offered, and the visitor can
+still change it. Nothing else moved — no custody questionnaire, no new field, no
+retainer, pricing, case type or report-template change, and the Call button's
+weight is untouched. Measured: 344×53 beside 195×53 on desktop, stacked at 390
+and 320 with the door at 80px tall as its label wraps, and no sideways scroll at
+any width. The only CSS is the existing `.cta a.btn` gaining a horizontal
+margin, because two inline-blocks in a centred box needed spacing and nothing
+else.
 
 **WHAT WAS DELIBERATELY NOT CHANGED.** `tmplDefaultFor()` suggests the
 Domestic / Custody report template from a case's `case_type` and reads `service`
