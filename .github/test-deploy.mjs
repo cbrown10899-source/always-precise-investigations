@@ -659,6 +659,31 @@ section('The manifest describes the site honestly');
   ok('every public service page links to at least one local market page',
      svcNoCity.length === 0, svcNoCity.join(' | '));
 
+  /* --- A FOOTER LINK IS NOT A TOPICAL SIGNAL ------------------------------
+     Search Console, 2026-09-14: "cheating spouse investigations virginia" drew
+     67 impressions and 63 of them landed on the BEDFORD city page rather than
+     the infidelity authority page — because every city page carries a cheating
+     card, an adultery card and an adultery FAQ, while its ONLY link to
+     /infidelity-investigations/ sat in the FOOTER beside Privacy. The same
+     shape held for /child-custody-investigations/.
+
+     So the property is not "is it linked" — the orphan guard above already
+     answers that, and answered it YES throughout. It is that each consumer
+     AUTHORITY page is reached from the BODY of every city page and the hub,
+     which is the only kind of link that says what the page is about. Cut the
+     document at <footer and look before it. */
+  const AUTHORITY = ['infidelity-investigations', 'child-custody-investigations'];
+  const localPages = html.filter(f => /private-investigator[\\/]/.test(f));
+  const bodyOf = (f) => readAll(f).split(/<footer[\s>]/)[0];
+  for (const rel of AUTHORITY) {
+    const noBodyLink = localPages
+      .filter(f => !bodyOf(f).includes(`/${rel}/`))
+      .map(f => path.relative(site, f).replace(/\\/g, '/'));
+    ok(`every local page links to /${rel}/ from its body, not only its footer`,
+       localPages.length >= 7 && noBodyLink.length === 0,
+       `${localPages.length} local pages; missing: ${noBodyLink.join(' | ')}`);
+  }
+
   /* --- FAQPage SCHEMA MATCHES THE VISIBLE FAQ, ON EVERY PAGE THAT HAS ONE ----
      The city pages already have this pinned for the ONE process-service
      question (guard 6). This is the same rule as a class, across the eleven

@@ -386,7 +386,15 @@ def page(p):
                      f'How we document infidelity in {esc(place)} &rarr;</a>'),
         "adultery": ("Adultery evidence for divorce", "Independent corroboration prepared for your attorney, meeting the standard Virginia courts expect."),
         "surv": ("Surveillance", "Covert, documented, and quoted by the hour — no hidden mileage or travel fees in our service area."),
-        "custody": ("Child custody", "Documentation of conditions, conduct and third-party contact relevant to custody proceedings."),
+        # THE ONE CONTEXTUAL LINK TO THE CUSTODY PAGE, and it is here for the
+        # reason the infidelity link above is: every city page carries a custody
+        # card, and its ONLY link to /child-custody-investigations/ was in the
+        # FOOTER, beside Privacy. The anchor names the city, so the six differ
+        # from each other rather than being one sentence repeated.
+        "custody": ("Child custody",
+                    "Documentation of conditions, conduct and third-party contact relevant to "
+                    f'custody proceedings. <a href="{DOMAIN}/child-custody-investigations/">'
+                    f'What a custody investigation documents in {esc(place)} &rarr;</a>'),
         "bg": ("Background checks", "For employers, landlords, volunteer organizations, and personal peace of mind."),
         "ins": ("Insurance claims", "Workers' comp and liability claim surveillance for insurers, employers, and defense attorneys."),
         "legal": ("Legal support", "Surveillance, locate and process support and reporting prepared for law firms and attorneys."),
@@ -658,7 +666,9 @@ def hub():
 
 <section><div class="wrap">
   <h2>What we handle</h2>
-  <p>Infidelity and adultery documentation, covert surveillance, child-custody evidence, background
+  <p><a href="{DOMAIN}/infidelity-investigations/">Infidelity and adultery documentation</a>,
+  covert surveillance,
+  <a href="{DOMAIN}/child-custody-investigations/">child-custody evidence</a>, background
   checks, <a href="{DOMAIN}/insurance-investigations/">workers' compensation and auto-claim investigation</a>,
   and process serving. Surveillance is quoted
   by the hour with no hidden mileage or travel fees anywhere in the service area below.</p>

@@ -544,6 +544,45 @@ retargeting it would have destroyed the only measured asset to chase one with
 none. It gained a single line. **67 impressions aligns a query to a page; it
 does not rebuild a site.**
 
+## The same shape, ahead of the data — child custody
+
+Owner brief 2026-09-14: make `/child-custody-investigations/` the clear primary
+page for child-custody intent without damaging a local page. Record in
+`SEO.md` §13. **There is no Search Console data for this query family**, and
+saying so is the point — this is the section above applied as a diagnosis, not
+a response to a measured loss.
+
+**IT HAD BOTH DEFECTS.** Title, H1 and `Service.areaServed` said flat
+*Virginia* / *Central Virginia* while the section heading said *"Serving all of
+Central Virginia and beyond"* — an unbounded claim of the shape five units have
+removed elsewhere — and **"Greater Lynchburg" appeared zero times** on the page
+selling custody work in the firm's core region. Title → *Child Custody
+Investigator & Surveillance | Lynchburg VA* (56), H1 → *Child Custody
+Investigator in Lynchburg & Central Virginia*, description → 153 characters
+ending in the phone number, H2 → *Serving Greater Lynchburg and Central
+Virginia*, `areaServed` → both regions. No URL, no canonical, no city page
+moved.
+
+**"COURT-READY" LEFT THE TITLE BECAUSE IT WAS THE GENERIC USE.** All three
+occurrences were `title` / `og:title` / `twitter:title`. The genuine
+family-court and law-firm uses on the Legal page, the homepage's legal `Offer`
+and the Infidelity page are untouched — the brief draws that line and it is the
+right one.
+
+**THE GUARD IS A CLASS, AND IT CAUGHT THE PREVIOUS UNIT ONE PAGE SHORT.**
+*Every local page links to each consumer authority page from its BODY, not only
+its footer* — written over both `/infidelity-investigations/` and
+`/child-custody-investigations/`, and **red on its first run**: the hub's *What
+we handle* paragraph had the words *Infidelity and adultery documentation*
+sitting unlinked beside a linked insurance phrase, so the infidelity unit's own
+fix had missed `/private-investigator/`. One phrase was linked; the guard was
+not narrowed. The orphan guard could never see either gap — it answered
+"linked" throughout, because a footer link is a link.
+
+**Write this kind of property as a class.** The brief asked for one page's
+links; asking the same question of every authority page is what found the bug
+the last unit shipped.
+
 ## CI pushes to master
 
 `build-locations.yml` commits and pushes to `master` as `github-actions[bot]`.

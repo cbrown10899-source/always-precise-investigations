@@ -377,3 +377,65 @@ to watch next is whether the attribution moves from Bedford to
 `/infidelity-investigations/` and whether position 27.3 changes — **and that is
 a question only Search Console can answer**, not this file.
 
+
+## 13. Child custody is now the authority page for its own intent (2026-09-14)
+
+Owner brief: make `/child-custody-investigations/` the clear primary page for
+child-custody investigation intent, **without** damaging the local city pages
+or the other service pages. **There is no Search Console data for this query
+family yet** — this is the infidelity unit's diagnosis applied ahead of the
+data, not a response to a measured loss.
+
+**THE PAGE HAD THE SAME TWO DEFECTS THE INFIDELITY PAGE HAD.**
+
+**One — its geography was flat "Virginia", and its H2 disagreed with its H1.**
+Title, H1 and the `Service` schema all said *Virginia* or *Central Virginia*
+while the section heading said *"Serving all of Central Virginia and beyond"* —
+an unbounded claim of exactly the shape five units have removed elsewhere.
+**"Greater Lynchburg" appeared zero times on the page**, and "Lynchburg" twice,
+both inside a city-links row. The page selling custody work in the firm's core
+region named that region nowhere.
+
+| | before | after |
+| --- | --- | --- |
+| Title | Child Custody Investigator Virginia \| Court-Ready Evidence (58) | Child Custody Investigator & Surveillance \| Lynchburg VA (56) |
+| H1 | Child Custody Investigations in Virginia | Child Custody Investigator in Lynchburg & Central Virginia |
+| Description | Contested custody? Licensed Virginia investigators document parenting time, exchanges and the child's environment. Free consult: (434) 907-0975. (144) | Child custody investigations in Greater Lynchburg and Central Virginia. Licensed, discreet documentation of parenting time and exchanges. (434) 907-0975. (153) |
+| H2 | Serving all of Central Virginia and beyond | Serving Greater Lynchburg and Central Virginia |
+| `Service.areaServed` | Central Virginia | Greater Lynchburg + Central Virginia |
+
+**"COURT-READY" CAME OUT OF THE TITLE BECAUSE IT WAS THE GENERIC USE.** All
+three occurrences on the page were `title` / `og:title` / `twitter:title` —
+metadata, not family-court reporting copy. The brief rules out the generic use
+and keeps the genuine legal-context ones, which is what the Legal page, the
+homepage's legal `Offer` and the Infidelity page's reporting line still carry
+untouched.
+
+**TWO — THE ONLY LINK FROM THE SIX CITY PAGES WAS THE FOOTER.** Identical
+shape to the infidelity finding, and identically invisible to the orphan guard,
+which answered "linked" throughout. Each city page carries a **Child custody**
+card; that card now carries the one contextual link, with a city-named anchor
+so the six differ from each other. The hub's *What we handle* paragraph already
+had the words *child-custody evidence* sitting unlinked beside a linked
+insurance phrase — that phrase is the link now.
+
+**AND THE GUARD WRITTEN FOR THIS FOUND THAT THE INFIDELITY UNIT HAD MISSED THE
+HUB.** The new assertion is a CLASS over both consumer authority pages —
+*every local page links to it from its BODY, not only its footer* — and it went
+red on `/private-investigator/` for infidelity on its first run. One phrase was
+linked; the guard was not narrowed. This is why the property is written as a
+class rather than as the one link the brief asked for.
+
+**WHAT WAS DELIBERATELY NOT DONE.** No duplicate custody page, no city-by-city
+custody doorway pages, no URL or canonical change, no city page retargeted away
+from *private investigator + location*, no change to the process-service
+geography, and no legal conclusion or custody-outcome promise added to the copy.
+
+**QUERY FAMILIES TO WATCH IN SEARCH CONSOLE** (none of these has data yet):
+
+- `child custody investigator lynchburg va`, `child custody private investigator virginia`
+- `custody surveillance lynchburg`, `private investigator for custody case`
+- `prove parent unfit virginia investigator`, `child custody evidence private investigator`
+- `custody exchange documentation investigator`
+- and the attribution question the infidelity unit raised: whether these land on
+  `/child-custody-investigations/` or get absorbed by a city page.
