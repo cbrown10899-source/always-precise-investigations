@@ -548,6 +548,117 @@ section('The manifest describes the site honestly');
                           .map(f => path.relative(site, f));
   ok('Richmond appears in no areaServed list', rich.length === 0, rich.join(' | '));
 
+  /* --- LOCATION-PAGE QUALITY GUARDS (owner, 2026-09-14 §41) ----------------
+     These pages are the site's local-search assets, so the things that would
+     quietly destroy one are asserted rather than trusted: a missing head tag,
+     a second h1, a duplicate title, an orphan, and — the one this unit
+     actually found — a process-service offer inheriting the page's whole
+     investigation footprint. */
+  const cityFiles = html.filter(x => /private-investigator[\\/][a-z-]+-va[\\/]index\.html$/.test(x));
+  const PROCESS_MARKETS = ['Lynchburg','Forest','Rustburg','Bedford','Amherst','Appomattox',
+                           'Altavista','Moneta','Smith Mountain Lake','Roanoke','Farmville'];
+  const headBad = [], seenTitle = new Map(), seenDesc = new Map(), dupes = [];
+  const areaBad = [];
+  for (const f of cityFiles) {
+    const raw = readAll(f), rel = path.relative(site, f);
+    const title = (raw.match(/<title>([\s\S]*?)<\/title>/i) || [])[1];
+    const desc  = (raw.match(/<meta\s+name="description"\s+content="([^"]*)"/i) || [])[1];
+    const canon = (raw.match(/<link\s+rel="canonical"\s+href="([^"]*)"/i) || [])[1];
+    const h1s   = [...raw.matchAll(/<h1[^>]*>/gi)].length;
+    if (!title) headBad.push(`${rel}: no title`);
+    if (!desc) headBad.push(`${rel}: no description`);
+    if (!canon) headBad.push(`${rel}: no canonical`);
+    else if (!canon.includes(rel.replace(/index\.html$/, '').replace(/\\/g, '/')))
+      headBad.push(`${rel}: canonical points elsewhere (${canon})`);
+    if (h1s !== 1) headBad.push(`${rel}: ${h1s} h1`);
+    if (title && seenTitle.has(title)) dupes.push(`title shared: ${rel} + ${seenTitle.get(title)}`);
+    if (title) seenTitle.set(title, rel);
+    if (desc && seenDesc.has(desc)) dupes.push(`description shared: ${rel} + ${seenDesc.get(desc)}`);
+    if (desc) seenDesc.set(desc, rel);
+
+    /* THE ONE THAT MATTERS. A city page names every community it covers in
+       areaServed — that is the local-entity signal it exists for — so a bare
+       Process serving Offer beside it would offer papers in all of them.
+       Madison Heights is the live case: a real investigation market on the
+       Lynchburg page and NOT a process market. The Offer therefore carries its
+       OWN areaServed, and every name in it must be an approved market. */
+    for (const m of raw.matchAll(/<script[^>]*application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)) {
+      let data; try { data = JSON.parse(m[1]); } catch { continue; }
+      const walk = (n) => {
+        if (Array.isArray(n)) return n.forEach(walk);
+        if (!n || typeof n !== 'object') return;
+        if (n['@type'] === 'Offer' && n.itemOffered?.name === 'Process serving') {
+          const a = n.areaServed;
+          if (!a) areaBad.push(`${rel}: process Offer has no areaServed of its own`);
+          else for (const q of (Array.isArray(a) ? a : [a])) {
+            const nm = String(q.name || '').replace(/,\s*Virginia$/, '');
+            if (!PROCESS_MARKETS.includes(nm))
+              areaBad.push(`${rel}: process Offer names "${nm}", not an approved market`);
+          }
+        }
+        Object.values(n).forEach(walk);
+      };
+      walk(data);
+    }
+  }
+  ok('every city page has a title, description, self-canonical and exactly one h1',
+     headBad.length === 0, headBad.join(' | '));
+  ok('no two city pages share a title or a description', dupes.length === 0, dupes.join(' | '));
+  ok('a city page’s process Offer carries its own areaServed, naming only approved markets',
+     areaBad.length === 0, areaBad.join(' | '));
+
+  /* --- NO INDEXABLE PUBLIC PAGE IS AN ORPHAN (§28) -------------------------
+     Links on this site are absolute, which is why a relative-only reading of
+     the link graph reports every city page as linking to nothing. Normalise
+     before judging. */
+  const DOMAIN_ = 'https://alwayspreciseinvestigations.net';
+  const norm = (h) => {
+    if (h.startsWith(DOMAIN_)) h = h.slice(DOMAIN_.length) || '/';
+    if (!h.startsWith('/')) return null;
+    h = h.split('#')[0].split('?')[0];
+    if (h.startsWith('/assets')) return null;
+    return h.endsWith('/') || h.endsWith('.html') ? h : h + '/';
+  };
+  const indexable = html.filter(f => !/noindex/i.test(readAll(f)));
+  const urlOf = (f) => '/' + path.relative(site, f).replace(/\\/g, '/').replace(/index\.html$/, '');
+  const inbound = new Map(indexable.map(f => [urlOf(f), 0]));
+  for (const f of indexable) {
+    const me = urlOf(f);
+    for (const m of readAll(f).matchAll(/href="([^"]+)"/g)) {
+      const h = norm(m[1]);
+      if (h && h !== me && inbound.has(h)) inbound.set(h, inbound.get(h) + 1);
+    }
+  }
+  /* CLEAN URLS: the footer links /privacy and Pages serves privacy.html for it,
+     so a naive normaliser reports that page as an orphan. It is not — resolve
+     the extensionless form against the pages that actually exist before
+     judging, or this guard cries wolf on its first run. */
+  for (const f of indexable) {
+    const me = urlOf(f);
+    for (const m of readAll(f).matchAll(/href="([^"]+)"/g)) {
+      const h = norm(m[1]);
+      if (!h || inbound.has(h)) continue;
+      const asFile = h.replace(/\/$/, '') + '.html';
+      if (asFile !== me && inbound.has(asFile)) inbound.set(asFile, inbound.get(asFile) + 1);
+    }
+  }
+  const orphans = [...inbound].filter(([, n]) => n === 0).map(([u]) => u);
+  ok('every indexable public page is linked from somewhere on the site',
+     orphans.length === 0, orphans.join(' | '));
+
+  /* --- THE SERVICE PAGES REACH THE LOCAL MARKETS (§9, §14) ----------------- */
+  const svcNoCity = [];
+  for (const rel of ['infidelity-investigations', 'child-custody-investigations',
+                     'insurance-investigations', 'legal-investigations']) {
+    const f = html.find(x => x.endsWith(path.join(rel, 'index.html')));
+    if (!f) continue;
+    const n = [...new Set([...readAll(f).matchAll(/private-investigator\/([a-z-]+-va)\//g)]
+                            .map(m => m[1]))].length;
+    if (n === 0) svcNoCity.push(rel);
+  }
+  ok('every public service page links to at least one local market page',
+     svcNoCity.length === 0, svcNoCity.join(' | '));
+
   /* --- THE RETIRED BRAND LINE AND THE FORBIDDEN REGION NAME ----------------
      Owner, 2026-09-13: the line is "Serving Greater Lynchburg and Central
      Virginia since 2014", the old "serving all of Virginia" is gone, and the

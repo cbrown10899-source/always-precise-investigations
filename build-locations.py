@@ -41,7 +41,7 @@ GBP_URL = "https://maps.google.com/?cid=1285488950812777376"
 # would stop matching the one generated after it, and the deploy guard would
 # fail on the NEXT day rather than this one. Bump this by hand when the location
 # content actually changes.
-CONTENT_REVISED = "2026-09-13"
+CONTENT_REVISED = "2026-09-14"
 FACEBOOK = "https://www.facebook.com/AlwaysPreciseInvestigations/"
 
 # THE GEOGRAPHY HIERARCHY HAS ONE WRITER (owner, 2026-09-13, finalization).
@@ -120,8 +120,10 @@ PLACES = [
         "detail": "the Hill City on the James River, bordered by Campbell, "
                   "Bedford and Amherst counties",
         "corridor": "US 29, US 460 and Route 501",
-        "covers": "Forest, Rustburg, Amherst, Appomattox, Altavista and the "
-                  "Smith Mountain Lake area",
+        "covers": "Forest, Rustburg, Madison Heights, Amherst, Appomattox, "
+                  "Altavista and the Smith Mountain Lake area",
+        "communities": ["Lynchburg", "Forest", "Rustburg", "Madison Heights", "Amherst",
+                         "Appomattox", "Altavista", "Moneta", "Smith Mountain Lake"],
         "region": "greater_lynchburg",
         # The one locality fact that is unrepeatable and needs no research: the
         # office is here. Verifiable from the address already on every page.
@@ -135,6 +137,7 @@ PLACES = [
         "detail": "the county seat below the Peaks of Otter",
         "corridor": "US 460 and Route 122",
         "covers": "Bedford County and the Smith Mountain Lake / Moneta area",
+        "communities": ["Bedford", "Moneta", "Smith Mountain Lake"],
         "region": "greater_lynchburg",
         "note": "",
         "process": True,
@@ -146,6 +149,7 @@ PLACES = [
                   "out Route 460",
         "corridor": "I-81, US 220 and US 460",
         "covers": "Roanoke City, Roanoke County, Salem and Vinton",
+        "communities": ["Roanoke", "Salem", "Vinton"],
         "region": "central_virginia",
         # Four separate localities sharing one valley and a lot of Roanoke mailing
         # addresses is a civic fact, not a claim about us.
@@ -160,6 +164,7 @@ PLACES = [
         "detail": "the independent city surrounded by Albemarle County",
         "corridor": "US 29 and I-64",
         "covers": "Charlottesville and Albemarle County",
+        "communities": ["Charlottesville"],
         "region": "central_virginia",
         "note": "Charlottesville is an independent city completely surrounded by "
                 "Albemarle County, so a great many addresses that read as "
@@ -174,6 +179,7 @@ PLACES = [
         "detail": "the Prince Edward County seat",
         "corridor": "US 460 and US 15",
         "covers": "Prince Edward, Cumberland and Buckingham counties",
+        "communities": ["Farmville"],
         "region": "central_virginia",
         "note": "",
         "process": True,
@@ -184,6 +190,7 @@ PLACES = [
         "detail": "the Dan River city on the North Carolina line",
         "corridor": "US 29 and US 58",
         "covers": "Danville and Pittsylvania County",
+        "communities": ["Danville"],
         "region": "central_virginia",
         # A licence boundary is a fact about the licence, not a story about a case.
         "note": "Danville sits on the North Carolina line, and a Virginia "
@@ -319,19 +326,35 @@ def page(p):
                 "Background checks", "Insurance claim investigation", "Legal investigation support"]
     if p["process"]:
         services.append("Process serving")
+
+    # THE COMMUNITIES THIS PAGE ANSWERS FOR, and the narrower set it may serve
+    # papers in. Madison Heights is exactly why these are two lists: it is a real
+    # investigation market on the Lynchburg page (and in the homepage areaServed)
+    # and it is NOT in PROCESS_MARKETS, so a single areaServed would have offered
+    # process service there the moment the page carried a process Offer. This is
+    # the homepage's own pattern — the process Offer carries its OWN areaServed —
+    # applied one level down (owner, 2026-09-14 §2: firm-wide geography must never
+    # silently turn every investigation market into a process-service market).
+    communities = p["communities"]
+    proc_area = [c for c in communities if c in PROCESS_MARKETS]
+
+    def offer(name):
+        o = {"@type": "Offer", "itemOffered": {"@type": "Service", "name": name}}
+        if name == "Process serving":
+            o["areaServed"] = [{"@type": "Place", "name": f"{c}, Virginia"} for c in proc_area]
+        return o
     biz_ld = {
         "@context": "https://schema.org", "@type": "ProfessionalService",
         "name": "Always Precise Investigations, LLC",
         "description": f"Licensed private investigation firm serving {place}, Virginia and the surrounding area since 2014.",
         "telephone": PHONE_LINK, "email": EMAIL, "url": url,
-        "areaServed": {"@type": "Place", "name": f"{place}, Virginia"},
+        "areaServed": [{"@type": "Place", "name": f"{c}, Virginia"} for c in communities],
         "address": ADDRESS, "geo": GEO, "openingHoursSpecification": HOURS,
         "foundingDate": "2014", "priceRange": "$$",
         "identifier": {"@type": "PropertyValue", "name": "Virginia DCJS license", "value": "11-9159"},
         "hasOfferCatalog": {
             "@type": "OfferCatalog", "name": f"Investigation services in {place}, Virginia",
-            "itemListElement": [{"@type": "Offer", "itemOffered": {"@type": "Service", "name": n}}
-                                for n in services]},
+            "itemListElement": [offer(n) for n in services]},
         "sameAs": [FACEBOOK, GBP_URL]
     }
     crumb_ld = {
