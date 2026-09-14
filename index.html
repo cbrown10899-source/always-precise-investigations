@@ -121,6 +121,31 @@
   .hero h1{font-size:clamp(1.9rem,5vw,3rem);max-width:860px;margin:0 auto 16px;}
   .hero .tag{color:var(--teal-2);font-family:'Segoe UI',Arial,sans-serif;letter-spacing:.14em;text-transform:uppercase;font-size:.9rem;margin-bottom:20px;}
   .hero p{max-width:640px;margin:0 auto 30px;font-size:1.12rem;color:#e6ebf2;}
+  /* THE TRUST LINE IS THE HERO'S QUIET THIRD LINE (owner, 2026-09-14). It pays
+     for its own space out of the supporting line's 30px bottom margin rather
+     than adding a second one, so the gap down to the CTA cards is UNCHANGED and
+     the hero grows by the line itself rather than by a line plus a margin.
+     No badge, box or icon — it is smaller, dimmer text and nothing else. */
+  .hero p.hero-lede{margin-bottom:8px;}
+  /* THE INK IS #ccd6e1 AND IT WAS MEASURED AGAINST PAINTED PIXELS, because the
+     hero is a gradient over a PHOTOGRAPH and no computed style can say what is
+     behind the glyphs. Measured over the text's own rectangle (a Range, not the
+     640px <p> box -- the sentence is short and centred, so the paragraph box
+     samples hundreds of pixels the text never covers), taking the LIGHTEST
+     pixel, which is the one light text has least contrast against:
+
+       --muted #9fb0c4   3.45:1 @1280   4.01:1 @390   FAILS AA
+       #b6c3d2           4.27          4.96          FAILS at 1280
+       #c3cedb           4.80          5.57          clears by 0.30 -- thin
+       #ccd6e1           5.20          6.04          <= chosen
+       #e6ebf2 (lede)    6.38          7.42          no separation at all
+
+     So the SIZE carries most of the hierarchy (15.2px against the lede's
+     17.92px) and the colour only 20% of the lede's luminance -- dimmer text
+     than this cannot clear AA over this photograph at this size. Do not dim it
+     further without re-running the measurement; a brighter photograph would
+     eat the margin. */
+  .hero p.hero-trust{font-size:.95rem;color:#ccd6e1;margin-bottom:30px;}
   .hero .call-btn{font-size:1.15rem;padding:15px 30px;display:inline-block;}
   .hero .stars{color:var(--gold);letter-spacing:3px;margin-top:22px;font-size:1.1rem;}
   .hero .stars small{display:block;color:var(--muted);font-family:'Segoe UI',Arial,sans-serif;letter-spacing:.08em;font-size:.78rem;text-transform:uppercase;margin-top:4px;}
@@ -357,7 +382,8 @@ padding:11px 22px;text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;f
 <div class="hero" id="top">
   <div class="tag">Serving Greater Lynchburg and Central Virginia since 2014</div>
   <h1>Private Investigator &amp; Surveillance Services in Lynchburg and Surrounding Areas</h1>
-  <p>Serving private clients, attorneys and insurance companies throughout Greater Lynchburg and Central Virginia.</p>
+  <p class="hero-lede">Serving private clients, attorneys and insurance companies throughout Greater Lynchburg and Central Virginia.</p>
+  <p class="hero-trust">Licensed, insured, and discreet.</p>
   <!-- THE THREE CLIENT PATHS (Unit 40, owner-approved direction). Each lands on
        its OWN door of the secure intake: a carrier is never shown the consumer
        picker, a private client is never offered carrier work, and a law firm is

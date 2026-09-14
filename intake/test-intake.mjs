@@ -1876,6 +1876,59 @@ section('Unit 40 — contrast, focus, and what the hero kept');
   ok('the overlay is a neutral dark, not a navy tint',
      ovStops.length >= 2 && ovStops.every(([r, g, b]) => b - r <= 8 && b - g <= 8),
      JSON.stringify(ovStops));
+
+  /* THE HERO TRUST LINE IS MEASURED THE SAME WAY (owner, 2026-09-14). It is
+     small, dim text over the same photographic hero, so it is exactly the shape
+     that passes on a declared colour and fails on a bright spot in the picture.
+
+     TWO THINGS DIFFER FROM THE CARDS ABOVE, and both matter.
+
+     The ink is NOT white, so the cards' `1.05 / (hi + 0.05)` shortcut would be
+     wrong here — the general ratio is computed from both luminances.
+
+     And the rectangle is the GLYPHS', taken from a Range, not the element box.
+     `.hero p` is 640px wide and the sentence is short and centred, so the <p>
+     box samples hundreds of pixels the text never covers; the brightest of
+     THOSE rejected a colour the text is never drawn on. Measuring the wrong
+     rectangle is how this check would have demanded a near-white line and
+     destroyed the hierarchy the owner asked for. */
+  await p4.reload({ waitUntil: 'networkidle' });
+  const tBox = await p4.evaluate(() => {
+    const t = document.querySelector('.hero p.hero-trust');
+    const rg = document.createRange(); rg.selectNodeContents(t);
+    const r = rg.getBoundingClientRect();
+    return { x: Math.round(r.left), y: Math.round(r.top),
+             w: Math.round(r.width), h: Math.round(r.height),
+             ink: getComputedStyle(t).color, size: parseFloat(getComputedStyle(t).fontSize),
+             lede: parseFloat(getComputedStyle(document.querySelector('.hero p')).fontSize) };
+  });
+  ok('the trust line is smaller than the supporting line it sits under',
+     tBox.size < tBox.lede, `${tBox.size}px vs ${tBox.lede}px`);
+  await p4.addStyleTag({ content: '.hero p.hero-trust{visibility:hidden!important;}' });
+  const tStrip = (await p4.screenshot({ clip: { x: tBox.x, y: tBox.y, width: tBox.w, height: tBox.h } })).toString('base64');
+  const tWorst = await p4.evaluate(async ({ b64, ink }) => {
+    const img = new Image();
+    await new Promise(res => { img.onload = res; img.src = 'data:image/png;base64,' + b64; });
+    const c = document.createElement('canvas');
+    c.width = img.width; c.height = img.height;
+    c.getContext('2d').drawImage(img, 0, 0);
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    const lum = (r, g, b) => {
+      const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+    };
+    let hi = -1, at = null;
+    for (let i = 0; i < d.length; i += 4) {
+      const L = lum(d[i], d[i + 1], d[i + 2]);
+      if (L > hi) { hi = L; at = [d[i], d[i + 1], d[i + 2]]; }
+    }
+    const [ir, ig, ib] = ink.match(/\d+/g).map(Number);
+    const li = lum(ir, ig, ib);
+    return { ratio: (Math.max(li, hi) + 0.05) / (Math.min(li, hi) + 0.05), pixel: at, ink: [ir, ig, ib] };
+  }, { b64: tStrip, ink: tBox.ink });
+  ok('the trust line clears 4.5:1 against the LIGHTEST pixel behind its glyphs',
+     tWorst.ratio >= 4.5,
+     `${tWorst.ratio.toFixed(2)}:1 — rgb(${tWorst.ink}) on rgb(${tWorst.pixel})`);
   await cx4.close();
 
   /* KEYBOARD. Focus must land on each card and be visibly marked. */
