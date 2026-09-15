@@ -341,22 +341,69 @@ padding:11px 22px;text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;f
     .cta-cards{grid-template-columns:repeat(2,1fr);max-width:680px;}
   }
   @media (max-width:640px){
-    /* ONE COLUMN, in the owner's order — Insurance, Legal, Private — which is
-       the source order, so nothing here reorders anything. `minmax(0,1fr)`
-       rather than `1fr`: a grid track's default minimum is its content, which
-       is how a long title pushes a card wider than the screen and starts the
-       page scrolling sideways. */
-    .cta-cards{grid-template-columns:minmax(0,1fr);max-width:420px;gap:14px;}
-    /* Shorter, because a phone shows them stacked and three tall cards is a lot
-       of scrolling before the contact controls below them. */
-    .cta-card{min-height:186px;}
-    .cta-body{padding:18px 16px;}
+    /* ONE COLUMN, in the owner's order — Private, Legal, Insurance (2026-09-15,
+       superseding the Insurance-first order of 2026-08-22) — which is the
+       SOURCE order, so nothing here reorders anything. Reordering with flex
+       `order` would put the visual order and the focus order out of step, which
+       is the defect rather than the fix. `minmax(0,1fr)` rather than `1fr`: a
+       grid track's default minimum is its content, which is how a long title
+       pushes a card wider than the screen and starts the page scrolling
+       sideways. */
+    .cta-cards{grid-template-columns:minmax(0,1fr);max-width:420px;gap:14px;
+      margin:20px auto 24px;}
+    /* 13B — COMPACTION, MEASURED. 186 → 155 is 16.7%, inside the owner's
+       15–20%. The content stack is 14+14 padding + a 25px title + the 10px gap
+       + a 50px button = 113, so 155 leaves 42px of photograph showing above the
+       title rather than a cramped card: `margin-top:auto` on the button means
+       the free space collects between the title and the button, which is where
+       the art is meant to read. Do not take this below ~150 without
+       re-measuring — under it the free space closes and the card stops looking
+       like a photograph. */
+    .cta-card{min-height:155px;}
+    .cta-body{padding:14px 16px;}
     /* 1.2rem = 19.2px, still above the 18.66px bold large-text line the
        contrast decision above depends on. Shrinking this below it would put
        the label back under the 4.5:1 rule it cannot meet. */
     .cta-title{font-size:1.2rem;}
-    /* Apple's 44px floor, on the part of the card that reads as the button. */
-    .cta-go{width:100%;text-align:center;min-height:44px;line-height:24px;}
+    /* 13C — THE BUTTON'S WEIGHT CAME OFF ITS WIDTH, NOT ITS TYPE.
+       The owner reported these as "visually oversized on phones" and named a
+       50–54px height. MEASURED FIRST, and the two do not agree: the phone
+       button was already at the 44px floor — shorter than the desktop's 52.1 —
+       while spanning 316 of a 350px card as a full-bleed cyan bar. A bar that
+       wide reads as oversized whatever its height, so the width is what was
+       carrying the complaint.
+
+       So it is shrink-wrapped with real horizontal padding, exactly as it is on
+       a desktop, and set to the owner's own 50px. Area goes 316×44 = 13,904px²
+       to about 157×50 = 7,850px² — roughly halved — while the target grows
+       taller, stays well clear of Apple's 44px floor, keeps the cyan and keeps
+       the 18.88px bold type the AA decision above depends on. The font size is
+       NOT a lever here and never will be: below 18.66px bold, white on --teal
+       falls under the 4.5:1 rule it cannot meet.
+
+       `text-align:center` is kept although the box now shrink-wraps: it costs
+       nothing and it is what keeps the label centred if this ever goes
+       full-width again. */
+    .cta-go{text-align:center;min-height:50px;line-height:24px;padding:13px 26px;}
+    /* 13D — GETTING TO THE FIRST ACTION SOONER, by spacing only. Nothing is
+       removed, no tap target drops below 44, the logo's own pixels are
+       untouched — the white badge's frame is thinner, not the artwork inside
+       it — and the navigation keeps every item it had. */
+    header .wrap{padding:8px 20px;gap:10px;}
+    .brand-badge{padding:6px 14px;}
+    /* THE NAV ROW GAP WAS TIGHTENED AND THEN PUT BACK, and the measurement is
+       why. 14 → 10 saved 8px of header, and it bought that by bringing rows of
+       23px-tall text links — already under the 44px floor, which is
+       pre-existing and not this unit's to fix — 4px closer together. The brief
+       forbids reducing tap targets; shrinking the space BETWEEN sub-floor
+       targets is the same defect wearing a different name. 8px is not worth
+       it. The 18px this block does save comes from the wrap's own padding and
+       the badge's frame, neither of which is anything a thumb aims at. */
+    /* The hero's 96/92 is a desktop figure and it was the single largest thing
+       between the header and the first card on a phone. The headline, the
+       supporting line and the trust line are owner-approved copy and are
+       untouched; this is the padding around them. */
+    .hero{padding:56px 20px 48px;}
   }
 </style>
 </head>
@@ -403,10 +450,10 @@ padding:11px 22px;text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;f
        is, and an icon over a photograph of the same thing was saying it
        twice (owner, 2026-08-22). -->
   <ul class="cta-cards">
-    <li><a class="cta-card cta-ins" href="/intake/?assignment=insurance">
+    <li><a class="cta-card cta-pri" href="/intake/?assignment=private">
       <span class="cta-art" aria-hidden="true"></span>
       <span class="cta-body">
-        <span class="cta-title">Submit an Insurance Assignment</span>
+        <span class="cta-title">Request a Private Investigation</span>
         <span class="cta-go" aria-hidden="true">Get Started</span>
       </span>
     </a></li>
@@ -417,10 +464,10 @@ padding:11px 22px;text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;f
         <span class="cta-go" aria-hidden="true">Get Started</span>
       </span>
     </a></li>
-    <li><a class="cta-card cta-pri" href="/intake/?assignment=private">
+    <li><a class="cta-card cta-ins" href="/intake/?assignment=insurance">
       <span class="cta-art" aria-hidden="true"></span>
       <span class="cta-body">
-        <span class="cta-title">Request a Private Investigation</span>
+        <span class="cta-title">Submit an Insurance Assignment</span>
         <span class="cta-go" aria-hidden="true">Get Started</span>
       </span>
     </a></li>
