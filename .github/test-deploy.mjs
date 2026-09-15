@@ -693,13 +693,14 @@ section('The manifest describes the site honestly');
      answers differently from the page is the drift this project keeps
      recording, and hidden schema-only questions are against Google's own rules
      for the markup. */
-  const faqBad = [];
+  const faqBad = [], faqAns = [];
   for (const f of publicPages) {
     const raw = readAll(f), rel = path.relative(site, f);
     let schema = null;
     for (const m of raw.matchAll(/<script[^>]*application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)) {
       let data; try { data = JSON.parse(m[1]); } catch { continue; }
-      if (data['@type'] === 'FAQPage') schema = (data.mainEntity || []).map(q => q.name);
+      if (data['@type'] === 'FAQPage') schema = (data.mainEntity || []).map(q =>
+        ({ q: q.name, a: ((q.acceptedAnswer || {}).text) || '' }));
     }
     if (!schema) continue;
     const decode = (t) => t.replace(/&amp;/g, '&').replace(/&#x27;|&#39;/g, "'")
@@ -709,15 +710,32 @@ section('The manifest describes the site honestly');
        renders its FAQ that way, which is why the schema can be compared to it
        at all — and if a page stops doing so this fails loudly rather than
        quietly comparing nothing. */
-    const visible = [...raw.matchAll(/<h3[^>]*>([^<]*\?)<\/h3>/g)].map(m => decode(m[1]));
+    const pairs = [...raw.matchAll(/<h3[^>]*>([^<]*\?)<\/h3>\s*<p[^>]*>([\s\S]*?)<\/p>/g)]
+      .map(m => [decode(m[1]), decode(m[2].replace(/<[^>]+>/g, ''))]);
+    const visible = pairs.map(p => p[0]);
     if (visible.length === 0) { faqBad.push(`${rel}: FAQPage schema but no visible questions`); continue; }
-    const miss = schema.map(decode).filter(q => !visible.includes(q));
+    const miss = schema.map(r => decode(r.q)).filter(q => !visible.includes(q));
     if (miss.length) faqBad.push(`${rel}: schema-only question "${miss[0].slice(0, 54)}"`);
     if (schema.length !== visible.length)
       faqBad.push(`${rel}: ${schema.length} in schema vs ${visible.length} visible`);
+    /* AND THE ANSWER, NOT ONLY THE QUESTION. The question half alone would pass
+       a page whose schema answers something the reader is never shown, which is
+       the exact drift this file records ("the FAQ's structured-data twin ... is
+       the copy that drifts when only the visible text is edited"). Measured
+       across all eleven pages before it was written: zero mismatches, so this
+       pins what is already true rather than describing an aspiration. */
+    const seen = new Map(pairs);
+    for (const row of schema) {
+      const q = decode(row.q), a = decode(row.a);
+      if (!seen.has(q)) continue;              // already reported above
+      if (seen.get(q) !== a)
+        faqAns.push(`${rel}: "${q.slice(0, 40)}" — schema says "${a.slice(0, 48)}…"`);
+    }
   }
   ok('every FAQPage question is also asked in the visible copy',
      faqBad.length === 0, faqBad.join(' | '));
+  ok('and every FAQPage answer is the answer the page actually shows',
+     faqAns.length === 0, faqAns.join(' | '));
 
   /* --- THE RETIRED BRAND LINE AND THE FORBIDDEN REGION NAME ----------------
      Owner, 2026-09-13: the line is "Serving Greater Lynchburg and Central

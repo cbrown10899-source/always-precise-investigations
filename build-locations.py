@@ -41,7 +41,7 @@ GBP_URL = "https://maps.google.com/?cid=1285488950812777376"
 # would stop matching the one generated after it, and the deploy guard would
 # fail on the NEXT day rather than this one. Bump this by hand when the location
 # content actually changes.
-CONTENT_REVISED = "2026-09-14"
+CONTENT_REVISED = "2026-09-15"
 FACEBOOK = "https://www.facebook.com/AlwaysPreciseInvestigations/"
 
 # THE GEOGRAPHY HIERARCHY HAS ONE WRITER (owner, 2026-09-13, finalization).
@@ -589,10 +589,13 @@ def hub():
          "administrators and self-insured employers submit claim assignments; law firms, attorneys "
          "and paralegals open legal matters; private clients start with a free confidential "
          "consultation. Each is handled under its own terms and billing arrangement."),
+        # OWNER COPY, 2026-09-15, verbatim. One tuple feeds the visible <h3>/<p>
+        # and the FAQPage node below, so the answer a reader sees and the answer
+        # in structured data cannot say different things about same-day start.
         ("How soon can someone be out?",
-         "Most matters can be scheduled within a few days, and urgent ones sooner. Timing tends to "
-         "matter more than people expect: patterns are easiest to document while they are still "
-         "active, so it is worth calling before a situation settles."),
+         "In many cases, we can begin as soon as the same day, depending on availability and the "
+         "type of assignment. Other matters can usually be scheduled quickly. Timing often "
+         "matters, so it is best to call as soon as you know you may need an investigator."),
     ]
     faq_html = "".join(f"<h3>{esc(q)}</h3><p>{esc(a)}</p>" for q, a in hub_faqs)
     ld = {"@context": "https://schema.org", "@type": "ItemList",
