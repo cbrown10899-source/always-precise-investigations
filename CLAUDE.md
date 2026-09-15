@@ -583,6 +583,38 @@ not narrowed. The orphan guard could never see either gap — it answered
 links; asking the same question of every authority page is what found the bug
 the last unit shipped.
 
+## A FAQ answer has one writer, and the guard now checks the answer
+
+Owner, 2026-09-15: the hub's *"How soon can someone be out?"* answer, replaced
+with their own wording about a **same-day start**. One line of copy, on
+`/private-investigator/` only — the six city pages do not carry that question.
+
+**IT IS THE GENERATOR'S, NOT THE HTML'S.** `hub_faqs` in `build-locations.py`
+is a list of `(question, answer)` tuples, and `faq_html` renders the visible
+`<h3>/<p>` from the same tuple the FAQPage node is composed from — so the
+reader's answer and the structured-data answer moved together by construction.
+Editing `private-investigator/index.html` would have been undone by the next
+regeneration, the *derived file* rule.
+
+**THE CLASS GUARD ONLY CHECKED QUESTIONS, AND NOW CHECKS ANSWERS.** *Every
+FAQPage question is also asked in the visible copy* would have passed a page
+whose schema answered something the reader is never shown — which is the drift
+this file keeps recording (*"the FAQ's structured-data twin ... is the copy that
+drifts when only the visible text is edited"*). **Measured over all eleven
+FAQPage pages before the assertion was written: zero mismatches**, so it pins
+what is already true rather than describing an aspiration. Negative-tested by
+rewriting the hub's schema answer and leaving the visible `<p>` alone: the
+question half still passes, the answer half fails naming the page, the question
+and the wrong text.
+
+**`CONTENT_REVISED` WAS BUMPED, AND THE IMPRECISION IS WORTH STATING.** It is
+one constant over all thirteen sitemap URLs, so bumping it for a change to ONE
+page moves `lastmod` on twelve that did not change today. That is a property of
+the one-writer design, not a new defect — and the alternative is the stale
+`lastmod` on a changed page that the homepage's frozen literal already cost
+once. If per-URL dates are ever wanted, that is a design change and an owner
+decision, not a quiet edit.
+
 ## CI pushes to master
 
 `build-locations.yml` commits and pushes to `master` as `github-actions[bot]`.
