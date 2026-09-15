@@ -615,6 +615,75 @@ the one-writer design, not a new defect — and the alternative is the stale
 once. If per-URL dates are ever wanted, that is a design change and an owner
 decision, not a quiet edit.
 
+## Private Investigation is the first public action, and the phone got shorter
+
+Owner brief 2026-09-15 (§13A–§13J). A compaction and reorder pass on the
+homepage cards — explicitly *"not a redesign"*: the artwork, borders, type,
+cyan buttons and card design are all untouched.
+
+**THE ORDER IS THE DOM'S, NEVER FLEX `order`.** Private, Legal, Insurance, in
+source order, so desktop and phone agree and — the half that matters — the
+visual order and the TAB order stay the same walk. The suite tabs it for real
+and asserts the new sequence; that assertion failing on the first run is what
+proved the reorder had gone through the DOM rather than a CSS trick.
+
+**THE ORDER IS NOW PINNED ONCE, AS ITS OWN DECISION.** Three routing
+assertions used to read `cards[0]`, `cards[1]`, `cards[2]`, so the reorder
+failed three checks that were not about order at all. Routing is keyed by
+TITLE now — *each named card reaches its own door*, which is the property those
+assertions actually mean — and the order has one explicit pin beside them.
+**No assertion was weakened**: eight failed, all eight were right, and each was
+re-aimed at the owner's new approved order the way the H1 pins were.
+
+**§13C'S PREMISE DID NOT SURVIVE MEASUREMENT, AND THE FIX FOLLOWED THE
+MEASUREMENT.** The brief calls the phone *Get Started* button *"visually
+oversized"* and names 50–54px. It was at **44px** — the floor, and shorter than
+the desktop's 52.1 — while spanning **316 of a 350px card** as a full-bleed cyan
+bar. The width was carrying the complaint. So it is shrink-wrapped with real
+horizontal padding, like the desktop's, at the owner's own 50px: **316×44 →
+160×50**, area roughly halved, target taller, and ≥24px of card either side
+against the 17px it had. **The type is not a lever and never will be** — white
+on `--teal` is 3.37:1, which clears AA only as large text, which for bold starts
+at 18.66px; shrinking the label to buy height would put it under a rule it
+cannot meet. Pinned at every phone width.
+
+**THE NAV ROW GAP WAS TIGHTENED AND THEN PUT BACK.** 14 → 10 saved 8px of
+header and bought it by bringing rows of **23px-tall text links** 4px closer —
+targets already under the 44px floor, which is pre-existing and not this unit's
+to fix. **Shrinking the space BETWEEN sub-floor targets is the same defect
+wearing a different name**, and 8px is not worth it. The 18px the header does
+save comes from the wrap's own padding and the white badge's frame — the logo's
+own pixels are 205×58 before and after, and all eight nav items and the Call
+button are untouched.
+
+**MEASURED AT FOUR WIDTHS, BEFORE AND AFTER.** Desktop and tablet card height,
+button, header and hero are **identical** — only the order moved up there, which
+is what "consistent on both surfaces" required.
+
+| | 390 | 320 |
+| --- | --- | --- |
+| card height | 186 → **155** (−16.7%) | 186 → **155** (−16.7%) |
+| Get Started | 316×44 → **160×50** | 246×44 → **160×50** |
+| header | 235.2 → **217.2** | 235.2 → **217.2** |
+| hero | 1393.7 → **1206.7** | 1520.4 → **1333.4** |
+| **Private card Y** | 1218.6 → **756.6** | 1365 → **903** |
+
+No collision, nothing clipped, no new overflow. **The 5px residue at 320 is the
+same `a.call-btn` this file already records** — byte-identical, in a section the
+brief forbids redesigning, neither caused nor worsened here.
+
+**LOOKING AT IT IS STILL PART OF THE JOB.** Rendered at 390×844 and 320×568:
+the compacted card keeps **50px of photograph** between title and button at 390
+and **25px at 320**, where two of the three titles wrap to a second line. It
+reads as a photograph, not a slab. Below about 150 that gap closes and the card
+stops looking like one — do not go under it without re-rendering.
+
+**320×568 STILL DOES NOT REACH THE FIRST CARD, and that is worth stating rather
+than chasing.** The card top moves 1365 → 903 on a 568-tall screen, so it is
+still a scroll away; the compliance notice alone is 119px there. The remaining
+bulk is the notice and the approved H1 block, and both are content decisions
+rather than spacing ones.
+
 ## CI pushes to master
 
 `build-locations.yml` commits and pushes to `master` as `github-actions[bot]`.
@@ -706,14 +775,16 @@ an insurance assignment and a private investigation. **Legal has been a public
 page since Unit 37A and had no door on the front page at all**, so a law firm
 arriving at the homepage had to find the nav.
 
-Three equal cards now, in the owner's order, each an anchor onto its own
-intake door:
+Three equal cards now, each an anchor onto its own intake door. **The ORDER
+below is the owner's of 2026-09-15 and supersedes the Insurance-first order of
+2026-08-22** — see *Private Investigation is the first public action* further
+down; the doors themselves have never moved.
 
 | Card | Door |
 | --- | --- |
-| Submit an Insurance Assignment | `/intake/?assignment=insurance` |
-| Submit a Legal Assignment | `/intake/?assignment=legal` |
 | Request a Private Investigation | `/intake/?assignment=private` |
+| Submit a Legal Assignment | `/intake/?assignment=legal` |
+| Submit an Insurance Assignment | `/intake/?assignment=insurance` |
 
 **Legal is never routed through the private door**, and that is structural
 rather than a preference: `pickSvc` on the private door refuses `legal`, so

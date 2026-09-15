@@ -1544,18 +1544,35 @@ section('Unit 40 — three cards, three doors');
     })));
   ok('there are exactly three cards', cards.length === 3, JSON.stringify(cards.map(c => c.href)));
 
+  /* THE OWNER'S ORDER, 2026-09-15: Private, Legal, Insurance — Private
+     Investigation is the primary public-client action, superseding the
+     Insurance-first order of 2026-08-22. It is pinned ONCE, here, as its own
+     decision. The routing assertions below used to carry it implicitly by
+     reading cards[0], cards[1], cards[2], which meant a reorder failed three
+     routing checks that were not about order at all. */
+  const ORDER = ['Request a Private Investigation', 'Submit a Legal Assignment',
+                 'Submit an Insurance Assignment'];
+  ok('the cards are in the owner\'s order: Private, Legal, Insurance',
+     cards.map(c => c.name.replace(/ Get Started$/, '')).join(' | ') === ORDER.join(' | '),
+     cards.map(c => c.name).join(' | '));
+
   /* ROUTING — the whole point of the unit, and the one thing that must not be
      got wrong: a law firm routed through the private door lands somewhere
-     `pickSvc` refuses outright. */
-  ok('the Insurance card reaches the carrier door',
-     cards[0].href === '/intake/?assignment=insurance', cards[0].href);
-  ok('the Legal card reaches the LEGAL door',
-     cards[1].href === '/intake/?assignment=legal', cards[1].href);
-  ok('the Private card reaches the private door',
-     cards[2].href === '/intake/?assignment=private', cards[2].href);
+     `pickSvc` refuses outright. KEYED BY TITLE, so it states the property it
+     means — each named card reaches its own door — and survives the next
+     reorder instead of failing beside it. */
+  const byTitle = (t) => cards.find(c => c.name.startsWith(t));
+  for (const [title, door] of [['Submit an Insurance Assignment', 'insurance'],
+                               ['Submit a Legal Assignment', 'legal'],
+                               ['Request a Private Investigation', 'private']]) {
+    const card = byTitle(title);
+    ok(`"${title}" reaches the ${door} door`,
+       !!card && card.href === `/intake/?assignment=${door}`, card && card.href);
+  }
   ok('and the Legal card is NOT routed through private or carrier',
-     cards[1].href !== '/intake/?assignment=private'
-     && cards[1].href !== '/intake/?assignment=insurance', cards[1].href);
+     byTitle('Submit a Legal Assignment').href !== '/intake/?assignment=private'
+     && byTitle('Submit a Legal Assignment').href !== '/intake/?assignment=insurance',
+     byTitle('Submit a Legal Assignment').href);
 
   /* Each is a real link, not a div with a handler. */
   ok('each card is a real anchor', cards.every(c => c.tag === 'A'));
@@ -1569,9 +1586,11 @@ section('Unit 40 — three cards, three doors');
       clone.querySelectorAll('[aria-hidden="true"]').forEach(n => n.remove());
       return clone.textContent.replace(/\s+/g, ' ').trim();
     }));
-  ok('the Insurance card announces itself', names[0] === 'Submit an Insurance Assignment', names[0]);
-  ok('the Legal card announces itself', names[1] === 'Submit a Legal Assignment', names[1]);
-  ok('the Private card announces itself', names[2] === 'Request a Private Investigation', names[2]);
+  /* The accessible name of each card is its own title — checked as a SET
+     against the pinned order, so the three titles are all present, all exact,
+     and in the order the assertion above already fixed. */
+  ok('each card announces itself by its own title, in that order',
+     names.join(' | ') === ORDER.join(' | '), names.join(' | '));
 
   /* NOT RELIANT ON THE BACKGROUND IMAGE. The art is a CSS background on an
      aria-hidden span; strip every decorative node and the meaning survives,
@@ -1680,6 +1699,17 @@ section('Unit 40 — the layout at three widths');
   ok('and sits low, the same distance off the foot on all three',
      new Set(go.map(g => g.foot)).size === 1 && go[0].foot <= 32, JSON.stringify(go.map(g => g.foot)));
   ok('with no horizontal overflow', desk.doc <= 0, String(desk.doc));
+  /* DESKTOP DID NOT MOVE. The 2026-09-15 compaction is scoped to <=640px and
+     the owner's rule is that desktop changes only when it must. Measured
+     before and after: card 236, button 147.9x52.1, identical. Only the ORDER
+     changed up here, which is the one thing the owner asked to be the same on
+     both surfaces. */
+  ok('desktop card height is unchanged at 236', desk.heights.every(h => h === 236),
+     JSON.stringify(desk.heights));
+  const deskGo = await page.evaluate(() => [...document.querySelectorAll('.cta-go')]
+    .map(g => Math.round(g.getBoundingClientRect().height * 10) / 10));
+  ok('and the desktop button is unchanged at 52.1', deskGo.every(h => h === 52.1),
+     JSON.stringify(deskGo));
   await ctx.close();
 
   /* PHONE: one column, in the owner's order, still no sideways scroll. */
@@ -1696,8 +1726,12 @@ section('Unit 40 — the layout at three widths');
     });
     ok(`${w}px: the cards stack in one column`, new Set(m.lefts).size === 1, JSON.stringify(m.lefts));
     ok(`${w}px: each below the last`, m.tops[0] < m.tops[1] && m.tops[1] < m.tops[2], JSON.stringify(m.tops));
-    ok(`${w}px: Insurance, Legal, Private in that order`,
-       m.order.join('|') === '/intake/?assignment=insurance|/intake/?assignment=legal|/intake/?assignment=private',
+    /* THE SAME ORDER ON A PHONE AS ON A DESKTOP, and it is the SOURCE order —
+       the owner's 2026-09-15 decision, Private first. Nothing here reorders
+       anything, which is what keeps the visual order and the tab order the
+       same walk (asserted for real, by tabbing, further down). */
+    ok(`${w}px: Private, Legal, Insurance in that order`,
+       m.order.join('|') === '/intake/?assignment=private|/intake/?assignment=legal|/intake/?assignment=insurance',
        m.order.join('|'));
     /* THE CARDS' OWN EDGE, not the whole document, and the difference matters.
        At 320px this page ALREADY overflowed before Unit 40, and BOTH numbers
@@ -1733,6 +1767,46 @@ section('Unit 40 — the layout at three widths');
        goN.every(g => Math.abs(g.off) <= 1 && g.align === 'center'), JSON.stringify(goN));
     ok(`${w}px: the Get Started target clears Apple's 44px floor`,
        m.go.every(h => h >= 44), JSON.stringify(m.go));
+
+    /* ---- 2026-09-15: the owner's mobile compaction, pinned as numbers ----
+       Every one of these was measured before and after; they are here so the
+       next unit cannot undo the trade without saying so.
+
+       THE BUTTON'S WEIGHT CAME OFF ITS WIDTH. The owner called it "oversized"
+       and named 50–54px, but it was already at the 44px floor — what made it
+       look oversized was spanning 316 of a 350px card as a full-bleed bar. So
+       the property asserted is that there is REAL CARD ON BOTH SIDES of it:
+       ≥24px a side, against the 17px it had when it was width:100%. Height
+       lands in the owner's own band. */
+    const shape = await p2.evaluate(() => [...document.querySelectorAll('.cta-card')].map(c => {
+      const cr = c.getBoundingClientRect(), g = c.querySelector('.cta-go');
+      const r = g.getBoundingClientRect(), t = c.querySelector('.cta-title').getBoundingClientRect();
+      return { card: Math.round(cr.height), h: Math.round(r.height),
+               side: Math.round(Math.min(r.left - cr.left, cr.right - r.right)),
+               px: parseFloat(getComputedStyle(g).fontSize),
+               weight: getComputedStyle(g).fontWeight,
+               overlaps: r.top < t.bottom - 0.5,
+               inside: r.bottom <= cr.bottom + 0.5 && r.right <= cr.right + 0.5 };
+    }));
+    ok(`${w}px: the button sits in the owner's 50–54px band`,
+       shape.every(x => x.h >= 50 && x.h <= 54), JSON.stringify(shape.map(x => x.h)));
+    ok(`${w}px: and is no longer a full-bleed bar — real card either side`,
+       shape.every(x => x.side >= 24), JSON.stringify(shape.map(x => x.side)));
+    /* THE TYPE IS NOT A LEVER AND NEVER WILL BE. White on --teal is 3.37:1,
+       which clears AA only as LARGE text, which for bold starts at 18.66px.
+       Shrinking this label to buy height would put it under a rule it cannot
+       meet — so the height came from padding and the size is pinned here. */
+    ok(`${w}px: the label stays above the 18.66px bold large-text line`,
+       shape.every(x => x.px >= 18.66 && Number(x.weight) >= 700),
+       JSON.stringify(shape.map(x => `${x.px}/${x.weight}`)));
+    /* THE CARD IS COMPACTED, NOT CRAMPED: 186 → 155 is 16.7%, inside the
+       owner's 15–20%, and the button still clears the title and stays inside
+       the card at every width including 320, where two of the three titles
+       wrap to a second line. */
+    ok(`${w}px: the card is in the compacted 150–160px band`,
+       shape.every(x => x.card >= 150 && x.card <= 160), JSON.stringify(shape.map(x => x.card)));
+    ok(`${w}px: nothing overlaps and nothing escapes the card`,
+       shape.every(x => !x.overlaps && x.inside), JSON.stringify(shape));
     await c2.close();
   }
 
@@ -1986,9 +2060,9 @@ section('Unit 40 — contrast, focus, and what the hero kept');
     });
     if (f) stops.push(f); else if (stops.length) break;
   }
-  ok('tabbing reaches each card exactly once, Insurance then Legal then Private',
+  ok('tabbing reaches each card exactly once, Private then Legal then Insurance',
      stops.length === 3 && stops.map(s => s.href).join('|') ===
-     '/intake/?assignment=insurance|/intake/?assignment=legal|/intake/?assignment=private',
+     '/intake/?assignment=private|/intake/?assignment=legal|/intake/?assignment=insurance',
      JSON.stringify(stops.map(s => s.href)));
   /* THE RING IS GOLD, not the teal it sits beside — measured on the focused
      element, because a rule that exists is not a rule that applies. */
