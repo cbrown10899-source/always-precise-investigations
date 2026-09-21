@@ -3491,6 +3491,58 @@
   .simp-line .btn{margin-left:auto;min-height:44px;}
   .simp-line.err{border-top:0;}
 
+  /* ===== SIMPLE VIEW'S CARDS AND ITS QUIETER LAUNCHERS (owner, §2/§6/§7) ==
+     Measured before this unit: four intakes on the desk drew FOUR rows in
+     Needs action and the SAME four cards in New intakes — 100% duplication at
+     390 and 320. The lists are derived together now; what is left here is the
+     shape of the one card that survived. */
+  .simp-need{border:1px solid var(--line);border-radius:var(--r-card, 12px);
+    background:var(--panel);padding:12px;}
+  /* §8 — COMPACT MEANS THE ACTIONS STOP BEING A COLUMN. Measured at 390: the
+     three buttons wrapped to THREE rows and the action block alone was 148 of
+     the card's 289px. Two across, with the primary spanning, is two rows —
+     and no button is shrunk below its own words, it simply wraps and grows,
+     which is this file's own rule about a primary action. Phone widths only:
+     above 640 the flex row already fits all three on one line. */
+  @media(max-width:640px){
+    .simp-need .simp-acts{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+    .simp-need .simp-acts > :first-child{grid-column:1 / -1;}
+  }
+  .simp-need + .simp-need{margin-top:10px;}
+  .simp-need .simp-acts{margin:0;}
+  .simp-intake .simp-acts,.simp-need .simp-acts{margin-bottom:0;}
+  /* §6 — the door for work the office invents, kept and made last. */
+  .simp-foot{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    margin:2px 0 14px;padding:0 2px;}
+  .simp-add{font-weight:700;min-height:44px;}
+  .simp-foot-s{font-size:.8rem;color:var(--muted);}
+
+  /* §7/§8 — THE TWO BOTS COME OUT OF THE AIR ON SIMPLE HOME.
+
+     The first attempt kept them floating and merely dropped their words —
+     135x48 and 76x44 became a 48 and a 44 circle, which was quieter and still
+     FAILED §8: measured at 390 and 320, a fixed launcher sat on top of a card's
+     own action button. A control you cannot tap because a pill is over it is
+     worse than a loud pill.
+
+     So on Simple Home they are DOCKED — an ordinary quiet row under the view
+     toggle, in the page, scrolling with it, so there is nothing left to cover
+     anything. Same `data-act`s, same handlers, same panels: nothing about what
+     they DO moved. **This is Simple HOME only**: every other screen, in either
+     mode, keeps the floating pair exactly as it was, because below 900px the
+     rail is behind the burger and those are the phone's only bot doors there.
+     Full View is not selected by any of this. */
+  body.simplehome .asst-pill,
+  body.simplehome .ceo-fab{display:none !important;}
+  .simp-bots{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 14px;}
+  .simp-bot{display:inline-flex;align-items:center;gap:7px;min-height:44px;
+    padding:0 14px;font:inherit;font-size:.82rem;font-weight:700;cursor:pointer;
+    border:1px solid var(--line);border-radius:var(--r-btn, 10px);
+    background:var(--panel);color:var(--muted);}
+  .simp-bot .simp-bot-i{font-size:.95rem;line-height:1;}
+  .simp-bot.ceo{color:var(--navy-2);}
+  .simp-bot:focus-visible{outline:2px solid var(--teal);outline-offset:2px;}
+
   /* DESKTOP IS UNCHANGED, AND THESE TWO RULES ARE WHAT KEEP IT THAT WAY.
      Splitting the dialog into three regions moved the action row's own
      `margin-top:12px` out of an inline style and the error out from under the
@@ -5778,7 +5830,7 @@ function ceoReviewCase(caseNo){
 function ceoFabHtml(){
   if(CEO_OPEN || (ASST && ASST.open)) return "";
   return `<button class="ceo-fab" data-act="ceoOpen" aria-label="Open the CEO Bot">
-    <span class="ceo-fabstar" aria-hidden="true">&#9733;</span><span>CEO</span></button>`;
+    <span class="ceo-fabstar" aria-hidden="true">&#9733;</span><span class="ceo-fabword">CEO</span></button>`;
 }
 
 function asstPillHtml(){
@@ -7463,6 +7515,11 @@ const simpleAwaiting = c => ["new", "awaiting_client"].includes(c.stage || c.sta
   && (c.lead_status || "") !== "converted";
 function simpleState(c){
   const claim = c.kind === "claims";
+  /* A LEAD THE OFFICE ALREADY DECIDED NEEDS NOTHING. `simpleAwaiting` only
+     excludes `converted`, so a declined or closed lead sitting at the opening
+     stage was being drawn as "Rate Sheet Needed" — an action list asking for
+     work on something somebody already said no to. */
+  if(["declined", "closed_lead"].includes(c.lead_status || "")) return null;
   if(simpleAwaiting(c)){
     /* SIGNED OUTRANKS EVERYTHING ELSE ON AN UNDECIDED INTAKE: the client has
        done their part and the only thing left is the office's decision. */
@@ -7480,34 +7537,112 @@ function simpleState(c){
   return null;    // nothing to say is not a state — it is silence
 }
 
+/* ── ONE WRITER FOR BOTH LISTS (owner, 2026-09-21 cleanup §1/§5) ──────────
+   Measured before this existed: four intakes on the desk, four rows in NEEDS
+   ACTION and the SAME four cards in NEW INTAKES — **100% duplication at 390
+   and at 320**. Every awaiting intake earns a state, so the second list could
+   only ever repeat the first.
+
+   The lists are derived together now and NEEDS ACTION WINS: `fresh` is what
+   is left over, which with today's derivation is normally nothing, and the
+   section then draws nothing rather than repeating a card. Subtracting
+   against the FULL needs set rather than the capped slice is the half that is
+   easy to get wrong — an intake past the cap reappearing below would be the
+   duplication coming back by a side door. */
+const SIMPLE_ACTION_CAP = 8;
+function simpleLists(){
+  const needs = [], fresh = [], claimed = new Set();
+  for(const c of CASES){
+    if(c.archived_at || c.deleted_at) continue;
+    if(["closed", "complete", "cancelled"].includes(c.stage || c.status)) continue;
+    const st = simpleState(c);
+    if(st){ needs.push([c, st]); claimed.add(c.case_no); }
+  }
+  for(const c of CASES){
+    if(c.archived_at || c.deleted_at || claimed.has(c.case_no)) continue;
+    if(!simpleAwaiting(c)) continue;
+    if(["declined", "closed_lead"].includes(c.lead_status || "")) continue;
+    fresh.push(c);
+  }
+  return { needs, fresh };
+}
+
+/* WHAT THIS INTAKE CAN ACTUALLY DO, FROM WHAT IS STORED (§2's "only show
+   actions that are actually valid"). Every one is an EXISTING control — same
+   `data-act`, same handler, same route — so this is a place to press them
+   from, never a second implementation.
+
+   OPEN INTAKE is always first and always primary: the submitted record
+   exists, and §26's own workflow opens with SEE INTAKE / READ IT. Quoting and
+   accepting are offered only while the decision is still open; once the case
+   is converted the only thing this row can still be waiting on is the money,
+   and that is the case's own Record Payment form. */
+function simpleActions(c){
+  const out = [`<button class="uibtn pri" data-act="simpleOpen"
+    data-case="${esc(c.case_no)}">Open intake</button>`];
+  if(simpleAwaiting(c)){
+    out.push(`<button class="uibtn sec" data-act="leadSheet" data-case="${esc(c.case_no)}"
+      data-kind="${esc(c.kind || "")}">Send rate sheet</button>`);
+    out.push(`<button class="uibtn acc" data-act="acceptIntake" data-case="${esc(c.case_no)}"${
+      ACCEPT_BUSY === c.case_no ? " disabled" : ""}>${
+      ACCEPT_BUSY === c.case_no ? "Accepting&hellip;" : "Create case / Accept"}</button>`);
+  }else{
+    out.push(`<button class="uibtn sec" data-act="openCase" data-case="${esc(c.case_no)}">Open case</button>`);
+    if(c.kind !== "claims" && c.retainer_received == null){
+      out.push(`<button class="uibtn sec" data-act="leadRecordPay"
+        data-case="${esc(c.case_no)}">Record retainer</button>`);
+    }
+  }
+  return out.join("");
+}
+
+/* THE FACTS §2 NAMES, and only the ones this row actually carries. A blank
+   field is absent rather than drawn as a label over nothing — the intake
+   form's own rule about never writing a placeholder into a value. */
+function simpleFacts(c){
+  const claim = c.kind === "claims";
+  return [
+    c.service ? esc(c.service) : "",
+    c.subject_name ? `${claim ? "Claimant" : "Subject"}: ${esc(c.subject_name)}` : "",
+    `Received ${when(c.created_at)}`,
+  ].filter(Boolean).join(" &middot; ");
+}
+
+/* THE CLIENT TYPE, as a chip, from the record's own category facts. */
+function simpleKindChip(c){
+  return `<span class="tag ${c.legal ? "legaltag" : c.kind === "claims" ? "claims" : "consumer"}">${
+    c.legal ? "Legal" : c.kind === "claims" ? "Insurance" : "Private"}</span>`;
+}
+
 /* NEEDS ACTION — compact, capped, and honest about a failed read.
 
    `CASES_OK` is the flag that keeps the three states apart, and it matters
    most here for the same reason it matters on the signed-intake card: a strip
    whose job is "what needs doing" must never quietly say nothing does about a
    list it could not read. */
-const SIMPLE_ACTION_CAP = 8;
-function simpleNeedsHtml(){
+function simpleNeedsHtml(lists){
   if(!CASES_OK){
     return `<div class="card simp-card"><div class="bar"><h2 class="simp-h">Needs action</h2></div>
       <div class="err">The case list did not load, so this is unknown &mdash; not empty.
         <button class="btn sm ghost" data-act="reload" style="margin-left:8px">Try again</button></div></div>`;
   }
-  const rows = [];
-  for(const c of CASES){
-    if(c.archived_at || c.deleted_at) continue;
-    if(["closed", "complete", "cancelled"].includes(c.stage || c.status)) continue;
-    const st = simpleState(c);
-    if(st) rows.push([c, st]);
-  }
+  const rows = lists.needs;
   return `<div class="card simp-card">
     <div class="bar"><h2 class="simp-h">Needs action</h2>
       <span class="count">${rows.length ? `${rows.length} waiting` : "Nothing waiting"}</span></div>
     ${rows.length ? `<div class="simp-rows">${rows.slice(0, SIMPLE_ACTION_CAP).map(([c, [label, tone]]) => `
-      <div class="simp-row">
-        <span class="simp-who"><b>${esc(simpleWho(c))}</b>
-          <span class="tag ${tone}">${esc(label)}</span></span>
-        <button class="btn sm" data-act="simpleOpen" data-case="${esc(c.case_no)}">Open</button>
+      <div class="simp-need">
+        <div class="simp-i-h"><b>${esc(simpleWho(c))}</b>
+          ${simpleKindChip(c)}
+          <span class="tag ${tone}">${esc(label)}</span>
+          ${/* SIGNED IS A FACT THE RECORD COMPUTES, and it is the one that
+               decides whether this is ready to read — so it sits with the
+               category rather than under a control, exactly as the Intakes
+               desk already draws it. */""}
+          ${c.signed ? `<span class="tag ok">Signed &#10003;</span>`
+            : `<span class="tag">Not signed</span>`}</div>
+        <div class="simp-i-f">${simpleFacts(c)}</div>
+        <div class="simp-acts">${simpleActions(c)}</div>
       </div>`).join("")}</div>
       ${rows.length > SIMPLE_ACTION_CAP ? `<div class="simp-more">and ${
         rows.length - SIMPLE_ACTION_CAP} more &mdash;
@@ -7523,37 +7658,61 @@ const simpleWho = c => c.legal ? (c.legal_firm || c.client_name || c.case_no)
   : c.kind === "claims" ? (c.carrier || c.client_name || c.case_no)
   : (c.client_name || c.case_no);
 
-/* NEW INTAKES — newest first, four facts, one action (§4). Declined, closed
-   and accepted rows are deliberately absent: this list answers "what just came
-   in", and mixing decided work into it is the noise §4 rules out. */
-function simpleIntakesHtml(){
+/* NEW INTAKES — WHAT NEEDS ACTION DID NOT ALREADY CLAIM (§1/§5).
+
+   THE SECTION DISAPPEARS RATHER THAN REPEATING. With today's derivation every
+   awaiting intake earns a state, so this is normally empty and draws nothing
+   at all — not an empty card, not a heading over a blank space. §5 allows
+   exactly that, and a section whose only possible content is a second copy of
+   the card above it is worse than no section. It returns when something genuinely
+   sits outside the action list. */
+function simpleIntakesHtml(lists){
   if(!CASES_OK) return "";
-  const fresh = CASES.filter(c => !c.archived_at && !c.deleted_at && simpleAwaiting(c)
-    && !["declined", "closed_lead"].includes(c.lead_status || ""));
+  const fresh = lists.fresh;
+  if(!fresh.length) return "";
   return `<div class="card simp-card">
     <div class="bar"><h2 class="simp-h">New intakes</h2>
-      <span class="count">${fresh.length ? `${fresh.length} awaiting a decision` : "None waiting"}</span>
-      <button class="btn sm ghost" data-act="tab" data-tab="newlead" style="margin-left:auto">+ Intake a client</button></div>
-    ${fresh.length ? `<div class="simp-list">${fresh.map(c => `
+      <span class="count">${fresh.length} awaiting a decision</span></div>
+    <div class="simp-list">${fresh.map(c => `
       <div class="simp-intake">
         <div class="simp-i-h"><b>${esc(simpleWho(c))}</b>
-          <span class="tag ${c.legal ? "legaltag" : c.kind === "claims" ? "claims" : "consumer"}">${
-            c.legal ? "Legal" : c.kind === "claims" ? "Insurance" : "Private"}</span>
+          ${simpleKindChip(c)}
           ${c.signed ? `<span class="tag ok">Signed &#10003;</span>` : ""}</div>
-        <div class="simp-i-f">${[
-          c.service ? esc(c.service) : "",
-          c.subject_name ? `${c.kind === "claims" ? "Claimant" : "Subject"}: ${esc(c.subject_name)}` : "",
-          `Received ${when(c.created_at)}`,
-        ].filter(Boolean).join(" &middot; ")}</div>
-        <button class="btn simp-open" data-act="simpleOpen" data-case="${esc(c.case_no)}">Open intake</button>
-      </div>`).join("")}</div>`
-      : `<div class="empty">Nothing new. Submissions from the public form and phoned-in intakes
-         both land here.</div>`}
+        <div class="simp-i-f">${simpleFacts(c)}</div>
+        <div class="simp-acts">${simpleActions(c)}</div>
+      </div>`).join("")}</div>
+  </div>`;
+}
+
+/* §6 — "+ Intake a client" STAYS, AND STOPS COMPETING. It used to sit in the
+   New intakes header as the only control on that bar, which put a door for
+   work the office invents beside the work that actually arrived — and with
+   that section now collapsing it would have had no home at all. It is one
+   quiet line under both lists: still one tap, still the same `newlead` tab,
+   visually last. */
+function simpleAddHtml(){
+  return `<div class="simp-foot">
+    <button class="linklike simp-add" data-act="tab" data-tab="newlead">+ Intake a client</button>
+    <span class="simp-foot-s">for a phone call or a walk-in &mdash; submitted intakes arrive above</span>
+  </div>`;
+}
+
+/* §7 — the two bots, docked and quiet. Same acts, same panels, nothing about
+   their behaviour touched; they simply stop floating over the work. */
+function simpleBotsHtml(){
+  return `<div class="simp-bots">
+    <button class="simp-bot" data-act="asstOpen" aria-label="Open the API Assistant">
+      <span class="simp-bot-i" aria-hidden="true">&#10024;</span>Assistant</button>
+    <button class="simp-bot ceo" data-act="ceoOpen" aria-label="Open the CEO Bot">
+      <span class="simp-bot-i" aria-hidden="true">&#9733;</span>CEO Bot</button>
   </div>`;
 }
 
 function simpleHomeHtml(){
-  return `${simpleNeedsHtml()}${simpleIntakesHtml()}`;
+  /* ONE DERIVATION, READ TWICE. Computing the lists in each renderer is how
+     the two would disagree about what the other had already shown. */
+  const lists = CASES_OK ? simpleLists() : { needs: [], fresh: [] };
+  return `${simpleNeedsHtml(lists)}${simpleIntakesHtml(lists)}${simpleAddHtml()}${simpleBotsHtml()}`;
 }
 
 /* THE TOGGLE (§1). Two real buttons rather than a checkbox, because the two
@@ -15390,6 +15549,14 @@ function paint(){
      `--vvh` rides the same flag: bound while the editor is open so the
      keyboard can shrink it, and REMOVED on close so a height the keyboard
      chose once cannot pin some other screen later. */
+  /* SIMPLE HOME IS A BODY FLAG, so the floating bot launchers can be withdrawn
+     there and nowhere else (§7/§8). It rides every paint beside the locks for
+     the same reason they do: the launchers render from `shell()` on every
+     screen, and only a class is toggled. Narrow on purpose — on any other tab,
+     in either mode, the floating pair is the phone's only bot door once the
+     rail is behind the burger. */
+  document.body.classList.toggle("simplehome",
+    simpleOn() && TAB === "dashboard" && VIEW !== "case");
   const rswLock = !!SHEET_WIZ;
   document.documentElement.classList.toggle("rswlock", rswLock);
   document.body.classList.toggle("rswlock", rswLock);

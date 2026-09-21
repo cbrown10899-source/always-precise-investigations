@@ -22174,9 +22174,14 @@ section('Simple View: the toggle, and what it replaces');
     toggleStill: !!document.querySelector('.vtog'),
     pressed: [...document.querySelectorAll('.vtog-b')].map(b => b.getAttribute('aria-pressed')),
   }), afterText);
-  ok('choosing Simple draws Needs action and New intakes', after.needs === true
-     && /Needs action/i.test(after.intakes) && /New intakes/i.test(after.intakes),
-     after.intakes.slice(0, 160));
+  /* RE-AIMED, NOT WEAKENED (owner cleanup §1/§5). "New intakes" used to be an
+     unconditional heading, and every awaiting intake appeared under BOTH it
+     and Needs action — measured at 100% duplication. Needs action now wins
+     and the second section collapses when it has nothing of its own, so the
+     property worth pinning is the stronger one: the action list is drawn, and
+     no intake is listed twice. */
+  ok('choosing Simple draws the Needs action list', after.needs === true
+     && /Needs action/i.test(after.intakes), after.intakes.slice(0, 160));
   ok('and it REPLACES the dashboard furniture rather than sitting beside it',
      after.greet === false && after.qtools === false && after.summary === false,
      JSON.stringify(after));
@@ -22235,15 +22240,20 @@ section('Simple View: the intake, end to end');
   await simpleOnFor(page);
 
   /* §4 / §23B — the card, and the SERVICE on it. */
+  /* ONE CARD PER INTAKE, AND IT IS THE ACTION CARD. A fresh submission earns
+     a state, so Needs action claims it and New intakes never repeats it. */
   const card = await page.evaluate(() => {
-    const el = [...document.querySelectorAll('.simp-intake')]
+    const el = [...document.querySelectorAll('.simp-need, .simp-intake')]
       .find(x => /Nora Fresh/.test(x.textContent));
     if (!el) return null;
     const btn = el.querySelector('[data-act="simpleOpen"]');
     return { text: el.innerText, act: btn && btn.dataset.act, caseNo: btn && btn.dataset.case,
-             h: btn ? Math.round(btn.getBoundingClientRect().height) : 0 };
+             h: btn ? Math.round(btn.getBoundingClientRect().height) : 0,
+             where: el.className };
   });
   ok('§4 — the new intake is on the Simple View list', !!card, JSON.stringify(card));
+  ok('§1 — and it is the Needs action card, not a second copy below it',
+     !!card && /simp-need/.test(card.where), JSON.stringify(card && card.where));
   const ct = (card && card.text) || '';
   ok('§23B — with the service the client actually chose', /Child Custody/.test(ct), ct);
   ok('and the subject and the time it arrived',
@@ -22253,7 +22263,7 @@ section('Simple View: the intake, end to end');
 
   /* §3 — the Needs action strip derives its state from the record. */
   const needs = await page.evaluate(() => {
-    const row = [...document.querySelectorAll('.simp-row')]
+    const row = [...document.querySelectorAll('.simp-need')]
       .find(x => /Nora Fresh/.test(x.textContent));
     return row ? row.innerText.replace(/\s+/g, ' ').trim() : null;
   });
@@ -22385,9 +22395,9 @@ section('Simple View: the intake, end to end');
        something the product never promised. */
     inNewIntakes: [...document.querySelectorAll('.simp-intake')]
       .some(x => /Nora Fresh/.test(x.textContent)),
-    inNeeds: [...document.querySelectorAll('.simp-row')]
+    inNeeds: [...document.querySelectorAll('.simp-need')]
       .some(x => /Nora Fresh/.test(x.textContent)),
-    needsSays: ([...document.querySelectorAll('.simp-row')]
+    needsSays: ([...document.querySelectorAll('.simp-need')]
       .find(x => /Nora Fresh/.test(x.textContent)) || {}).innerText || '',
   }));
   ok('§4 — the accepted case has left the New intakes list, which is what that list means',
@@ -22398,6 +22408,237 @@ section('Simple View: the intake, end to end');
 
   await page.evaluate(async () => { await setViewMode('full'); });
   await page.close();
+}
+
+/* ========== SIMPLE VIEW CLEANUP (owner, 2026-09-21) =======================
+   MEASURED BEFORE THIS UNIT, at 390 and at 320: four intakes on the desk drew
+   FOUR rows in Needs action and the SAME four cards in New intakes — 100%
+   duplication, the owner's complaint as a number. Everything below is that,
+   plus the richer card the same brief asks for. */
+section('Simple View: one card per intake, and it carries its own actions');
+{
+  /* Four shapes: a plain new private intake, a SIGNED one, a claims
+     assignment, and a DECLINED lead that must appear in neither list. */
+  for (const [no, extra] of [
+    ['API-SC-PLAIN', { service: 'Child Custody', client_name: 'Plain Client',
+                       subject_name: 'Plain Subject' }],
+    ['API-SC-SIGNED', { service: 'Surveillance', client_name: 'Signed Client',
+                        subject_name: 'Signed Subject',
+                        signature: 'data:image/png;base64,AAAA', signed_name: 'Signed Client' }],
+    ['API-SC-CLAIM', { service: 'Insurance claim assignment', carrier: 'Probe Mutual',
+                       claim_number: 'PM-9', client_name: 'Probe Mutual',
+                       subject_name: 'Claimant Person' }],
+    ['API-SC-DECLINED', { service: 'Surveillance', client_name: 'Declined Client',
+                          subject_name: 'Nobody' }],
+  ]) {
+    await post('/ingest', { case_no: no, client_email: 'x@example.test',
+      objective: 'Document activity', ...extra }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  }
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await simpleOnFor(page);
+  /* The office decides against one of them, through the ordinary lead route. */
+  await page.evaluate(async () => {
+    await api('/leads/API-SC-DECLINED/status', { method: 'POST', body: { status: 'declined' } });
+    await render();
+  });
+  await page.waitForTimeout(900);
+
+  const lists = await page.evaluate(() => {
+    const names = sel => [...document.querySelectorAll(sel)]
+      .map(x => (x.querySelector('b') || {}).textContent || '').map(t => t.trim());
+    const needs = names('.simp-need'), fresh = names('.simp-intake');
+    return { needs, fresh, dup: fresh.filter(n => needs.includes(n)),
+             freshSection: !!document.querySelector('.simp-list'),
+             heading: (document.querySelector('#app') || {}).innerText || '' };
+  });
+  ok('§1 — NO intake is listed twice', lists.dup.length === 0, JSON.stringify(lists));
+  ok('§1 — the three live intakes are all on the action list',
+     ['Plain Client', 'Signed Client', 'Probe Mutual'].every(n => lists.needs.includes(n)),
+     JSON.stringify(lists.needs));
+  ok('§5 — and the New intakes section collapses rather than repeating them',
+     lists.fresh.length === 0 && lists.freshSection === false, JSON.stringify(lists));
+  ok('§5 — it does not even leave a heading over nothing',
+     !/New intakes/i.test(lists.heading), lists.heading.slice(0, 200));
+  /* A DECIDED LEAD NEEDS NOTHING. It was being drawn as "Rate Sheet Needed" —
+     an action list asking for work on something somebody already said no to. */
+  ok('a declined lead appears in neither list',
+     !lists.needs.includes('Declined Client') && !lists.fresh.includes('Declined Client'),
+     JSON.stringify(lists));
+
+  /* ---- §2 — the card carries the six facts the brief names --------------- */
+  const card = await page.evaluate(() => {
+    const el = [...document.querySelectorAll('.simp-need')]
+      .find(x => /Signed Client/.test(x.textContent));
+    if (!el) return null;
+    return { text: el.innerText.replace(/\s+/g, ' '),
+             acts: [...el.querySelectorAll('.uibtn')].map(b => b.textContent.trim()),
+             actData: [...el.querySelectorAll('.uibtn')].map(b => b.dataset.act),
+             h: Math.round(el.getBoundingClientRect().height) };
+  });
+  ok('§2 — the card exists to be read', !!card, JSON.stringify(card));
+  for (const [what, re] of [['the client name', /Signed Client/],
+      ['the client type', /PRIVATE/i], ['the service', /Surveillance/],
+      ['the subject', /Signed Subject/], ['the signed status', /SIGNED/i],
+      ['when it arrived', /Received/]]) {
+    ok(`§2 — it shows ${what}`, re.test(card.text), card.text.slice(0, 240));
+  }
+  ok('§2 — and its actions are the three the brief names',
+     card.actData.join('|') === 'simpleOpen|leadSheet|acceptIntake',
+     JSON.stringify(card.actData));
+
+  /* A CLAIMS CARD SAYS CLAIMANT, because that is what the record calls it. */
+  const claim = await page.evaluate(() => {
+    const el = [...document.querySelectorAll('.simp-need')]
+      .find(x => /Probe Mutual/.test(x.textContent));
+    return el ? el.innerText.replace(/\s+/g, ' ') : '';
+  });
+  ok('§2 — a claims intake reads INSURANCE and names a claimant',
+     /INSURANCE/i.test(claim) && /Claimant: Claimant Person/.test(claim), claim.slice(0, 200));
+  ok('§2 — an unsigned intake says so rather than saying nothing',
+     /Not signed/i.test(await page.evaluate(() => {
+       const el = [...document.querySelectorAll('.simp-need')]
+         .find(x => /Plain Client/.test(x.textContent));
+       return el ? el.innerText : ''; })));
+
+  /* ---- §2 — ONLY ACTIONS VALID FOR THE STORED STATE ---------------------- */
+  await page.evaluate(async () => {
+    await api('/leads/API-SC-PLAIN/status', { method: 'POST', body: { status: 'converted' } });
+    await render();
+  });
+  await page.waitForTimeout(900);
+  const after = await page.evaluate(() => {
+    const el = [...document.querySelectorAll('.simp-need')]
+      .find(x => /Plain Client/.test(x.textContent));
+    if (!el) return null;
+    return { acts: [...el.querySelectorAll('.uibtn')].map(b => b.dataset.act),
+             label: el.innerText.replace(/\s+/g, ' ') };
+  });
+  ok('an accepted case moves to its own state rather than leaving the list',
+     !!after && /Retainer Pending/i.test(after.label), JSON.stringify(after));
+  ok('§2 — and it is no longer offered Create case / Accept',
+     !!after && !after.acts.includes('acceptIntake'), JSON.stringify(after && after.acts));
+  ok('§2 — it is offered the case and the money instead',
+     !!after && after.acts.includes('openCase') && after.acts.includes('leadRecordPay'),
+     JSON.stringify(after && after.acts));
+
+  /* ---- §6 — + Intake a client stays, and stops competing ----------------- */
+  const add = await page.evaluate(() => {
+    const b = document.querySelector('.simp-add');
+    if (!b) return null;
+    const cs = getComputedStyle(b);
+    const first = document.querySelector('.simp-need .uibtn');
+    return { text: b.textContent.trim(), h: Math.round(b.getBoundingClientRect().height),
+             filled: cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent',
+             belowWork: !!first && b.getBoundingClientRect().top > first.getBoundingClientRect().top,
+             tab: b.dataset.tab };
+  });
+  ok('§6 — the door for a phoned-in client is still there', !!add && /Intake a client/i.test(add.text),
+     JSON.stringify(add));
+  ok('§6 — at the tap floor, unfilled, and below the work that arrived',
+     add.h >= 44 && add.filled === false && add.belowWork === true, JSON.stringify(add));
+  ok('§6 — and it still opens the same intake screen', add.tab === 'newlead', add.tab);
+
+  await page.evaluate(async () => { await setViewMode('full'); });
+  await page.close();
+}
+
+section('Simple View: the two bots stop floating over the work');
+{
+  for (const width of [390, 320]) {
+    const page = await newPage();
+    await signIn(page, 'trever', 'AdminPassword1x');
+
+    /* ---- FULL VIEW FIRST, so "unchanged" is measured rather than assumed. */
+    await goHome(page);
+    await page.setViewportSize({ width, height: width === 320 ? 568 : 844 });
+    await page.waitForTimeout(500);
+    const full = await page.evaluate(() => {
+      const vis = el => !!(el && getComputedStyle(el).display !== 'none');
+      const box = el => { const r = el.getBoundingClientRect();
+        return { w: Math.round(r.width), h: Math.round(r.height) }; };
+      const p = document.querySelector('.asst-pill'), f = document.querySelector('.ceo-fab');
+      return { pill: vis(p) && box(p), fab: vis(f) && box(f),
+               flag: document.body.classList.contains('simplehome') };
+    });
+    ok(`§7 — in FULL view at ${width} the floating pair is exactly as it was`,
+       full.pill && full.pill.h === 48 && full.fab && full.fab.h === 44 && full.flag === false,
+       JSON.stringify(full));
+
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await simpleOnFor(page);
+    await page.setViewportSize({ width, height: width === 320 ? 568 : 844 });
+    await page.waitForTimeout(600);
+
+    const sim = await page.evaluate(() => {
+      const vis = el => !!(el && getComputedStyle(el).display !== 'none');
+      const hit = (a, b) => { const p = a.getBoundingClientRect(), q = b.getBoundingClientRect();
+        return !(p.right < q.left || p.left > q.right || p.bottom < q.top || p.top > q.bottom); };
+      const acts = [...document.querySelectorAll('.simp-need .uibtn, .simp-intake .uibtn')];
+      const bots = [...document.querySelectorAll('.simp-bot')];
+      const p = document.querySelector('.asst-pill'), f = document.querySelector('.ceo-fab');
+      return { pillVisible: vis(p), fabVisible: vis(f),
+               bots: bots.map(b => ({ t: b.textContent.trim(), act: b.dataset.act,
+                                      h: Math.round(b.getBoundingClientRect().height) })),
+               floatCovers: acts.some(a => (vis(p) && hit(p, a)) || (vis(f) && hit(f, a))),
+               dockCovers: acts.some(a => bots.some(b => hit(b, a))),
+               mnav: [...document.querySelectorAll('.mnav button')].map(b => b.textContent.trim()),
+               overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth };
+    });
+    ok(`§7 — on Simple Home at ${width} the floating launchers are withdrawn`,
+       sim.pillVisible === false && sim.fabVisible === false, JSON.stringify(sim));
+    ok(`§7 — and both bots are docked in the page instead, at the tap floor`,
+       sim.bots.length === 2 && sim.bots.every(b => b.h >= 44)
+       && sim.bots.map(b => b.act).join('|') === 'asstOpen|ceoOpen', JSON.stringify(sim.bots));
+    /* §8's own line, and the reason the docking replaced a smaller pill: the
+       first attempt merely shrank them and a fixed launcher still sat on a
+       card's action button at both widths. */
+    ok(`§8 — nothing covers an action at ${width}`,
+       sim.floatCovers === false && sim.dockCovers === false, JSON.stringify(sim));
+    /* EACH LABEL CARRIES ITS OWN GLYPH — "⌂Home", not "Home" — which the first
+       version of this probe did not allow for and reported as the nav having
+       changed when it had not. The property is the five destinations in their
+       order; the icons are part of the label and always were. */
+    ok(`§8 — the bottom nav is unchanged at ${width}`,
+       sim.mnav.length === 5
+       && ['Home', 'Cases', 'Tasks', 'Intakes', 'More']
+            .every((w, i) => (sim.mnav[i] || '').includes(w)),
+       JSON.stringify(sim.mnav));
+    ok(`§8 — and no horizontal overflow at ${width}`, sim.overflow === false);
+
+    /* THE DOCKED DOOR STILL OPENS THE PANEL — quieter, not weaker. */
+    /* Guarded so a missing dock FAILS by name rather than aborting the run —
+       a negative test has to be readable. */
+    await page.evaluate(() => {
+      const b = document.querySelector('.simp-bot[data-act="asstOpen"]');
+      if (b) b.click();
+    });
+    await page.waitForTimeout(700);
+    ok(`§7 — the docked Assistant still opens the Assistant at ${width}`,
+       await page.evaluate(() => !!(ASST && ASST.open)));
+    await page.evaluate(() => { if (ASST) { ASST.open = false; paint(); } });
+    await page.waitForTimeout(400);
+
+    /* AND ON ANY OTHER SCREEN IN SIMPLE VIEW THE FLOATING PAIR IS STILL THERE,
+       because below 900px the rail is behind the burger and those are the
+       phone's only bot doors on that screen. */
+    await page.evaluate(() => { TAB = 'cases'; paint(); });
+    await page.waitForTimeout(500);
+    const elsewhere = await page.evaluate(() => {
+      const vis = el => !!(el && getComputedStyle(el).display !== 'none');
+      return { pill: vis(document.querySelector('.asst-pill')),
+               fab: vis(document.querySelector('.ceo-fab')),
+               flag: document.body.classList.contains('simplehome') };
+    });
+    ok(`§7 — elsewhere in Simple View at ${width} the floating pair is untouched`,
+       elsewhere.pill === true && elsewhere.fab === true && elsewhere.flag === false,
+       JSON.stringify(elsewhere));
+
+    await page.evaluate(async () => { TAB = 'dashboard'; await setViewMode('full'); });
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await page.close();
+  }
 }
 
 section('Simple View at 390 and 320');
@@ -22428,7 +22669,8 @@ section('Simple View at 390 and 320');
     await page.setViewportSize({ width, height: width === 320 ? 568 : 844 });
     await page.waitForTimeout(500);
     const m = await page.evaluate(() => {
-      const small = [...document.querySelectorAll('.vtog-b, .simp-open, .simp-row .btn')]
+      const small = [...document.querySelectorAll(
+        '.vtog-b, .simp-need .uibtn, .simp-intake .uibtn, .simp-add, .simp-bot')]
         .filter(b => Math.round(b.getBoundingClientRect().height) < 44).length;
       const tog = document.querySelector('.vtog');
       return { small, overflow: document.documentElement.scrollWidth
@@ -22436,7 +22678,7 @@ section('Simple View at 390 and 320');
                togTop: tog ? Math.round(tog.getBoundingClientRect().top) : null,
                pill: (() => {
                  const p2 = document.querySelector('.asst-pill, .ceo-fab');
-                 const a = document.querySelector('.simp-open');
+                 const a = document.querySelector('.simp-need .uibtn');
                  if (!p2 || !a) return 'none';
                  const r = p2.getBoundingClientRect(), b = a.getBoundingClientRect();
                  return !(r.right < b.left || r.left > b.right || r.bottom < b.top || r.top > b.bottom);

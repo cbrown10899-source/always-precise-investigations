@@ -2746,6 +2746,78 @@ read in full. **The suite's ordinary two-word fixtures passed straight over
 it**; the assertion has a name with nothing to break on now. Same trap as the
 one-column card track this file records as `minmax(0,1fr)`.
 
+### The cleanup: one card per intake, and the bots came out of the air
+
+Owner, 2026-09-21, after using it. Three findings, all measured.
+
+**THE DUPLICATION WAS TOTAL, NOT OCCASIONAL.** Four intakes on the desk drew
+FOUR rows in NEEDS ACTION and the **same four cards** in NEW INTAKES — 100% at
+390 and at 320. It follows from the derivation rather than from an edge case:
+every awaiting intake earns a state, so the second list could only ever repeat
+the first.
+
+**`simpleLists()` IS THE ONE WRITER AND NEEDS ACTION WINS.** Both lists come
+out of one pass, `fresh` is the remainder, and the New intakes section **draws
+nothing at all** when it is empty — not an empty card, not a heading over a
+blank space, which §5 allows by name. **The subtraction is against the FULL
+needs set, not the capped slice**: an intake past `SIMPLE_ACTION_CAP`
+reappearing below would be the duplication coming back by a side door.
+
+**A DECIDED LEAD NEEDS NOTHING.** `simpleAwaiting` only excludes `converted`,
+so a **declined** or closed lead still sitting at the opening stage was drawn
+as *Rate Sheet Needed* — an action list asking for work on something somebody
+had already said no to. `simpleState` returns null for both, and a test puts a
+declined lead in neither list.
+
+**THE CARD CARRIES THE RECORD AND ITS OWN ACTIONS.** Name, client type,
+service, subject, signed-or-not, received — and *Open intake / Send rate sheet
+/ Create case-Accept*, **every one an existing control** (`simpleOpen`,
+`leadSheet`, `acceptIntake`). Validity is the stored state: the quote and the
+acceptance are offered only while the decision is open, and a converted case is
+offered *Open case* and *Record retainer* instead, because the only thing that
+row can still be waiting on is the money. **`Not signed` is stated** rather
+than left blank — the absence of a tick is not an answer.
+
+**COMPACT MEANT THE ACTIONS STOPPED BEING A COLUMN.** The three buttons wrapped
+to **three rows**, 148 of the card's 289px at 390. Two across with the primary
+spanning is two rows: card **289 → 249** at 390 and **343 → 320** at 320, no
+button shrunk below its own words — it wraps and grows, which is this file's
+own rule.
+
+**THE FIRST ANSWER TO §7 PASSED §7 AND FAILED §8.** Keeping the two launchers
+floating and merely dropping their words took them from 135×48 and 76×44 to a
+48 and a 44 circle — quieter, and a fixed launcher still measured **on top of a
+card's own action button** at both widths. A control you cannot tap because a
+pill is over it is worse than a loud pill. So on Simple Home they are
+**DOCKED** — an ordinary quiet row that scrolls with the page, same
+`data-act`s, same panels, nothing about what they do moved.
+
+**AND THE WITHDRAWAL IS SIMPLE HOME ONLY (`body.simplehome`), NOT SIMPLE
+VIEW.** Hiding the floating pair across the whole mode would have taken the
+phone's only bot doors off every other screen, because below 900px the rail is
+behind the burger. Asserted from both sides: withdrawn on Simple Home, present
+on Cases in the same mode, and **Full View measured unchanged at 390 and 320**
+(48 and 44, the before-numbers).
+
+**A NAV LABEL CARRIES ITS OWN GLYPH.** The probe asserting the bottom nav was
+unchanged compared against `Home|Cases|Tasks|Intakes|More` and got
+`⌂Home|📁Cases|✓Tasks|📪Intakes|⋯More` — it reported the nav as having moved
+when nothing had. The icons are part of the label and always were; the
+assertion reads the five destinations in order now. **The fifth instrument
+defect in three units**, same shape as the rest: measure what the product
+actually renders.
+
+**`+ Intake a client` LOST ITS BAR AND KEPT ITS DOOR.** It sat in the New
+intakes header — a door for work the office invents, beside the work that
+actually arrived — and that section now collapses, so it would have had no home.
+One quiet unfilled line under both lists, at the tap floor, still `newlead`.
+
+**NEGATIVE-TESTED: 10 NAMED FAILURES.** Restoring the duplication, the
+decided-lead state, the bare card and the floating launchers fails §1, §5, §2,
+§6 and §7 each by its own name — including the Needs-action list reading back
+eight clients with the same eight repeated below it, and a declined lead among
+them.
+
 ### The editor's background scroll was measured, not described
 
 **MEASURED AT 390 AND 320 BEFORE ANYTHING WAS WRITTEN:**
