@@ -2665,6 +2665,110 @@ this cannot quietly drift out of date again; a second test plants a row in
 every one of those tables plus fifteen child tables, clears, and asserts
 nothing survives while an identically-shaped real case is untouched.
 
+## Accepting an intake creates nothing, because the case is already there
+
+Owner brief 2026-09-21 (§1–§12): accepting a real submitted intake should be
+one tap that opens the case, with no Corey/Trever picker and no offer flow.
+
+**"CREATE CASE" WAS NEVER CREATING A CASE, AND THAT IS THE WHOLE UNIT.** A
+submitted intake **is** its `submissions` row, and the case number was minted
+by the public form at the moment the client pressed Submit. This file already
+said so — *"Leads ARE submissions — same table, same workspace"* — but both
+Accept controls were written as though a case had to be brought into
+existence.
+
+**WHY THE ASSIGNMENT CHOOSER WAS APPEARING: THE BUTTONS CALLED NOTHING.**
+`Accept →` on the Intakes desk and `Create case — accept →` on the intake
+screen both carried `data-act="…CaseTab" data-tab="assign"`. They were
+**navigations**, not writes — they opened the Assignment tab, where *Offer
+this case* (to / date / hours / pay) and the Assigned-to picker live. No
+acceptance route was reached by either one.
+
+**AND THE DESK IS WHY THEY POINTED THERE.** `leadsView` decided "awaiting a
+decision" from the case **STAGE** while the card's own Accepted **TAG** read
+`lead_status` — one card, two answers to one question. Moving the stage was
+the only thing that made the desk stop calling an accepted intake undecided,
+so **the assignment chooser had become the de-facto accept button**: the only
+door that made the screen agree with itself.
+
+**ONE PREDICATE NOW, AND IT IS THE WORKER'S OWN.** `awaiting(c)` is read by
+the two lists, the card's label and whether Accept is drawn at all, and it
+asks **both halves** — still at an opening stage AND no acceptance on the lead
+ladder — which is exactly `UNDECIDED` in `worker.js` (`assistantIntakeFacts`,
+`assistantCounts`). Neither half is enough: the ladder alone would throw every
+case accepted through the old assignment path (stage moved, no lead row) back
+onto the desk with an Accept button over live work. **Declined and closed
+leads are deliberately not read there** — this unit writes `converted` and
+nothing else, and folding those two into *Recently accepted* would be a new
+untruth on a screen fixing an old one.
+
+**`acceptIntake` POSTS THE ROUTE THE ASSISTANT ALREADY USED.**
+`/leads/:no/status` with `converted`, so `stampLead` stays the one writer of
+that word and the acceptance-time `snapshotFixedFee` rides with it. **No new
+route, no new table, no schema change and no portal-setup dispatch.** The
+Assistant's `accept_intake` command had been doing exactly this since the
+Command Center — the page's own buttons were the outlier.
+
+**NOBODY IS ASSIGNED, AND NO STAGE IS WRITTEN.** An accepted case is an open
+case the office has not yet given to anyone, which is what the record now
+says. The Assignment tab, the offer form, `/offers/*`, `makeOffer`,
+`withdrawOffer` and `saveCase` are **untouched** — §9 asked for the chooser to
+be bypassed on the accept path, not deleted, and it is still the door for when
+somebody really is assigned.
+
+**DUPLICATE PROTECTION IS STRUCTURAL, NOT A FLAG.** Nothing is created;
+`lead_status.case_no` is a PRIMARY KEY written `ON CONFLICT DO UPDATE`; and
+`snapshotFixedFee` returns early on a case that already carries a figure and
+inserts `ON CONFLICT DO NOTHING`. Three acceptances — two admins between them
+— produce one case, one ladder row and one unchanged fee. **`ACCEPT_BUSY` is
+the page-side in-flight guard and it holds a CASE NUMBER, not a boolean**,
+because the desk draws many cards at once and a bare flag would grey out every
+other intake's button too.
+
+**THE SUBMITTED INTAKE IS PRESERVED BY CONSTRUCTION, and it is asserted that
+way**: the `submissions` row is read before acceptance and compared field by
+field after it — id, case number, submitted timestamp, client, subject,
+service, payload and signature all byte-identical. Acceptance touches
+`lead_status` and (on a fixed legal service) `case_retainer`, and nothing
+else. The intake stays on its own screen, stays on the desk under *Recently
+accepted*, and its `sent_document` / acceptance links are never read by this
+path at all.
+
+**NO TRANSIENT CONFIRMATION IS SET ON SUCCESS.** `LEAD_MSG` draws on the
+Intakes desk, which is the screen the tap leaves — it would be a note nobody
+reads now and a stale one on the next visit. What says it happened is the
+**record**: the Accepted tag, the card in *Recently accepted*, and the intake
+screen's own block reading *Open case*. A failure is the opposite case and
+says so where it was pressed, without navigating — landing in a case the
+record does not yet say was accepted is the one outcome worth refusing.
+
+**THREE PROBES OF MINE WERE WRONG, AND ALL THREE WERE THE INSTRUMENT.**
+A probe looking for the card's Accept control with `/accept/i` over every
+button matched the **identity button**, because the fixture client was called
+*"Marta Accepted"* — it reported the fix as unshipped while the very next step
+clicked the real control by its `data-case` and it worked. It is scoped to
+`.pc-next` and anchored at `^Accept` now, and the fixture is renamed, because
+a client name containing a control's label is a trap set for the next probe
+too. An assertion required *"Child Custody"* on the intake DETAILS screen —
+that screen lists the submitted FIELDS and the intake TYPE, and **the service
+is carried to the page on both reads and rendered on neither**, so the
+assertion was asserting something untrue about the product; it reads the
+record now, which is where §1 puts the promise anyway. And the walk **crashed
+on a nav tab that cannot exist**: the case page bypasses `shell()`, so clicking
+Intakes from inside a case waits thirty seconds for an element the screen has
+no way to draw — out through the page's own Back control first, which is how a
+person leaves too.
+
+**DO NOT RUN `case-portal/test-worker.mjs` WHILE `portal/test-portal.mjs` IS
+RUNNING.** Two video-stamp assertions failed on a concurrent run — *"the
+output carries bright pixels there — 0"* — and passed on the same tree run
+alone. `vstDraw` + `MediaRecorder` encodes in REAL TIME, so CPU contention
+drops the stamped frames, and it fails in exactly the shape of a product
+regression: the burn-in test, reporting that the timestamp is not in the
+pixels. This file already said two agents must not run the portal suite at
+once because they bind the same port; the stronger rule is that nothing
+CPU-heavy may run beside it at all.
+
 ## Child Custody is a private service the public form offers
 
 Owner, 2026-09-14: *"It is simply a service-selection label."* The portal's
@@ -2912,6 +3016,13 @@ node portal/test-portal.mjs        # the page against the real Worker
 
 The portal tests run the real page against the real Worker against real SQLite,
 so they catch SQL and permission mistakes rather than mocking past them.
+
+**`portal/test-portal.mjs` GETS THE MACHINE TO ITSELF.** Beyond the port it
+binds, its video-stamp section encodes in real time through `MediaRecorder`,
+so anything CPU-heavy beside it — the Worker suite, another Playwright run —
+drops the stamped frames and the burn-in assertions fail as though the
+timestamp had stopped reaching the pixels. Measured 2026-09-21: two failures
+concurrent, zero on the same tree run alone.
 
 ## The client package
 

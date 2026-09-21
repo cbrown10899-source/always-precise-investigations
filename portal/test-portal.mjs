@@ -22098,6 +22098,234 @@ section('Case closeout: the page records a refund and emails nobody');
   await page.close();
 }
 
+/* ACCEPTING A REAL INTAKE IS ONE TAP, AND IT LANDS IN THE CASE (owner brief
+   2026-09-21, "REAL INTAKE ACCEPTANCE FLOW — REMOVE ASSIGNMENT CHOOSER").
+
+   WHY THE CHOOSER WAS APPEARING: both Accept controls carried
+   `data-tab="assign"`. They called no acceptance route at all — they were
+   NAVIGATIONS to the Assignment tab, where "Offer this case" (to / date /
+   hours / pay) and the Assigned-to picker live. This walks the real page: the
+   desk, the tap, where it lands, and what is left behind. */
+section('Create case / Accept: one tap, no chooser, and the intake survives it');
+{
+  await post('/ingest', { case_no: 'API-ACCP-E2E', service: 'Child Custody',
+    client_name: 'Marta Newcase', client_email: 'marta@example.test',
+    client_phone: '(434) 555-0142', subject_name: 'Other Parent',
+    objective: 'Document exchanges', signature: 'data:image/png;base64,AAAA',
+    signed_name: 'Marta Newcase' }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Intakes' }).first().click();
+  await page.waitForTimeout(800);
+
+  /* ---- THE DOOR ITSELF --------------------------------------------------- */
+  const door = await page.evaluate(() => {
+    const cards = [...document.querySelectorAll('.pcard')];
+    const card = cards.find(c => /Marta Newcase/.test(c.textContent));
+    if (!card) return { found: false, seen: cards.length };
+    /* THE ACTION BLOCK'S OWN CONTROL, found by its label. `/accept/i` over
+       every button on the card was my first probe and it matched the identity
+       button — because the fixture client was called "Marta Accepted". The
+       instrument, not the product: the very next step clicked the real
+       control by its `data-case` and it worked. Scoped to `.pc-next` and
+       anchored at the start of the label so a client's NAME cannot be it. */
+    const btn = [...card.querySelectorAll('.pc-next button')]
+      .find(b => /^Accept\b/i.test(b.textContent.trim()));
+    return { found: true, has: !!btn,
+             act: btn && btn.dataset.act, tab: (btn && btn.dataset.tab) || null,
+             caseNo: btn && btn.dataset.case,
+             assignAnywhere: !!card.querySelector('[data-tab="assign"]') };
+  });
+  ok('the intake is on the desk awaiting a decision', door.found === true,
+     JSON.stringify(door));
+  ok('and its Accept control accepts rather than navigating',
+     door.has && door.act === 'acceptIntake', JSON.stringify(door));
+  ok('THE EXACT PATH THAT IS BYPASSED: nothing on the card opens the assignment tab',
+     door.tab === null && door.assignAnywhere === false, JSON.stringify(door));
+  ok('and it names the case it is about', door.caseNo === 'API-ACCP-E2E', door.caseNo);
+
+  /* ---- §7 — TWO TAPS, ONE REQUEST, ONE CASE ------------------------------ */
+  const taps = await page.evaluate(async () => {
+    const real = window.fetch;
+    const calls = [];
+    window.fetch = (u, o) => { calls.push(String(u) + ':' + ((o && o.method) || 'GET')); return real(u, o); };
+    const before = CASES.length;
+    /* The second tap finds whatever the first one's repaint left behind — a
+       disabled button, or none at all. Guarded so the GUARD is what is being
+       measured rather than a thrown TypeError. */
+    const press = () => {
+      const b = document.querySelector('[data-act="acceptIntake"][data-case="API-ACCP-E2E"]');
+      if (b) b.click();
+    };
+    press(); press();                       // the double tap
+    await new Promise(r => setTimeout(r, 1500));
+    window.fetch = real;
+    return { posts: calls.filter(c => /\/leads\/API-ACCP-E2E\/status:POST/.test(c)).length,
+             before, after: CASES.length };
+  });
+  ok('a double tap fires ONE acceptance, not two', taps.posts === 1, JSON.stringify(taps));
+  ok('and no second case appeared — nothing is created, so nothing can double',
+     taps.after === taps.before, JSON.stringify(taps));
+
+  /* ---- §5 — IT LANDS IN THE CASE, NOT ON AN ASSIGNMENT SCREEN ------------ */
+  await page.waitForTimeout(600);
+  const landed = await page.evaluate(() => ({
+    view: VIEW, caseNo: WS_CASE, tab: WS_TAB,
+    asg: !!document.getElementById('asg'),
+    offer: !!document.querySelector('[data-act="makeOffer"]'),
+    body: (document.querySelector('#app') || {}).innerText || '',
+  }));
+  ok('one tap lands directly in the case', landed.view === 'case'
+     && landed.caseNo === 'API-ACCP-E2E', JSON.stringify({ v: landed.view, c: landed.caseNo }));
+  ok('on the standard case screen, not the Assignment tab',
+     landed.tab === 'overview', landed.tab);
+  ok('and no assignment chooser or offer form is in front of the office',
+     landed.asg === false && landed.offer === false,
+     JSON.stringify({ asg: landed.asg, offer: landed.offer }));
+  ok('nobody was asked who it should go to',
+     !/Who should this go to|Send offer to|Assign investigator/i.test(landed.body));
+
+  /* ---- §1/§6 — THE SUBMITTED INTAKE IS STILL THERE, AND STILL LINKED ----- */
+  await page.evaluate(() => openCase('API-ACCP-E2E', 'details'));
+  await page.waitForTimeout(900);
+  const kept = await page.evaluate(() => ({
+    lead: WS && WS.lead_status,
+    svc: WS && WS.submission && WS.submission.service,
+    payloadSvc: WS && WS.submission && WS.submission.payload
+      ? JSON.stringify(WS.submission.payload.service) : null,
+    text: (document.querySelector('#app') || {}).innerText || '',
+    acts: [...document.querySelectorAll('.feebox button')]
+      .map(b => (b.getAttribute('aria-label') || b.textContent).replace(/\s+/g, ' ').trim()),
+  }));
+  ok('the record says converted, through the existing lead model',
+     kept.lead === 'converted', String(kept.lead));
+  ok('the submitted intake is still on its own screen after acceptance',
+     /Marta Newcase/.test(kept.text) && /Other Parent/.test(kept.text),
+     kept.text.slice(0, 200));
+  /* THE SERVICE IS PRESERVED IN THE RECORD, which is what §1 asks. It is NOT
+     printed on the intake details screen — that screen lists the submitted
+     FIELDS and the intake TYPE (Private client / Legal / Insurance), and the
+     service reads on the case header and the case list. Asserting it over the
+     details text was asserting something untrue about the product; the honest
+     assertion is over what the Worker still holds. */
+  ok('with the service the client actually picked, still on the record',
+     kept.svc === 'Child Custody' && /Child Custody/.test(kept.payloadSvc || ''),
+     JSON.stringify({ svc: kept.svc, payload: kept.payloadSvc }));
+  ok('and the signature it was submitted with', /signature|Signed/i.test(kept.text));
+  ok('the screen now offers Open case rather than accepting it twice',
+     kept.acts.some(l => /Open case/i.test(l)) && !kept.acts.some(l => /accept/i.test(l)),
+     JSON.stringify(kept.acts));
+
+  /* ---- §6 — IT IS NOT HIDDEN FROM THE DESK, IT MOVED ---------------------- */
+  /* THE CASE PAGE BYPASSES `shell()`, so it has no nav rail at all — clicking
+     an Intakes tab from inside a case waits for an element that cannot exist.
+     Out through the page's own Back control first, which is the way a person
+     leaves too. */
+  await page.locator('.pagebar .close').first().click();
+  await page.waitForTimeout(600);
+  await page.locator('.tabs button', { hasText: 'Intakes' }).first().click();
+  await page.waitForTimeout(800);
+  const desk = await page.evaluate(() => {
+    const card = [...document.querySelectorAll('.pcard')]
+      .find(c => /Marta Newcase/.test(c.textContent));
+    if (!card) return { found: false };
+    return { found: true,
+             tag: /Accepted/.test(card.textContent),
+             accept: !!card.querySelector('[data-act="acceptIntake"]'),
+             open: !!card.querySelector('[data-act="openCase"]'),
+             viewIntake: !!card.querySelector('[data-tab="details"]'),
+             awaiting: (document.querySelector('.count') || {}).textContent || '' };
+  });
+  ok('the accepted intake is still on the desk — accepting hides nothing',
+     desk.found === true, JSON.stringify(desk));
+  ok('wearing the Accepted tag', desk.tag === true, JSON.stringify(desk));
+  ok('THE DESK AND THE CARD NOW AGREE: it is no longer offered Accept',
+     desk.accept === false, JSON.stringify(desk));
+  ok('and it offers Open case, with the original intake still one tap away',
+     desk.open === true && desk.viewIntake === true, JSON.stringify(desk));
+
+  /* ---- §9 — THE ASSIGNMENT FLOW IS BYPASSED, NOT DELETED ------------------ */
+  await page.evaluate(() => openCase('API-ACCP-E2E', 'assign'));
+  await page.waitForTimeout(900);
+  const still = await page.evaluate(() => ({
+    asg: !!document.getElementById('asg'),
+    save: !!document.querySelector('[data-act="saveCase"]'),
+    offer: !!document.querySelector('[data-act="makeOffer"]'),
+    to: !!document.getElementById('of_inv'),
+    assigned: WS && WS.submission ? WS.submission.assigned_to : (WS && WS.assigned_to),
+  }));
+  ok('the Assignment tab still exists and still offers the case',
+     still.asg && still.save && still.offer && still.to, JSON.stringify(still));
+  ok('§4 — but accepting assigned the case to nobody',
+     still.assigned == null, String(still.assigned));
+
+  await page.close();
+}
+
+/* THE SAME TAP FROM THE INTAKE SCREEN, and on a phone — the two remaining
+   scenarios in the owner's list (§10, §11B/D: a Child Custody intake with no
+   payment, accepted from where it is being read). */
+section('Accepting from the intake screen itself, at 390 and 320');
+{
+  for (const width of [390, 320]) {
+    const caseNo = `API-ACCP-P${width}`;
+    await post('/ingest', { case_no: caseNo, service: 'Child Custody',
+      client_name: `Phone Client ${width}`, client_email: `p${width}@example.test`,
+      subject_name: 'Co-parent', objective: 'Exchanges' },
+      { 'X-Ingest-Key': 'e2e-ingest-key' });
+
+    const page = await newPage();
+    await signIn(page, 'trever', 'AdminPassword1x');
+    await page.setViewportSize({ width, height: width === 320 ? 568 : 844 });
+    await page.evaluate(no => openCase(no, 'details'), caseNo);
+    await page.waitForTimeout(900);
+
+    /* Scoped to the intake's OWN action block by its heading, the way the
+       existing intake-actions assertion scopes it — `.feebox` is a generic
+       box and a loose text match is how the first version of the probe above
+       ended up measuring a client's name. */
+    const btn = await page.evaluate(() => {
+      const box = [...document.querySelectorAll('.feebox')]
+        .find(x => /What happens to this intake/.test(x.textContent));
+      const b = box && [...box.querySelectorAll('button')]
+        .find(x => /accept/i.test(x.textContent));
+      if (!b) return null;
+      const r = b.getBoundingClientRect();
+      return { act: b.dataset.act, tab: b.dataset.tab || null,
+               h: Math.round(r.height),
+               overflow: document.documentElement.scrollWidth
+                       > document.documentElement.clientWidth };
+    });
+    ok(`at ${width} the intake screen's accept control accepts`,
+       !!btn && btn.act === 'acceptIntake' && btn.tab === null, JSON.stringify(btn));
+    ok(`and clears the 44px tap floor at ${width} (${btn && btn.h})`,
+       !!btn && btn.h >= 44, JSON.stringify(btn));
+    ok(`with no sideways scroll at ${width}`, btn && btn.overflow === false);
+
+    await page.evaluate(() => {
+      const box = [...document.querySelectorAll('.feebox')]
+        .find(x => /What happens to this intake/.test(x.textContent));
+      const b = box && [...box.querySelectorAll('button')]
+        .find(x => /accept/i.test(x.textContent));
+      if (b) b.click();
+    });
+    await page.waitForTimeout(1500);
+    const after = await page.evaluate(() => ({
+      view: VIEW, tab: WS_TAB, lead: WS && WS.lead_status,
+      asg: !!document.getElementById('asg'),
+    }));
+    ok(`at ${width} it lands on the case, not the assignment tab`,
+       after.view === 'case' && after.tab === 'overview' && after.asg === false,
+       JSON.stringify(after));
+    ok(`and the record reads converted at ${width}`, after.lead === 'converted',
+       String(after.lead));
+
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await page.close();
+  }
+}
+
 section('The intake screen carries the intake\'s own actions');
 {
   const page = await newPage();

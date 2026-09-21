@@ -22136,6 +22136,242 @@ section('Packet generation is recorded for ever, and the accepted document is th
   globalThis.fetch = realFetch;
 }
 
+/* ACCEPTING A SUBMITTED INTAKE — what the one-tap accept rests on (owner,
+   2026-09-21, "REAL INTAKE ACCEPTANCE FLOW — REMOVE ASSIGNMENT CHOOSER").
+
+   THE PAGE CHANGED; THE DATA LAYER DID NOT. There is no new route, no new
+   table and no new column here — acceptance is the ordinary
+   `POST /leads/:no/status` with 'converted', which `stampLead` has always
+   been the single writer of. So what this section pins is not new behaviour,
+   it is the set of properties the new button now DEPENDS ON, none of which
+   had ever been asserted: that acceptance preserves the submitted intake
+   untouched, assigns nobody, and cannot produce a second case however many
+   times it is pressed. */
+section('Accepting an intake preserves it, assigns nobody, and cannot double');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+
+  /* A SECOND ADMIN, because §11's scenario F is "both admin accounts" — and
+     the property that matters is that acceptance records WHO decided without
+     making the case theirs. */
+  const inv2 = await jsonOf(await invite(env, admin,
+    { username: 'corey', display_name: 'Corey', role: 'admin' }));
+  await call(env, `/invite/${new URL(inv2.url, 'https://x.test').searchParams.get('invite')}/accept`,
+    { method: 'POST', body: { password: 'SecondAdmin1x' } });
+  const admin2 = (await login(env, 'corey', 'SecondAdmin1x')).cookie;
+
+  /* A REAL SUBMITTED INTAKE, through the public door the client actually
+     uses — signature and all, so §1's "signature/acceptance" is really in
+     the row being compared rather than a field a fixture left empty. */
+  await ingest(env, {
+    case_no: 'API-ACC-1', service: 'Child Custody',
+    client_name: 'Dana Client', client_email: 'dana@example.test',
+    client_phone: '(434) 555-0100',
+    subject_name: 'Pat Subject', subject_address: '10 Elm St, Lynchburg VA',
+    objective: 'Document exchanges', signature: 'data:image/png;base64,AAAA',
+    signed_name: 'Dana Client',
+  });
+
+  const readSub = async () => await env.DB.prepare(
+    `SELECT case_no, kind, client_name, client_email, client_phone, subject_name,
+            carrier, claim_number, assigned_to, status, created_at, payload
+       FROM submissions WHERE case_no = 'API-ACC-1'`).first();
+  const before = await readSub();
+  ok('the intake arrived through the public door with its signature in the payload',
+     !!before && /"signature"/.test(before.payload || ''), JSON.stringify(before && before.case_no));
+
+  /* ---- §7: PRESS IT TWICE, AND A THIRD TIME AS A RETRY ------------------ */
+  const r1 = await call(env, '/leads/API-ACC-1/status',
+    { method: 'POST', cookie: admin, body: { status: 'converted' } });
+  const r2 = await call(env, '/leads/API-ACC-1/status',
+    { method: 'POST', cookie: admin, body: { status: 'converted' } });
+  const r3 = await call(env, '/leads/API-ACC-1/status',
+    { method: 'POST', cookie: admin2, body: { status: 'converted' } });
+  ok('every press is accepted rather than erroring on the second',
+     r1.status === 200 && r2.status === 200 && r3.status === 200,
+     `${r1.status}/${r2.status}/${r3.status}`);
+
+  /* THE STRONG FORM OF "NO DUPLICATE CASE": not a count that happens to be
+     one, but the fact that acceptance CREATES NOTHING. The submissions row is
+     the case and it was minted by the public form; there is no creation step
+     for a double tap to run twice. */
+  const subs = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM submissions WHERE case_no LIKE 'API-ACC%'").first();
+  ok('three acceptances made exactly one case', Number(subs.n) === 1, String(subs.n));
+  const leads = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM lead_status WHERE case_no = 'API-ACC-1'").first();
+  ok('and exactly one lead-status row — the case number is its PRIMARY KEY',
+     Number(leads.n) === 1, String(leads.n));
+
+  /* ---- §1: THE SUBMITTED INTAKE IS UNTOUCHED --------------------------- */
+  const after = await readSub();
+  ok('the submission row is byte-for-byte what it was before acceptance',
+     JSON.stringify(before) === JSON.stringify(after),
+     JSON.stringify({ before, after }));
+  ok('including its original case number and submitted timestamp',
+     after.case_no === 'API-ACC-1' && after.created_at === before.created_at,
+     `${after.case_no} ${after.created_at}`);
+  ok('and its signature, service and subject are still in the payload the client signed',
+     /"signature"/.test(after.payload) && /Child Custody/.test(after.payload)
+       && /Pat Subject/.test(after.payload), (after.payload || '').slice(0, 120));
+
+  /* ---- §4: NOBODY IS ASSIGNED ------------------------------------------ */
+  ok('accepting assigned the case to nobody — not to the admin who pressed it',
+     after.assigned_to === null || after.assigned_to === undefined,
+     String(after.assigned_to));
+  const offers = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM case_offers WHERE case_no = 'API-ACC-1'").first();
+  ok('and made no offer to anyone', Number(offers.n) === 0, String(offers.n));
+
+  /* ---- §6: THE EXISTING STATUS MODEL SAYS IT, AND THE INTAKE IS STILL
+       IN THE CASE LIST AND ON ITS OWN SCREEN ------------------------------ */
+  const list = (await jsonOf(await call(env, '/submissions', { cookie: admin }))).submissions;
+  const row = list.find(c => c.case_no === 'API-ACC-1');
+  ok('the case list still carries the intake — accepting hides nothing',
+     !!row, JSON.stringify(list.map(c => c.case_no)));
+  ok('and reads converted through the existing lead model',
+     row && row.lead_status === 'converted', row && row.lead_status);
+  const ws = await jsonOf(await call(env, '/cases/API-ACC-1/workspace', { cookie: admin }));
+  ok('the workspace answers converted, which is what the screen reads',
+     ws.lead_status === 'converted', ws.lead_status);
+  const sub = (await jsonOf(await call(env, '/submissions/API-ACC-1',
+    { cookie: admin }))).submission || {};
+  ok('and the original submission is still readable in full, signature included',
+     !!sub.payload && /"signature"/.test(JSON.stringify(sub.payload))
+       && sub.case_no === 'API-ACC-1',
+     JSON.stringify(sub).slice(0, 200));
+
+  /* WHO DECIDED IS RECORDED; IT IS NOT AN ASSIGNMENT. The last press wins on
+     `set_by`, which is the ON CONFLICT DO UPDATE behaviour — and it moves
+     nothing about who the case belongs to, which is the §4 line. */
+  const stamp = await env.DB.prepare(
+    `SELECT l.status, u.username FROM lead_status l LEFT JOIN users u ON u.id = l.set_by
+      WHERE l.case_no = 'API-ACC-1'`).first();
+  ok('the ladder records which admin decided', stamp.username === 'corey', stamp.username);
+  ok('while the case is still assigned to nobody at all',
+     (await readSub()).assigned_to === null);
+
+  /* ---- §3: A FIXED-FEE LEGAL INTAKE SNAPSHOTS ONCE AND ONLY ONCE -------- */
+  await ingest(env, {
+    case_no: 'API-ACC-2', assignment: 'legal', legal_service: 'process',
+    service: 'Legal Investigation Assignment',
+    client_name: 'Smith Law', client_email: 'firm@example.test',
+    subject_name: 'Serve Target', objective: 'Serve papers',
+  });
+  await call(env, '/leads/API-ACC-2/status',
+    { method: 'POST', cookie: admin, body: { status: 'converted' } });
+  const fee1 = await env.DB.prepare(
+    "SELECT retainer_amount FROM case_retainer WHERE case_no = 'API-ACC-2'").first();
+  await call(env, '/leads/API-ACC-2/status',
+    { method: 'POST', cookie: admin, body: { status: 'converted' } });
+  const feeRows = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM case_retainer WHERE case_no = 'API-ACC-2'").first();
+  const fee2 = await env.DB.prepare(
+    "SELECT retainer_amount FROM case_retainer WHERE case_no = 'API-ACC-2'").first();
+  ok('acceptance snapshots the fee in force onto a fixed legal case',
+     fee1 && Number(fee1.retainer_amount) > 0, JSON.stringify(fee1));
+  ok('and accepting again neither duplicates nor rewrites it',
+     Number(feeRows.n) === 1 && fee2.retainer_amount === fee1.retainer_amount,
+     `${feeRows.n} ${fee2 && fee2.retainer_amount}`);
+
+  /* ---- §11 SCENARIO C: AN INTAKE WITH A LINKED RATE SHEET AND A SIGNED
+       ACCEPTANCE. §1 names "linked Rate Sheet / sent document, exact document
+       acceptance linkage" as things acceptance must not detach, and that link
+       is the portal's only answer to "which exact document did this client
+       sign?" — so it is asserted over the stored rows rather than assumed
+       from the fact that acceptance does not mention them. ---------------- */
+  {
+    const realFetch = globalThis.fetch;
+    const mails = [];
+    globalThis.fetch = async (url, init) => {
+      if (String(url).includes('api.resend.com')) {
+        mails.push(JSON.parse(init.body));
+        return new Response('{"id":"re_1"}', { status: 200 });
+      }
+      return realFetch(url, init);
+    };
+    env.RESEND_API_KEY = 'test-resend-key';
+    env.MAIL_PER_MINUTE = '50';
+    const sent = await jsonOf(await call(env, '/sheets/private_retainer/email', {
+      method: 'POST', cookie: admin,
+      body: { to: 'linked@example.test', client_name: 'Linked Client',
+              retainer_amount: 2000, non_refundable: 750, include_intake: true,
+              attempt_key: 'att-acc-link' } }));
+    ok('a rate sheet was sent and a document recorded',
+       sent.ok === true && /^DOC-[0-9a-f]{32}$/.test(sent.doc_id || ''),
+       JSON.stringify({ ok: sent.ok, doc: sent.document }));
+
+    /* The client returns the intake carrying the token their own door was
+       issued with — the only way a link is ever written. */
+    await ingest(env, { case_no: 'API-ACC-4', client_name: 'Linked Client',
+      client_email: 'linked@example.test', subject_name: 'Watched Person',
+      service: 'Surveillance', objective: 'Document activity',
+      signed_name: 'Linked Client', signature: 'data:image/png;base64,iVBORw0KGgo=',
+      doc_ref: sent.doc_id });
+
+    const accBefore = await env.DB.prepare(
+      'SELECT * FROM document_acceptance WHERE doc_id = ?').bind(sent.doc_id).first();
+    const docBefore = await env.DB.prepare(
+      'SELECT doc_id, case_no, subject, body_text, body_html, content_hash, retainer_amount, non_refundable, terms_json FROM sent_document WHERE doc_id = ?')
+      .bind(sent.doc_id).first();
+    ok('the signed acceptance is linked to the exact document before acceptance',
+       !!accBefore && accBefore.signed === 1, JSON.stringify(accBefore || {}));
+    ok('and the document knows the case it landed in',
+       docBefore && docBefore.case_no === 'API-ACC-4', docBefore && docBefore.case_no);
+
+    await call(env, '/leads/API-ACC-4/status',
+      { method: 'POST', cookie: admin, body: { status: 'converted' } });
+    await call(env, '/leads/API-ACC-4/status',
+      { method: 'POST', cookie: admin2, body: { status: 'converted' } });
+
+    const accAfter = await env.DB.prepare(
+      'SELECT * FROM document_acceptance WHERE doc_id = ?').bind(sent.doc_id).first();
+    const docAfter = await env.DB.prepare(
+      'SELECT doc_id, case_no, subject, body_text, body_html, content_hash, retainer_amount, non_refundable, terms_json FROM sent_document WHERE doc_id = ?')
+      .bind(sent.doc_id).first();
+    ok('accepting leaves the acceptance link exactly as it was',
+       JSON.stringify(accBefore) === JSON.stringify(accAfter),
+       JSON.stringify({ accBefore, accAfter }));
+    ok('and the stored document bytes are untouched — the terms the client signed',
+       JSON.stringify(docBefore) === JSON.stringify(docAfter),
+       JSON.stringify({ b: docBefore && docBefore.content_hash, a: docAfter && docAfter.content_hash }));
+    ok('still exactly one acceptance row after two acceptances',
+       Number((await env.DB.prepare(
+         'SELECT COUNT(*) AS n FROM document_acceptance WHERE doc_id = ?')
+         .bind(sent.doc_id).first()).n) === 1);
+    /* THE SEND HISTORY IS HISTORY: accepting writes no send row and emails
+       nobody, which is what the intake screen's own hint promises. */
+    const after = mails.length;
+    await call(env, '/leads/API-ACC-4/status',
+      { method: 'POST', cookie: admin, body: { status: 'converted' } });
+    ok('and accepting emails nobody', mails.length === after, String(mails.length - after));
+    ok('the send history still names the one send that happened',
+       Number((await env.DB.prepare(
+         "SELECT COUNT(*) AS n FROM send_log WHERE case_no = 'API-ACC-4'").first()).n) <= 1);
+
+    globalThis.fetch = realFetch;
+  }
+
+  /* ---- THE DOOR IS STILL ADMIN-ONLY ------------------------------------ */
+  const inv3 = await jsonOf(await invite(env, admin,
+    { username: 'fieldacc', display_name: 'Field', role: 'investigator' }));
+  await call(env, `/invite/${new URL(inv3.url, 'https://x.test').searchParams.get('invite')}/accept`,
+    { method: 'POST', body: { password: 'FieldAcc2026x' } });
+  const field = (await login(env, 'fieldacc', 'FieldAcc2026x')).cookie;
+  await ingest(env, { case_no: 'API-ACC-3', service: 'Surveillance', client_name: 'Third' });
+  ok('an investigator cannot accept an intake',
+     (await call(env, '/leads/API-ACC-3/status',
+       { method: 'POST', cookie: field, body: { status: 'converted' } })).status === 403);
+  ok('and an anonymous caller cannot either',
+     (await call(env, '/leads/API-ACC-3/status',
+       { method: 'POST', body: { status: 'converted' } })).status === 401);
+  ok('so that intake is still awaiting a decision',
+     !(await env.DB.prepare(
+       "SELECT 1 FROM lead_status WHERE case_no = 'API-ACC-3'").first()));
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));

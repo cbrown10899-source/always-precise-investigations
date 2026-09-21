@@ -3606,6 +3606,12 @@ const LEAD_LABEL = {lead:"Lead", rate_sheet_sent:"Rate sheet sent", intake_sent:
   intake_received:"Intake received", contacted:"Contacted", more_info_requested:"More info requested",
   converted:"Converted to case", declined:"Declined", closed_lead:"Closed lead"};
 let LEAD_MSG = "";    // one-shot confirmation on the leads desk
+/* WHICH INTAKE IS BEING ACCEPTED RIGHT NOW, or "" — the in-flight guard for
+   the one-tap acceptance, held as a CASE NUMBER rather than a boolean because
+   the Intakes desk draws many cards at once and only the one that was pressed
+   may go quiet. The `NL_BUSY` / `EV_UP_BUSY` / `DAY_BUSY` shape, on a desk
+   where a bare flag would disable every other intake's button too. */
+let ACCEPT_BUSY = "";
 /* UNIT 8 — one search box, and the office's exception list. Both keep the
    three states apart that this page has been bitten by twice: never loaded,
    loaded and genuinely empty, and failed. A failed read is never drawn as a
@@ -7581,20 +7587,40 @@ function myExpensesView(){
    accepting one is just walking it forward, and nothing can drift. */
 function leadsView(){
   const stageOf = c => c.stage || c.status;
+  /* IS THIS INTAKE STILL AWAITING A DECISION? ONE PREDICATE, read by all four
+     places that used to ask it separately — the two lists, the card's own
+     label, and whether the card offers Accept at all.
+
+     IT WAS THE STAGE ALONE, and the card's Accepted TAG was `lead_status`, so
+     one card carried two answers to one question. That is also the reason the
+     Accept button pointed at the Assignment tab: moving the STAGE there was
+     the only thing that made this desk stop calling an accepted intake
+     undecided, which made the assignment chooser the de-facto accept button.
+
+     BOTH HALVES, which is exactly what the Worker's own `UNDECIDED` asks
+     (`assistantIntakeFacts`, `assistantCounts`): still at an opening stage AND
+     no acceptance recorded on the lead ladder. Both are needed and neither is
+     enough. Reading only the ladder would throw every case accepted through
+     the old assignment path — stage moved, no lead row — back onto the desk
+     with an Accept button over live work; reading only the stage is the
+     defect above. Declined and closed leads are deliberately NOT read here:
+     this unit writes 'converted' and nothing else, and folding those two into
+     "Recently accepted" would be a new untruth on a screen fixing an old one. */
+  const awaiting = c => ["new", "awaiting_client"].includes(stageOf(c))
+    && (c.lead_status || "") !== "converted";
   const leadState = c => {
-    const st = stageOf(c);
-    if(st === "new") return ["New", "new"];
-    if(st === "awaiting_client") return ["More info requested", "awaiting_client"];
-    return ["Accepted", "assigned"];
+    if(!awaiting(c)) return ["Accepted", "assigned"];
+    return stageOf(c) === "awaiting_client"
+      ? ["More info requested", "awaiting_client"] : ["New", "new"];
   };
   const pool = CASES.filter(c => !["closed", "complete", "cancelled"].includes(stageOf(c)));
-  const fresh = pool.filter(c => ["new", "awaiting_client"].includes(stageOf(c)));
-  const accepted = pool.filter(c => !["new", "awaiting_client"].includes(stageOf(c))).slice(0, 6);
+  const fresh = pool.filter(awaiting);
+  const accepted = pool.filter(c => !awaiting(c)).slice(0, 6);
 
   const card = c => {
     const [lbl, tone] = leadState(c);
     const claim = c.kind === "claims";
-    const open = ["new", "awaiting_client"].includes(stageOf(c));
+    const open = awaiting(c);
     /* DASH-DELETE — who the confirmation names: the card's own headline, which
        is what the admin is looking at when they press it. */
     const who = c.legal ? (c.legal_firm || c.client_name || c.case_no)
@@ -7723,7 +7749,16 @@ function leadsView(){
             data-case="${esc(c.case_no)}">Record payment</button>` : ""}
         </div>
         ${sendRow}
-        ${open ? `<button class="uibtn acc" data-act="openCaseTab" data-case="${esc(c.case_no)}" data-tab="assign">Accept &rarr;</button>` : ""}
+        ${/* ONE TAP, AND IT ACCEPTS (owner, 2026-09-21). This carried
+             `data-tab="assign"` and therefore accepted nothing — it opened the
+             Assignment tab's offer/assigned-to chooser, which is where an
+             admin had to go to make this desk stop calling the intake
+             undecided. `acceptIntake` posts the office's decision to the
+             ordinary lead route and lands in the case; assignment stays its
+             own act, on its own tab, for when somebody is actually assigned. */""}
+        ${open ? `<button class="uibtn acc" data-act="acceptIntake" data-case="${esc(c.case_no)}"${
+          ACCEPT_BUSY === c.case_no ? " disabled" : ""}>${
+          ACCEPT_BUSY === c.case_no ? "Accepting&hellip;" : "Accept &rarr;"}</button>` : ""}
         ${open ? `<div class="pc-del"><button class="btn-del" data-act="intakeDel"
           data-case="${esc(c.case_no)}" data-name="${esc(who)}"
           aria-label="Delete intake for ${esc(who)}" title="Delete intake">${TRASH_SVG}</button></div>` : ""}
@@ -22726,7 +22761,9 @@ function intakeActionsHtml(s){
     <div class="actions" style="flex-wrap:wrap">
       ${accepted
         ? `<button class="btn sm" data-act="wsTab" data-tab="overview">Open case &rarr;</button>`
-        : `<button class="btn sm" data-act="wsTab" data-tab="assign">Create case &mdash; accept &rarr;</button>`}
+        : `<button class="btn sm" data-act="acceptIntake" data-case="${esc(WS_CASE)}"${
+            ACCEPT_BUSY === WS_CASE ? " disabled" : ""}>${
+            ACCEPT_BUSY === WS_CASE ? "Accepting&hellip;" : "Create case &mdash; accept &rarr;"}</button>`}
       <button class="btn sm ghost" data-act="wsTab" data-tab="notes">Internal note</button>
       <button class="btn sm ghost" data-act="wsTab" data-tab="comms">Message the client</button>
       ${archived
@@ -24288,6 +24325,67 @@ async function sendLeadIntakeMail(caseNo){
   }catch(e){ LEAD_SEND.busy = false; LEAD_SEND.err = e.message; paint(); }
 }
 
+/* ACCEPTING A SUBMITTED INTAKE, IN ONE TAP (owner, 2026-09-21).
+
+   THE CASE ALREADY EXISTS, and that fact is the whole unit. A submitted
+   intake IS its `submissions` row and the case number was minted by the
+   public form at the moment the client pressed Submit — so "Create case" was
+   never creating anything. What acceptance records is the OFFICE'S DECISION,
+   and the record of that decision is `lead_status`.
+
+   WHY THE ASSIGNMENT CHOOSER WAS APPEARING: both Accept controls carried
+   `data-tab="assign"`. They called no acceptance route at all — they were
+   NAVIGATIONS to the Assignment tab, where "Offer this case" (to / date /
+   hours / pay) and the Assigned-to picker live. Moving the case's STAGE there
+   was the only thing that made the Intakes desk stop calling it undecided, so
+   the chooser had become the de-facto accept button.
+
+   This posts to the ordinary `/leads/:no/status` route the Assistant's own
+   `accept_intake` command already uses, so `stampLead` stays the ONE writer
+   of 'converted' and the acceptance-time fee snapshot rides with it. No new
+   route, no new table, no stage write and NOBODY IS ASSIGNED — an accepted
+   case is an open case the office has not yet given to anyone, and the
+   Assignment tab is still exactly where it always was for when they do.
+
+   DUPLICATE PROTECTION IS STRUCTURAL, not this flag (§7). Nothing is created,
+   `lead_status.case_no` is a PRIMARY KEY written with ON CONFLICT DO UPDATE,
+   and `snapshotFixedFee` returns early on a case that already carries a
+   figure and inserts with ON CONFLICT DO NOTHING. A double tap, or a retry
+   after a dropped response, lands on the same single row. The flag is here so
+   the second tap does not fire a second request and a second navigation. */
+async function acceptIntake(caseNo){
+  if(!caseNo || ACCEPT_BUSY) return;
+  ACCEPT_BUSY = caseNo;
+  LEAD_MSG = ""; WS_ERR = "";
+  paint();
+  try{
+    await api(`/leads/${encodeURIComponent(caseNo)}/status`,
+      {method:"POST", body:{status: "converted"}});
+    /* The desk's own copy of the row, so the card is right the instant we
+       leave it — the `leadStatus` handler's shape. `openCase` re-reads the
+       case and the submission from the Worker, so the screen we land on is
+       never the local guess. */
+    const c = CASES.find(x => x.case_no === caseNo);
+    if(c) c.lead_status = "converted";
+    ACCEPT_BUSY = "";
+    /* §5 — LAND IN THE CASE. One door, the one every other case link uses.
+       NO TRANSIENT CONFIRMATION IS SET: `LEAD_MSG` draws on the Intakes desk,
+       which is the screen we are leaving, so it would be a note nobody reads
+       now and a stale one on their next visit. What says the acceptance
+       happened is the RECORD — the card moves to Recently accepted wearing the
+       Accepted tag, and the intake screen's own block now reads "Open case",
+       which is durable where a one-shot message is not. */
+    await openCase(caseNo);
+  }catch(e){
+    /* A failed acceptance stays where it was pressed and says why. Navigating
+       on a failure would strand the office in a case the record does not yet
+       say they accepted. */
+    ACCEPT_BUSY = "";
+    LEAD_MSG = e.message; WS_ERR = e.message;
+    paint();
+  }
+}
+
 /* Manual intake (P17): one POST, then either straight into the case or back
    to the leads desk with the number in hand. */
 /* Read what is on screen into the draft. Called before every repaint of this
@@ -24588,6 +24686,7 @@ document.addEventListener("click", ev => {
     }
   }
   else if(act === "openCaseTab"){ openCase(el.dataset.case, el.dataset.tab); }
+  else if(act === "acceptIntake"){ acceptIntake(el.dataset.case); }
   else if(act === "paySave"){ savePaymentMethod(el.dataset.id, el.dataset.on === "1"); }
   else if(act === "billSave"){ saveBillingSettings(); }
   else if(act === "ctAdd"){ addCaseType(); }
