@@ -3435,6 +3435,126 @@
     .crp-acts .btn{width:100%;}
   }
 
+  /* ===================== SIMPLE VIEW (owner, 2026-09-21) ==================
+     Quiet on purpose (§22): no new colour, no new radius, no new shadow —
+     the existing card, the existing tags, the existing `--r-card`/`--btn-h`
+     tokens. A front door that looked like a different product would be the
+     redesign the brief rules out. */
+  .vtog{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 14px;}
+  .vtog-b{font:inherit;font-weight:800;font-size:.82rem;padding:0 14px;min-height:40px;
+    border:1px solid var(--line);background:var(--panel);color:var(--muted);
+    border-radius:var(--r-btn, 10px);cursor:pointer;}
+  .vtog-b.on{background:var(--navy-2);border-color:var(--navy-2);color:#fff;}
+  .vtog-e{flex-basis:100%;}
+  .simp-card{margin-bottom:14px;}
+  .simp-h{margin:0;font-size:1.05rem;}
+  .simp-rows{display:flex;flex-direction:column;gap:8px;}
+  .simp-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-card, 12px);
+    background:var(--panel);}
+  .simp-who{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:1 1 auto;min-width:0;}
+  /* A NAME IS A FLEX ITEM, AND A FLEX ITEM'S DEFAULT MINIMUM IS ITS CONTENT.
+     Measured at 320: the 32-character client name "Aabbccddeeffgghhiijjkkllmmnnoopp"
+     drew 324px inside a 320px screen and pushed the page 56px sideways, with
+     `overflow:hidden` on the `<b>` doing nothing because the box it was
+     hiding was already too wide. `min-width:0` is what lets it shrink; the
+     name then WRAPS rather than being clipped, because a client's name is the
+     one thing on this card you have to be able to read in full. Same trap as
+     the one-column card track this file records as `minmax(0,1fr)`. */
+  .simp-who b,.simp-i-h b{min-width:0;max-width:100%;overflow-wrap:anywhere;}
+  .simp-row .btn{margin-left:auto;}
+  .simp-more{margin-top:10px;font-size:.84rem;color:var(--muted);}
+  .simp-list{display:flex;flex-direction:column;gap:10px;}
+  .simp-intake{border:1px solid var(--line);border-radius:var(--r-card, 12px);
+    background:var(--panel);padding:12px;}
+  .simp-i-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;}
+  .simp-i-f{font-size:.84rem;color:var(--muted);margin-bottom:10px;}
+  /* §22 — every action in Simple View is at the tap floor, stated as a floor
+     rather than as a padding sum nobody can read off the rule. */
+  .simp-open,.simp-row .btn,.vtog-b{min-height:44px;}
+  .simp-bar{border:1px solid var(--line);border-radius:var(--r-card, 12px);
+    background:var(--panel);padding:12px;margin:0 0 14px;}
+  .simp-acts{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;}
+  .simp-acts .uibtn{flex:1 1 auto;min-height:44px;}
+  .simp-stat{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;}
+  .simp-st{display:inline-flex;align-items:center;gap:5px;font-size:.78rem;font-weight:700;
+    padding:4px 9px;border-radius:999px;border:1px solid var(--line);
+    background:var(--neutral-bg);color:var(--muted);}
+  .simp-st.ok{color:var(--ok-ink);border-color:var(--ok-bg);background:var(--ok-bg);}
+  .simp-st.warn{color:var(--warn);}
+  /* THE NEXT MISSING THING IS EMPHASISED AND NOTHING IS ENFORCED (§11). A
+     ring, not a different component: the row is the same shape as its
+     neighbours so the summary still reads as one line of state. */
+  .simp-st.next{outline:2px solid var(--gold);outline-offset:1px;}
+  .simp-line{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:.86rem;
+    padding-top:8px;border-top:1px solid var(--line);}
+  .simp-line .btn{margin-left:auto;min-height:44px;}
+  .simp-line.err{border-top:0;}
+
+  /* DESKTOP IS UNCHANGED, AND THESE TWO RULES ARE WHAT KEEP IT THAT WAY.
+     Splitting the dialog into three regions moved the action row's own
+     `margin-top:12px` out of an inline style and the error out from under the
+     buttons — so the margin is restated here at EVERY width, and the error is
+     given its own line rather than being laid out as a flex item beside them.
+     Everything else about this dialog above 640px is byte-what-it-was. */
+  .rsw-acts{margin-top:12px;}
+  .rsw-err{flex-basis:100%;margin:0 0 8px;}
+
+  /* ===== THE RATE SHEET EDITOR IS ITS OWN SCREEN ON A PHONE ===============
+     Owner, on an iPhone, 2026-09-21. The numbers that produced this are in
+     the comment above `sheetWizardHtml`; the short version is that at 320 the
+     page behind really did move 600px while the editor was open, and the form
+     really did jump back to its top on every repaint.
+
+     FOUR ANSWERS, and only the fourth is JavaScript:
+
+       1. ONE SCROLLER. `.rsw-body` is the only thing that scrolls, and it
+          carries `overscroll-behavior:contain` so reaching its end does not
+          hand the rest of the gesture to the document. `.amsheet.rsw` itself
+          is `overflow:hidden` — a scroller inside a scroller is how a swipe
+          lands in whichever box it started over.
+       2. A REAL LOCK. `html`/`body` go `overflow:hidden` while the editor is
+          open. It does not MOVE the page, so there is no scroll offset to
+          save and none to restore — the portal is exactly where it was when
+          the editor closes. That is why this is not `position:fixed` with a
+          saved offset: that technique jumps to the top and then has to undo
+          it, which is the "do not create jump-to-top behavior" line.
+       3. THREE FLEX REGIONS. Head and actions are SIBLINGS of the scrolling
+          body, so the sticky controls cannot cover the field being typed
+          into — the body's height simply excludes them (§18's last line).
+       4. `--vvh`, below in the script: `dvh` tracks browser chrome but NOT
+          the on-screen keyboard, which is a visualViewport fact.
+
+     This is the Assistant sheet's own recorded pattern, applied one dialog
+     over, and it is scoped to `.rsw` so the four other `.amwrap` sheets are
+     untouched. */
+  @media(max-width:640px){
+    .amwrap.rsw{align-items:stretch;padding:0;}
+    .amsheet.rsw{border-radius:0;max-width:none;max-height:none;
+      /* The keyboard is not part of dvh. `--vvh` is the visual viewport when
+         the page can measure it, and the dynamic viewport otherwise. */
+      height:var(--vvh, 100dvh);
+      padding:0;overflow:hidden;display:flex;flex-direction:column;}
+    .amsheet.rsw .rsw-head{flex:0 0 auto;margin:0;padding:10px 16px;
+      padding-top:max(10px, env(safe-area-inset-top));
+      border-bottom:1px solid var(--line);background:#fff;min-height:44px;}
+    .amsheet.rsw .rsw-body{flex:1 1 auto;min-height:0;overflow-y:auto;
+      overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding:14px 16px;}
+    .amsheet.rsw .rsw-acts{flex:0 0 auto;margin:0;padding:10px 16px;
+      padding-bottom:max(10px, env(safe-area-inset-bottom));
+      border-top:1px solid var(--line);background:#fff;flex-wrap:wrap;}
+    .amsheet.rsw .rsw-acts .btn{min-height:44px;flex:1 1 auto;}
+    .amsheet.rsw .rsw-err{flex-basis:100%;margin:0 0 8px;}
+  }
+  /* WHILE THE EDITOR IS OPEN THE DOCUMENT DOES NOT SCROLL. Set on BOTH
+     elements because iOS Safari honours whichever is the scrolling box, and
+     phone-only for the standing rule that the desktop must not regress — on a
+     desktop the editor is a centred dialog and the page behind it is allowed
+     to stay scrollable, exactly as it is today. */
+  @media(max-width:640px){
+    html.rswlock, body.rswlock{overflow:hidden;}
+  }
+
 </style>
 </head>
 <body>
@@ -4265,11 +4385,19 @@ function shell(inner){
      keeps its own "Case Portal" h1 and the two never coexist — two h1s is its
      own defect, and a hidden one is still the FIRST one to anything reading
      the document in order. */
+  /* SIMPLE VIEW replaces the DASHBOARD'S OWN FURNITURE and nothing else: the
+     greeting, the signed-intake card, the launcher strip and the alert cards.
+     Every other tab still draws all four, because they are Home's and Home is
+     where the toggle changes. The toggle itself sits under the nav on every
+     screen so the way back to Full View is never somewhere you have to be in
+     Simple View to find. */
+  const simpleHome = simpleOn() && TAB === "dashboard";
   return `<h1 class="vh">Always Precise Investigations case portal</h1>
     <nav class="tabs" aria-label="Portal sections">${tabs}</nav>${schema}${problem}${
-    homeBackHtml()}${
+    viewToggleHtml()}${
+    homeBackHtml()}${simpleHome ? "" : `${
     greetHtml()}${signedIntakeHtml()}${quickToolsHtml()}${
-    summaryCards()}${inner}${
+    summaryCards()}`}${inner}${
     SHEET_WIZ ? sheetWizardHtml() : ""}${PAY_SEND ? paySendHtml() : ""}${
     INTAKE_SEND ? preIntakeHtml() : ""}${asstPillHtml()}${asstHtml()}${
     ceoFabHtml()}${ceoPanelHtml()}${mnavHtml()}`;
@@ -6159,6 +6287,40 @@ let PREFS = {};
 let PREFS_STORED = true;
 const DEFAULT_HIDDEN = ["needs_assignment", "lead_status"];
 const prefHidden = id => (Array.isArray(PREFS.hidden) ? PREFS.hidden : DEFAULT_HIDDEN).includes(id);
+
+/* ── SIMPLE VIEW / FULL VIEW (owner brief 2026-09-21, §1) ──────────────────
+   A front door, not a second portal. FULL is the factory default, so nothing
+   moves for anybody until they choose SIMPLE — and it is `PREFS.view`, which
+   is this user's own row and nobody else's, so Corey and Trever really can
+   run different defaults. An unknown stored value reads as FULL rather than
+   drawing an empty screen: a preference store is not a source of truth about
+   what this page can render.
+
+   IT IS ADMIN-ONLY because everything Simple View is FOR is admin-only — the
+   Intakes desk, the rate sheet, accepting a case. An investigator toggling it
+   would land on a screen of doors they get 403 from, which is the
+   drawn-dead-control defect this file already records. */
+const VIEW_MODES = ["simple", "full"];
+const viewMode = () => VIEW_MODES.includes(PREFS.view) ? PREFS.view : "full";
+const simpleOn = () => !!(ME && ME.role === "admin" && viewMode() === "simple");
+let VIEW_MSG = "";
+/* Optimistic, then corrected by what came back — the toggle has to answer the
+   tap on the tap, and the store is the one that decides in the end. A failed
+   save says so and puts the choice back, because a toggle that silently
+   reverted on the next reload is worse than one that refuses out loud. */
+async function setViewMode(mode){
+  if(!VIEW_MODES.includes(mode) || viewMode() === mode) return;
+  const prev = PREFS.view;
+  PREFS.view = mode; VIEW_MSG = ""; paint();
+  try{
+    const r = await api("/me/prefs", {method:"POST", body:{view: mode}});
+    PREFS = {...(r.prefs || {}), __loaded: true};
+  }catch(e){
+    if(prev === undefined) delete PREFS.view; else PREFS.view = prev;
+    VIEW_MSG = "That view preference could not be saved \u2014 " + e.message;
+  }
+  paint();
+}
 async function loadMyPrefs(){
   try{
     const r = await api("/me/prefs");
@@ -7271,6 +7433,143 @@ function recentActivityHtml(){
     <div class="bar"><h2 style="margin:0">Recent activity</h2>
       <span class="count">The last few things that happened, newest first</span></div>
     ${body}</div>`;
+}
+
+/* ===================== SIMPLE VIEW (owner brief 2026-09-21) ===============
+
+   "NEW INTAKE → OPEN → SEE EVERYTHING CLIENT SUBMITTED → SEND RATE SHEET IF
+   NEEDED → CREATE CASE / ACCEPT → RECORD RETAINER WHEN PAID → MOVE ON."
+
+   THIS ADDS NO DATA AND NO ROUTE. Every state below is derived from columns
+   `GET /submissions` has always returned — `signed` and `send_count` are
+   computed in that statement's own SQL, `lead_status` is the ladder, and
+   `retainer_received` is the case_retainer read already joined in. §3's "only
+   derive states from real stored data" is therefore a property of having
+   nothing else to read rather than a rule someone has to keep.
+
+   AND IT REPLACES ONLY THE DASHBOARD. Cases, Billing, Rate Sheets, Settings,
+   the case page, both bots and every tool draw exactly what they always drew,
+   which is §12 — Simple View is a cleaner front door, not another portal. */
+
+/* THE SIX STATES, IN THE ORDER THEY DEMAND ATTENTION. Each one is a question
+   the record can answer on its own; nothing here infers, schedules or ranks
+   beyond this list, because §3 says not to build a task system.
+
+   `awaiting` is the SHIPPED predicate from the Intakes desk (2026-09-21) —
+   opening stage AND no acceptance on the ladder — read here rather than
+   restated, so the front door and the desk cannot disagree about what is
+   still undecided. */
+const simpleAwaiting = c => ["new", "awaiting_client"].includes(c.stage || c.status)
+  && (c.lead_status || "") !== "converted";
+function simpleState(c){
+  const claim = c.kind === "claims";
+  if(simpleAwaiting(c)){
+    /* SIGNED OUTRANKS EVERYTHING ELSE ON AN UNDECIDED INTAKE: the client has
+       done their part and the only thing left is the office's decision. */
+    if(c.signed) return ["Ready to Create Case", "ok"];
+    if(Number(c.send_count) > 0) return ["Waiting for Client Acceptance", "info"];
+    if(c.lead_status === "intake_received") return ["Retainer Pending", "warn"];
+    /* NOTHING HAS GONE OUT YET. Which of the two words is true depends on
+       whether this is a consumer quote at all — a carrier assignment is
+       invoiced per fee schedule and is never waiting on a rate sheet. */
+    return claim ? ["New Intake", "new"] : ["Rate Sheet Needed", "new"];
+  }
+  /* ACCEPTED. The one thing an accepted private case can still be waiting on
+     that this row can answer for is the money. */
+  if(!claim && c.retainer_received == null) return ["Retainer Pending", "warn"];
+  return null;    // nothing to say is not a state — it is silence
+}
+
+/* NEEDS ACTION — compact, capped, and honest about a failed read.
+
+   `CASES_OK` is the flag that keeps the three states apart, and it matters
+   most here for the same reason it matters on the signed-intake card: a strip
+   whose job is "what needs doing" must never quietly say nothing does about a
+   list it could not read. */
+const SIMPLE_ACTION_CAP = 8;
+function simpleNeedsHtml(){
+  if(!CASES_OK){
+    return `<div class="card simp-card"><div class="bar"><h2 class="simp-h">Needs action</h2></div>
+      <div class="err">The case list did not load, so this is unknown &mdash; not empty.
+        <button class="btn sm ghost" data-act="reload" style="margin-left:8px">Try again</button></div></div>`;
+  }
+  const rows = [];
+  for(const c of CASES){
+    if(c.archived_at || c.deleted_at) continue;
+    if(["closed", "complete", "cancelled"].includes(c.stage || c.status)) continue;
+    const st = simpleState(c);
+    if(st) rows.push([c, st]);
+  }
+  return `<div class="card simp-card">
+    <div class="bar"><h2 class="simp-h">Needs action</h2>
+      <span class="count">${rows.length ? `${rows.length} waiting` : "Nothing waiting"}</span></div>
+    ${rows.length ? `<div class="simp-rows">${rows.slice(0, SIMPLE_ACTION_CAP).map(([c, [label, tone]]) => `
+      <div class="simp-row">
+        <span class="simp-who"><b>${esc(simpleWho(c))}</b>
+          <span class="tag ${tone}">${esc(label)}</span></span>
+        <button class="btn sm" data-act="simpleOpen" data-case="${esc(c.case_no)}">Open</button>
+      </div>`).join("")}</div>
+      ${rows.length > SIMPLE_ACTION_CAP ? `<div class="simp-more">and ${
+        rows.length - SIMPLE_ACTION_CAP} more &mdash;
+        <button class="linklike" data-act="tab" data-tab="leads">the full Intakes desk</button></div>` : ""}`
+      : `<div class="empty">Nothing is waiting on you. New submissions land here the moment they arrive.</div>`}
+  </div>`;
+}
+
+/* WHO THIS IS ABOUT, in the card's own headline position — the Intakes desk's
+   own rule, because a case NUMBER where a name belongs is how a live row
+   reads as an orphaned reference. */
+const simpleWho = c => c.legal ? (c.legal_firm || c.client_name || c.case_no)
+  : c.kind === "claims" ? (c.carrier || c.client_name || c.case_no)
+  : (c.client_name || c.case_no);
+
+/* NEW INTAKES — newest first, four facts, one action (§4). Declined, closed
+   and accepted rows are deliberately absent: this list answers "what just came
+   in", and mixing decided work into it is the noise §4 rules out. */
+function simpleIntakesHtml(){
+  if(!CASES_OK) return "";
+  const fresh = CASES.filter(c => !c.archived_at && !c.deleted_at && simpleAwaiting(c)
+    && !["declined", "closed_lead"].includes(c.lead_status || ""));
+  return `<div class="card simp-card">
+    <div class="bar"><h2 class="simp-h">New intakes</h2>
+      <span class="count">${fresh.length ? `${fresh.length} awaiting a decision` : "None waiting"}</span>
+      <button class="btn sm ghost" data-act="tab" data-tab="newlead" style="margin-left:auto">+ Intake a client</button></div>
+    ${fresh.length ? `<div class="simp-list">${fresh.map(c => `
+      <div class="simp-intake">
+        <div class="simp-i-h"><b>${esc(simpleWho(c))}</b>
+          <span class="tag ${c.legal ? "legaltag" : c.kind === "claims" ? "claims" : "consumer"}">${
+            c.legal ? "Legal" : c.kind === "claims" ? "Insurance" : "Private"}</span>
+          ${c.signed ? `<span class="tag ok">Signed &#10003;</span>` : ""}</div>
+        <div class="simp-i-f">${[
+          c.service ? esc(c.service) : "",
+          c.subject_name ? `${c.kind === "claims" ? "Claimant" : "Subject"}: ${esc(c.subject_name)}` : "",
+          `Received ${when(c.created_at)}`,
+        ].filter(Boolean).join(" &middot; ")}</div>
+        <button class="btn simp-open" data-act="simpleOpen" data-case="${esc(c.case_no)}">Open intake</button>
+      </div>`).join("")}</div>`
+      : `<div class="empty">Nothing new. Submissions from the public form and phoned-in intakes
+         both land here.</div>`}
+  </div>`;
+}
+
+function simpleHomeHtml(){
+  return `${simpleNeedsHtml()}${simpleIntakesHtml()}`;
+}
+
+/* THE TOGGLE (§1). Two real buttons rather than a checkbox, because the two
+   modes are equal choices and a switch implies one is the "off" of the other.
+   `aria-pressed` is what says which one is live to a screen reader — the
+   class alone says it only to someone who can see the fill. Admin-only, for
+   the reason `simpleOn` is. */
+function viewToggleHtml(){
+  if(!ME || ME.role !== "admin") return "";
+  const mode = viewMode();
+  const b = (id, label) => `<button class="vtog-b ${mode === id ? "on" : ""}"
+    data-act="viewMode" data-mode="${id}" aria-pressed="${mode === id}">${label}</button>`;
+  return `<div class="vtog" role="group" aria-label="Portal view">
+    ${b("simple", "Simple view")}${b("full", "Full view")}
+    ${VIEW_MSG ? `<span class="err vtog-e">${esc(VIEW_MSG)}</span>` : ""}
+  </div>`;
 }
 
 function dashView(){
@@ -9463,23 +9762,52 @@ function sheetWizardHtml(){
         : `The email is the sheet exactly as shown on this page`}${w.include ? ", plus the intake button" : ""}${
         w.sheet === "private_retainer" && w.pay && (w.payMethods || []).length ? ", plus the payment buttons" : ""}.
         Sending payment instructions does not mark the ${wizLegalFixed(w) ? "fee" : "retainer"} paid.</p>`;
-  return `<div class="amwrap" data-act="wizClose">
-    <div class="amsheet" data-act="amNoop" role="dialog" aria-modal="true" aria-label="Send the rate sheet">
-      <div class="amhead"><b>Send &mdash; ${esc(wizLegalFixed(w)
+  /* ===== THREE REGIONS, WHICH IS WHAT MAKES THE PHONE FIX POSSIBLE =========
+     Owner, on an iPhone, 2026-09-21: scrolling the editor scrolled the
+     dashboard behind it, the keyboard ate the screen, and it read as a
+     floating modal rather than its own workspace.
+
+     Measured at 390 and 320 before anything was written:
+
+       | | 390 | 320 |
+       | sheet / viewport      | 743 of 844 | 500 of 568 |
+       | form content          | 1414       | 1574       |
+       | overscroll-behavior   | auto       | auto       |
+       | html/body overflow    | visible    | visible    |
+       | head / actions        | static     | static     |
+       | page scrollY, pushing past the sheet's end | 260 | 260 -> 860 |
+       | editor scrollTop across a repaint | 200 -> 0 | 200 -> 0 |
+
+     So the page really did move — 600px of it at 320 — and the form really
+     did jump back to its top every time a select or a checkbox repainted.
+
+     `.rsw` scopes all of it to THIS dialog: the four other `.amwrap` sheets
+     are untouched, which is the "do not redesign the portal" line. The head
+     and the action row become FLEX SIBLINGS of one scrolling body, so the
+     sticky controls cannot cover the field being typed into — the body's
+     height simply excludes them. */
+  return `<div class="amwrap rsw" data-act="wizClose">
+    <div class="amsheet rsw" data-act="amNoop" role="dialog" aria-modal="true" aria-label="Send the rate sheet">
+      <div class="amhead rsw-head"><b>Send &mdash; ${esc(wizLegalFixed(w)
         /* A fixed send's dialog names the document it will actually send —
            not the retainer card whose route it shares (D5/D12). */
         ? `Legal / Law Firm — ${(wizLegalSvc(w) || {}).label || ""}`
         : (sheet.selector_label || sheet.name || ""))}</b>
         <button class="amx" data-act="wizClose" aria-label="Close">&times;</button></div>
-      ${rail}
-      ${body}
-      <div class="actions" style="margin-top:12px">
+      <div class="rsw-body" id="rsw_body">
+        ${rail}
+        ${body}
+      </div>
+      ${/* THE REFUSAL RIDES WITH THE CONTROLS, not with the form. Left in the
+           scrolling body it would sit a thousand pixels below the Send button
+           that produced it, on a phone, which is a refusal nobody reads. */""}
+      <div class="actions rsw-acts">
+        ${w.err ? `<div class="err rsw-err">${esc(w.err)}</div>` : ""}
         ${w.step > 1 ? `<button class="btn ghost sm" data-act="wizStep" data-s="${w.step - 1}">&larr; Back</button>` : ""}
         ${w.step < 2 ? `<button class="btn sm" data-act="wizStep" data-s="${w.step + 1}">Preview &rarr;</button>`
           : `<button class="btn sm" data-act="wizSend"${w.busy ? " disabled" : ""}>${
               w.busy ? "Sending&hellip;" : "Send it"}</button>`}
       </div>
-      ${w.err ? `<div class="err">${esc(w.err)}</div>` : ""}
     </div>
   </div>`;
 }
@@ -14860,6 +15188,84 @@ function focusRestore(){
   try { el.setSelectionRange(el.value.length, el.value.length); } catch(e){ }
 }
 
+/* ===== THE EDITOR KEEPS ITS PLACE ACROSS A REPAINT (owner §20) ============
+
+   `paint()` assigns `app.innerHTML`, which destroys the scrolling element and
+   builds a new one — measured at 390 and 320 before the fix: `scrollTop` 200
+   became 0, and `sameNode:false` is why. Every select, every checkbox and
+   every step move in the rate-sheet editor calls `paint()`, so on a phone the
+   form threw the owner back to its top whenever they changed anything.
+
+   This is `focusCapture`/`focusRestore`'s exact shape one element over: read
+   before the DOM is replaced, give it back after. It is keyed by ELEMENT ID
+   rather than by "whatever is scrolled", so a future scroller has to opt in —
+   the `FOCUS_KEEP` rule, for the same reason.
+
+   RESTORED SYNCHRONOUSLY, inside the same frame the paint happens in, or the
+   browser paints one frame at the top and the form visibly jumps. */
+const SCROLL_KEEP = ["rsw_body"];
+let SCROLL_WAS = null;
+function scrollCapture(){
+  SCROLL_WAS = null;
+  for(const id of SCROLL_KEEP){
+    const el = $(id);
+    if(el && el.scrollTop > 0){ SCROLL_WAS = [id, el.scrollTop]; return; }
+  }
+}
+function scrollRestore(){
+  const was = SCROLL_WAS;
+  SCROLL_WAS = null;
+  if(!was) return;
+  const el = $(was[0]);
+  if(el) el.scrollTop = was[1];
+}
+
+/* ===== THE KEYBOARD IS NOT PART OF THE DYNAMIC VIEWPORT ==================
+
+   `dvh` tracks the browser's own chrome — the toolbars that come and go as
+   you scroll — and iOS Safari does NOT shrink it when the on-screen keyboard
+   appears. `visualViewport.height` does, and it is the only thing that does.
+   So the editor's height is `var(--vvh, 100dvh)`: the measured visual
+   viewport where the browser can report one, and the dynamic viewport as the
+   honest fallback where it cannot.
+
+   IT IS SET AND CLEARED WITH THE EDITOR, not left on the document: a stale
+   `--vvh` would pin some other screen to a height the keyboard chose once. */
+/* ===== TAPPING BLANK SPACE PUTS THE KEYBOARD AWAY (owner §16) =============
+
+   `.amsheet` carries `data-act="amNoop"`, which exists so a tap inside the
+   dialog does not reach the backdrop's close. Every tap inside the editor
+   therefore resolves to `amNoop` — including taps on its own inputs, because
+   an `<input>` carries no `data-act` of its own and `closest` walks past it.
+
+   So the decision is made on the REAL TARGET, not on the resolved action: a
+   tap that landed on a control of any kind is left completely alone, and only
+   a tap on genuinely blank space blurs. Nothing is prevented and nothing is
+   stopped, so the control the user actually meant still activates normally —
+   which is §16's own second half, and the half that is easy to break. */
+const RSW_CONTROL_SEL = "input,textarea,select,button,a,label,summary,option,[contenteditable]";
+function rswBlurIfBlank(target){
+  if(!target || !target.closest) return;
+  if(target.closest(RSW_CONTROL_SEL)) return;      // they meant that control
+  const a = document.activeElement;
+  if(a && a.blur && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName || "")) a.blur();
+}
+
+let VVH_ON = false;
+function vvhSync(){
+  const vv = window.visualViewport;
+  if(!vv) return;
+  document.documentElement.style.setProperty("--vvh", Math.round(vv.height) + "px");
+}
+function vvhBind(on){
+  const vv = window.visualViewport;
+  if(!vv || on === VVH_ON) return;
+  VVH_ON = on;
+  if(on){ vvhSync(); vv.addEventListener("resize", vvhSync); vv.addEventListener("scroll", vvhSync); }
+  else{ vv.removeEventListener("resize", vvhSync); vv.removeEventListener("scroll", vvhSync);
+        document.documentElement.style.removeProperty("--vvh"); }
+}
+
 /* ARRIVING SOMEWHERE IS NOT AN ANNOUNCEMENT (owner, 2026-08-22).
 
    The chokepoint above reads whatever `.note`, `.err`, `.linkbox` or
@@ -14959,6 +15365,9 @@ function paint(){
   /* Before anything is replaced — once `app.innerHTML` is assigned the active
      element is the body and there is nothing left to read. */
   focusCapture();
+  /* Read beside the caret and for the same reason: once `app.innerHTML` is
+     assigned the scrolling element is gone and there is nothing left to read. */
+  scrollCapture();
   paintEvView();
   paintPStamp();
   paintVStamp();
@@ -14971,6 +15380,20 @@ function paint(){
   const asstLock = !!(ASST && ASST.open);
   document.documentElement.classList.toggle("asstlock", asstLock);
   document.body.classList.toggle("asstlock", asstLock);
+  /* AND THE RATE SHEET EDITOR LOCKS THE SAME WAY (owner, 2026-09-21). Measured
+     at 320 before this existed: the page behind moved 260 -> 860 while the
+     editor was open. `overflow:hidden` does not MOVE the page, so there is no
+     offset to save here and none to put back — the portal is exactly where it
+     was when the editor closes, which is what §13 asks for without the
+     jump-to-top §13 rules out. The CSS scopes it to phone widths.
+
+     `--vvh` rides the same flag: bound while the editor is open so the
+     keyboard can shrink it, and REMOVED on close so a height the keyboard
+     chose once cannot pin some other screen later. */
+  const rswLock = !!SHEET_WIZ;
+  document.documentElement.classList.toggle("rswlock", rswLock);
+  document.body.classList.toggle("rswlock", rswLock);
+  vvhBind(rswLock);
   if(!ME){ app.innerHTML = loginView(); $("who").hidden = true;
     document.body.classList.remove("withnav", "navopen", "hasmnav");
     if($("burger")) $("burger").hidden = true;
@@ -15006,7 +15429,21 @@ function paint(){
       <div class="pagebar"><button class="btn sm ghost close" data-act="backToCases">&larr; Back to ${
         TAB === "leads" ? "Intakes" : TAB === "completed" ? "Completed" : "Cases"}</button></div>
       <div class="card"><div class="dlg" id="dlgBody">${caseBodyHtml()}</div></div>
-    </div>`;
+    </div>${/* THE SEND WIZARD HAS TO RENDER HERE TOO (owner §21, 2026-09-21).
+
+       `sheetWizardHtml()` was drawn from `shell()` alone, and the case page
+       bypasses `shell()` entirely — so Send rate sheet from inside a case set
+       `SHEET_WIZ` and drew NOTHING. It was unreachable rather than broken
+       while the only door was the Intakes desk, which is in the shell; Simple
+       View's action bar put that door on the case screen and the hole opened.
+       Found by the suite, from the §8 assertion, which is what an end-to-end
+       walk is for.
+
+       The three modals travel together because they are one family and the
+       next one moved would be the same bug again. Everything else about them
+       is unchanged — same state, same handlers, same close. */""}${
+      SHEET_WIZ ? sheetWizardHtml() : ""}${PAY_SEND ? paySendHtml() : ""}${
+      INTAKE_SEND ? preIntakeHtml() : ""}`;
     /* UNIT 21'S CHOKEPOINT REACHES THIS SCREEN AT LAST. This branch returned
        before the `announceRendered()` below, so every confirmation and refusal
        inside a case was drawn silently for a screen-reader user — on the
@@ -15018,13 +15455,20 @@ function paint(){
     // but only to whoever had it, which is what stops opening a case from
     // raising the keyboard.
     focusRestore();
+    /* The rate-sheet editor renders from the case page too (opened from an
+       intake), so the restore belongs on BOTH paint paths, not just the
+       shell's — a fix on one branch is the phone-only hole this file records. */
+    scrollRestore();
     return;
   }
   /* The shell is on screen, so the mobile nav is too — the flag reserves the
      room for it and lifts the Assistant pill clear of it. */
   document.body.classList.add("hasmnav");
   app.innerHTML = shell(
-      TAB === "dashboard" ? dashView()
+      /* The front door is a MODE of Home, not a tab of its own: no new
+         destination, no second entry in the nav, and every deep link and
+         `?tab=` that worked yesterday lands exactly where it did. */
+      TAB === "dashboard" ? (simpleOn() ? simpleHomeHtml() : dashView())
     : TAB === "staff" ? staffView()
     : TAB === "settings" ? settingsView()
     : TAB === "leads" ? leadsView()
@@ -15050,6 +15494,7 @@ function paint(){
      the new screen happened to contain, so arriving at a section focused a
      field nobody had touched and the phone raised its keyboard over the page. */
   focusRestore();
+  scrollRestore();
 }
 
 /* Loading the portal used to swallow every failure and paint an empty
@@ -20061,7 +20506,10 @@ function caseBodyHtml(){
     : WS_TAB === "edit"     ? editCasePanel(s, a) + caseProfileHtml()
     : WS_TAB === "assign"   ? assignPanel(s)
     : WS_TAB === "subject"  ? detailList(s, "subject") + caseDetailsPanel() + subjectsPanel(s)
-    : WS_TAB === "details"  ? detailList(s, "overview") + intakeActionsHtml(s)
+    /* SIMPLE VIEW puts the intake's own actions at the TOP (§6). In FULL
+       VIEW the screen is byte-what-it-was — same renderer, same order, the
+       action block still at the bottom — which is §12. */
+    : WS_TAB === "details"  ? simpleIntakeBarHtml(s) + detailList(s, "overview") + intakeActionsHtml(s)
     : WS_TAB === "billing"  ? billingPanel(s, a)
     : admin                 ? overviewPanel(s, a)
     :                         fieldHomeHtml() + myOfferBox() + detailList(s, "overview")
@@ -22648,7 +23096,7 @@ function detailList(s, mode){
         order). It used to open the screen, so the first thing anyone read
         about a submitted intake was a list of what it did not have. */""}
   ${needed.length ? `<h3 class="sec-h">NOT AVAILABLE YET</h3>${neededBox}` : ""}
-  <h3 class="sec-h">CLIENT SIGNATURE / ACCEPTANCE</h3>
+  <h3 class="sec-h" id="sig-sec" tabindex="-1">CLIENT SIGNATURE / ACCEPTANCE</h3>
   ${sig
     ? `<div><img class="sig" src="${esc(sig)}" alt="signature"></div>
        ${p.signed_name ? `<div class="optn">Typed: ${esc(p.signed_name)}</div>` : ""}`
@@ -22735,6 +23183,113 @@ function assocSheetHtml(){
   <button class="btn sm" data-act="docOpen" data-doc="${esc(d.doc_id)}">View rate sheet as sent</button>`;
 }
 
+
+/* ===== SIMPLE VIEW'S ACTION BAR, AT THE TOP OF THE OPENED INTAKE ==========
+   Owner brief 2026-09-21 §6/§9/§10/§11. Rendered ONLY in Simple View, so Full
+   View's intake screen is byte-what-it-was (§12).
+
+   EVERY CONTROL HERE ALREADY EXISTED, and that is deliberate: `acceptIntake`
+   is the one shipped on 2026-09-21, `leadSheet` is the Intakes desk's own Send
+   rate sheet, `retQuick` opens the Authorization panel's Record Payment form,
+   and `docOpen` reads back the exact stored document. A second implementation
+   of any of them would be the parallel system this project forbids, and the
+   one that drifts is the one nobody is looking at.
+
+   THERE IS NO ASSIGNMENT CONTROL, by §6's own line: both admins already have
+   every case, so a chooser here would be the step the previous unit removed
+   coming back one screen over. */
+
+/* §11 — the status summary, and every mark is a stored fact. `null` is the
+   third state and draws as a dot, never as a tick or a dash: a document read
+   that has not landed yet must not report "no rate sheet was sent". */
+function simpleStatusHtml(s, p){
+  const docsIn = (WS_CASE in DOCS);
+  const docErr = !!DOCS_ERR[WS_CASE];
+  const sheet = docsIn ? caseSheetDoc(WS_CASE) : null;
+  const ret = ((WS && WS.authorization) || {}).retainer || null;
+  const items = [
+    ["Intake", true],
+    ["Rate sheet", docErr ? null : docsIn ? !!sheet : null],
+    ["Acceptance", !!(p.signature || p.signed_name)],
+    ["Retainer", !!(ret && ret.received)],
+    ["Case", (WS && WS.lead_status) === "converted"],
+  ];
+  const mark = v => v === true ? ["&#10003;", "ok"] : v === false ? ["&#8212;", "muted"] : ["&#9679;", "warn"];
+  /* THE NEXT MISSING THING IS EMPHASISED, NOT ENFORCED (§11: "do not force a
+     wizard sequence"). It is the first item that is not yet true, and it is a
+     highlight on a row that is otherwise identical to its neighbours. */
+  const nextIdx = items.findIndex(([, v]) => v !== true);
+  return `<div class="simp-stat" role="list">${items.map(([label, v], i) => {
+    const [g, tone] = mark(v);
+    return `<span class="simp-st ${tone}${i === nextIdx ? " next" : ""}" role="listitem">
+      <span class="simp-st-m" aria-hidden="true">${g}</span>${esc(label)}<span class="vh">: ${
+        v === true ? "done" : v === false ? "not yet" : "not known yet"}</span></span>`;
+  }).join("")}</div>`;
+}
+
+function simpleIntakeBarHtml(s){
+  if(!simpleOn() || ME.role !== "admin" || !WS) return "";
+  const p = (s && s.payload) || {};
+  const accepted = (WS.lead_status === "converted");
+  const claim = s.kind === "claims";
+  const signed = !!(p.signature || p.signed_name);
+  /* The document read is the same one `assocSheetHtml` performs further down
+     the screen — asked for HERE too because this bar is above it and would
+     otherwise draw its Rate sheet mark before anything had been fetched. One
+     loader, guarded against a second call by the cache it fills. */
+  if(!(WS_CASE in DOCS) && !(WS_CASE in DOCS_ERR)) setTimeout(() => loadCaseDocs(WS_CASE), 0);
+  const sheet = (WS_CASE in DOCS) ? caseSheetDoc(WS_CASE) : null;
+  /* §9 — a sheet already sent is STATED, and the new send is a deliberate
+     second act that writes its own document record. Nothing here overwrites
+     history: `docOpen` reads the stored bytes back and `leadSheet` opens the
+     ordinary wizard, which is the only thing that can create a document. */
+  const sheetRow = DOCS_ERR[WS_CASE]
+    ? `<div class="simp-line err">The sent document could not be read &mdash; that is not the same
+        as none having been sent. <button class="linklike" data-act="crRetry">Try again</button></div>`
+    : !(WS_CASE in DOCS)
+    ? `<div class="simp-line">Rate sheet &mdash; reading the record&hellip;</div>`
+    : sheet
+    ? `<div class="simp-line"><span><b>Rate sheet</b> sent ${esc(when(sheet.sent_at))}</span>
+        <button class="btn sm ghost" data-act="docOpen" data-doc="${esc(sheet.doc_id)}">View exact document</button></div>`
+    : `<div class="simp-line"><span><b>Rate sheet</b> &mdash; none sent from the portal</span></div>`;
+  /* §10 — one compact row, read off the Worker's OWN published block rather
+     than re-derived here, so this row and the Authorization panel cannot
+     disagree about whether money arrived. `received_total` is what ACTUALLY
+     came in (summed across instalments, voided ones excluded); `amount` is
+     what was agreed, which is a different question and is not what "received"
+     means. The date is the latest live payment's own `paid_on` — absent when
+     the case carries only the legacy single receipt, and absent is drawn as
+     absent rather than as today. */
+  const ret = ((WS && WS.authorization) || {}).retainer || null;
+  const live = ((ret && ret.payments) || []).filter(x => !x.voided && x.paid_on);
+  const lastOn = live.length ? live[live.length - 1].paid_on : "";
+  const got = ret && ret.received;
+  const retRow = `<div class="simp-line">
+    <span><b>Retainer</b> &mdash; ${got
+      ? `${esc(usd(ret.received_total != null ? ret.received_total : ret.amount))} received${
+          lastOn ? ` &middot; ${esc(fmtDay(lastOn) || lastOn)}` : ""}`
+      : "not recorded"}</span>
+    ${got ? "" : `<button class="btn sm ghost" data-act="retQuick">Record retainer</button>`}
+  </div>`;
+  return `<div class="simp-bar">
+    <div class="simp-acts">
+      ${accepted
+        ? `<button class="uibtn pri" data-act="wsTab" data-tab="overview">Open case</button>`
+        : `<button class="uibtn acc" data-act="acceptIntake" data-case="${esc(WS_CASE)}"${
+            ACCEPT_BUSY === WS_CASE ? " disabled" : ""}>${
+            ACCEPT_BUSY === WS_CASE ? "Accepting&hellip;" : "Create case / Accept"}</button>`}
+      <button class="uibtn sec" data-act="leadSheet" data-case="${esc(WS_CASE)}"
+        data-kind="${esc(s.kind || "")}">${sheet ? "Send new rate sheet" : "Send rate sheet"}</button>
+      ${/* A REAL DESTINATION, NOT A BUTTON FOR THE SCREEN YOU ARE ON. The
+           signature sits at the far end of a long record — 1400px of form on a
+           390px phone — so this jumps to it. Drawn only when there IS one:
+           a control that can open nothing must not be drawn as a button. */""}
+      ${signed ? `<button class="uibtn sec" data-act="simpleSig">View signed intake</button>` : ""}
+    </div>
+    ${simpleStatusHtml(s, p)}
+    ${sheetRow}${claim ? "" : retRow}
+  </div>`;
+}
 
 /* THE INTAKE'S OWN ACTIONS, at the bottom of the screen that shows it (owner,
    from a real iPhone 2026-09-06). The complaint was the DISTANCE: reading a
@@ -24527,6 +25082,26 @@ document.addEventListener("keydown", ev => {
   else if(ev.key === "Escape" && VST && VST.step !== "working"){ vstClose(); }
 });
 
+/* ===== THE FIELD BEING TYPED INTO STAYS ON SCREEN (owner §15) =============
+
+   The editor's three flex regions already stop the sticky actions COVERING a
+   field — the scrolling body's height excludes them, so there is nowhere for
+   them to overlap. What this adds is the other half: a field far down a
+   1400px form, focused by a Next/Previous tap on the keyboard's own accessory
+   bar, has to be brought INTO that band.
+
+   `block:"nearest"` is the whole reason this does not fight the user: an
+   element already in view is not moved at all, so tapping straight into a
+   visible field scrolls nothing. Scoped to the editor's own scroller, and the
+   document is locked while it is open, so nothing here can move the page. */
+document.addEventListener("focusin", ev => {
+  if(!SHEET_WIZ) return;
+  const t = ev.target;
+  if(!t || !t.closest || !t.closest("#rsw_body")) return;
+  if(!/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || "")) return;
+  try{ t.scrollIntoView({block: "nearest"}); }catch(e){ /* older engines */ }
+});
+
 document.addEventListener("click", ev => {
   const el = ev.target.closest("[data-act]");
   if(!el) return;
@@ -24541,6 +25116,10 @@ document.addEventListener("click", ev => {
   else if(act === "retQuick") noteUse("retainer_paid");
   else if(act === "fcQuick") noteUse("close_case");
   else if(act === "openCaseTab" && el.dataset.tab === "details") noteUse("view_intake");
+  /* §16 — blank space inside the rate-sheet editor dismisses the keyboard.
+     Before the chain, because it is not a destination and must not compete
+     with one. */
+  if(act === "amNoop" && SHEET_WIZ){ rswBlurIfBlank(ev.target); }
   if(act === "backToCases"){ VIEW = "list"; render(); }
   else if(act === "navToggle"){
     /* The drawer slides rather than blinks (owner, 2026-09-02). Opening rides
@@ -24687,6 +25266,21 @@ document.addEventListener("click", ev => {
   }
   else if(act === "openCaseTab"){ openCase(el.dataset.case, el.dataset.tab); }
   else if(act === "acceptIntake"){ acceptIntake(el.dataset.case); }
+  else if(act === "viewMode"){ setViewMode(el.dataset.mode); }
+  /* Simple View's own door into an intake: the EXISTING case screen on the
+     EXISTING details tab, which is already the whole submitted record (§5).
+     A second renderer of what the client sent is the parallel system this
+     project forbids, and it is the one that would drift. */
+  else if(act === "simpleOpen"){ openCase(el.dataset.case, "details"); }
+  /* VIEW SIGNED INTAKE is a jump, not a screen — the signature sits at the far
+     end of a record that measures well over a thousand pixels on a phone. It
+     moves FOCUS as well as the viewport, because a scroll alone leaves a
+     keyboard user exactly where they were, which is the skip-link defect this
+     file already records. */
+  else if(act === "simpleSig"){
+    const t = $("sig-sec");
+    if(t){ t.scrollIntoView({block: "start", behavior: "smooth"}); t.focus({preventScroll: true}); }
+  }
   else if(act === "paySave"){ savePaymentMethod(el.dataset.id, el.dataset.on === "1"); }
   else if(act === "billSave"){ saveBillingSettings(); }
   else if(act === "ctAdd"){ addCaseType(); }

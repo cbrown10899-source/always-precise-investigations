@@ -22372,6 +22372,69 @@ section('Accepting an intake preserves it, assigns nobody, and cannot double');
        "SELECT 1 FROM lead_status WHERE case_no = 'API-ACC-3'").first()));
 }
 
+/* SIMPLE VIEW IS A PER-USER PREFERENCE, AND THE STORE IS WHY (owner brief
+   2026-09-21 §1: "Persist this preference per login ... Corey and Trever may
+   choose different defaults. Do not create global shared preference state.")
+
+   `view` is one more allow-listed key in `user_pref`, which is keyed to the
+   authenticated identity — so "no path by which one account's choice reaches
+   another's screen" is a property of every read and write binding `user.id`,
+   not a rule someone has to remember. This walks it with two real admins. */
+section('The Simple/Full view preference is one row per login');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const corey = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const inv = await jsonOf(await invite(env, corey,
+    { username: 'trever2', display_name: 'Trever', role: 'admin' }));
+  await call(env, `/invite/${new URL(inv.url, 'https://x.test').searchParams.get('invite')}/accept`,
+    { method: 'POST', body: { password: 'SecondAdmin1x' } });
+  const trever = (await login(env, 'trever2', 'SecondAdmin1x')).cookie;
+
+  const read = async ck => (await jsonOf(await call(env, '/me/prefs', { cookie: ck }))).prefs || {};
+  ok('neither admin starts with a stored view — FULL is the factory default '
+     + 'and nothing moves until somebody chooses',
+     (await read(corey)).view === undefined && (await read(trever)).view === undefined);
+
+  ok('the key is accepted',
+     (await call(env, '/me/prefs', { method: 'POST', cookie: corey,
+       body: { view: 'simple' } })).status === 200);
+  ok('the first admin now reads simple', (await read(corey)).view === 'simple');
+  ok('AND THE SECOND ADMIN IS UNTOUCHED — different defaults, same portal',
+     (await read(trever)).view === undefined);
+
+  await call(env, '/me/prefs', { method: 'POST', cookie: trever, body: { view: 'full' } });
+  ok('they can hold opposite choices at the same time',
+     (await read(corey)).view === 'simple' && (await read(trever)).view === 'full');
+
+  /* THE /meta MERGE RULE, which this key inherits rather than restates. */
+  await call(env, '/me/prefs', { method: 'POST', cookie: corey, body: { hidden: ['lead_status'] } });
+  ok('an absent key is unchanged — saving something else does not reset the view',
+     (await read(corey)).view === 'simple');
+  await call(env, '/me/prefs', { method: 'POST', cookie: corey, body: { view: null } });
+  const after = await read(corey);
+  ok('and an explicit null clears it back to the default',
+     after.view === undefined && Array.isArray(after.hidden),
+     JSON.stringify(after));
+
+  /* IT IS LAYOUT, NOT A CASE. Nothing about this key reaches shared data. */
+  ok('the preference blob holds no case, client or figure',
+     !/case_no|client|retainer|\$/i.test(JSON.stringify(await read(corey))),
+     JSON.stringify(await read(corey)));
+
+  /* An investigator has the same personal store; the page is what withholds
+     the toggle, and the Worker deliberately does not police a layout key. */
+  const inv2 = await jsonOf(await invite(env, corey,
+    { username: 'fieldpv', display_name: 'Field', role: 'investigator' }));
+  await call(env, `/invite/${new URL(inv2.url, 'https://x.test').searchParams.get('invite')}/accept`,
+    { method: 'POST', body: { password: 'FieldPref2026x' } });
+  const field = (await login(env, 'fieldpv', 'FieldPref2026x')).cookie;
+  ok('an investigator still reads only their own row',
+     (await read(field)).view === undefined);
+  ok('and an anonymous caller reads nobody\'s',
+     (await call(env, '/me/prefs')).status === 401);
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));

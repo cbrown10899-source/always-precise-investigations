@@ -22106,6 +22106,751 @@ section('Case closeout: the page records a refund and emails nobody');
    NAVIGATIONS to the Assignment tab, where "Offer this case" (to / date /
    hours / pay) and the Assigned-to picker live. This walks the real page: the
    desk, the tap, where it lands, and what is left behind. */
+/* ===================== SIMPLE VIEW (owner brief 2026-09-21) ===============
+   A front door for handling real incoming intakes, chosen per login. Walked
+   through the real page: the toggle, what it draws, what it deliberately does
+   NOT draw, and the whole intake flow end to end. */
+
+/* `signIn` deliberately lands every section on CASES — its own comment says
+   so, and `goHome` above exists for exactly this. Simple View is a mode of
+   HOME, so every section here walks there first. Measuring the dashboard's
+   furniture from the Cases tab is the instrument, not the product, and it
+   read as the feature not rendering at all. */
+const simpleOnFor = async page => {
+  await goHome(page);
+  await page.waitForTimeout(300);
+  await page.evaluate(async () => { await setViewMode('simple'); });
+  await page.waitForTimeout(700);
+};
+/* THE CONTENT, NOT THE CHROME. `#app` includes the navigation rail, which
+   names Staff, Storage and Investigators on every screen in the portal — so a
+   clutter scan over the whole of it reports Simple View as carrying things the
+   NAV carries. Scoped to everything after the rail. */
+const contentText = page => page.evaluate(() => {
+  const app = document.querySelector('#app');
+  if (!app) return '';
+  const nav = app.querySelector('.tabs');
+  return [...app.children].filter(c => c !== nav)
+    .map(c => c.innerText || '').join('\n');
+});
+
+section('Simple View: the toggle, and what it replaces');
+{
+  await post('/ingest', { case_no: 'API-SV-NEW', service: 'Child Custody',
+    client_name: 'Nora Fresh', client_email: 'nora@example.test',
+    subject_name: 'Co-parent Fresh', objective: 'Document exchanges' },
+    { 'X-Ingest-Key': 'e2e-ingest-key' });
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await goHome(page);
+
+  const before = await page.evaluate(() => ({
+    toggle: !!document.querySelector('.vtog'),
+    buttons: [...document.querySelectorAll('.vtog-b')].map(b => b.textContent.trim()),
+    pressed: [...document.querySelectorAll('.vtog-b')].map(b => b.getAttribute('aria-pressed')),
+    greet: !!document.querySelector('.greet'),
+    qtools: !!document.querySelector('.qtools'),
+    mode: viewMode(),
+  }));
+  ok('an admin gets the view toggle', before.toggle === true);
+  ok('and it offers both modes by name',
+     before.buttons.join('|') === 'Simple view|Full view', JSON.stringify(before.buttons));
+  ok('FULL is the factory default, so nothing moved for anybody',
+     before.mode === 'full' && before.greet === true && before.qtools === true,
+     JSON.stringify(before));
+  ok('and which one is live is said in the accessibility tree, not by fill alone',
+     before.pressed.join('|') === 'false|true', JSON.stringify(before.pressed));
+
+  await simpleOnFor(page);
+  const afterText = await contentText(page);
+  const after = await page.evaluate(t => ({
+    mode: viewMode(),
+    needs: !!document.querySelector('.simp-card'),
+    intakes: t,
+    greet: !!document.querySelector('.greet'),
+    qtools: !!document.querySelector('.qtools'),
+    summary: !!document.querySelector('.stats'),
+    toggleStill: !!document.querySelector('.vtog'),
+    pressed: [...document.querySelectorAll('.vtog-b')].map(b => b.getAttribute('aria-pressed')),
+  }), afterText);
+  ok('choosing Simple draws Needs action and New intakes', after.needs === true
+     && /Needs action/i.test(after.intakes) && /New intakes/i.test(after.intakes),
+     after.intakes.slice(0, 160));
+  ok('and it REPLACES the dashboard furniture rather than sitting beside it',
+     after.greet === false && after.qtools === false && after.summary === false,
+     JSON.stringify(after));
+  ok('the way back to Full view is still on screen', after.toggleStill === true
+     && after.pressed.join('|') === 'true|false', JSON.stringify(after.pressed));
+
+  /* §26 — the clutter list, by name. */
+  const clutterText = await contentText(page);
+  const clutter = await page.evaluate(t => {
+    return {
+      assign: /assign(ed)? to|send offer|investigator/i.test(t),
+      mileage: /mileage/i.test(t),
+      health: /storage|health|schema/i.test(t),
+      ceoSugg: /CEO Bot suggests|unused feature/i.test(t),
+      search: !!document.querySelector('.srchbox'),
+      dupCases: (t.match(/Case packages/g) || []).length,
+    };
+  }, clutterText);
+  ok('§26 — Simple View carries no assignment-to-user control',
+     clutter.assign === false, JSON.stringify(clutter));
+  ok('no mileage, no system health, no CEO suggestions',
+     !clutter.mileage && !clutter.health && !clutter.ceoSugg, JSON.stringify(clutter));
+  ok('no giant search bar and no duplicate Cases card',
+     clutter.search === false && clutter.dupCases === 0, JSON.stringify(clutter));
+
+  /* §12 — FULL VIEW MUST REMAIN. The rest of the portal is untouched by the
+     mode: every destination still exists and still works from Simple View. */
+  const nav = await page.evaluate(() =>
+    [...document.querySelectorAll('.tabs button')].map(b => b.textContent.trim()));
+  for (const want of ['Cases', 'Intakes', 'Billing', 'Rate Sheets', 'Settings']) {
+    ok(`§12 — ${want} is still in the navigation in Simple View`,
+       nav.some(n => n.includes(want)), JSON.stringify(nav));
+  }
+  const tools = await page.evaluate(() => ({
+    asst: !!document.querySelector('[data-act="asstOpen"]'),
+    ceo: !!document.querySelector('[data-act="ceoOpen"]'),
+    surv: !!document.querySelector('[data-act="surveillance"]'),
+    vst: !!document.querySelector('[data-act="vstOpen"]'),
+    pst: !!document.querySelector('[data-act="pstLaunch"]'),
+  }));
+  ok('§12 — Assistant, CEO Bot, Active Surveillance and both timestamp tools remain',
+     Object.values(tools).every(Boolean), JSON.stringify(tools));
+
+  /* Another tab in Simple mode draws exactly what it always drew. */
+  await page.locator('.tabs button', { hasText: 'Cases' }).first().click();
+  await page.waitForTimeout(700);
+  ok('Simple View is a mode of HOME only — Cases is the ordinary Cases screen',
+     await page.locator('.stacktbl, .cases, table').count() > 0);
+  await page.close();
+}
+
+section('Simple View: the intake, end to end');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await simpleOnFor(page);
+
+  /* §4 / §23B — the card, and the SERVICE on it. */
+  const card = await page.evaluate(() => {
+    const el = [...document.querySelectorAll('.simp-intake')]
+      .find(x => /Nora Fresh/.test(x.textContent));
+    if (!el) return null;
+    const btn = el.querySelector('[data-act="simpleOpen"]');
+    return { text: el.innerText, act: btn && btn.dataset.act, caseNo: btn && btn.dataset.case,
+             h: btn ? Math.round(btn.getBoundingClientRect().height) : 0 };
+  });
+  ok('§4 — the new intake is on the Simple View list', !!card, JSON.stringify(card));
+  const ct = (card && card.text) || '';
+  ok('§23B — with the service the client actually chose', /Child Custody/.test(ct), ct);
+  ok('and the subject and the time it arrived',
+     /Co-parent Fresh/.test(ct) && /Received/.test(ct), ct);
+  ok('its one action opens the intake',
+     !!card && card.act === 'simpleOpen' && card.caseNo === 'API-SV-NEW', JSON.stringify(card));
+
+  /* §3 — the Needs action strip derives its state from the record. */
+  const needs = await page.evaluate(() => {
+    const row = [...document.querySelectorAll('.simp-row')]
+      .find(x => /Nora Fresh/.test(x.textContent));
+    return row ? row.innerText.replace(/\s+/g, ' ').trim() : null;
+  });
+  ok('§3 — Needs action names it and says what it needs',
+     !!needs && /Nora Fresh/.test(needs) && /Rate Sheet Needed/i.test(needs), String(needs));
+
+  /* §5 — opening it shows the whole submitted record immediately. */
+  /* Guarded, so a Simple View that did not render FAILS by name rather than
+     aborting the run — the negative test has to be readable. */
+  await page.evaluate(() => {
+    const b = document.querySelector('[data-act="simpleOpen"][data-case="API-SV-NEW"]');
+    if (b) b.click(); else openCase('API-SV-NEW', 'details');
+  });
+  await page.waitForTimeout(1100);
+  const rec = await page.evaluate(() => ({
+    tab: WS_TAB, view: VIEW,
+    text: (document.querySelector('#app') || {}).innerText || '',
+    bar: !!document.querySelector('.simp-bar'),
+  }));
+  ok('§6 — the action bar rendered', rec.bar === true, JSON.stringify({ v: rec.view, t: rec.tab }));
+  ok('§5 — it lands straight on the submitted record, no Review-then-Details',
+     rec.view === 'case' && rec.tab === 'details', JSON.stringify({ v: rec.view, t: rec.tab }));
+  for (const [what, re] of [['the client', /Nora Fresh/], ['the subject', /Co-parent Fresh/],
+      ['what was provided', /PROVIDED INFORMATION/], ['what is signed', /SIGNATURE/],
+      ['the objective', /Document exchanges/]]) {
+    ok(`§5 — ${what} is on screen`, re.test(rec.text), rec.text.slice(0, 200));
+  }
+
+  /* §6 — the action bar, at the TOP, with no assignment control. */
+  const bar = await page.evaluate(() => {
+    const b = document.querySelector('.simp-bar');
+    if (!b) return null;
+    const acts = [...b.querySelectorAll('.simp-acts .uibtn')];
+    const rec2 = document.querySelector('.simp-bar ~ dl, .simp-bar + *');
+    return {
+      labels: acts.map(x => x.textContent.trim()),
+      short: acts.filter(x => Math.round(x.getBoundingClientRect().height) < 44).length,
+      aboveRecord: !!rec2,
+      assign: /assign|offer|investigator|Corey|Trever/i.test(b.textContent),
+      status: [...b.querySelectorAll('.simp-st')].map(x => x.textContent.replace(/\s+/g, ' ').trim()),
+      retainer: /Retainer/.test(b.textContent),
+      record: !!b.querySelector('[data-act="retQuick"]'),
+    };
+  });
+  ok('§6 — the bar exists to be measured', !!bar, JSON.stringify(bar));
+  if (!bar) { ok('§6 — (the rest of the bar assertions cannot run)', false); }
+  else {
+  ok('§6 — the bar is above the record', bar.aboveRecord === true);
+  ok('§6 — it offers Create case / Accept and Send rate sheet',
+     bar.labels.some(l => /Create case \/ Accept/i.test(l))
+     && bar.labels.some(l => /Send rate sheet/i.test(l)), JSON.stringify(bar.labels));
+  ok('§6 — and NOTHING that assigns it to a person', bar.assign === false, JSON.stringify(bar.labels));
+  ok('§6 — every action is at the tap floor', bar.short === 0, String(bar.short));
+  ok('§11 — the status summary names all five states',
+     ['Intake', 'Rate sheet', 'Acceptance', 'Retainer', 'Case']
+       .every(k => bar.status.some(sx => sx.includes(k))), JSON.stringify(bar.status));
+  ok('§10 — the retainer row is there with its Record control',
+     bar.retainer === true && bar.record === true, JSON.stringify(bar));
+  }
+
+  /* §8 / §21 — Send Rate Sheet opens the EXISTING wizard, prefilled. */
+  await page.evaluate(() => {
+    const b = document.querySelector('.simp-acts [data-act="leadSheet"]');
+    if (b) b.click();
+  });
+  await page.waitForTimeout(900);
+  const wiz = await page.evaluate(() => ({
+    open: !!SHEET_WIZ,
+    dialog: !!document.querySelector('.amsheet.rsw'),
+    to: (document.getElementById('wiz_to') || {}).value,
+    caseNo: (document.getElementById('wiz_case') || {}).value,
+    name: (document.getElementById('wiz_cname') || {}).value,
+    retainer: !!document.getElementById('wiz_ret'),
+    preview: !!document.querySelector('[data-act="wizStep"]'),
+  }));
+  ok('§8 — it opens the existing Prepare & Send wizard, not a second generator',
+     wiz.open === true && wiz.dialog === true, JSON.stringify(wiz));
+  ok('§8 — carrying the client forward', wiz.to === 'nora@example.test'
+     && wiz.caseNo === 'API-SV-NEW', JSON.stringify(wiz));
+  ok('§8 — and the owner can still choose the retainer and reach Preview',
+     wiz.retainer === true && wiz.preview === true, JSON.stringify(wiz));
+  /* `wizClose` is a delegated ACTION, not a function — the close is the
+     control, which is also what a person presses. */
+    await page.evaluate(() => {
+      const x = document.querySelector('.amx[data-act="wizClose"]');
+      if (x) x.click();
+    });
+  await page.waitForTimeout(600);
+  const back = await page.evaluate(() => ({ view: VIEW, tab: WS_TAB, caseNo: WS_CASE }));
+  ok('§21 — closing returns to the same intake, no context lost',
+     back.view === 'case' && back.tab === 'details' && back.caseNo === 'API-SV-NEW',
+     JSON.stringify(back));
+
+  /* §7 / §23A — Create Case / Accept is the SHIPPED path, unchanged. */
+  await page.evaluate(() => {
+    const b = document.querySelector('.simp-acts [data-act="acceptIntake"]');
+    if (b) b.click();
+  });
+  await page.waitForTimeout(1600);
+  const acc = await page.evaluate(() => ({
+    view: VIEW, tab: WS_TAB, lead: WS && WS.lead_status,
+    asg: !!document.getElementById('asg'),
+  }));
+  ok('§7 — one tap accepts and lands in the case', acc.view === 'case'
+     && acc.tab === 'overview' && acc.lead === 'converted', JSON.stringify(acc));
+  ok('§7 — with no assignment chooser anywhere near it', acc.asg === false);
+
+  /* §23E — after acceptance: no duplicate New Intake action, record preserved. */
+  await page.evaluate(() => openCase('API-SV-NEW', 'details'));
+  await page.waitForTimeout(1000);
+  const post2 = await page.evaluate(() => {
+    const b = document.querySelector('.simp-bar');
+    return { accept: !!(b && b.querySelector('[data-act="acceptIntake"]')),
+             open: !!(b && /Open case/i.test(b.textContent)),
+             text: (document.querySelector('#app') || {}).innerText || '' };
+  });
+  ok('§23E — the accepted intake is no longer offered acceptance',
+     post2.accept === false && post2.open === true, JSON.stringify(post2.accept));
+  ok('§23E — and the original submission is still there in full',
+     /Nora Fresh/.test(post2.text) && /Co-parent Fresh/.test(post2.text)
+     && /Child Custody|PROVIDED INFORMATION/.test(post2.text));
+
+  await page.evaluate(() => { TAB = 'dashboard'; VIEW = 'list'; paint(); });
+  await page.waitForTimeout(700);
+  const gone = await page.evaluate(() => ({
+    /* SCOPED TO THE NEW-INTAKES CARDS. An accepted private case with no
+       retainer recorded is legitimately in NEEDS ACTION — that is the state
+       machine working — so reading the whole screen for the name asserted
+       something the product never promised. */
+    inNewIntakes: [...document.querySelectorAll('.simp-intake')]
+      .some(x => /Nora Fresh/.test(x.textContent)),
+    inNeeds: [...document.querySelectorAll('.simp-row')]
+      .some(x => /Nora Fresh/.test(x.textContent)),
+    needsSays: ([...document.querySelectorAll('.simp-row')]
+      .find(x => /Nora Fresh/.test(x.textContent)) || {}).innerText || '',
+  }));
+  ok('§4 — the accepted case has left the New intakes list, which is what that list means',
+     gone.inNewIntakes === false, JSON.stringify(gone));
+  ok('§3 — and it moved to Needs action, saying what it now needs',
+     gone.inNeeds === true && /Retainer Pending/i.test(gone.needsSays),
+     JSON.stringify(gone));
+
+  await page.evaluate(async () => { await setViewMode('full'); });
+  await page.close();
+}
+
+section('Simple View at 390 and 320');
+{
+  await post('/ingest', { case_no: 'API-SV-MOB', service: 'Surveillance',
+    client_name: 'Mobile Client', client_email: 'mob@example.test',
+    subject_name: 'Mobile Subject', objective: 'Watch' },
+    { 'X-Ingest-Key': 'e2e-ingest-key' });
+  /* A NAME WITH NOTHING TO BREAK ON. The overflow this asserts against is
+     invisible without one: measured at 320, a 32-character unbroken client
+     name drew 324px inside a 320px screen and pushed the page 56px sideways.
+     A fixture of ordinary two-word names would have passed over the bug. */
+  await post('/ingest', { case_no: 'API-SV-LONG', service: 'Surveillance',
+    client_name: 'Aabbccddeeffgghhiijjkkllmmnnoopp',
+    client_email: 'a.very.long.address@subdomain.example.test',
+    subject_name: 'Bartholomew Fitzgerald-Montgomery III', objective: 'Watch' },
+    { 'X-Ingest-Key': 'e2e-ingest-key' });
+  for (const width of [390, 320]) {
+    const page = await newPage();
+    await signIn(page, 'trever', 'AdminPassword1x');
+    /* HOME FIRST, THEN THE PHONE. Below 900px the nav rail is behind the
+       burger, so `goHome`'s tab click waits thirty seconds for a control that
+       is display:none — the instrument, not the product. The mode and the
+       screen are chosen at desktop width and the viewport is shrunk after,
+       which is also what a person carrying one portal between two devices
+       actually experiences. */
+    await simpleOnFor(page);
+    await page.setViewportSize({ width, height: width === 320 ? 568 : 844 });
+    await page.waitForTimeout(500);
+    const m = await page.evaluate(() => {
+      const small = [...document.querySelectorAll('.vtog-b, .simp-open, .simp-row .btn')]
+        .filter(b => Math.round(b.getBoundingClientRect().height) < 44).length;
+      const tog = document.querySelector('.vtog');
+      return { small, overflow: document.documentElement.scrollWidth
+                 > document.documentElement.clientWidth,
+               togTop: tog ? Math.round(tog.getBoundingClientRect().top) : null,
+               pill: (() => {
+                 const p2 = document.querySelector('.asst-pill, .ceo-fab');
+                 const a = document.querySelector('.simp-open');
+                 if (!p2 || !a) return 'none';
+                 const r = p2.getBoundingClientRect(), b = a.getBoundingClientRect();
+                 return !(r.right < b.left || r.left > b.right || r.bottom < b.top || r.top > b.bottom);
+               })() };
+    });
+    ok(`§22 — every Simple View action is at the tap floor at ${width}`, m.small === 0, String(m.small));
+    ok(`§22 — no horizontal overflow at ${width}`, m.overflow === false);
+    ok(`§22 — the toggle is reachable near the top at ${width} (y=${m.togTop})`,
+       m.togTop !== null && m.togTop < 400, String(m.togTop));
+    ok(`§22 — the bots' pills do not cover an intake's action at ${width}`,
+       m.pill === false || m.pill === 'none', String(m.pill));
+    await page.evaluate(async () => { await setViewMode('full'); });
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await page.close();
+  }
+}
+
+section('The view preference is this login\'s own');
+{
+  /* §1 / §23F — two admins, two front doors, and neither moves the other. */
+  const p1 = await newPage();
+  await signIn(p1, 'trever', 'AdminPassword1x');
+  await simpleOnFor(p1);
+  ok('the first admin is in Simple View', await p1.evaluate(() => viewMode()) === 'simple');
+
+  const p2 = await newPage();
+  await signIn(p2, 'corey2', 'SecondOwner1x').catch(() => {});
+  const made = await p1.evaluate(async () => {
+    try { return await api('/invites', { method: 'POST',
+      body: { username: 'corey2', display_name: 'Corey', role: 'admin' } }); }
+    catch (e) { return { error: e.message }; }
+  });
+  if (made && made.url) {
+    const tok = new URL(made.url, 'http://x').searchParams.get('invite');
+    await p2.goto(`${p1.url().split('/portal/')[0]}/portal/?invite=${tok}`);
+    await p2.waitForTimeout(700);
+    await p2.locator('#p1').fill('SecondOwner1x');
+    await p2.locator('#p2').fill('SecondOwner1x');
+    await p2.locator('#acceptBtn').click();
+    await p2.waitForTimeout(1600);
+    const other = await p2.evaluate(() => ({ mode: viewMode(), tog: !!document.querySelector('.vtog') }));
+    ok('§23F — the second admin gets the FULL default, not the first one\'s choice',
+       other.mode === 'full', JSON.stringify(other));
+    ok('and has the toggle of their own', other.tog === true);
+    ok('while the first admin is still in Simple View',
+       await p1.evaluate(() => viewMode()) === 'simple');
+    /* §23F — both retain existing case access. */
+    const sees = await p2.evaluate(async () => {
+      try { return ((await api('/submissions')).submissions || []).length; } catch { return -1; }
+    });
+    ok('§23F — and both keep full case access', sees > 0, String(sees));
+  } else {
+    ok('§23F — a second admin could be invited', false, JSON.stringify(made));
+  }
+  await p1.evaluate(async () => { await setViewMode('full'); });
+  await p1.close(); await p2.close();
+}
+
+/* ============ THE RATE SHEET EDITOR ON A PHONE (owner §13-§21) ============
+
+   Reported on an iPhone: scrolling the editor scrolled the dashboard behind
+   it, the keyboard ate the screen, and it read as a floating modal.
+
+   MEASURED BEFORE ANY FIX, at 390 and 320:
+
+     | sheet of viewport      | 743/844 | 500/568 |
+     | form content           | 1414    | 1574    |
+     | overscroll-behavior    | auto    | auto    |
+     | html/body overflow     | visible | visible |
+     | page scrollY, pushed past the sheet's end | 260 | 260 -> 860 |
+     | editor scrollTop across a repaint         | 200 -> 0 | 200 -> 0 |
+
+   The page really moved 600px at 320, and the form really jumped back to its
+   top whenever a select or a checkbox repainted. Everything below is those
+   two numbers, asserted. */
+
+const openWiz = async page => {
+  await page.evaluate(() => { SHEET_WIZ = { sheet: 'private_retainer', context: 'private',
+    legal: false, attemptKey: 'e2e-rsw', step: 1, to: '', caseNo: '', note: '',
+    include: true, pay: true, payMethods: [], err: '', clientName: '', clientPhone: '',
+    legalService: '', lsvcTouched: false, retainer: null,
+    retainerPick: String(RETAINER_STANDARD), retainerCustom: '', retainerTouched: false };
+    wizPaymentLoad(); wizSheetLoad(); paint(); });
+  await page.waitForTimeout(800);
+};
+
+section('The rate sheet editor is its own screen, and the portal behind it does not move');
+{
+  for (const width of [390, 320]) {
+    const H = width === 320 ? 568 : 844;
+    const page = await newPage();
+    await signIn(page, 'trever', 'AdminPassword1x');
+    await page.setViewportSize({ width, height: H });
+    await page.waitForTimeout(400);
+    await page.evaluate(() => window.scrollTo(0, 260));
+    await page.waitForTimeout(200);
+    const startedAt = await page.evaluate(() => window.scrollY);
+    ok(`${width}: the portal is scrolled before the editor opens`, startedAt === 260, String(startedAt));
+
+    await openWiz(page);
+
+    /* §14 — its own screen, not a floating card. */
+    const geo = await page.evaluate(() => {
+      const sheet = document.querySelector('.amsheet.rsw');
+      const body = document.getElementById('rsw_body');
+      const head = document.querySelector('.rsw-head');
+      const acts = document.querySelector('.rsw-acts');
+      const r = sheet.getBoundingClientRect();
+      return { h: Math.round(r.height), top: Math.round(r.top), vh: window.innerHeight,
+        overscroll: getComputedStyle(body).overscrollBehavior,
+        sheetOverflow: getComputedStyle(sheet).overflowY,
+        headOutsideBody: !body.contains(head), actsOutsideBody: !body.contains(acts),
+        htmlLocked: getComputedStyle(document.documentElement).overflow === 'hidden',
+        bodyLocked: getComputedStyle(document.body).overflow === 'hidden',
+        actsPadBottom: getComputedStyle(acts).paddingBottom,
+        headPadTop: getComputedStyle(head).paddingTop,
+        canScroll: body.scrollHeight > body.clientHeight,
+        bodyH: body.clientHeight, contentH: body.scrollHeight };
+    });
+    ok(`§14 — at ${width} the editor fills the screen (${geo.h} of ${geo.vh})`,
+       geo.h === geo.vh && geo.top === 0, JSON.stringify(geo));
+    ok(`§13 — at ${width} the document is locked while it is open`,
+       geo.htmlLocked && geo.bodyLocked, JSON.stringify(geo));
+    ok(`§13 — ONE scroller, and it contains its own overscroll at ${width}`,
+       geo.overscroll === 'contain' && geo.sheetOverflow === 'hidden', JSON.stringify(geo));
+    ok(`§18 — head and actions are OUTSIDE the scrolling body at ${width}, so they `
+       + 'cannot cover the field being typed into',
+       geo.headOutsideBody && geo.actsOutsideBody, JSON.stringify(geo));
+    ok(`§19 — the action row respects the safe area at ${width}`,
+       parseFloat(geo.actsPadBottom) >= 10 && parseFloat(geo.headPadTop) >= 10,
+       JSON.stringify({ b: geo.actsPadBottom, t: geo.headPadTop }));
+    ok(`the form is longer than the screen at ${width} (${geo.contentH} in ${geo.bodyH}), `
+       + 'so this is a real scroller', geo.canScroll === true, JSON.stringify(geo));
+
+    /* §24A — scroll the editor, then push PAST its end. The page must not move. */
+    await page.evaluate(() => { const b = document.getElementById('rsw_body');
+      b.scrollTop = b.scrollHeight; });
+    await page.mouse.move(width / 2, Math.round(H / 2));
+    await page.mouse.wheel(0, 900);
+    await page.waitForTimeout(400);
+    const afterPush = await page.evaluate(() => window.scrollY);
+    ok(`§24A — at ${width} pushing past the editor's end leaves the portal exactly `
+       + `where it was (${afterPush})`, afterPush === 260, String(afterPush));
+
+    /* §24F — the bottom controls are reachable, and they are not IN the scroll. */
+    const reach = await page.evaluate(() => {
+      const acts = document.querySelector('.rsw-acts');
+      const r = acts.getBoundingClientRect();
+      const mid = document.elementFromPoint(Math.round(r.left + r.width / 2),
+                                            Math.round(r.top + r.height / 2));
+      const next = [...acts.querySelectorAll('button')].find(b => /Preview/.test(b.textContent));
+      const nr = next ? next.getBoundingClientRect() : null;
+      return { visible: r.bottom <= window.innerHeight + 1 && r.top >= 0,
+               hit: !!(mid && acts.contains(mid)),
+               next: !!next, nextH: nr ? Math.round(nr.height) : 0 };
+    });
+    ok(`§24F — at ${width} Preview is reachable without scrolling for it`,
+       reach.visible && reach.next && reach.nextH >= 44, JSON.stringify(reach));
+
+    /* §20 / §24C — type, then change something that repaints: the editor keeps
+       its place. Before the fix this measured 200 -> 0 at both widths. */
+    /* A CONTROL THAT REALLY REPAINTS, PRESSED THE WAY A PERSON PRESSES IT.
+       The first version of this probe ticked `wiz_inc` and dispatched a
+       synthetic `change`: that box has no handler at all, so nothing
+       repainted and the assertion measured nothing. `wiz_pay` runs
+       `wizCollect(); paint()` from the CLICK chain, and a real click is what
+       fires it — the instrument, not the product. */
+    /* A REPAINT THAT DOES NOT CHANGE THE FORM'S HEIGHT, which is what this
+       assertion is actually about. Two earlier versions of this probe were
+       wrong in two different ways and the product was right both times:
+       `.click()` scrolls its target into view first, so a position read
+       before it is stale; and ticking `wiz_pay` HIDES the payment block, so
+       the form gets ~104px shorter and the browser legitimately CLAMPS the
+       restored position to the new maximum. Switching between two retainer
+       presets repaints the whole dialog and leaves its height alone, so an
+       exact comparison means what it says. */
+    await page.evaluate(() => { document.getElementById('rsw_body').scrollTop = 180; });
+    await page.waitForTimeout(100);
+    const scrolledTo = await page.evaluate(() =>
+      ({ before: document.getElementById('rsw_body').scrollTop,
+         height: document.getElementById('rsw_body').scrollHeight,
+         node: (window.__rswNode = document.getElementById('rsw_body')) && true }));
+    await page.selectOption('#wiz_ret', '1000');
+    await page.waitForTimeout(450);
+    const kept = await page.evaluate(was => {
+      const now = document.getElementById('rsw_body');
+      return { before: was.before, after: now ? now.scrollTop : null,
+               heightBefore: was.height, heightAfter: now ? now.scrollHeight : null,
+               rebuilt: now !== window.__rswNode };
+    }, scrolledTo);
+    ok(`§20 — at ${width} a repaint does not throw the form back to its top `
+       + `(${kept.before} -> ${kept.after})`,
+       kept.after === kept.before && kept.before > 0, JSON.stringify(kept));
+    ok(`and the form really did stay the same length at ${width}, so that `
+       + 'comparison means what it says',
+       kept.heightAfter === kept.heightBefore, JSON.stringify(kept));
+    ok(`and the element really was rebuilt, so this is the restore working at ${width}`,
+       kept.rebuilt === true, JSON.stringify(kept));
+
+    /* §24B / §15 — focusing a field keeps it on screen and above the actions. */
+    await page.evaluate(() => { document.getElementById('rsw_body').scrollTop = 0; });
+    /* `wizRetPick` is registered on INPUT, not on change — a `<select>` fires
+       both for a real user and neither for a hand-built `change` event. Driven
+       through Playwright so the browser raises what the browser raises. */
+    await page.selectOption('#wiz_ret', 'custom');
+    await page.waitForTimeout(500);
+    const focused = await page.evaluate(async () => {
+      const f = document.getElementById('wiz_retc');
+      if (!f) return { none: true };
+      f.focus();
+      await new Promise(r => setTimeout(r, 250));
+      const fr = f.getBoundingClientRect();
+      const ar = document.querySelector('.rsw-acts').getBoundingClientRect();
+      const br = document.getElementById('rsw_body').getBoundingClientRect();
+      return { top: Math.round(fr.top), bottom: Math.round(fr.bottom),
+               actsTop: Math.round(ar.top), bodyTop: Math.round(br.top),
+               bodyBottom: Math.round(br.bottom), active: document.activeElement.id };
+    });
+    ok(`§24B — at ${width} the custom retainer field is focused and on screen`,
+       focused.active === 'wiz_retc' && focused.top >= focused.bodyTop - 1
+       && focused.bottom <= focused.bodyBottom + 1, JSON.stringify(focused));
+    ok(`§18 — and the sticky actions are BELOW it, never over it, at ${width}`,
+       focused.bottom <= focused.actsTop + 1, JSON.stringify(focused));
+
+    /* §24C — type, tap blank space: the keyboard goes, the place is kept. */
+    const dismissed = await page.evaluate(async () => {
+      const f = document.getElementById('wiz_retc');
+      if (!f) return { none: true };
+      f.focus(); f.value = '2500';
+      const b = document.getElementById('rsw_body');
+      const at = b.scrollTop;
+      /* A real tap on the sheet's own blank space — the rail, which carries no
+         control at all. */
+      const blank = document.querySelector('.pkg-steps') || document.querySelector('.rsw-body');
+      blank.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 200));
+      return { active: document.activeElement ? document.activeElement.id : '',
+               value: (document.getElementById('wiz_retc') || {}).value,
+               at, now: document.getElementById('rsw_body').scrollTop };
+    });
+    ok(`§24C — at ${width} tapping blank space blurs the field`,
+       dismissed.active !== 'wiz_retc', JSON.stringify(dismissed));
+    ok(`§24C — the typed value survives and the editor stays where it was at ${width}`,
+       dismissed.value === '2500' && dismissed.now === dismissed.at, JSON.stringify(dismissed));
+
+    /* §24D/E/§16 — a tap on ANOTHER control still activates it. */
+    const other = await page.evaluate(async () => {
+      const rc = document.getElementById('wiz_retc');
+      if (rc) rc.focus();
+      const to = document.getElementById('wiz_to');
+      to.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      to.focus();
+      await new Promise(r => setTimeout(r, 150));
+      const movedTo = document.activeElement.id;
+      const sel = document.getElementById('wiz_ret');
+      let selOk = false;
+      if (sel) { sel.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        sel.focus();
+        await new Promise(r => setTimeout(r, 120));
+        selOk = document.activeElement.id === 'wiz_ret'; }
+      const box = document.getElementById('wiz_inc');
+      const was = box.checked;
+      box.click();
+      await new Promise(r => setTimeout(r, 250));
+      return { movedTo, selOk, boxToggled: document.getElementById('wiz_inc').checked !== was };
+    });
+    ok(`§24D — at ${width} tapping another input moves focus to it`,
+       other.movedTo === 'wiz_to', JSON.stringify(other));
+    ok(`§24E — a select still takes focus at ${width}`, other.selOk === true, JSON.stringify(other));
+    ok(`§16 — and a checkbox still toggles at ${width} — the dismiss swallows nothing`,
+       other.boxToggled === true, JSON.stringify(other));
+
+    /* §24G/H — closing puts the portal back exactly, and leaves no lock. */
+    /* `wizClose` is a delegated ACTION, not a function — the close is the
+     control, which is also what a person presses. */
+    await page.evaluate(() => {
+      const x = document.querySelector('.amx[data-act="wizClose"]');
+      if (x) x.click();
+    });
+    await page.waitForTimeout(500);
+    const closed = await page.evaluate(() => ({
+      scrollY: window.scrollY,
+      htmlLocked: document.documentElement.classList.contains('rswlock'),
+      bodyLocked: document.body.classList.contains('rswlock'),
+      vvh: document.documentElement.style.getPropertyValue('--vvh'),
+      sheet: !!document.querySelector('.amsheet.rsw'),
+      canScroll: getComputedStyle(document.documentElement).overflow !== 'hidden',
+    }));
+    ok(`§24G — at ${width} closing returns the portal to exactly where it was (${closed.scrollY})`,
+       closed.scrollY === 260, JSON.stringify(closed));
+    ok(`§24H — and leaves no scroll lock behind at ${width}`,
+       !closed.htmlLocked && !closed.bodyLocked && closed.canScroll && !closed.sheet,
+       JSON.stringify(closed));
+    ok(`§15 — the keyboard's viewport variable is cleared with it at ${width}`,
+       closed.vvh === '', JSON.stringify(closed));
+
+    /* Reopening works, which is the other half of §24H. */
+    await openWiz(page);
+    const again = await page.evaluate(() => ({
+      locked: document.documentElement.classList.contains('rswlock'),
+      body: !!document.getElementById('rsw_body'),
+      scrollTop: (document.getElementById('rsw_body') || {}).scrollTop,
+    }));
+    ok(`§24H — reopening locks again and opens at the top at ${width}`,
+       again.locked && again.body && again.scrollTop === 0, JSON.stringify(again));
+    /* `wizClose` is a delegated ACTION, not a function — the close is the
+     control, which is also what a person presses. */
+    await page.evaluate(() => {
+      const x = document.querySelector('.amx[data-act="wizClose"]');
+      if (x) x.click();
+    });
+
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await page.close();
+  }
+}
+
+section('The rate sheet editor on a shrunken viewport — the keyboard case');
+{
+  /* A real on-screen keyboard cannot be raised in a headless browser, so the
+     viewport is shrunk to what one leaves — the same technique this suite
+     already uses for the Assistant. What is asserted is the property that
+     matters: the field being typed into is still inside the scrolling band,
+     and the controls are still below it rather than over it. */
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openWiz(page);
+  await page.setViewportSize({ width: 390, height: 430 });   // keyboard up
+  await page.waitForTimeout(500);
+  await page.selectOption('#wiz_ret', 'custom');
+  await page.waitForTimeout(500);
+  const small = await page.evaluate(async () => {
+    const f = document.getElementById('wiz_retc');
+    if (!f) return { none: true };
+    f.focus();
+    await new Promise(r => setTimeout(r, 250));
+    const fr = f.getBoundingClientRect();
+    const acts = document.querySelector('.rsw-acts').getBoundingClientRect();
+    const head = document.querySelector('.rsw-head').getBoundingClientRect();
+    const body = document.getElementById('rsw_body').getBoundingClientRect();
+    const sheet = document.querySelector('.amsheet.rsw').getBoundingClientRect();
+    return { fieldTop: Math.round(fr.top), fieldBottom: Math.round(fr.bottom),
+             actsTop: Math.round(acts.top), headBottom: Math.round(head.bottom),
+             bodyTop: Math.round(body.top), bodyBottom: Math.round(body.bottom),
+             sheetH: Math.round(sheet.height), vh: window.innerHeight,
+             bodyScrolls: document.getElementById('rsw_body').scrollHeight
+                        > document.getElementById('rsw_body').clientHeight };
+  });
+  ok('§15 — the editor shrinks with the viewport rather than overflowing it',
+     small.sheetH <= small.vh + 1, JSON.stringify(small));
+  ok('§24I — the field being typed into is not hidden behind the sticky footer',
+     small.fieldBottom <= small.actsTop + 1, JSON.stringify(small));
+  ok('nor behind the sticky header', small.fieldTop >= small.headBottom - 1, JSON.stringify(small));
+  ok('§15 — and the body is still scrollable with the keyboard up',
+     small.bodyScrolls === true, JSON.stringify(small));
+  /* `wizClose` is a delegated ACTION, not a function — the close is the
+     control, which is also what a person presses. */
+    await page.evaluate(() => {
+      const x = document.querySelector('.amx[data-act="wizClose"]');
+      if (x) x.click();
+    });
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.close();
+}
+
+section('§25 — the desktop rate sheet editor did not move');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.evaluate(() => window.scrollTo(0, 120));
+  await openWiz(page);
+  const d = await page.evaluate(() => {
+    const sheet = document.querySelector('.amsheet.rsw');
+    const cs = getComputedStyle(sheet);
+    const acts = document.querySelector('.rsw-acts');
+    return { maxH: cs.maxHeight, overflowY: cs.overflowY, radius: cs.borderTopLeftRadius,
+             width: Math.round(sheet.getBoundingClientRect().width),
+             actsMarginTop: getComputedStyle(acts).marginTop,
+             htmlLocked: getComputedStyle(document.documentElement).overflow === 'hidden',
+             pageScrollable: document.documentElement.scrollHeight > window.innerHeight };
+  });
+  ok('§25 — on desktop it is still the centred dialog it always was',
+     d.maxH !== 'none' && d.overflowY === 'auto' && parseFloat(d.radius) > 0 && d.width <= 560,
+     JSON.stringify(d));
+  ok('§25 — the action row keeps its spacing', d.actsMarginTop === '12px', d.actsMarginTop);
+  ok('§13 — and the desktop page behind it is deliberately NOT locked',
+     d.htmlLocked === false, JSON.stringify(d));
+  /* The whole form is still reachable on desktop. */
+  const fields = await page.evaluate(() => ['wiz_to', 'wiz_case', 'wiz_cname', 'wiz_inc', 'wiz_ret']
+    .filter(id => !!document.getElementById(id)).length);
+  ok('§25 — and every control is still there', fields === 5, String(fields));
+  /* `wizClose` is a delegated ACTION, not a function — the close is the
+     control, which is also what a person presses. */
+    await page.evaluate(() => {
+      const x = document.querySelector('.amx[data-act="wizClose"]');
+      if (x) x.click();
+    });
+  const after = await page.evaluate(() => window.scrollY);
+  ok('§25 — desktop close leaves the page where it was', after === 120, String(after));
+  await page.close();
+}
+
+section('An investigator gets no view toggle');
+{
+  const page = await newPage();
+  await signIn(page, 'dana', 'FieldWork2026x');
+  await page.waitForTimeout(700);
+  ok('the toggle is admin-only — the screens behind Simple View are',
+     await page.locator('.vtog').count() === 0);
+  await page.close();
+}
+
 section('Create case / Accept: one tap, no chooser, and the intake survives it');
 {
   await post('/ingest', { case_no: 'API-ACCP-E2E', service: 'Child Custody',
