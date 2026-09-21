@@ -7112,7 +7112,12 @@ async function closeoutEmail(request, env, user, caseNo) {
    clears, and the whole blob is re-read after the write so the page repaints
    from what is actually stored. Keys are allow-listed — a preference store
    that accepts anything becomes a junk drawer nobody can migrate. */
-const PREF_KEYS = ['qt_order', 'hidden', 'dismissed', 'metrics', 'ceo', 'suggestion_state'];
+/* `view` is SIMPLE VIEW / FULL VIEW (owner, 2026-09-21) — a layout choice,
+   which is exactly what this store is for, so it needed no new column and no
+   new route. It is per user by construction: every read and write below binds
+   `user.id`, so Corey's front door and Trever's are separate rows. */
+const PREF_KEYS = ['qt_order', 'hidden', 'dismissed', 'metrics', 'ceo', 'suggestion_state',
+  'view'];
 const PREF_MAX_BYTES = 24 * 1024;
 
 async function prefsRow(env, userId) {

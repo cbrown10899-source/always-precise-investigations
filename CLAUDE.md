@@ -2665,6 +2665,206 @@ this cannot quietly drift out of date again; a second test plants a row in
 every one of those tables plus fifteen child tables, clears, and asserts
 nothing survives while an identically-shaped real case is untouched.
 
+## Simple View is a mode of Home, and the rate sheet took the Assistant's lock
+
+Owner brief 2026-09-21, two halves of one operational unit: a front door for
+handling real intakes (§1–§12, §22–§23, §26) and the rate-sheet editor on an
+iPhone (§13–§21, §24–§25).
+
+**SIMPLE VIEW IS NOT A TAB.** It is `PREFS.view`, and it replaces the
+DASHBOARD'S OWN FURNITURE — the greeting, the signed-intake card, the launcher
+strip, the alert cards and `dashView()` — and nothing else. Cases, Billing,
+Rate Sheets, Settings, the case page, both bots and every tool draw exactly
+what they always drew, which is §12. No new destination means no new nav entry
+and every `?tab=` that worked yesterday still lands where it did.
+
+**FULL IS THE FACTORY DEFAULT, SO NOTHING MOVED FOR ANYBODY.** An unknown
+stored value reads as FULL rather than drawing an empty screen: a preference
+store is not a source of truth about what the page can render. It is
+**admin-only**, because everything Simple View is FOR is admin-only — an
+investigator toggling it would land on a screen of doors they get 403 from,
+which is the drawn-dead-control defect this file already records.
+
+**`view` NEEDED ONE WORD IN `PREF_KEYS` AND NOTHING ELSE.** `user_pref` is a
+JSON blob under an allow-list, so the per-login promise is inherited rather
+than rebuilt: every read and write binds `user.id`, the /meta merge rule
+applies (absent unchanged, null clears), and the suite walks two real admins
+holding opposite choices. **No schema change, no portal-setup dispatch.**
+
+**EVERY SIMPLE VIEW STATE IS DERIVED FROM COLUMNS `GET /submissions` ALREADY
+RETURNED.** `signed` and `send_count` are computed in that statement's own
+SQL, `lead_status` is the ladder, `retainer_received` is the joined
+`case_retainer` read. §3's *"only derive states from real stored data"* is
+therefore a property of having nothing else to read, not a rule to remember —
+and it needed no route, no column and no table.
+
+**`simpleAwaiting` IS THE SHIPPED PREDICATE, READ RATHER THAN RESTATED.** The
+Intakes desk's own two-halves rule from the acceptance unit — opening stage AND
+no acceptance on the ladder — so the front door and the desk cannot disagree
+about what is still undecided. A third copy of that question is a third thing
+to drift.
+
+**THE OPENED INTAKE IS THE EXISTING SCREEN.** `simpleOpen` is
+`openCase(no, "details")`, which already shows SUMMARY / PROVIDED INFORMATION /
+NOT AVAILABLE YET / SIGNATURE / ASSOCIATED RATE SHEET — §5's list, verbatim,
+built two units ago. A second renderer of what the client sent is the parallel
+system this project forbids. What Simple View adds is the §6 action bar ABOVE
+it, and **every control in it already existed**: `acceptIntake`, `leadSheet`,
+`retQuick`, `docOpen`. In Full View that bar does not render and the screen is
+byte-what-it-was.
+
+**THERE IS NO ASSIGNMENT CONTROL ON IT, by §6's own line** — both admins
+already have every case, so a chooser there would be the step the previous unit
+removed coming back one screen over.
+
+**"VIEW SIGNED INTAKE" IS A REAL DESTINATION, NOT A BUTTON FOR THE SCREEN YOU
+ARE ON.** The signature sits at the far end of a record measuring over a
+thousand pixels on a phone, so it jumps to it — and it moves FOCUS as well as
+the viewport, because a scroll alone leaves a keyboard user where they were.
+It is drawn only when a signature exists.
+
+**THE STATUS SUMMARY HAS A THIRD STATE AND USES IT.** Intake / Rate sheet /
+Acceptance / Retainer / Case, where the rate-sheet mark is `null` until the
+document read lands — drawn as a dot, never as a dash. "No rate sheet was sent"
+is a claim, and a read in flight has not made it. The next missing item is
+emphasised with a ring rather than by becoming a different component: §11 says
+do not force a wizard sequence.
+
+**THE RETAINER ROW READS THE WORKER'S OWN PUBLISHED BLOCK.** `received_total`
+is what arrived (summed, voided excluded) and `amount` is what was agreed —
+different questions, and "received" means the first. The date is the latest
+live payment's own `paid_on`, absent on a legacy single receipt and drawn as
+absent rather than as today.
+
+**A NAME IS A FLEX ITEM, AND A FLEX ITEM'S DEFAULT MINIMUM IS ITS CONTENT.**
+Measured at 320 with a 32-character unbroken client name: the `<b>` drew
+**324px inside a 320px screen** and pushed the page 56px sideways, while its
+own `overflow:hidden` did nothing — the box it was hiding was already too
+wide. `min-width:0` is what lets it shrink, and it then WRAPS rather than
+clipping, because a client's name is the one thing on that card you have to
+read in full. **The suite's ordinary two-word fixtures passed straight over
+it**; the assertion has a name with nothing to break on now. Same trap as the
+one-column card track this file records as `minmax(0,1fr)`.
+
+### The editor's background scroll was measured, not described
+
+**MEASURED AT 390 AND 320 BEFORE ANYTHING WAS WRITTEN:**
+
+| | 390 | 320 |
+| --- | --- | --- |
+| sheet of viewport | 743 of 844 | **500 of 568** |
+| form content | 1414 | **1574** |
+| `overscroll-behavior` | auto | auto |
+| `html`/`body` overflow | visible | visible |
+| head / actions | inside the scroller | inside the scroller |
+| actions padding-bottom | 0 | 0 |
+| **page scrollY, pushed past the sheet's end** | 260 | **260 → 860** |
+| **editor scrollTop across a repaint** | **200 → 0** | **200 → 0** |
+
+So the page really did move — **600px of it at 320** — and the form really did
+jump back to its top every time a select or a checkbox repainted. Both numbers
+are now assertions, and both are zero.
+
+**AFTER, THE SAME INSTRUMENT:**
+
+| | 390 | 320 |
+| --- | --- | --- |
+| sheet of viewport | **844 of 844** | **568 of 568** |
+| `overscroll-behavior` | **contain** | **contain** |
+| `html`/`body` overflow | **hidden** | **hidden** |
+| head / actions | **outside the scroller** | **outside it** |
+| actions padding-bottom | **10px** (safe-area max) | 10px |
+| page scrollY, pushed past the end | **260** | **260** |
+| editor scrollTop across a repaint | **200 → 200** | **200 → 200** |
+
+**FOUR ANSWERS, AND ONLY THE FOURTH IS JAVASCRIPT.** One scroller
+(`.rsw-body`, `overscroll-behavior:contain`, with `.amsheet.rsw` itself
+`overflow:hidden` — a scroller inside a scroller is how a swipe lands in
+whichever box it started over); a real lock (`html`/`body` `overflow:hidden`,
+which does not MOVE the page, so there is no offset to save and none to
+restore — that is why it is not `position:fixed`, the technique §13 rules out
+by name when it says no jump-to-top); three flex regions, so the sticky
+controls **cannot** cover the field being typed into because the body's height
+excludes them; and `--vvh`.
+
+**`dvh` IS NOT THE KEYBOARD.** The dynamic viewport tracks the browser's own
+toolbars and iOS Safari does not shrink it when the keyboard appears —
+`visualViewport.height` is the only thing that does. So the editor is
+`height:var(--vvh, 100dvh)`: measured where the browser reports it, dynamic
+viewport as the honest fallback. It is **bound and cleared with the editor**,
+because a stale `--vvh` would pin some other screen to a height the keyboard
+chose once.
+
+**§20 IS `focusCapture`/`focusRestore` ONE ELEMENT OVER.** `paint()` assigns
+`app.innerHTML`, which destroys the scrolling element — `sameNode:false` is the
+measurement that says why. `SCROLL_KEEP` is an allow-list by element id for the
+`FOCUS_KEEP` reason, restored synchronously in the same frame or the browser
+paints once at the top and the form visibly jumps. **Wired on BOTH paint
+paths**, because the editor renders from the case page too and a fix on one
+branch is the phone-only hole this file already records.
+
+**THE KEYBOARD DISMISS DECIDES ON THE REAL TARGET, NOT THE RESOLVED ACTION.**
+`.amsheet` carries `data-act="amNoop"` so a tap inside the dialog does not
+reach the backdrop's close — which means EVERY tap inside resolves to `amNoop`,
+including taps on its own inputs, since an `<input>` carries no `data-act` and
+`closest` walks past it. So the blur is keyed off `ev.target.closest(…controls)`
+and nothing is prevented or stopped: the control the user actually meant still
+activates. That second half is §16's, and it is the half that is easy to break.
+
+**`.rsw` SCOPES ALL OF IT TO ONE DIALOG.** The four other `.amwrap` sheets are
+untouched — the "do not redesign the portal" line. **They share the shape**:
+none of them locks the document either, so the same background-scroll defect is
+still reachable on the payment-options, pre-case-intake, remove-content and
+add-activity sheets. Recorded rather than fixed, because the brief scopes this
+to the rate sheet.
+
+**THE SEND WIZARD DID NOT RENDER ON THE CASE PAGE AT ALL, and the suite found
+it.** `sheetWizardHtml()` was drawn from `shell()` alone, and the case page
+bypasses `shell()` entirely — so *Send rate sheet* from inside a case set
+`SHEET_WIZ` and drew **nothing**. It was unreachable rather than broken while
+the only door was the Intakes desk, which lives in the shell; Simple View's
+action bar put that door on the case screen and the hole opened. Found by the
+§8 assertion in an end-to-end walk, which is what an end-to-end walk is for.
+All three send modals now render from both paint paths, because they are one
+family and the next one moved would be the same bug again.
+
+**AND A RESTORE THAT LANDS SHORT IS NOT ALWAYS A RESTORE THAT FAILED.** The
+§20 probe ticked the payment checkbox, which HIDES the payment block — the
+form got about 104px shorter and the browser correctly CLAMPED the restored
+position to the new maximum (573 → 469). It reads exactly like the fix not
+working. The assertion switches between two retainer presets instead: a
+repaint that leaves the height alone, so an exact comparison means what it
+says — and the height itself is asserted, so the next person cannot be fooled
+the same way.
+
+**A SYNTHETIC `change` IS NOT A CHANGE, AND THAT COST TWO ROUNDS.** The
+wizard's retainer selector is registered on **`input`**, not on `change` — a
+real `<select>` fires both and a hand-built `new Event('change')` fires
+neither of the ones that matter. A probe that dispatched `change` measured
+nothing and reported the product as broken. `wiz_inc` is the same shape from
+the other side: that checkbox has **no handler at all**, so ticking it
+genuinely does not repaint, and a §20 assertion aimed at it was testing the
+restore against a paint that never happened. Both probes are driven through
+Playwright's own `selectOption` and `click` now, so the browser raises what
+the browser raises. **The third instrument defect in two units**, and the same
+lesson each time: drive the control, do not simulate it.
+
+**BOTH HALVES ARE NEGATIVE-TESTED, SEPARATELY, AND THE NUMBERS ARE THE
+DEFECT.** Removing Simple View's replacement of the dashboard and its action
+bar fails **10** named assertions; removing the lock, the containment and the
+scroll restore fails **12**, including *"pushing past the editor's end leaves
+the portal exactly where it was"* reporting **1160** against 260 at both
+widths — 900 pixels of page movement — and *"a repaint does not throw the form
+back to its top"* reporting **180 → 0** with the form's height asserted
+unchanged, so it is the restore and nothing else. Neither run crashed.
+
+**DESKTOP IS UNCHANGED AND TWO RULES ARE WHAT KEEP IT THAT WAY.** Splitting the
+dialog into three regions moved the action row's inline `margin-top:12px` out
+and the error out from under the buttons, so both are restated at every width.
+Everything else above 640px is byte-what-it-was, the lock is phone-only, and
+the suite pins the centred dialog, its max-height, its radius, its width and
+the page behind it staying scrollable.
+
 ## Accepting an intake creates nothing, because the case is already there
 
 Owner brief 2026-09-21 (§1–§12): accepting a real submitted intake should be
