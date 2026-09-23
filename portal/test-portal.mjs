@@ -25274,7 +25274,15 @@ section('FULL CUSTOM: §15 — Simple View, open intake, custom agreement, back 
   });
   ok('§15 — the opened intake carries Send rate sheet', bar.there === true, JSON.stringify(bar));
 
-  await page.locator('[data-act="leadSheet"][data-case="API-CU-SV"]').click();
+  /* SCOPED TO THE SIMPLE VIEW BAR, which is the door §15 names. The intake
+     screen draws Send rate sheet TWICE in Simple View — once in that bar and
+     once in the intake's own action row — so an unscoped locator matched both
+     and Playwright's strict mode stopped the run. Both are the same control on
+     the same handler; which one is pressed is this probe's choice, and the
+     duplicate itself predates this unit. */
+  const bars = await page.locator('.simp-bar [data-act="leadSheet"][data-case="API-CU-SV"]').count();
+  ok('§15 — the Simple View bar carries exactly one Send rate sheet', bars === 1, String(bars));
+  await page.locator('.simp-bar [data-act="leadSheet"][data-case="API-CU-SV"]').first().click();
   await page.waitForSelector('.amsheet.rsw', { timeout: 6000 });
   await page.waitForTimeout(300);
   const opened = await page.evaluate(() => ({

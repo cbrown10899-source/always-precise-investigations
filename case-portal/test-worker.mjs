@@ -22444,6 +22444,121 @@ section('The Simple/Full view preference is one row per login');
    pin on everything it sits beside — and the second half is written first in
    the file below so a regression is reported before a feature.
    ========================================================================= */
+
+/* ============================================================================
+   THE STANDARD DOCUMENTS, PINNED TO THE BYTE (FULL CUSTOM §1/§17)
+
+   The FULL CUSTOM unit touched the renderers every standard sheet goes
+   through — `sheetEmail`, `engagementText/Html`, `paymentBlockText/Html` — and
+   its promise is that none of them moved. Wording checks cannot hold that
+   promise: the first draft of this unit added a whitespace-only line to every
+   standard sheet's HTML, and every "the sheet still says X" assertion would
+   have passed over it.
+
+   So these are the bytes. Each GOLDEN row is SHA-256 (first 16 hex) of the
+   subject, the text part and the HTML part that MASTER at bb84259 — before
+   FULL CUSTOM existed — produced for the same send through the same route,
+   captured by running that commit's own Worker. The branch was measured
+   against it: all sixteen identical. Per-send randomness is normalised out
+   first (the document reference on the intake door, the record copy's
+   document id, content hash and send time), and nothing else is.
+
+   IF ONE OF THESE FAILS, a standard document changed. If that change is
+   deliberate — new approved wording, a new payment handle — replace the row
+   with the hashes printed in the failure. If it is not deliberate, it is the
+   regression this exists to catch.
+   ========================================================================= */
+section('The standard rate sheets are byte-identical to the pre-FULL-CUSTOM master');
+{
+  const crypto = await import('node:crypto');
+  const H = s => crypto.createHash('sha256').update(String(s)).digest('hex').slice(0, 16);
+  const realFetch = globalThis.fetch;
+  let mailed = null;
+  const all = [];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      mailed = JSON.parse(init.body); all.push(mailed);
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'k'; env.MAIL_PER_MINUTE = '200'; env.INGEST_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const norm = s => String(s).replace(/ref=DOC-[0-9a-f]+/g, 'ref=DOC-X');
+  const normCopy = s => norm(s).replace(/DOC-[0-9a-f]+/g, 'DOC-X')
+    .replace(/\b[0-9a-f]{64}\b/g, 'HASH')
+    .replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d+Z/g, 'TIME');
+  const GOLDEN = {
+    'private, plain':                  ['9041ce89a9eb919d', 'e02b39b9d691db63', 'e4150aef8661265e'],
+    'private, both payment methods':   ['9041ce89a9eb919d', '0e2705edbbbadcff', 'bcf8bfd0470b945c'],
+    'private, Venmo only':             ['9041ce89a9eb919d', '375834ba73e91ab3', '3fe760b8cafa2a74'],
+    'private, custom retainer + NR':   ['4a20784b23abf4ee', '53800dd9c81c85bd', '6f3da7bc537f5cc1'],
+    'private, NR zero':                ['9041ce89a9eb919d', '6534eb739f67d5d2', '9db54b6731589e94'],
+    'private, with intake + note':     ['9041ce89a9eb919d', '3257e8fcd116dd4b', '69f6d19d2e897c92'],
+    'private, everything':             ['ef7a9c49c2e6d5b6', '012f87f7ed71cdc0', 'cd9ca56b33ad1f4f'],
+    'legal retainer card':             ['9041ce89a9eb919d', '9c52f9be957f2351', 'a3e76160728ac75c'],
+    'legal + mail check':              ['9041ce89a9eb919d', '5a27514a72ebaec7', '1b910e2f3c9ff968'],
+    'legal fixed: process':            ['36d72e57b875ddf0', '36e552b653bbe29c', '50f62d17d35ba463'],
+    'legal fixed: process $375':       ['e1380ebaed41726e', '731a6ce216387113', 'b3139926e7a12080'],
+    'legal fixed: locate + intake':    ['b1b7e6e9dcfc65dc', '548e5ee1e737b05b', '0e58d4f74c799a39'],
+    'insurance':                       ['488f922ef3bbc4ed', '53a4935b2107d8b1', '9548abda0cd8ed2b'],
+    'insurance + mail check + intake': ['488f922ef3bbc4ed', '52023175d1efd6de', '693fffde45ed2274'],
+    'payment options alone':           ['15f9acbfbd89b65f', 'd383becd82436a25', '64959b68c5d960cf'],
+    'owner record copy':               ['ba0c52d0a3b8d2a9', '25e6647836635ee1', '0bca946663ce3a1e'],
+  };
+  const MATRIX = [
+    ['private, plain',                  'private_retainer',     { to: 'a@example.com' }],
+    ['private, both payment methods',   'private_retainer',     { to: 'a@example.com', include_payment: true }],
+    ['private, Venmo only',             'private_retainer',     { to: 'a@example.com', include_payment: true, methods: ['venmo'] }],
+    ['private, custom retainer + NR',   'private_retainer',     { to: 'a@example.com', retainer_amount: 3000, non_refundable: 750 }],
+    ['private, NR zero',                'private_retainer',     { to: 'a@example.com', non_refundable: 0 }],
+    ['private, with intake + note',     'private_retainer',     { to: 'a@example.com', include_intake: true, note: 'As discussed.' }],
+    ['private, everything',             'private_retainer',     { to: 'a@example.com', include_intake: true, include_payment: true, note: 'Hi', case_no: 'REF-1' }],
+    ['legal retainer card',             'private_retainer',     { to: 'f@example.com', send_context: 'legal' }],
+    ['legal + mail check',              'private_retainer',     { to: 'f@example.com', send_context: 'legal', include_payment: true, methods: ['mail_check'] }],
+    ['legal fixed: process',            'private_retainer',     { to: 'f@example.com', send_context: 'legal', legal_service: 'process' }],
+    ['legal fixed: process $375',       'private_retainer',     { to: 'f@example.com', send_context: 'legal', legal_service: 'process', flat_fee: 375 }],
+    ['legal fixed: locate + intake',    'private_retainer',     { to: 'f@example.com', send_context: 'legal', legal_service: 'locate', include_intake: true }],
+    ['insurance',                       'insurance_assignment', { to: 'c@example.com' }],
+    ['insurance + mail check + intake', 'insurance_assignment', { to: 'c@example.com', include_payment: true, methods: ['mail_check'], include_intake: true }],
+  ];
+  const check = (name, got) => {
+    const want = GOLDEN[name];
+    ok(`byte-identical: ${name}`,
+       !!got && got[0] === want[0] && got[1] === want[1] && got[2] === want[2],
+       got ? `now ${JSON.stringify(got)} — was ${JSON.stringify(want)}` : 'nothing was sent');
+  };
+  for (const [name, id, body] of MATRIX) {
+    mailed = null;
+    await call(env, `/sheets/${id}/email`, { method: 'POST', cookie: admin, body });
+    check(name, mailed && [H(mailed.subject), H(norm(mailed.text)), H(norm(mailed.html))]);
+  }
+  mailed = null;
+  await call(env, '/payment-options/email',
+    { method: 'POST', cookie: admin, body: { to: 'a@example.com', name: 'Jane' } });
+  check('payment options alone', mailed && [H(mailed.subject), H(mailed.text), H(mailed.html)]);
+  await call(env, '/billing-settings', { method: 'POST', cookie: admin,
+    body: { owner_record_email: 'office@example.com' } });
+  all.length = 0;
+  await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'a@example.com', client_name: 'Jane Doe', retainer_amount: 2000 } });
+  const copy = all.find(m => String(m.to).includes('office@example.com'));
+  check('owner record copy',
+        copy && [H(copy.subject), H(normCopy(copy.text)), H(normCopy(copy.html))]);
+
+  /* NEGATIVE-TESTED IN PLACE: one space added to the standard HTML must move
+     the hash, or this whole section is a table of numbers nobody has watched
+     change. */
+  mailed = null;
+  await call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin, body: { to: 'a@example.com' } });
+  ok('and a single added space would fail the pin',
+     H(norm(mailed.html) + ' ') !== GOLDEN['private, plain'][2]);
+  globalThis.fetch = realFetch;
+}
+
 section('FULL CUSTOM: the standard private sheets did not move');
 {
   const realFetch = globalThis.fetch;

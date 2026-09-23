@@ -1307,9 +1307,25 @@ nothing until the label is deliberately chosen.
 **THE TERMS READ AFTER THE FIGURES, AND THE FLAG IS ON THE SHEET OBJECT.**
 `engagement_last` is absent on every sheet that existed before, so the standard
 documents render exactly as they did. Getting this wrong is **a whitespace-only
-line in the HTML**, which is why the pin is on the bytes and not on the wording
-— the first draft added `  ${engagementHtml(engAfter)}` on its own line and
-would have shipped two spaces of difference into every standard sheet.
+line in the HTML** — the first draft added `  ${engagementHtml(engAfter)}` on
+its own line and would have shipped two spaces of difference into every
+standard sheet — **and no wording assertion can see that.**
+
+**SO THE STANDARD DOCUMENTS ARE PINNED TO THE BYTE, AGAINST MASTER.** This
+file's first version of this section claimed a byte pin the suite did not
+have: every standard-sheet assertion checked WORDING, and the whitespace line
+above passes all of them. The pin is real now. Sixteen standard sends —
+private with and without payment, custom retainer and non-refundable, zero
+non-refundable, intake and note, the legal retainer card, Mail Check, both
+fixed legal services and a custom flat fee, insurance with and without its
+options, the payment-options email alone and the office's record copy — were
+rendered through **master's own Worker at `bb84259`** and through this branch,
+through the real route: **all sixteen byte-identical**, with only per-send
+randomness normalised (the intake door's document reference, the record copy's
+id, hash and send time). Their hashes are `GOLDEN` in the Worker suite, which
+prints the new ones on failure so a DELIBERATE change to a standard sheet is
+re-pinned rather than argued with. **Negative-tested with the exact first-draft
+line: fourteen named failures**, one per document that goes through the table.
 
 **THE PREVIEW IS THE WORKER'S, FETCHED (§12).** `wizCustomResolve` calls
 `POST /assistant/prepare-sheet`, which is a **pinned mirror of `emailSheet`**
