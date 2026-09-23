@@ -436,6 +436,36 @@ async function documentRead(env, user, docId) {
   let terms = null;
   try { terms = d.terms_json ? JSON.parse(d.terms_json) : null; } catch { terms = null; }
 
+  /* THE AGREEMENT'S OWN FIGURES, where the document was a FULL CUSTOM one
+     (§13). The BYTES are what the client received and are what "never rebuilt
+     from current settings" rests on; this answers the other question — what
+     was typed, and which figures the office set by hand rather than letting
+     the arithmetic decide. A row nothing ever reads is a record the office
+     cannot use, so it is read here rather than only written.
+
+     Guarded like every companion-table read: before portal-setup runs the key
+     is simply absent, which is unknown rather than "there was no agreement". */
+  let custom = null;
+  if (!miss.includes('sent_document_custom')) {
+    const c = await env.DB.prepare(
+      `SELECT agreement_type, title, hourly_rate, scheduled_days, hours_per_day,
+              total_hours, total_due, computed_total_hours, computed_total_due,
+              hours_overridden, total_overridden, payment_label_kind, payment_label_custom,
+              payment_label, minimum_hours_included, minimum_hours,
+              non_refundable_included, non_refundable, terms_included, payment_methods
+         FROM sent_document_custom WHERE doc_id = ?`).bind(docId).first();
+    if (c) {
+      let inc = [], pays = [];
+      try { inc = JSON.parse(c.terms_included || '[]'); } catch { inc = []; }
+      try { pays = JSON.parse(c.payment_methods || '[]'); } catch { pays = []; }
+      custom = { ...c, hours_overridden: !!c.hours_overridden,
+                 total_overridden: !!c.total_overridden,
+                 minimum_hours_included: !!c.minimum_hours_included,
+                 non_refundable_included: !!c.non_refundable_included,
+                 terms_included: inc, payment_methods: pays };
+    }
+  }
+
   /* THE ACCEPTANCE, WHEN THERE IS ONE. Absent is a real answer — most documents
      have not been signed — and it is said as "not linked" rather than drawn as
      a blank tick. */
@@ -460,6 +490,7 @@ async function documentRead(env, user, docId) {
   return json({ document: { ...d, terms_json: undefined, terms,
                             intake_included: !!d.intake_included, ok: !!d.ok,
                             record_copy: !!d.record_copy },
+                custom_agreement: custom,
                 acceptance: acceptance || null, record_copies: copies });
 }
 
@@ -776,6 +807,411 @@ function engagementBlock(retainer, nonRefundable) {
         + 'reservation of investigative services. Additional terms are governed by the '
         + 'client agreement.',
   };
+}
+
+/* ================== THE FULL CUSTOM PRIVATE AGREEMENT ====================
+   Owner brief 2026-09-23. "Give Corey an OWNER-ONLY FULL CUSTOM Rate Sheet
+   mode for unusual private-client agreements WITHOUT changing the existing
+   standard Private Rate Sheets."
+
+   IT IS A PER-SEND DOCUMENT VARIANT, WHICH IS THE `legalFixedSheet` SHAPE ONE
+   CONTEXT OVER. A fixed legal service already swaps a different sheet object
+   into the same send route — same renderer, same styling, same email, same
+   `sent_document` record — selected by what the office chose for THIS send and
+   writing nothing back to the product. FULL CUSTOM is that, for private.
+
+   So `rateSheets()` is untouched and remains the only place a STANDARD figure
+   is set; `PERSONAL`, `RETAINER_PRESETS`, `nonRefundableFor` and
+   `engagementBlock` are all exactly as they were, and a send that does not
+   carry a custom agreement is byte-identical to one sent before this existed.
+   A source pin asserts the standard private card still resolves through
+   `rateSheets()` and carries the approved engagement block.
+
+   THE WORDS ARE THE BOUNDARY, the `legalFixedSheet` rule again. A FULL CUSTOM
+   document says only what the owner ticked: no minimum-hours language when the
+   minimum is off, no non-refundable sentence when it is off, and NOT THE WORD
+   "RETAINER" unless the owner deliberately chose that payment description
+   (§8). The tests grep the vocabulary, so a reworded leak still fails. */
+
+/* THE SEVEN OPTIONAL TERMS (§5/§10), in the order they read on the document.
+   Each is independently on or off, and OFF MEANS ABSENT — no blank row, no
+   placeholder, and no standard term quietly inserted in its place. */
+const CUSTOM_TERMS = ['hourly_rate', 'days', 'hours_per_day', 'total_hours',
+                      'total_due', 'non_refundable', 'minimum_hours'];
+
+/* MINIMUM HOURS AND NON-REFUNDABLE ARE OFF BY DEFAULT, and the owner's brief
+   says so twice ("This is critical"). A FULL CUSTOM agreement is for the
+   engagements the standard product does not describe, so inheriting the
+   standard product's terms is precisely the failure mode. Both are opt-in. */
+const CUSTOM_TERMS_DEFAULT_ON = ['hourly_rate', 'days', 'hours_per_day',
+                                 'total_hours', 'total_due'];
+
+/* HOW THE MONEY IS DESCRIBED TO THE CLIENT (§8). `retainer` is the ONLY value
+   that puts that word on the document, and it is never the default: calling a
+   one-off $1,800 total a retainer implies a drawdown against an hourly rate,
+   which is the standard product and not this one. */
+const CUSTOM_PAY_LABELS = {
+  total_due: 'TOTAL DUE BEFORE WORK BEGINS',
+  retainer: 'RETAINER',
+  custom: null,   // the owner's own words, carried verbatim
+};
+
+/* STRICT TWO-DECIMAL MONEY, and deliberately NOT `nrMoney`. That one prints
+   whole dollars without cents so $500 sits tidily beside $1,500 on the
+   standard sheet; a custom agreement is arithmetic the client is expected to
+   check — $75.00 per hour x 24 hours = $1,800.00 — and dropping the cents from
+   one figure in a sum makes it read as a different calculation. */
+function customMoney(n) {
+  return '$' + Number(n).toLocaleString('en-US',
+    { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/* A COUNT AND ITS NOUN. "1 day" and "2 days" — the document states the
+   schedule in words a client reads, and a bare "1 days" is the kind of seam
+   that makes a quote look generated rather than written. Fractions keep their
+   plural ("1.5 hours"), which is what English does. */
+function customCount(n, one, many) {
+  const v = Number(n);
+  const shown = Number.isInteger(v) ? String(v) : String(Math.round(v * 100) / 100);
+  return `${shown} ${v === 1 ? one : many}`;
+}
+
+/* CENTS ARE THE MONEY REPRESENTATION, and this is the project's existing safe
+   pattern (`Math.round(x * 100) / 100`, used throughout the invoice and
+   authorization arithmetic) with the multiply done while the rate is an
+   INTEGER NUMBER OF CENTS rather than a float number of dollars.
+
+   The difference is the whole of §3. `75.1 * 3` is 225.29999999999998 in
+   IEEE-754, and rounding that at the end still gives 225.3 — but a rate like
+   $16.10 over 7 hours is 112.69999999999999, and a longer schedule compounds
+   it. Multiplying 1610 cents by 7 is 11270 cents exactly, every time, because
+   the multiply never leaves the integers. The final divide by 100 is the only
+   float operation and it is exact for any value a currency can hold. */
+function customCents(dollars) {
+  return Math.round(Number(dollars) * 100);
+}
+
+/* A NUMBER THE OFFICE TYPED, or a named reason it cannot be used. Blank is
+   ABSENT (null) and never zero — §18's "do not silently convert blank optional
+   terms into defaults" is the same rule the intake form states as "never write
+   N/A, Unknown or a placeholder into a data field". */
+function customNum(raw, { min = 0, max = 1000000, allowZero = true } = {}) {
+  const s = String(raw == null ? '' : raw).replace(/[$,\s]/g, '');
+  if (s === '') return { value: null };
+  const n = Number(s);
+  if (!Number.isFinite(n)) return { bad: 'not_a_number' };
+  if (n < min) return { bad: 'negative' };
+  if (!allowZero && n === 0) return { bad: 'zero' };
+  if (n > max) return { bad: 'too_large' };
+  return { value: Math.round(n * 100) / 100 };
+}
+
+/* THE ONE VALIDATOR AND THE ONE CALCULATOR (§2/§3/§4/§18), the
+   `nonRefundableFor` principle applied to a whole agreement: the send, the
+   Assistant's mirror and the office's record copy all resolve through this,
+   so there is no second place for the arithmetic or the refusals to differ.
+
+   IT RETURNS EVERY FIGURE, INCLUDING THE ONES THE DOCUMENT DOES NOT SHOW.
+   `computed_total_hours` and `computed_total_due` are kept beside the values
+   in force even when an override replaced them, because §4's whole point is
+   that the office can see later what the arithmetic said and what was sent
+   instead. A record that kept only the override could not answer that. */
+function customAgreementSpec(raw) {
+  if (!raw || typeof raw !== 'object') {
+    return { error: 'The custom agreement is missing its figures.', code: 'bad_custom_agreement' };
+  }
+  const bad = (field, kind) => {
+    const why = kind === 'negative' ? 'cannot be negative'
+      : kind === 'zero' ? 'has to be above zero'
+      : kind === 'too_large' ? 'is larger than this form can carry'
+      : 'has to be a number';
+    return { error: `The ${field} ${why}.`, code: 'bad_custom_' + field.replace(/[^a-z]+/g, '_') };
+  };
+
+  /* THE HOURLY RATE IS THE ONE FIGURE THE ARITHMETIC CANNOT DO WITHOUT, so it
+     is the one that is genuinely required. Zero is refused rather than
+     accepted as free work: a $0.00 per hour agreement is a document nobody
+     meant to send, and the office is owed the reason rather than a silent
+     $0.00 total in front of a client. */
+  const rate = customNum(raw.hourly_rate, { allowZero: false });
+  if (rate.bad) return bad('hourly rate', rate.bad);
+  if (rate.value === null) {
+    return { error: 'Enter the hourly rate for this agreement.', code: 'custom_rate_required' };
+  }
+
+  const days = customNum(raw.days, { max: 3650 });
+  if (days.bad) return bad('number of days', days.bad);
+  const perDay = customNum(raw.hours_per_day, { max: 24 });
+  if (perDay.bad) return bad('hours per day', perDay.bad);
+
+  /* THE DEFAULT CALCULATION (§2): days x hours per day = total hours, and
+     total hours x rate = total due. With either half of the schedule absent
+     there is nothing to multiply, and the computed total hours is null rather
+     than zero — null means "does not apply", and zero would be a claim that
+     the agreement covers no hours. */
+  const computedHours = (days.value !== null && perDay.value !== null)
+    ? Math.round(days.value * perDay.value * 100) / 100 : null;
+
+  /* THE OVERRIDE (§4). An owner-typed figure REPLACES the arithmetic, is
+     marked as having done so, and is what the preview, the email and the
+     stored document all carry. Nothing recalculates it afterwards — the sent
+     bytes are immutable by construction, and the flag is what lets the office
+     read the record later and know the difference. */
+  const askedHours = customNum(raw.total_hours, { max: 100000 });
+  if (askedHours.bad) return bad('total scheduled hours', askedHours.bad);
+  const hoursOverridden = askedHours.value !== null
+    && (computedHours === null || askedHours.value !== computedHours);
+  const totalHours = askedHours.value !== null ? askedHours.value : computedHours;
+
+  const computedDue = totalHours === null ? null
+    : Math.round(customCents(rate.value) * totalHours) / 100;
+
+  const askedDue = customNum(raw.total_due);
+  if (askedDue.bad) return bad('total due', askedDue.bad);
+  const totalOverridden = askedDue.value !== null
+    && (computedDue === null || askedDue.value !== computedDue);
+  const totalDue = askedDue.value !== null ? askedDue.value : computedDue;
+
+  if (totalDue === null) {
+    return { error: 'There is no total to quote — enter the scheduled days and hours per day, '
+                  + 'or type the total hours or the total due directly.',
+             code: 'custom_total_missing' };
+  }
+
+  /* WHICH TERMS APPEAR (§5). An absent list is the default set, because a
+     caller that sends figures and no term list means the ordinary document;
+     an EMPTY ARRAY is the office ticking nothing, which is a different answer
+     and is honoured. The `null` / `[]` distinction `paymentOptionsFor` already
+     draws, and for the same reason. */
+  const askedTerms = Array.isArray(raw.terms) ? raw.terms.map(t => String(t)) : null;
+  const unknown = (askedTerms || []).filter(t => !CUSTOM_TERMS.includes(t));
+  if (unknown.length) {
+    return { error: `That is not a term this agreement has: ${unknown.join(', ')}. The terms are: `
+                  + CUSTOM_TERMS.join(', ') + '.', code: 'unknown_custom_term' };
+  }
+  const wanted = askedTerms === null ? CUSTOM_TERMS_DEFAULT_ON.slice() : [...new Set(askedTerms)];
+
+  /* A TERM CANNOT BE SHOWN WITHOUT ITS FIGURE. Ticking "hours per day" on an
+     agreement that has none would print a label over nothing, which is the
+     blank row §5 forbids — so the figure decides and the tick only ever
+     narrows. */
+  const has = { hourly_rate: true, days: days.value !== null, hours_per_day: perDay.value !== null,
+                total_hours: totalHours !== null, total_due: true,
+                non_refundable: true, minimum_hours: true };
+
+  /* THE MINIMUM IS OPTIONAL AND OFF BY DEFAULT (§6), AND ITS NUMBER IS THE
+     OWNER'S. `PERSONAL.minHours` is the STANDARD product's four hours and is
+     deliberately not read here: forcing four onto a custom agreement is
+     exactly what the brief forbids, and a document that says four when the
+     office agreed six is worse than one that says nothing. */
+  const minOn = wanted.includes('minimum_hours');
+  const minHours = customNum(raw.minimum_hours, { max: 24, allowZero: false });
+  if (minHours.bad) return bad('minimum hours', minHours.bad);
+  if (minOn && minHours.value === null) {
+    return { error: 'Enter the minimum hours per surveillance day, or leave that term off.',
+             code: 'custom_minimum_required' };
+  }
+
+  /* THE NON-REFUNDABLE PORTION IS OPTIONAL AND OFF BY DEFAULT (§7), and
+     `NON_REFUNDABLE_DEFAULT` is deliberately NOT consulted. The standard
+     product's rule is that the amount must never disappear for being left
+     blank; this product's rule is the opposite — the term is absent unless
+     the owner asked for it — and quietly inserting $500 into a custom
+     agreement is the "hidden standard term" §5 names. Zero is honoured, as it
+     is in `nonRefundableFor`, because typing 0 is a deliberate act.
+
+     IT IS CAPPED AT THE TOTAL, the same coherence rule one product over: a
+     non-refundable portion larger than the whole is not a stricter quote, it
+     is an incoherent one, and it is refused by name rather than clamped. */
+  const nrOn = wanted.includes('non_refundable');
+  const nr = customNum(raw.non_refundable);
+  if (nr.bad) return bad('non-refundable amount', nr.bad);
+  if (nrOn && nr.value === null) {
+    return { error: 'Enter the non-refundable amount, or leave that term off. Nothing is filled '
+                  + 'in for you on a custom agreement.', code: 'custom_non_refundable_required' };
+  }
+  if (nrOn && nr.value > totalDue) {
+    return { error: `A non-refundable amount of ${customMoney(nr.value)} is larger than the `
+                  + `${customMoney(totalDue)} this agreement totals. It can be at most the total.`,
+             code: 'custom_non_refundable_over_total' };
+  }
+
+  /* HOW THE MONEY IS DESCRIBED (§8). An unknown kind is refused rather than
+     defaulted: the label is the one thing on this document that decides
+     whether the client reads "retainer", and guessing it is the mislabelling
+     the owner ruled out by name. */
+  const kind = String(raw.payment_label_kind || 'total_due').trim().toLowerCase();
+  if (!Object.prototype.hasOwnProperty.call(CUSTOM_PAY_LABELS, kind)) {
+    return { error: 'The payment description has to be Total Due Before Work Begins, Retainer, '
+                  + 'or a custom label.', code: 'bad_custom_payment_label' };
+  }
+  const labelCustom = String(raw.payment_label_custom == null ? '' : raw.payment_label_custom)
+    .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 80);
+  if (kind === 'custom' && !labelCustom) {
+    return { error: 'Type the custom payment label, or choose one of the standard descriptions.',
+             code: 'custom_payment_label_required' };
+  }
+  const label = kind === 'custom' ? labelCustom.toUpperCase() : CUSTOM_PAY_LABELS[kind];
+
+  const title = String(raw.title == null ? '' : raw.title)
+    .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 80)
+    || 'Custom Surveillance Agreement';
+
+  const terms = CUSTOM_TERMS.filter(t => wanted.includes(t) && has[t]);
+  return {
+    spec: {
+      agreement_type: 'full_custom',
+      title,
+      hourly_rate: rate.value,
+      days: days.value, hours_per_day: perDay.value,
+      total_hours: totalHours, total_due: totalDue,
+      computed_total_hours: computedHours, computed_total_due: computedDue,
+      hours_overridden: hoursOverridden, total_overridden: totalOverridden,
+      payment_label_kind: kind, payment_label_custom: kind === 'custom' ? labelCustom : '',
+      payment_label: label,
+      minimum_hours_included: terms.includes('minimum_hours'),
+      minimum_hours: terms.includes('minimum_hours') ? minHours.value : null,
+      non_refundable_included: terms.includes('non_refundable'),
+      non_refundable: terms.includes('non_refundable') ? nr.value : null,
+      terms,
+    },
+  };
+}
+
+/* THE CLIENT-FACING TERM BLOCK FOR A CUSTOM AGREEMENT — the same
+   `{lines:[{text,tone}], note}` shape `engagementBlock` produces, so all three
+   existing renderers (the email's text part, its HTML part and the portal
+   card) and the office's record copy draw it with no change at all. `term` is
+   still the one tone and it still means bold and nothing else.
+
+   THE ORDER IS THE STANDARD PRODUCT'S — money, then the portion of it that is
+   non-refundable, then the per-day minimum — because that is the sequence the
+   owner approved on the sheet they already read, and a second arrangement of
+   the same three ideas is a second thing to argue about. */
+function customEngagementBlock(spec) {
+  const lines = [];
+  if (spec.terms.includes('total_due')) {
+    lines.push({ text: `${spec.payment_label}: ${customMoney(spec.total_due)}`, tone: 'term' });
+  }
+  if (spec.non_refundable_included) {
+    lines.push({ text: `NON-REFUNDABLE PORTION: ${customMoney(spec.non_refundable)}`,
+                 tone: 'term' });
+  }
+  if (spec.minimum_hours_included) {
+    lines.push({ text: `${customCount(spec.minimum_hours, 'HOUR', 'HOUR')
+      .replace(' ', '-')} MINIMUM PER SURVEILLANCE DAY`, tone: 'term' });
+  }
+  if (!lines.length) return null;
+  /* THE NOTE IS THE NON-REFUNDABLE SENTENCE AND NOTHING ELSE, so it appears
+     only where that term does. Printing it under an agreement with no
+     non-refundable portion would be the hidden standard term §5 forbids,
+     arriving as prose rather than as a figure. */
+  return {
+    lines,
+    note: spec.non_refundable_included
+      ? 'A portion of the amount above is non-refundable upon engagement and reservation of '
+        + 'investigative services. Additional terms are governed by the client agreement.'
+      : '',
+  };
+}
+
+/* THE DOCUMENT. Built from the resolved spec and nothing else, so what the
+   preview renders and what the provider is handed cannot be composed from
+   different inputs (§12).
+
+   `id` IS `private_retainer` ON PURPOSE, exactly as `legalFixedSheet` returns
+   it: the id is the PRODUCT the route is addressed by, which is what keeps
+   `sheetTakesPayment`, `contextForSheet` and the context allow-list answering
+   as they always have. What is custom is the DOCUMENT, not the door. */
+function privateCustomSheet(spec) {
+  const lines = [];
+  if (spec.terms.includes('hourly_rate')) {
+    lines.push({ label: 'Investigative rate', value: `${customMoney(spec.hourly_rate)} per hour`,
+      big: true,
+      note: 'Investigative time is billed at this rate. Field investigation, necessary video '
+          + 'review, case documentation and report preparation are handled at this rate.' });
+  }
+  if (spec.terms.includes('days')) {
+    lines.push({ label: 'Scheduled days', value: customCount(spec.days, 'day', 'days'), big: true,
+      note: 'The number of investigation days scheduled under this agreement.' });
+  }
+  if (spec.terms.includes('hours_per_day')) {
+    lines.push({ label: 'Hours per day', value: customCount(spec.hours_per_day, 'hour', 'hours'),
+      big: true, note: 'The investigative hours scheduled for each of those days.' });
+  }
+  if (spec.terms.includes('total_hours')) {
+    lines.push({ label: 'Total scheduled hours', value: customCount(spec.total_hours, 'hour', 'hours'),
+      big: true, note: 'The total investigative hours this agreement covers.' });
+  }
+  lines.push({ label: 'Straightforward billing', value: 'No routine add-on fees',
+    note: 'Standard local operating costs are included. There are no routine mileage, toll, '
+        + 'parking, report or case-delivery surcharges within our normal service area.' });
+  lines.push({ label: 'Outside our normal service area', value: 'Quoted in advance',
+    note: 'Significant travel outside our normal service area is discussed and approved before '
+        + 'the work is scheduled.' });
+
+  /* THE SUMMARY AND THE CLOSING CARRY THE OWNER'S CHOSEN DESCRIPTION, NEVER
+     THE WORD "RETAINER" BY DEFAULT (§8). The standard product's closing opens
+     "Work begins once the retainer and required authorization are received",
+     which is true of that product and a mislabelling of this one. */
+  const desc = spec.payment_label_kind === 'retainer' ? 'retainer'
+    : spec.payment_label_kind === 'custom' ? spec.payment_label_custom.toLowerCase()
+    : 'amount due';
+  const totalSentence = spec.terms.includes('total_due')
+    ? ` The ${desc} for this agreement is ${customMoney(spec.total_due)}.` : '';
+  return {
+    id: 'private_retainer',
+    type: 'custom',
+    agreement: 'full_custom',
+    name: spec.title,
+    selector_label: `Private Client — ${spec.title}`,
+    audience: 'Private surveillance, domestic and family investigations',
+    summary: `This agreement is written for this engagement specifically.${totalSentence}`,
+    lines,
+    engagement: customEngagementBlock(spec),
+    /* THE TERMS READ AFTER THE FIGURES, which is the order the owner's own
+       example states them in: the rate, the schedule, then what is due. The
+       standard sheet puts its block first and is untouched — the flag is
+       absent there, and a pin asserts the standard document is byte-identical
+       to what it was before this flag existed. */
+    engagement_last: true,
+    closing_title: 'Your case. Your authorization. No surprise billing.',
+    /* IT CANNOT POINT AT AN AMOUNT THE DOCUMENT DOES NOT STATE. With the total
+       term off there is no figure above, and "the amount above" would be the
+       document referring to something the reader cannot see — the same class
+       of untruth as a heading over an empty section. */
+    closing: `Work begins once ${spec.terms.includes('total_due') ? 'the amount above' : 'payment'} `
+           + 'and any required authorization are received. '
+           + 'Investigative activity is documented and appropriate case deliverables may '
+           + 'include a written report, photographs and video. An investigator may provide '
+           + 'testimony regarding their own observations when appropriate and separately '
+           + 'arranged.',
+    custom_spec: spec,
+  };
+}
+
+/* THE PAYMENT BLOCK'S OPENING SENTENCE, for a document whose money is not a
+   retainer. `paymentBlockText`/`Html` open with "A $1,500 retainer is required
+   to begin investigative services" — the standard product's sentence, with the
+   standard product's figure — so a FULL CUSTOM send would have called an
+   $1,800 total a retainer in the one block the client is asked to pay from,
+   which is exactly what §8 forbids, and quoted the wrong number while doing
+   it. Composed here, passed in, so the two renderers cannot differ. */
+function customPayLead(spec) {
+  /* A TERM THE OWNER SWITCHED OFF DOES NOT COME BACK IN THE PAYMENT BLOCK.
+     With the total not stated on the document, quoting it here would be §5's
+     "omit it completely" undone by the one block the client reads last. */
+  if (!spec.terms.includes('total_due')) {
+    return 'Payment is due before investigative services begin.';
+  }
+  const amount = customMoney(spec.total_due);
+  if (spec.payment_label_kind === 'retainer') {
+    return `A ${amount} retainer is required to begin investigative services.`;
+  }
+  if (spec.payment_label_kind === 'custom') {
+    return `${spec.payment_label_custom}: ${amount}, due before investigative services begin.`;
+  }
+  return `${amount} is due before investigative services begin.`;
 }
 
 /* THE TWO FLAT-FEE LEGAL SERVICES (LEGAL-SERVICES.md D1, owner 2026-09-02) and
@@ -2157,6 +2593,51 @@ async function emailSheet(request, env, user, id) {
   }
   const nonRef = nonRefundableFor(retainer, body.non_refundable);
   if (nonRef.error) return json({ error: nonRef.error, code: nonRef.code }, 400);
+
+  /* ================= THE FULL CUSTOM PRIVATE AGREEMENT (owner, 2026-09-23) ==
+     A per-send DOCUMENT variant, resolved exactly where `legalFixedSheet` is
+     and refused by name off its own context for the same reason: a figure
+     silently dropped because it arrived on the wrong send is a screen that
+     accepted something it did not use.
+
+     THE STANDARD SHEETS ARE UNREACHABLE FROM HERE. Absent `custom_agreement`,
+     every line below is skipped and the send is byte-identical to one made
+     before this existed — which is §1 and §17 stated as control flow rather
+     than as a promise. */
+  let customSpec = null;
+  if (body.custom_agreement !== undefined && body.custom_agreement !== null) {
+    if (sendCtx !== SEND_CONTEXT.PRIVATE) {
+      return json({ error: 'A full custom agreement is a private-client document, and this '
+        + `send is ${sendCtx}. Leave it out, or send from the private card.`,
+        code: 'custom_agreement_not_private' }, 400);
+    }
+    if (legalSvc) {
+      return json({ error: 'A full custom agreement and a legal service are two different '
+        + 'documents. Choose one.', code: 'custom_agreement_not_legal_service' }, 400);
+    }
+    if (body.non_refundable !== undefined && body.non_refundable !== null
+        && String(body.non_refundable).trim() !== '') {
+      return json({ error: 'A full custom agreement carries its own non-refundable term. '
+        + 'Set it inside the agreement, not beside it.',
+        code: 'non_refundable_not_custom' }, 400);
+    }
+    if (body.retainer_amount !== undefined && body.retainer_amount !== null
+        && String(body.retainer_amount).trim() !== '') {
+      return json({ error: 'A full custom agreement is not a retainer, so there is no agreed '
+        + 'retainer to send with it. Remove the retainer figure, or send the standard private '
+        + 'sheet.', code: 'retainer_not_custom' }, 400);
+    }
+    const built = customAgreementSpec(body.custom_agreement);
+    if (built.error) return json({ error: built.error, code: built.code }, 400);
+    if (!(await customRecordReady(env))) {
+      return json({ error: 'Custom agreements cannot be sent until the case portal setup has been '
+        + 'run once more — there is nowhere yet to record what was quoted, and a custom agreement '
+        + 'the portal cannot record is one nobody can answer for later. Run the portal-setup '
+        + 'workflow. The standard rate sheets are unaffected and send normally.',
+        code: 'custom_agreement_not_set_up' }, 503);
+    }
+    customSpec = built.spec;
+  }
   /* THE DOCUMENT IS BUILT FOR THE CONTEXT, NOT JUST THE PRODUCT (Unit 28).
      `sheetById` returns the raw product, so a legal send emailed the PRIVATE
      card's audience and closing — "Private surveillance, domestic and family
@@ -2168,7 +2649,8 @@ async function emailSheet(request, env, user, id) {
      product — "a law firm buying a $250 Person Locate should receive a
      concise $250 Person Locate rate sheet". General, Surveillance and Custom
      stay the legal card, which IS the existing legal pricing. */
-  const sheet = legalSvc && legalSvc.model === 'fixed'
+  const sheet = customSpec ? privateCustomSheet(customSpec)
+    : legalSvc && legalSvc.model === 'fixed'
     ? legalFixedSheet(legalSvc, flatFee)
     : sheetForContext(id, sendCtx, retainer, nonRef.amount);
 
@@ -2297,9 +2779,18 @@ async function emailSheet(request, env, user, id) {
     client_name: clientName || recClient || null,
     client_email: clientEmail || to, client_phone: clientPhone || null,
     recipient: to,
-    retainer_amount: sendCtx === SEND_CONTEXT.INSURANCE ? null
+    /* A FULL CUSTOM AGREEMENT HAS NO RETAINER, so the record does not claim
+       one: `retainer` here is whatever the case or the standard figure would
+       have been, and storing it beside a document that never mentioned it
+       would be this record asserting something the client was never sent. Its
+       non-refundable portion is the agreement's own or genuinely absent —
+       never the standard $500 default, which a custom agreement does not
+       inherit (§7). */
+    retainer_amount: customSpec ? null
+      : sendCtx === SEND_CONTEXT.INSURANCE ? null
       : (legalSvc && legalSvc.model === 'fixed') ? null : retainer,
-    non_refundable: sendCtx === SEND_CONTEXT.PRIVATE ? nonRef.amount : null,
+    non_refundable: customSpec ? customSpec.non_refundable
+      : sendCtx === SEND_CONTEXT.PRIVATE ? nonRef.amount : null,
     flat_fee: flatFee != null ? flatFee : null,
     terms: sheet.engagement || null,
     intake_included: includeIntake, intake_kind: includeIntake ? sendCtx : null,
@@ -2316,6 +2807,10 @@ async function emailSheet(request, env, user, id) {
        back the failure rather than being told the send is indeterminate. */
     const failDoc = await recordSentDocument(env, user, { ...docFacts, ok: 0,
       detail: mail.reason || 'send failed' });
+    if (customSpec) {
+      await recordCustomAgreement(env, failDoc.doc_id, customSpec,
+        payment.map(x => x.id));
+    }
     await finishSendAttempt(env, attempt.key, failDoc.doc_id);
     if (payment.length || npPicked.length) {
       await logPaymentSend(env, user, { case_no: linkedCase, recipient: to,
@@ -2334,6 +2829,13 @@ async function emailSheet(request, env, user, id) {
   /* THE EXACT DOCUMENT, recorded from the same bytes the provider was handed
      (§1). `send_log` above says a send happened; this says what went. */
   const docRec = await recordSentDocument(env, user, { ...docFacts, ok: 1 });
+  /* §13 — the agreement's own figures, recorded against the document they
+     produced. It cannot cost the send: the client already has the document,
+     and a failed record is REPORTED on the response rather than swallowed or
+     turned into an error, the `integrity: recorded / not_recorded` rule. */
+  const customRec = customSpec
+    ? await recordCustomAgreement(env, docRec.doc_id, customSpec, payment.map(x => x.id))
+    : null;
   await finishSendAttempt(env, attempt.key, docRec.doc_id);
   /* §5 — the system stamps what IT did. A sheet sent against a lead's case
      number moves the lead to Rate Sheet Sent (with the intake ticked, the
@@ -2371,6 +2873,10 @@ async function emailSheet(request, env, user, id) {
        no retainer, no non-refundable portion and no per-day minimum on a
        carrier's or a law firm's send, and a record copy naming one would be
        the office's own file asserting something untrue. */
+    /* THE DOCUMENT'S OWN RENDERED BLOCK, verbatim (owner, 2026-09-07). A FULL
+       CUSTOM agreement's block is composed by `customEngagementBlock` and is
+       handed over the same way — the office receives the strings the client
+       received, whichever product produced them. */
     engagement: sendCtx === SEND_CONTEXT.PRIVATE ? sheet.engagement : null,
     flat_fee: flatFee != null ? flatFee : undefined,
     intake_included: includeIntake,
@@ -2387,7 +2893,24 @@ async function emailSheet(request, env, user, id) {
        the client cannot quietly disagree — the `legal_service` / `flat_fee`
        rule applied to the third per-send figure. Absent on a non-private send,
        because there is no such portion on one. */
-    non_refundable: sendCtx === SEND_CONTEXT.PRIVATE ? nonRef.amount : undefined,
+    non_refundable: customSpec ? (customSpec.non_refundable == null ? undefined : customSpec.non_refundable)
+      : sendCtx === SEND_CONTEXT.PRIVATE ? nonRef.amount : undefined,
+    /* THE AGREEMENT THE DOCUMENT WAS BUILT FROM — observable and asserted, the
+       `send_context` / `legal_service` / `flat_fee` rule applied to the fourth
+       per-send resolution. The figures come back from the RESOLVED spec, so a
+       preview, the email and this answer cannot quietly disagree about what
+       was quoted, and the override flags travel with them. */
+    custom_agreement: customSpec ? {
+      agreement_type: customSpec.agreement_type, title: customSpec.title,
+      hourly_rate: customSpec.hourly_rate, days: customSpec.days,
+      hours_per_day: customSpec.hours_per_day, total_hours: customSpec.total_hours,
+      total_due: customSpec.total_due,
+      hours_overridden: customSpec.hours_overridden,
+      total_overridden: customSpec.total_overridden,
+      payment_label: customSpec.payment_label, terms: customSpec.terms,
+      minimum_hours: customSpec.minimum_hours, non_refundable: customSpec.non_refundable,
+      ...(customRec || {}),
+    } : undefined,
     /* Which legal service the document was generated from — observable and
        asserted, the send_context rule applied one level down. Absent when no
        service was named or on file, which is the pre-unit send exactly. */
@@ -3972,12 +4495,16 @@ const SHEET_INTAKE = {
    handle shows the handle, plainly and in full — it is NEVER turned into a
    link, because a guessed payment URL that resolves to a real stranger sends
    the retainer to the wrong person. */
-function paymentBlockText(pay, retainer) {
+/* `lead` is OPTIONAL and every existing caller omits it, emitting byte-identical
+   output — the `pdfFromDoc` footer precedent. It exists for the FULL CUSTOM
+   private agreement, whose money is not a retainer and must not be called one
+   (§8); see `customPayLead`. */
+function paymentBlockText(pay, retainer, lead) {
   if (!pay.length) return '';
   return `
 PAYMENT OPTIONS
-A ${usd(Number(retainer) > 0 ? retainer : PERSONAL.retainer)} retainer is required to begin investigative services.
-The retainer may be submitted using one of the approved methods below.
+${lead || `A ${usd(Number(retainer) > 0 ? retainer : PERSONAL.retainer)} retainer is required to begin investigative services.`}
+${lead ? 'It' : 'The retainer'} may be submitted using one of the approved methods below.
 ${pay.map(m => `
 PAY WITH ${m.label.toUpperCase()}
 ${m.handle ? `  ${m.handle}\n` : ''}  ${m.url}${m.instructions ? `\n  ${m.instructions}` : ''}`).join('')}
@@ -3993,13 +4520,15 @@ ${m.handle ? `  ${m.handle}\n` : ''}  ${m.url}${m.instructions ? `\n  ${m.instru
    Written with inline styles and no flexbox because it has to survive Outlook
    and Gmail, which drop most CSS. `display:block` on the anchor is what makes
    the whole rectangle tappable in every client that renders anything at all. */
-function paymentBlockHtml(pay, retainer) {
+function paymentBlockHtml(pay, retainer, lead) {
   if (!pay.length) return '';
   return `<div style="margin:0 0 18px;padding:16px 18px;background:#f4f8fa;border:1px solid #dfe7ec;border-radius:10px">
     <p style="margin:0 0 6px;font-weight:800;color:#12305a;letter-spacing:.04em">PAYMENT OPTIONS</p>
-    <p style="margin:0 0 14px;font-size:.92rem">A <b>${escHtml(usd(Number(retainer) > 0 ? retainer : PERSONAL.retainer))}</b> retainer is
+    <p style="margin:0 0 14px;font-size:.92rem">${lead
+      ? `${escHtml(lead)} It may be submitted using one of the approved methods below.`
+      : `A <b>${escHtml(usd(Number(retainer) > 0 ? retainer : PERSONAL.retainer))}</b> retainer is
       required to begin investigative services. The retainer may be submitted using one of the
-      approved methods below.</p>
+      approved methods below.`}</p>
     ${pay.map(m => `<a href="${escHtml(m.url)}"
       style="display:block;margin:0 0 10px;padding:14px 16px;background:#12305a;border-radius:10px;
              text-decoration:none;color:#ffffff;font-family:'Segoe UI',Arial,sans-serif">
@@ -4092,7 +4621,8 @@ function npPayBlockHtml(picked) {
    nothing that was carrying meaning. */
 function engagementText(block) {
   if (!block) return '';
-  return `\n${block.lines.map(l => l.text).join('\n')}\n\n${block.note}\n`;
+  const body = block.lines.map(l => l.text).join('\n');
+  return block.note ? `\n${body}\n\n${block.note}\n` : `\n${body}\n`;
 }
 
 function engagementHtml(block) {
@@ -4100,7 +4630,7 @@ function engagementHtml(block) {
   const tone = t => t === 'term' ? 'font-weight:700' : '';
   return `<div style="margin:0 0 18px">
     ${block.lines.map(l => `<div style="margin:0 0 5px;${tone(l.tone)}">${escHtml(l.text)}</div>`).join('')}
-    <p style="margin:10px 0 0;font-size:.84rem;color:#5c6775;line-height:1.5">${escHtml(block.note)}</p>
+    ${block.note ? `<p style="margin:10px 0 0;font-size:.84rem;color:#5c6775;line-height:1.5">${escHtml(block.note)}</p>` : ''}
   </div>`;
 }
 
@@ -4108,6 +4638,15 @@ function sheetEmail(sheet, note, intake, pay, retainer, npPicked) {
   /* Belt and braces on the boundary: even called wrongly, the carrier sheet
      cannot carry a consumer payment handle. */
   const payment = (sheetTakesPayment(sheet.id) && Array.isArray(pay)) ? pay : [];
+  /* THE FULL CUSTOM AGREEMENT STATES ITS TERMS AFTER ITS FIGURES, and opens
+     the payment block with its own sentence rather than the standard
+     product's retainer one. Both are properties of the SHEET OBJECT, absent on
+     every sheet that existed before, so the standard documents render exactly
+     as they did — pinned byte for byte by the suite. */
+  const engLast = sheet.engagement_last === true;
+  const engBefore = engLast ? null : sheet.engagement;
+  const engAfter = engLast ? sheet.engagement : null;
+  const payLead = sheet.custom_spec ? customPayLead(sheet.custom_spec) : undefined;
   const rows = sheet.lines.map(l =>
     `  ${l.label}${l.sub ? ` (${l.sub})` : ''}: ${l.value}${l.badge ? `  ** ${l.badge} **` : ''}\n     ${l.note}`).join('\n');
   const text =
@@ -4116,12 +4655,12 @@ Always Precise Investigations, LLC — Va DCJS #11-9159
 
 ${sheet.audience}
 ${sheet.summary}
-${note ? `\n${note}\n` : ''}${engagementText(sheet.engagement)}
+${note ? `\n${note}\n` : ''}${engagementText(engBefore)}
 ${rows}
-
+${engagementText(engAfter)}
 ${sheet.closing_title}
 ${sheet.closing}
-${paymentBlockText(payment, retainer)}${npPayBlockText(npPicked)}${intake ? `\nReady to begin? The ${intake.label} takes a few minutes:\n${intake.url}\n` : ''}
+${paymentBlockText(payment, retainer, payLead)}${npPayBlockText(npPicked)}${intake ? `\nReady to begin? The ${intake.label} takes a few minutes:\n${intake.url}\n` : ''}
 Questions: (434) 907-0975
 Always Precise Investigations, LLC`;
 
@@ -4133,7 +4672,7 @@ Always Precise Investigations, LLC`;
   <p style="margin:0 0 14px;font-size:.88rem;color:#5c6775">${escHtml(sheet.audience)}</p>
   <p style="margin:0 0 18px">${escHtml(sheet.summary)}</p>
   ${note ? `<p style="margin:0 0 18px;padding:12px 14px;background:#f4f8fa;border-left:3px solid #2f7d90">${escHtml(note)}</p>` : ''}
-  ${engagementHtml(sheet.engagement)}
+  ${engagementHtml(engBefore)}
   <table style="width:100%;border-collapse:collapse;margin:0 0 18px">
     ${sheet.lines.map(l => `<tr>
       <td style="padding:12px 0;border-bottom:1px solid #e4e9ed;vertical-align:top">
@@ -4144,10 +4683,10 @@ Always Precise Investigations, LLC`;
       <td style="padding:12px 0 12px 14px;border-bottom:1px solid #e4e9ed;text-align:right;white-space:nowrap;vertical-align:top;${
         l.big ? 'font-size:1.35rem;font-weight:800;color:#12305a' : 'font-weight:700'}">${escHtml(l.value)}</td>
     </tr>`).join('')}
-  </table>
+  </table>${engagementHtml(engAfter)}
   <p style="margin:0 0 4px;font-weight:800;color:#12305a">${escHtml(sheet.closing_title)}</p>
   <p style="margin:0 0 14px;font-size:.92rem">${escHtml(sheet.closing)}</p>
-  ${paymentBlockHtml(payment, retainer)}${npPayBlockHtml(npPicked)}
+  ${paymentBlockHtml(payment, retainer, payLead)}${npPayBlockHtml(npPicked)}
   ${intake ? `<p style="margin:0 0 14px">
     <a href="${escHtml(intake.url)}" style="display:inline-block;background:#12305a;color:#fff;
        padding:11px 18px;border-radius:8px;text-decoration:none;font-weight:700">
@@ -4768,6 +5307,55 @@ async function recordSentDocument(env, user, d) {
     console.error('sent_document write failed', e && e.message ? e.message : e);
     return { doc_id: null, content_hash: contentHash, document: 'not_recorded',
              document_reason: 'write_failed' };
+  }
+}
+
+/* IS THERE ANYWHERE TO RECORD A CUSTOM AGREEMENT'S FIGURES? (§13.)
+
+   `portal-setup.yml` is a MANUAL dispatch while the Worker deploys on push, so
+   between a merge and that run the companion table does not exist on the live
+   database. Every other unit here degrades by name at that seam, and this one
+   refuses BY NAME rather than sending: a FULL CUSTOM document whose figures
+   were never recorded is precisely what §13 exists to prevent, and a send that
+   quietly lost its record would be discovered by somebody asking, months
+   later, what was quoted.
+
+   THE STANDARD SHEETS ARE UNAFFECTED. This is consulted only where a custom
+   agreement was asked for, so private, legal and insurance sends work exactly
+   as they always have until the workflow is run. */
+async function customRecordReady(env) {
+  return !(await missingTables(env)).includes('sent_document_custom');
+}
+
+/* THE FIGURES BEHIND THE DOCUMENT, written after the document itself so a row
+   here can never claim an agreement the portal then failed to record. Written
+   on the FAILURE path too — a document that did not arrive is still a document
+   the office composed, and what it said is exactly what somebody will want. */
+async function recordCustomAgreement(env, docId, spec, methods) {
+  if (!docId || !spec) return { custom: 'not_recorded', custom_reason: 'no_document' };
+  try {
+    await env.DB.prepare(
+      `INSERT INTO sent_document_custom
+         (doc_id, agreement_type, title, hourly_rate, scheduled_days, hours_per_day,
+          total_hours, total_due, computed_total_hours, computed_total_due,
+          hours_overridden, total_overridden,
+          payment_label_kind, payment_label_custom, payment_label,
+          minimum_hours_included, minimum_hours, non_refundable_included, non_refundable,
+          terms_included, payment_methods, spec_json, recorded_at)
+       VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)`)
+      .bind(docId, spec.agreement_type, spec.title,
+            spec.hourly_rate, spec.days, spec.hours_per_day,
+            spec.total_hours, spec.total_due, spec.computed_total_hours, spec.computed_total_due,
+            spec.hours_overridden ? 1 : 0, spec.total_overridden ? 1 : 0,
+            spec.payment_label_kind, spec.payment_label_custom || null, spec.payment_label,
+            spec.minimum_hours_included ? 1 : 0, spec.minimum_hours,
+            spec.non_refundable_included ? 1 : 0, spec.non_refundable,
+            JSON.stringify(spec.terms), JSON.stringify(methods || []),
+            JSON.stringify(spec), nowIso()).run();
+    return { custom: 'recorded' };
+  } catch (e) {
+    console.error('sent_document_custom write failed', e && e.message ? e.message : e);
+    return { custom: 'not_recorded', custom_reason: 'write_failed' };
   }
 }
 
@@ -14417,6 +15005,7 @@ const INTAKE_EXEMPT = {
      The attempt key stays for a different reason: it is what stops a retry
      re-emailing a client, and deleting it would arm that. */
   sent_document: 'the exact document sent is non-deletable evidence, and a send alone must not block deletion',
+  sent_document_custom: 'the figures behind a sent document are part of that same evidence',
   document_acceptance: 'what a client signed is non-deletable evidence, and it must not block deletion',
   document_record_copy: 'the office-copy trail is send history and must not block deletion',
   document_send_attempt: 'the idempotency key is what prevents a second client email; removing it would arm one',
@@ -14554,6 +15143,10 @@ const DEMO_SWEEP = [
      one bind, because the sweep binds a single value. */
   ['document_acceptance',   'DELETE FROM document_acceptance WHERE case_no LIKE ?1 OR doc_id IN (SELECT doc_id FROM sent_document WHERE case_no LIKE ?1)'],
   ['document_record_copy',  'DELETE FROM document_record_copy WHERE doc_id IN (SELECT doc_id FROM sent_document WHERE case_no LIKE ?)'],
+  /* Resolved through its parent like every other child here, so a row is
+     matched by whose case the DOCUMENT belongs to and never by a prefix of its
+     own — and it goes BEFORE `sent_document`, which is the subquery it reads. */
+  ['sent_document_custom',  'DELETE FROM sent_document_custom WHERE doc_id IN (SELECT doc_id FROM sent_document WHERE case_no LIKE ?)'],
   ['document_send_attempt', 'DELETE FROM document_send_attempt WHERE doc_id IN (SELECT doc_id FROM sent_document WHERE case_no LIKE ?)'],
   ['sent_document',         'DELETE FROM sent_document WHERE case_no LIKE ?'],
   /* The packet generation trail is CASE data — it names one case's records
@@ -16285,7 +16878,7 @@ const EXPECTED_TABLES = [
   'case_content_removed', 'case_content_event', 'feed_hidden', 'assistant_log',
   'case_refund', 'case_closeout', 'case_closeout_detail', 'user_pref',
   'sent_document', 'document_send_attempt', 'document_acceptance', 'document_record_copy',
-  'packet_generation',
+  'packet_generation', 'sent_document_custom',
 ];
 
 async function missingTables(env) {
@@ -16894,6 +17487,11 @@ async function assistantSimulateIntake(request, env, user) {
    instead of drifting. If a THIRD consumer of this resolution ever appears,
    extract the shared resolver then — the third-reader lesson. */
 async function assistantSheetPlan(env, body) {
+  /* The mirror's refusals are `{fail: json(...)}` rather than a bare response,
+     so the FULL CUSTOM resolution — which is copied here step for step, the
+     way every other resolution in this function is — needs the same wrapper
+     under a name it can call. */
+  const fail = (payload, status) => ({ fail: json(payload, status) });
   const id = String(body.id || body.sheet || '').trim();
   if (!sheetById(id)) return { fail: json({ error: 'no such rate sheet' }, 404) };
   const to = String(body.to || '').trim();
@@ -17010,7 +17608,46 @@ async function assistantSheetPlan(env, body) {
   }
   const nonRef = nonRefundableFor(retainer, body.non_refundable);
   if (nonRef.error) return { fail: json({ error: nonRef.error, code: nonRef.code }, 400) };
-  const sheet = legalSvc && legalSvc.model === 'fixed'
+
+  /* ================= THE FULL CUSTOM PRIVATE AGREEMENT (owner, 2026-09-23) ==
+     A per-send DOCUMENT variant, resolved exactly where `legalFixedSheet` is
+     and refused by name off its own context for the same reason: a figure
+     silently dropped because it arrived on the wrong send is a screen that
+     accepted something it did not use.
+
+     THE STANDARD SHEETS ARE UNREACHABLE FROM HERE. Absent `custom_agreement`,
+     every line below is skipped and the send is byte-identical to one made
+     before this existed — which is §1 and §17 stated as control flow rather
+     than as a promise. */
+  let customSpec = null;
+  if (body.custom_agreement !== undefined && body.custom_agreement !== null) {
+    if (sendCtx !== SEND_CONTEXT.PRIVATE) {
+      return fail({ error: 'A full custom agreement is a private-client document, and this '
+        + `send is ${sendCtx}. Leave it out, or send from the private card.`,
+        code: 'custom_agreement_not_private' }, 400);
+    }
+    if (legalSvc) {
+      return fail({ error: 'A full custom agreement and a legal service are two different '
+        + 'documents. Choose one.', code: 'custom_agreement_not_legal_service' }, 400);
+    }
+    if (body.non_refundable !== undefined && body.non_refundable !== null
+        && String(body.non_refundable).trim() !== '') {
+      return fail({ error: 'A full custom agreement carries its own non-refundable term. '
+        + 'Set it inside the agreement, not beside it.',
+        code: 'non_refundable_not_custom' }, 400);
+    }
+    if (body.retainer_amount !== undefined && body.retainer_amount !== null
+        && String(body.retainer_amount).trim() !== '') {
+      return fail({ error: 'A full custom agreement is not a retainer, so there is no agreed '
+        + 'retainer to send with it. Remove the retainer figure, or send the standard private '
+        + 'sheet.', code: 'retainer_not_custom' }, 400);
+    }
+    const built = customAgreementSpec(body.custom_agreement);
+    if (built.error) return fail({ error: built.error, code: built.code }, 400);
+    customSpec = built.spec;
+  }
+  const sheet = customSpec ? privateCustomSheet(customSpec)
+    : legalSvc && legalSvc.model === 'fixed'
     ? legalFixedSheet(legalSvc, flatFee)
     : sheetForContext(id, sendCtx, retainer, nonRef.amount);
   const includeIntake = body.include_intake === true || body.include_intake === 1 || body.include_intake === '1';
@@ -17046,7 +17683,7 @@ async function assistantSheetPlan(env, body) {
     ? `${sheet.name} — Always Precise Investigations (case ${caseNo})`
     : `${sheet.name} — Always Precise Investigations`;
   return { to, subject, text, sendCtx, legalSvc, flatFee, sheet, intakeDoor,
-           payment, npPicked, linkedCase, caseNo, nonRef };
+           payment, npPicked, linkedCase, caseNo, nonRef, customSpec };
 }
 
 /* POST /assistant/prepare-sheet — what WOULD go, priced by the real
@@ -17060,6 +17697,14 @@ async function assistantPrepareSheet(request, env) {
     legal_service: plan.legalSvc
       ? { id: plan.legalSvc.id, label: plan.legalSvc.label, model: plan.legalSvc.model } : undefined,
     flat_fee: plan.legalSvc && plan.legalSvc.model === 'fixed' ? plan.flatFee : undefined,
+    /* THE RESOLVED CUSTOM AGREEMENT, so the wizard's Preview can be the
+       WORKER'S answer rather than a second arithmetic beside it. §12's
+       "Preview is the final truth" is then a property of where the figures
+       come from, not a rule somebody has to keep. This route writes nothing
+       and sends nothing — it is the rehearsal, which is exactly what a
+       preview is. */
+    custom_agreement: plan.customSpec || undefined,
+    engagement: plan.sheet.engagement || undefined,
     included: {
       rate_sheet: plan.sheet.name,
       intake: plan.intakeDoor ? plan.intakeDoor.label : null,

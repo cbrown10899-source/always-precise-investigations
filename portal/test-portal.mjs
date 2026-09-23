@@ -24894,6 +24894,527 @@ section('The office copy says when it failed, and offers to send only itself');
   await page.close();
 }
 
+
+/* ============================================================================
+   THE FULL CUSTOM PRIVATE AGREEMENT, ON THE SCREEN (owner brief 2026-09-23)
+
+   §15 — the builder lives inside the shipped Rate Sheet editor, so the
+   background lock, the keyboard handling and the scroll restore cover it with
+   no new code; §16 — measured at 390 and 320; §19 — the owner's real client,
+   driven through the real form and sent through the real Worker.
+   ========================================================================= */
+section('FULL CUSTOM: the mode is offered, opens on Standard, and withdraws the retainer');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await openWiz(page);
+
+  const before = await page.evaluate(() => ({
+    mode: !!document.getElementById('wiz_mode'),
+    value: (document.getElementById('wiz_mode') || {}).value,
+    builder: !!document.querySelector('.cubox'),
+    retainer: !!document.getElementById('wiz_ret'),
+    nonRef: !!document.getElementById('wiz_nr'),
+  }));
+  ok('the private wizard offers an Agreement selector', before.mode === true,
+     JSON.stringify(before));
+  ok('it opens on the STANDARD sheet — the mode is chosen, never inherited',
+     before.value === 'standard', before.value);
+  ok('and with Standard chosen the builder is not drawn at all',
+     before.builder === false, JSON.stringify(before));
+  ok('the standard agreed-retainer selector is where it always was',
+     before.retainer === true);
+  ok('and so is the standard non-refundable box', before.nonRef === true);
+
+  await page.selectOption('#wiz_mode', 'custom');
+  await page.waitForTimeout(250);
+  const after = await page.evaluate(() => ({
+    builder: !!document.querySelector('.cubox'),
+    rate: !!document.getElementById('cu_rate'),
+    days: !!document.getElementById('cu_days'),
+    perDay: !!document.getElementById('cu_perday'),
+    hours: !!document.getElementById('cu_hours'),
+    due: !!document.getElementById('cu_due'),
+    terms: [...document.querySelectorAll('.cu-term')].map(b => b.dataset.t),
+    ticked: [...document.querySelectorAll('.cu-term')].filter(b => b.checked).map(b => b.dataset.t),
+    retainer: !!document.getElementById('wiz_ret'),
+    nonRef: !!document.getElementById('wiz_nr'),
+    labelKind: (document.getElementById('cu_labelkind') || {}).value,
+    minBox: !!document.getElementById('cu_minpick'),
+    nrBox: !!document.getElementById('cu_nonref'),
+  }));
+  ok('choosing Full custom draws the builder', after.builder === true, JSON.stringify(after));
+  /* A SCREEN MUST NOT MISNAME WHAT IT IS ABOUT TO EMAIL. Left reading the
+     private card's label the dialog said "Private Client — $1,500 Retainer"
+     over a custom agreement — the defect `wizLegalFixed` already corrects one
+     product over. */
+  ok('and the dialog stops calling itself the $1,500 retainer sheet',
+     await page.evaluate(() => {
+       const t = document.querySelector('.rsw-head b').textContent;
+       return /Custom Surveillance Agreement/.test(t) && !/1,500/.test(t);
+     }), await page.evaluate(() => document.querySelector('.rsw-head b').textContent));
+  ok('with every figure the brief names', after.rate && after.days && after.perDay
+     && after.hours && after.due, JSON.stringify(after));
+  ok('and all seven optional terms', after.terms.join() ===
+     'hourly_rate,days,hours_per_day,total_hours,total_due,non_refundable,minimum_hours',
+     after.terms.join());
+  ok('§6/§7 — the minimum and the non-refundable portion are OFF by default',
+     !after.ticked.includes('minimum_hours') && !after.ticked.includes('non_refundable'),
+     after.ticked.join());
+  ok('and with them off neither field is even drawn',
+     after.minBox === false && after.nrBox === false, JSON.stringify(after));
+  ok('the other five open ticked, which is the ordinary document',
+     after.ticked.join() === 'hourly_rate,days,hours_per_day,total_hours,total_due',
+     after.ticked.join());
+  ok('§8 — the money is described as a total, not a retainer, until that is chosen',
+     after.labelKind === 'total_due', after.labelKind);
+  ok('THE STANDARD RETAINER SELECTOR IS WITHDRAWN — a custom agreement is not '
+     + 'a retainer product', after.retainer === false, JSON.stringify(after));
+  ok('and so is the standard non-refundable box', after.nonRef === false);
+
+  /* §17 — going back restores the standard form exactly. */
+  await page.selectOption('#wiz_mode', 'standard');
+  await page.waitForTimeout(250);
+  const back = await page.evaluate(() => ({
+    builder: !!document.querySelector('.cubox'),
+    retainer: !!document.getElementById('wiz_ret'),
+    nonRef: !!document.getElementById('wiz_nr'),
+    ret: (document.getElementById('wiz_ret') || {}).value,
+  }));
+  ok('switching back to Standard restores the retainer selector',
+     back.retainer === true && back.nonRef === true && back.builder === false,
+     JSON.stringify(back));
+  ok('and it opens on the standard figure, as it always did',
+     back.ret === String(await page.evaluate(() => RETAINER_STANDARD)), back.ret);
+
+  /* THE MODE BELONGS TO THE PRIVATE PRODUCT. A legal send takes the private
+     SHEET, so a builder gated on the sheet id would have drawn on one. */
+  await page.selectOption('#wiz_type', 'legal');
+  await page.waitForTimeout(400);
+  ok('a LEGAL send is offered no custom agreement at all',
+     await page.evaluate(() => !document.getElementById('wiz_mode')));
+  await page.selectOption('#wiz_type', 'insurance');
+  await page.waitForTimeout(400);
+  ok('nor is a carrier send',
+     await page.evaluate(() => !document.getElementById('wiz_mode')));
+  await page.selectOption('#wiz_type', 'private');
+  await page.waitForTimeout(400);
+  ok('and it comes back on the private one, opening on Standard again',
+     await page.evaluate(() => {
+       const m = document.getElementById('wiz_mode');
+       return !!m && m.value === 'standard' && !document.querySelector('.cubox');
+     }));
+  await page.close();
+}
+
+section('FULL CUSTOM: the arithmetic on screen, and the Worker agrees with it');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await openWiz(page);
+  await page.selectOption('#wiz_mode', 'custom');
+  await page.waitForTimeout(250);
+
+  /* §2 — THE OWNER'S OWN EXAMPLE, typed the way a person types it. */
+  await page.locator('#cu_rate').fill('75');
+  await page.locator('#cu_days').fill('2');
+  await page.locator('#cu_perday').fill('12');
+  await page.waitForTimeout(250);
+  const live = await page.evaluate(() => {
+    const s = document.querySelector('.cu-sum');
+    return { text: s ? s.innerText.replace(/\s+/g, ' ').trim() : '',
+             total: (document.querySelector('.cu-total') || {}).textContent || '' };
+  });
+  ok('§2 — the builder shows 2 x 12 = 24 hours as it is typed',
+     /2 × 12 = 24 hours/.test(live.text), live.text);
+  ok('§2 — and 24 x $75.00 = $1,800.00', live.total === '$1,800.00', live.total);
+
+  /* THE CARET SURVIVES, because these fields do not repaint on a keystroke —
+     the `dsDirtyCtl` pattern. A builder that rebuilt the box being typed in
+     is the defect this file records against the package summary and the
+     invoice search. */
+  const caret = await page.evaluate(() => {
+    const el = document.getElementById('cu_perday');
+    el.focus(); el.setSelectionRange(1, 1);
+    return { active: document.activeElement.id, at: el.selectionStart };
+  });
+  await page.locator('#cu_perday').type('0');
+  await page.waitForTimeout(200);
+  const afterType = await page.evaluate(() => ({
+    active: document.activeElement.id,
+    value: document.getElementById('cu_perday').value,
+    total: (document.querySelector('.cu-total') || {}).textContent || '',
+  }));
+  ok('typing into a builder field keeps the caret in it',
+     caret.active === 'cu_perday' && afterType.active === 'cu_perday', JSON.stringify(afterType));
+  ok('and the total follows the keystroke without a repaint',
+     afterType.value === '102' && afterType.total === '$15,300.00', JSON.stringify(afterType));
+  await page.locator('#cu_perday').fill('12');
+  await page.waitForTimeout(200);
+
+  /* THE TWO CALCULATORS ARE PINNED AGAINST EACH OTHER, on a figure that
+     breaks in floating point. The page's arithmetic is DISPLAY ONLY and the
+     Worker composes the document — a screen that disagreed with the document
+     by a hundredth is a defect whichever half is right. */
+  for (const [rate, days, per, want] of [
+    ['75', '2', '12', '$1,800.00'],
+    ['16.10', '1', '7', '$112.70'],
+    ['33.33', '3', '3', '$299.97'],
+  ]) {
+    await page.locator('#cu_rate').fill(rate);
+    await page.locator('#cu_days').fill(days);
+    await page.locator('#cu_perday').fill(per);
+    await page.waitForTimeout(200);
+    const shown = await page.evaluate(() =>
+      (document.querySelector('.cu-total') || {}).textContent || '');
+    const worker = await page.evaluate(async ([r, d, p]) => {
+      const a = await api('/assistant/prepare-sheet', { method: 'POST', body: {
+        id: 'private_retainer', to: 'x@example.com', send_context: 'private',
+        custom_agreement: { hourly_rate: r, days: d, hours_per_day: p } } });
+      return a.custom_agreement.total_due;
+    }, [rate, days, per]);
+    ok(`$${rate} x ${days} x ${per}: the screen says ${shown} and so does the Worker`,
+       shown === want && '$' + Number(worker).toLocaleString('en-US',
+         { minimumFractionDigits: 2, maximumFractionDigits: 2 }) === want,
+       JSON.stringify({ shown, worker }));
+  }
+
+  /* §4 — an override is OBEYED and SAID OUT LOUD. */
+  await page.locator('#cu_rate').fill('75');
+  await page.locator('#cu_days').fill('2');
+  await page.locator('#cu_perday').fill('12');
+  await page.locator('#cu_due').fill('1500');
+  await page.waitForTimeout(250);
+  const ov = await page.evaluate(() => {
+    const s = document.querySelector('.cu-sum');
+    return s ? s.innerText.replace(/\s+/g, ' ').trim() : '';
+  });
+  ok('§4 — an overridden total says so, and names both figures',
+     /Total due overridden/.test(ov) && /\$1,800\.00/.test(ov) && /\$1,500\.00/.test(ov), ov);
+  await page.locator('#cu_due').fill('');
+  await page.waitForTimeout(200);
+
+  /* §5 — unticking a term takes its field away, and ticking one brings its
+     own figure with it rather than a default. */
+  await page.locator('.cu-term[data-t="minimum_hours"]').click();
+  await page.waitForTimeout(250);
+  const minOn = await page.evaluate(() => {
+    const sel = document.getElementById('cu_minpick');
+    return { drawn: !!sel, value: sel ? sel.value : '',
+             options: sel ? [...sel.options].map(o => o.value).join() : '' };
+  });
+  ok('§6 — ticking the minimum draws its own figure', minOn.drawn === true,
+     JSON.stringify(minOn));
+  ok('§6 — offering the owner\'s own choices rather than forcing four hours',
+     minOn.options === '4,6,8,12,custom', minOn.options);
+  await page.locator('.cu-term[data-t="non_refundable"]').click();
+  await page.waitForTimeout(250);
+  const nrOn = await page.evaluate(() => {
+    const el = document.getElementById('cu_nonref');
+    return { drawn: !!el, value: el ? el.value : 'MISSING',
+             placeholder: el ? el.placeholder : 'MISSING' };
+  });
+  ok('§7 — ticking the non-refundable portion draws an EMPTY box',
+     nrOn.drawn === true && nrOn.value === '' && nrOn.placeholder === '',
+     JSON.stringify(nrOn));
+  ok('§7 — nothing standard is filled in for the owner',
+     await page.evaluate(() => !/\$?500/.test(
+       (document.getElementById('cu_nonref') || {}).value || '')));
+
+  /* §8 — the word retainer is reachable, deliberately, and only there. */
+  await page.selectOption('#cu_labelkind', 'custom');
+  await page.waitForTimeout(250);
+  ok('choosing a custom label asks for the owner\'s own words',
+     await page.evaluate(() => !!document.getElementById('cu_labelcustom')));
+  await page.close();
+}
+
+section('FULL CUSTOM: Preview is the Worker\'s, and Send is what was previewed');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await openWiz(page);
+  await page.selectOption('#wiz_mode', 'custom');
+  await page.waitForTimeout(250);
+  await page.locator('#wiz_to').fill('vanessa@example.com');
+  await page.locator('#cu_rate').fill('75');
+  await page.locator('#cu_days').fill('2');
+  await page.locator('#cu_perday').fill('12');
+  await page.waitForTimeout(250);
+
+  /* A REFUSAL KEEPS THE ADMIN ON THE FORM. Ticking a term without its figure
+     is exactly the case §18 forbids being defaulted, so the Worker refuses and
+     the wizard must not advance to a preview of a document it would reject. */
+  await page.locator('.cu-term[data-t="minimum_hours"]').click();
+  await page.waitForTimeout(200);
+  await page.evaluate(() => { SHEET_WIZ.cuMinPick = ''; paint(); });
+  await page.waitForTimeout(200);
+  await page.locator('.rsw-acts .btn', { hasText: 'Preview' }).click();
+  await page.waitForTimeout(900);
+  const refused = await page.evaluate(() => ({
+    step: SHEET_WIZ.step, err: SHEET_WIZ.err,
+    onForm: !!document.getElementById('cu_rate'),
+  }));
+  ok('a term with no figure refuses, and the admin stays on the form',
+     refused.step === 1 && refused.onForm === true && /minimum/i.test(refused.err || ''),
+     JSON.stringify(refused));
+  await page.locator('.cu-term[data-t="minimum_hours"]').click();
+  await page.waitForTimeout(250);
+
+  await page.locator('.rsw-acts .btn', { hasText: 'Preview' }).click();
+  await page.waitForFunction(() => SHEET_WIZ && SHEET_WIZ.step === 2, null, { timeout: 6000 });
+  await page.waitForTimeout(300);
+  const prev = await page.evaluate(() => ({
+    text: document.querySelector('.rsw-body').innerText.replace(/\s+/g, ' ').trim(),
+    resolved: SHEET_WIZ.cuResolved,
+    eng: [...document.querySelectorAll('.rs-eng .eng-l')].map(e => ({
+      text: e.textContent.trim(), bold: getComputedStyle(e).fontWeight })),
+  }));
+  ok('§12 — the preview names the agreement, not the retainer sheet',
+     /Custom Surveillance Agreement/.test(prev.text), prev.text.slice(0, 200));
+  ok('§12 — the figures it shows are the WORKER\'S resolution',
+     prev.resolved && prev.resolved.total_due === 1800 && prev.resolved.total_hours === 24,
+     JSON.stringify(prev.resolved));
+  ok('the preview states the whole agreement in one line',
+     /\$75\.00 per hour/.test(prev.text) && /2 days/.test(prev.text)
+     && /12 hours per day/.test(prev.text) && /24 hours total/.test(prev.text)
+     && /\$1,800\.00/.test(prev.text), prev.text.slice(0, 300));
+  ok('there is NO agreed-retainer row on it',
+     !/Agreed retainer/.test(prev.text), prev.text.slice(0, 300));
+  ok('the client-facing term block is drawn from the same resolution',
+     prev.eng.length === 1
+     && prev.eng[0].text === 'TOTAL DUE BEFORE WORK BEGINS: $1,800.00', JSON.stringify(prev.eng));
+  ok('and the term is bold and nothing else — the owner\'s one tone',
+     Number(prev.eng[0].bold) >= 700, JSON.stringify(prev.eng));
+  ok('the note says no standard term is added to it',
+     /no standard term is added/i.test(prev.text), prev.text.slice(-300));
+
+  /* §19 — THE REAL SEND, through the real Worker, to the real mail capture. */
+  MAILED = null;
+  env.RESEND_API_KEY = 'e2e-resend-key';
+  const sent = await page.evaluate(async () => {
+    await wizSend();
+    return { closed: SHEET_WIZ === null, msg: SHEET_MSG };
+  });
+  await page.waitForTimeout(400);
+  const mail = REAL_MAIL();
+  delete env.RESEND_API_KEY;
+  ok('the wizard sends and closes', sent.closed === true && /vanessa@example\.com/.test(sent.msg),
+     JSON.stringify(sent));
+  ok('the email really went', !!mail && mail.to === 'vanessa@example.com',
+     JSON.stringify(mail && mail.to));
+  const doc = mail.text;
+  ok('§19 — it states $75.00 per hour', doc.includes('$75.00 per hour'));
+  ok('§19 — 2 days', doc.includes('2 days'));
+  ok('§19 — 12 hours', doc.includes('12 hours'));
+  ok('§19 — 24 hours', doc.includes('24 hours'));
+  ok('§19 — $1,800.00', doc.includes('$1,800.00'));
+  ok('§19 — and NO four-hour minimum', !doc.includes('4-HOUR MINIMUM PER SURVEILLANCE DAY'));
+  ok('§19 — no minimum-per-surveillance-day language at all',
+     !/MINIMUM PER SURVEILLANCE DAY/i.test(doc));
+  ok('§19 — no non-refundable portion', !/NON-REFUNDABLE PORTION/i.test(doc));
+  ok('§8 — and the word retainer appears nowhere in it',
+     !/retainer/i.test(doc), (doc.match(/.{0,50}retainer.{0,50}/i) || [''])[0]);
+  ok('the subject is the agreement\'s own name',
+     mail.subject === 'Custom Surveillance Agreement — Always Precise Investigations',
+     mail.subject);
+  await page.close();
+}
+
+
+section('FULL CUSTOM: §15 — Simple View, open intake, custom agreement, back to the intake');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await simpleOnFor(page);
+
+  /* THE DOOR IS THE ONE THE INTAKE ALREADY HAD. `leadSheet` is the Simple View
+     action bar's own Send rate sheet — the same control, the same handler, the
+     same route — so this is one flow with two doors rather than a second
+     rate-sheet system, which §4 and §14 both forbid. */
+  await page.evaluate(() => { simpleOpen('API-SV-NEW'); });
+  await page.waitForFunction(() => WS_CASE === 'API-SV-NEW' && WS, null, { timeout: 6000 });
+  await page.waitForTimeout(400);
+  const bar = await page.evaluate(() => {
+    const b = [...document.querySelectorAll('[data-act="leadSheet"]')]
+      .find(x => x.dataset.case === 'API-SV-NEW');
+    return { there: !!b, label: b ? b.textContent.trim() : '' };
+  });
+  ok('§15 — the opened intake carries Send rate sheet', bar.there === true, JSON.stringify(bar));
+
+  await page.locator('[data-act="leadSheet"][data-case="API-SV-NEW"]').click();
+  await page.waitForSelector('.amsheet.rsw', { timeout: 6000 });
+  await page.waitForTimeout(300);
+  const opened = await page.evaluate(() => ({
+    fromLead: !!SHEET_WIZ.fromLead,
+    mode: (document.getElementById('wiz_mode') || {}).value,
+    builder: !!document.querySelector('.cubox'),
+    to: SHEET_WIZ.to, caseNo: SHEET_WIZ.caseNo,
+    typeSel: !!document.getElementById('wiz_type'),
+  }));
+  ok('§15 — it opens from the lead, on the intake\'s own case and address',
+     opened.fromLead === true && opened.caseNo === 'API-SV-NEW' && !!opened.to,
+     JSON.stringify(opened));
+  ok('§15 — the FULL CUSTOM mode is offered here too, and still opens on Standard',
+     opened.mode === 'standard' && opened.builder === false, JSON.stringify(opened));
+  ok('and the type selector stays withdrawn on a lead-opened send, as it was',
+     opened.typeSel === false);
+
+  await page.selectOption('#wiz_mode', 'custom');
+  await page.waitForTimeout(250);
+  await page.locator('#cu_rate').fill('75');
+  await page.locator('#cu_days').fill('2');
+  await page.locator('#cu_perday').fill('12');
+  await page.waitForTimeout(250);
+  ok('§15 — the builder prices it on the intake screen too',
+     await page.evaluate(() =>
+       (document.querySelector('.cu-total') || {}).textContent === '$1,800.00'),
+     await page.evaluate(() => (document.querySelector('.cu-total') || {}).textContent));
+
+  await page.locator('.rsw-acts .btn', { hasText: 'Preview' }).click();
+  await page.waitForFunction(() => SHEET_WIZ && SHEET_WIZ.step === 2, null, { timeout: 8000 });
+  await page.waitForTimeout(300);
+  ok('§15 — Preview resolves through the Worker from inside the case screen',
+     await page.evaluate(() => !!SHEET_WIZ.cuResolved
+       && SHEET_WIZ.cuResolved.total_due === 1800),
+     await page.evaluate(() => JSON.stringify(SHEET_WIZ.cuResolved)));
+
+  MAILED = null;
+  env.RESEND_API_KEY = 'e2e-resend-key';
+  await page.evaluate(() => wizSend());
+  await page.waitForFunction(() => SHEET_WIZ === null, null, { timeout: 8000 });
+  await page.waitForTimeout(500);
+  const mail = REAL_MAIL();
+  delete env.RESEND_API_KEY;
+  ok('§15 — the custom agreement really goes', !!mail
+     && mail.subject === 'Custom Surveillance Agreement — Always Precise Investigations',
+     JSON.stringify(mail && mail.subject));
+  ok('§15 — and it carries the owner\'s figures', !!mail && mail.text.includes('$1,800.00')
+     && mail.text.includes('$75.00 per hour'));
+
+  /* §15 — AND YOU LAND BACK ON THE SAME INTAKE. A send that dropped the
+     operator somewhere else would be the Rate Sheets-list defect this file
+     records, one screen over. */
+  const back = await page.evaluate(() => ({
+    caseNo: WS_CASE, tab: WS_TAB, wiz: SHEET_WIZ,
+    onScreen: !!document.querySelector('[data-act="leadSheet"]'),
+  }));
+  ok('§15 — the wizard closes and the same intake is still what is open',
+     back.caseNo === 'API-SV-NEW' && back.wiz === null && back.onScreen === true,
+     JSON.stringify(back));
+
+  /* §14 — ONE DOCUMENT SYSTEM. The send is linked to the case exactly as a
+     standard sheet is: the office history gains its row, the stored document
+     names the case, and the intake door it carried is stamped with the
+     document's own id so an acceptance can link back to it. */
+  const rec = await page.evaluate(async () => {
+    const s = await api('/sends?limit=50');
+    const d = await api('/cases/API-SV-NEW/documents');
+    return { sends: (s.sends || []).filter(x => x.case_no === 'API-SV-NEW').length,
+             docs: (d.documents || []).map(x => ({ id: x.doc_id, ctx: x.send_context })) };
+  });
+  ok('§14 — the office send history gained the row, on the case',
+     rec.sends >= 1, JSON.stringify(rec));
+  ok('§14 — and the case\'s document list carries it as a private send',
+     rec.docs.length >= 1 && rec.docs[0].ctx === 'private', JSON.stringify(rec.docs));
+  const readBack = await page.evaluate(async (id) => {
+    const r = await api('/documents/' + id);
+    return { body: (r.document || {}).body_text || '', custom: r.custom_agreement };
+  }, rec.docs[0].id);
+  ok('§14 — reading it back gives the bytes the client received',
+     readBack.body.includes('$1,800.00') && !/retainer/i.test(readBack.body),
+     readBack.body.slice(0, 120));
+  ok('§13 — with the agreement\'s own figures beside them',
+     readBack.custom && readBack.custom.hourly_rate === 75
+     && readBack.custom.total_hours === 24, JSON.stringify(readBack.custom));
+  await page.close();
+}
+
+section('FULL CUSTOM: the builder on a phone, at 390 and 320');
+{
+  for (const width of [390, 320]) {
+    const H = width === 320 ? 568 : 844;
+    const page = await newPage();
+    await signIn(page, 'trever', 'AdminPassword1x');
+    await page.setViewportSize({ width, height: H });
+    await page.waitForTimeout(300);
+    await openWiz(page);
+    await page.selectOption('#wiz_mode', 'custom');
+    await page.waitForTimeout(400);
+    await page.locator('#cu_rate').fill('75');
+    await page.locator('#cu_days').fill('2');
+    await page.locator('#cu_perday').fill('12');
+    await page.waitForTimeout(300);
+
+    const geo = await page.evaluate(() => {
+      const body = document.getElementById('rsw_body');
+      const box = document.querySelector('.cubox');
+      const fields = ['cu_rate', 'cu_days', 'cu_perday', 'cu_hours', 'cu_due']
+        .map(id => document.getElementById(id)).filter(Boolean);
+      const terms = [...document.querySelectorAll('.cu-terms .cu-t')];
+      const r = box.getBoundingClientRect();
+      return {
+        boxRight: Math.round(r.right), boxLeft: Math.round(r.left), vw: window.innerWidth,
+        pageOverflow: document.documentElement.scrollWidth > window.innerWidth,
+        bodyOverflow: body.scrollWidth > body.clientWidth,
+        fonts: fields.map(f => parseFloat(getComputedStyle(f).fontSize)),
+        heights: fields.map(f => Math.round(f.getBoundingClientRect().height)),
+        widest: Math.max(...fields.map(f => Math.round(f.getBoundingClientRect().right))),
+        termH: terms.map(t => Math.round(t.getBoundingClientRect().height)),
+        termRows: new Set(terms.map(t => Math.round(t.getBoundingClientRect().top))).size,
+        cols: getComputedStyle(document.querySelector('.cugrid')).gridTemplateColumns
+          .split(' ').length,
+        total: (document.querySelector('.cu-total') || {}).textContent || '',
+        locked: getComputedStyle(document.documentElement).overflow === 'hidden',
+      };
+    });
+    ok(`${width}: the builder stays inside the screen`,
+       geo.boxRight <= geo.vw && geo.boxLeft >= 0 && geo.widest <= geo.vw,
+       JSON.stringify(geo));
+    ok(`${width}: nothing scrolls sideways — not the page, not the editor`,
+       geo.pageOverflow === false && geo.bodyOverflow === false, JSON.stringify(geo));
+    ok(`${width}: every field clears the 16px iOS-zoom floor`,
+       geo.fonts.every(f => f >= 16), JSON.stringify(geo.fonts));
+    ok(`${width}: and the 44px tap floor`,
+       geo.heights.every(h => h >= 44), JSON.stringify(geo.heights));
+    ok(`${width}: the figures stack one per row rather than squeezing`,
+       geo.cols === 1, geo.cols + ' columns');
+    ok(`${width}: all seven terms are on their own rows`,
+       geo.termRows === 7, String(geo.termRows));
+    ok(`${width}: each term row is tappable`,
+       geo.termH.every(h => h >= 40), JSON.stringify(geo.termH));
+    ok(`${width}: the arithmetic still reads`, geo.total === '$1,800.00', geo.total);
+    ok(`${width}: §16 — the shipped editor lock still holds over the builder`,
+       geo.locked === true);
+
+    /* §16 — THE SHIPPED SCROLL RESTORE COVERS THE BUILDER, because it lives
+        inside `rsw_body`. A repaint that threw the form back to its top would
+        be the defect the last unit measured and fixed, reappearing on the one
+        screen that most needs the position kept. */
+    await page.evaluate(() => { document.getElementById('rsw_body').scrollTop = 200; });
+    await page.waitForTimeout(150);
+    const at = await page.evaluate(() => document.getElementById('rsw_body').scrollTop);
+    await page.selectOption('#cu_labelkind', 'retainer');
+    await page.waitForTimeout(350);
+    const after = await page.evaluate(() => ({
+      top: document.getElementById('rsw_body').scrollTop,
+      h: document.getElementById('rsw_body').scrollHeight,
+    }));
+    ok(`${width}: a repaint does not throw the builder back to its top `
+       + `(${at} -> ${after.top})`, at > 0 && after.top === at, JSON.stringify({ at, after }));
+
+    /* §24A — and the portal behind it still does not move. */
+    await page.evaluate(() => { const b = document.getElementById('rsw_body');
+      b.scrollTop = b.scrollHeight; });
+    await page.mouse.move(width / 2, Math.round(H / 2));
+    await page.mouse.wheel(0, 900);
+    await page.waitForTimeout(300);
+    ok(`${width}: pushing past the builder's end leaves the portal where it was`,
+       await page.evaluate(() => window.scrollY) === 0);
+    await page.close();
+  }
+}
+
 await browser.close();
 server.close();
 
