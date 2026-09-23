@@ -22811,6 +22811,13 @@ section('FULL CUSTOM: the arithmetic, the overrides and the refusals');
     .bind(r.doc_id).first();
   ok('the record keeps both the override and what the arithmetic said',
      cu.total_due === 1500 && cu.computed_total_due === 1800 && cu.total_overridden === 1);
+  /* §22 — THE CLIENT IS NOT SHOWN THE OFFICE'S WORKINGS. The computed figure,
+     the override flags and the builder's own vocabulary stay in the record;
+     the document states the agreement, which is what the client agreed to. */
+  ok('§22 — and the client document shows none of the office workings',
+     !/overrid|computed|agreement_type|full_custom|spec/i.test(mailed.text)
+     && !/overrid|computed|agreement_type|full_custom/i.test(mailed.html),
+     (mailed.text.match(/.{0,40}(overrid|computed).{0,40}/i) || [''])[0]);
   r = await jsonOf(await agree({ hourly_rate: '75', days: '2', hours_per_day: '12',
                                  total_hours: '30' }));
   ok('an overridden hour count re-prices from the override',
