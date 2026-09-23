@@ -3630,8 +3630,15 @@
 .cu-h{display:block;font-size:.76rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
   color:var(--muted);margin:0 0 6px}
 /* Each term is its own row: seven of them side by side would put a checkbox
-   and a six-word label on one line at 320, and the label is the control. */
-.cu-terms .cu-t{display:flex;align-items:center;gap:9px;margin:0}
+   and a six-word label on one line at 320, and the label is the control.
+
+   THE ROW IS THE TAP TARGET, SO IT CARRIES THE 44px FLOOR — measured at 22px
+   by the suite before this line existed. The floor is SCOPED to these rows on
+   purpose: a portal-wide `.cap{min-height:44px}` was tried once and flattened
+   the Assistant workbench's stacked labels onto the controls above them, which
+   is recorded in CLAUDE.md under "A rule written for one screen broke
+   another". */
+.cu-terms .cu-t{display:flex;align-items:center;gap:9px;margin:0;min-height:44px}
 @media (max-width:640px){
   /* ONE COLUMN ON A PHONE, and `minmax(0,1fr)` rather than `1fr`: a grid
      track's default minimum is its content, which is how a long placeholder

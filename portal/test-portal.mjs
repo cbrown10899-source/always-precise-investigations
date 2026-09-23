@@ -25326,8 +25326,12 @@ section('FULL CUSTOM: §15 — Simple View, open intake, custom agreement, back 
   await page.waitForTimeout(500);
   const mail = REAL_MAIL();
   delete env.RESEND_API_KEY;
-  ok('§15 — the custom agreement really goes', !!mail
-     && mail.subject === 'Custom Surveillance Agreement — Always Precise Investigations',
+  /* A SEND THAT NAMES A CASE CARRIES THE REFERENCE IN ITS SUBJECT — the
+     product's own format for every rate sheet, measured rather than guessed:
+     the first version of this assertion expected the bare subject and failed
+     a send that was correct. */
+  ok('§15 — the custom agreement really goes, with the case in its subject', !!mail
+     && mail.subject === 'Custom Surveillance Agreement — Always Precise Investigations (case API-CU-SV)',
      JSON.stringify(mail && mail.subject));
   ok('§15 — and it carries the owner\'s figures', !!mail && mail.text.includes('$1,800.00')
      && mail.text.includes('$75.00 per hour'));
@@ -25421,8 +25425,11 @@ section('FULL CUSTOM: the builder on a phone, at 390 and 320');
        geo.cols === 1, geo.cols + ' columns');
     ok(`${width}: all seven terms are on their own rows`,
        geo.termRows === 7, String(geo.termRows));
-    ok(`${width}: each term row is tappable`,
-       geo.termH.every(h => h >= 40), JSON.stringify(geo.termH));
+    /* THE PORTAL'S FLOOR IS 44, and the first version of this assertion
+       allowed 40 — lenient enough that it still failed, at 22, which is the
+       only reason the defect was seen. It asks for the real floor now. */
+    ok(`${width}: each term row clears the 44px tap floor`,
+       geo.termH.every(h => h >= 44), JSON.stringify(geo.termH));
     ok(`${width}: the arithmetic still reads`, geo.total === '$1,800.00', geo.total);
     ok(`${width}: §16 — the shipped editor lock still holds over the builder`,
        geo.locked === true);
