@@ -2047,6 +2047,48 @@ CREATE TABLE IF NOT EXISTS sent_document (
 CREATE INDEX IF NOT EXISTS idx_sentdoc_case ON sent_document(case_no, id DESC);
 CREATE INDEX IF NOT EXISTS idx_sentdoc_kind ON sent_document(kind, id DESC);
 
+-- THE FULL CUSTOM PRIVATE AGREEMENT'S OWN FIGURES (owner brief 2026-09-23 §13).
+-- A COMPANION TABLE, not columns on sent_document: schema.sql is re-applied on
+-- every portal-setup run and ALTER TABLE ADD COLUMN is not idempotent, which is
+-- the reasoning behind build_custom, activity_removed, legal_intake and every
+-- other companion in this file.
+--
+-- sent_document ALREADY preserves the document itself — subject, body_text,
+-- body_html and content_hash are the bytes the provider was handed, so "never
+-- rebuilt from current settings" is structural and does not depend on this
+-- table existing. What this adds is the BUILDER'S OWN INPUTS: the figures the
+-- office typed, which of them were overridden, and which terms were ticked, so
+-- the record can answer "what did we quote and why does it say that" rather
+-- than only "what did it say".
+--
+-- agreement_type carries NO CHECK (the Unit 7 rule) — a second custom
+-- agreement shape must be an ordinary Worker edit, not a table rebuild.
+CREATE TABLE IF NOT EXISTS sent_document_custom (
+  doc_id                  TEXT PRIMARY KEY,   -- the sent_document this belongs to
+  agreement_type          TEXT NOT NULL,      -- full_custom
+  title                   TEXT,               -- the document's own name
+  hourly_rate             REAL,
+  scheduled_days          REAL,
+  hours_per_day           REAL,
+  total_hours             REAL,               -- as sent: the override where there was one
+  total_due               REAL,               -- as sent
+  computed_total_hours    REAL,               -- what the arithmetic said, kept beside it
+  computed_total_due      REAL,
+  hours_overridden        INTEGER NOT NULL DEFAULT 0,
+  total_overridden        INTEGER NOT NULL DEFAULT 0,
+  payment_label_kind      TEXT,               -- total_due | retainer | custom
+  payment_label_custom    TEXT,               -- the owner's own words, verbatim
+  payment_label           TEXT,               -- as printed
+  minimum_hours_included  INTEGER NOT NULL DEFAULT 0,
+  minimum_hours           REAL,
+  non_refundable_included INTEGER NOT NULL DEFAULT 0,
+  non_refundable          REAL,
+  terms_included          TEXT,               -- JSON array of the term keys shown
+  payment_methods         TEXT,               -- JSON array of the ids that rode with it
+  spec_json               TEXT,               -- the whole resolved spec, verbatim
+  recorded_at             TEXT NOT NULL
+);
+
 -- ONE ATTEMPT KEY PER SEND (§10). The page mints a key per attempt, reuses it
 -- across a failure and mints a new one for a deliberate new send — the shape
 -- `retainer_payment_token` already has, and for the same reason: a dropped

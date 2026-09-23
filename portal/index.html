@@ -3607,6 +3607,45 @@
     html.rswlock, body.rswlock{overflow:hidden;}
   }
 
+/* ====== THE FULL CUSTOM PRIVATE AGREEMENT BUILDER (owner, 2026-09-23) ======
+   AT THE END OF THE STYLESHEET, like every phone-aware block added since the
+   `.qgrid` / `.dlg` / burger-rule incidents: a rule written above the ones it
+   overrides is the source-order casualty this file has recorded eight times.
+
+   `.cu-` IS A FRESH PREFIX, checked for collisions before a line was written
+   (the `.uiact-lead` lesson — a short name the file already owns leaks its
+   properties into a new component). Nothing here restyles a control: the
+   portal's own `.f`, `.cap`, `.feebox` and `.hint` do the work, so the 16px
+   iOS-zoom floor and the 44px tap floor arrive by rule rather than by a fresh
+   declaration, and the builder lives inside `.rsw-body` so the shipped
+   scroll-restore and keyboard behaviour cover it with no new code. */
+.cubox{margin:10px 0 0}
+.cugrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,150px),1fr));gap:10px;margin:8px 0 0}
+.cugrid .f{margin:0}
+.cu-sum{margin:8px 0 0;line-height:1.55}
+.cu-total{font-size:1.08rem}
+.cu-terms{margin:12px 0 0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;
+  background:var(--paper)}
+.cu-terms .hint{margin:8px 0 0}
+.cu-h{display:block;font-size:.76rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--muted);margin:0 0 6px}
+/* Each term is its own row: seven of them side by side would put a checkbox
+   and a six-word label on one line at 320, and the label is the control.
+
+   THE ROW IS THE TAP TARGET, SO IT CARRIES THE 44px FLOOR — measured at 22px
+   by the suite before this line existed. The floor is SCOPED to these rows on
+   purpose: a portal-wide `.cap{min-height:44px}` was tried once and flattened
+   the Assistant workbench's stacked labels onto the controls above them, which
+   is recorded in CLAUDE.md under "A rule written for one screen broke
+   another". */
+.cu-terms .cu-t{display:flex;align-items:center;gap:9px;margin:0;min-height:44px}
+@media (max-width:640px){
+  /* ONE COLUMN ON A PHONE, and `minmax(0,1fr)` rather than `1fr`: a grid
+     track's default minimum is its content, which is how a long placeholder
+     pushes a card past the screen edge and starts the page scrolling
+     sideways — the defect this file already records on the Home card track. */
+  .cugrid{grid-template-columns:minmax(0,1fr)}
+}
 </style>
 </head>
 <body>
@@ -9334,6 +9373,13 @@ function wizSetType(id){
   w.payMethods = [];
   w.mailCheck = false; w.billcom = false;
   w.nonRef = "";
+  /* THE CUSTOM AGREEMENT BELONGS TO THE PRIVATE PRODUCT, so switching type
+     drops it rather than carrying it across — the rule this function already
+     applies to a legal service, a flat fee and a consumer payment option.
+     Carrying it would leave the screen holding figures its own next render
+     cannot draw, which is how a send goes out carrying something nobody
+     chose. */
+  w.custom = false; wizCustomReset(w);
   w.retainerPick = String(RETAINER_STANDARD); w.retainerCustom = ""; w.retainerTouched = false;
   w.err = "";
   /* A NEW PRODUCT IS A NEW ATTEMPT. The key guards "this exact send"; once the
@@ -9636,6 +9682,249 @@ function wizNonRefHtml(w){
       retainer above.</span></label>`;
 }
 
+/* ============ THE FULL CUSTOM PRIVATE AGREEMENT (owner, 2026-09-23) ========
+   An OWNER-ONLY mode inside the existing private Prepare & Send wizard, for
+   the engagements the standard product does not describe. Choosing it is
+   deliberate: the selector opens on Standard, and every send that does not
+   touch it is byte-identical to one made before this existed.
+
+   THE FIGURES ARE THE OWNER'S AND NONE OF THEM IS FILLED IN. There is no
+   default rate, no default minimum, no default non-refundable amount and no
+   inherited four-hour minimum — the standard product's terms are exactly what
+   this mode exists to step around, so inheriting them is the failure. The
+   Worker refuses a term ticked without its figure BY NAME rather than
+   supplying one. */
+
+/* THE ONE PAGE-SIDE CALCULATION, and it is DISPLAY ONLY. What the client
+   receives is composed by the Worker from the raw figures, and the Preview is
+   fetched from it (`wizCustomResolve`) rather than rendered from here — §12's
+   "Preview is the final truth" made structural. This exists so the owner
+   watches 2 x 12 = 24 arrive while typing, which is §2's whole shape.
+
+   IT MULTIPLIES IN INTEGER CENTS, the same way `customCents` does in the
+   Worker, because a display that disagrees with the document by a hundredth
+   is a defect whichever half is right. A suite assertion drives the real form
+   and compares this figure to the Worker's answer on a value that breaks in
+   floating point. */
+function wizCustomCalc(w){
+  const num = v => {
+    const s2 = String(v == null ? "" : v).replace(/[$,\s]/g, "");
+    if(s2 === "") return null;
+    const n = Number(s2);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+  const rate = num(w.cuRate), days = num(w.cuDays), per = num(w.cuPerDay);
+  const hours = (days !== null && per !== null) ? Math.round(days * per * 100) / 100 : null;
+  const askedHours = num(w.cuHours);
+  const useHours = askedHours !== null ? askedHours : hours;
+  const due = (rate !== null && useHours !== null)
+    ? Math.round(Math.round(rate * 100) * useHours) / 100 : null;
+  const askedDue = num(w.cuDue);
+  return {
+    rate, days, per,
+    hours, useHours, due, useDue: askedDue !== null ? askedDue : due,
+    hoursOverridden: askedHours !== null && (hours === null || askedHours !== hours),
+    dueOverridden: askedDue !== null && (due === null || askedDue !== due),
+  };
+}
+
+/* The money the builder shows itself. Two decimals always, matching the
+   document — a custom agreement is arithmetic the client checks, and dropping
+   the cents from one figure in a sum makes it read as a different sum. */
+function wizCuMoney(n){
+  return n == null ? "—" : "$" + Number(n).toLocaleString("en-US",
+    {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+
+/* The seven optional terms, in the order they read on the document. The two
+   that are OFF by default are the two the owner's brief names twice. */
+const WIZ_CU_TERMS = [
+  ["hourly_rate",    "Hourly rate"],
+  ["days",           "Scheduled number of days"],
+  ["hours_per_day",  "Hours per day"],
+  ["total_hours",    "Total scheduled hours"],
+  ["total_due",      "Total due before work begins"],
+  ["non_refundable", "Non-refundable portion"],
+  ["minimum_hours",  "Minimum hours per surveillance day"],
+];
+const WIZ_CU_DEFAULT_TERMS = ["hourly_rate", "days", "hours_per_day", "total_hours", "total_due"];
+/* §6's own list, offered as choices rather than typed from memory. Custom
+   keeps any other figure reachable, the retainer selector's shape. */
+const WIZ_CU_MINS = [4, 6, 8, 12];
+
+function wizCuTerms(w){
+  return Array.isArray(w.cuTerms) ? w.cuTerms : WIZ_CU_DEFAULT_TERMS.slice();
+}
+
+/* THE PAYLOAD, resolved once and read by BOTH the preview fetch and the send,
+   so the document that is rehearsed and the document that goes cannot be
+   built from different inputs. */
+function wizCustomSpec(w){
+  const t = wizCuTerms(w);
+  /* An unchosen minimum is sent as BLANK, never as the first option — the
+     Worker then refuses the ticked term by name, which is §18's "do not
+     silently convert blank optional terms into defaults" held at the door
+     that actually decides. */
+  const minPick = w.cuMinPick == null ? "" : String(w.cuMinPick);
+  return {
+    title: (w.cuTitle || "").trim(),
+    hourly_rate: (w.cuRate || "").trim(),
+    days: (w.cuDays || "").trim(),
+    hours_per_day: (w.cuPerDay || "").trim(),
+    total_hours: (w.cuHours || "").trim(),
+    total_due: (w.cuDue || "").trim(),
+    terms: t,
+    minimum_hours: t.includes("minimum_hours")
+      ? (minPick === "custom" ? (w.cuMinCustom || "").trim() : minPick) : "",
+    non_refundable: t.includes("non_refundable") ? (w.cuNonRef || "").trim() : "",
+    payment_label_kind: w.cuLabelKind || "total_due",
+    payment_label_custom: (w.cuLabelCustom || "").trim(),
+  };
+}
+
+/* FULL CUSTOM IS OFFERED ON THE PRIVATE CONTEXT ONLY, and gated on the
+   CONTEXT rather than the sheet id — a legal send takes the private SHEET by
+   design, so `w.sheet === "private_retainer"` is true on one and would have
+   drawn this builder on a law firm's send. The same trap `wizContext` and
+   `wizNonRefHtml` already exist for. */
+/* Everything the builder holds, cleared in ONE place. Two lists of these
+   fields is one list that goes stale the first time a field is added. */
+function wizCustomReset(w){
+  w.cuTitle = ""; w.cuRate = ""; w.cuDays = ""; w.cuPerDay = "";
+  w.cuHours = ""; w.cuDue = ""; w.cuTerms = WIZ_CU_DEFAULT_TERMS.slice();
+  w.cuMinPick = ""; w.cuMinCustom = ""; w.cuNonRef = "";
+  w.cuLabelKind = "total_due"; w.cuLabelCustom = "";
+  w.cuResolved = null; w.cuEngagement = null; w.cuDocName = "";
+}
+
+function wizCustomOffered(w){
+  return w.sheet === "private_retainer" && wizContext(w) === "private";
+}
+function wizCustomOn(w){ return wizCustomOffered(w) && w.custom === true; }
+
+function wizCustomHtml(w){
+  if(!wizCustomOffered(w)) return "";
+  const on = w.custom === true;
+  const c = wizCustomCalc(w);
+  const terms = wizCuTerms(w);
+  const tick = (id, label) => `<label class="cap cu-t"><input type="checkbox" class="cu-term"
+      data-act="wizCuTerm" data-t="${id}"${terms.includes(id) ? " checked" : ""}><span>${label}</span></label>`;
+  /* NOTHING IS PRE-CHOSEN. A select whose first real option is selected by
+     default asserts a figure nobody picked, and on this term the brief says
+     twice that four hours must not be forced — so the control opens on an
+     empty choice and the Worker refuses the term by name until one is made.
+     The same correction this file records against the private lead's Service
+     picker, which filed an unasked lead as Surveillance. */
+  const minPick = w.cuMinPick == null ? "" : String(w.cuMinPick);
+  return `<label class="f" style="margin:10px 0 0"><span>Agreement</span>
+      <select id="wiz_mode" data-act="wizModePick">
+        <option value="standard"${on ? "" : " selected"}>Standard private rate sheet</option>
+        <option value="custom"${on ? " selected" : ""}>Full custom agreement</option>
+      </select></label>
+    <p class="hint">${on
+      ? `Every figure and every term below is yours. Nothing is filled in &mdash; no minimum, no
+         non-refundable portion and no standard wording arrives unless you tick it.`
+      : `The standard sheet, with the agreed retainer and the approved terms. Choose
+         <b>Full custom agreement</b> for an engagement those terms do not describe.`}</p>
+    ${!on ? "" : `<div class="feebox cubox">
+      <label class="f" style="margin:0"><span>Document title <span class="optn">(optional)</span></span>
+        <input id="cu_title" data-act-input="wizCuDirty" value="${esc(w.cuTitle || "")}"
+          placeholder="Custom Surveillance Agreement"></label>
+      <div class="cugrid">
+        <label class="f"><span>Hourly rate ($)</span>
+          <input id="cu_rate" inputmode="decimal" data-act-input="wizCuDirty"
+            placeholder="e.g. 75" value="${esc(w.cuRate || "")}"></label>
+        <label class="f"><span>Scheduled days <span class="optn">(optional)</span></span>
+          <input id="cu_days" inputmode="decimal" data-act-input="wizCuDirty"
+            placeholder="e.g. 2" value="${esc(w.cuDays || "")}"></label>
+        <label class="f"><span>Hours per day <span class="optn">(optional)</span></span>
+          <input id="cu_perday" inputmode="decimal" data-act-input="wizCuDirty"
+            placeholder="e.g. 12" value="${esc(w.cuPerDay || "")}"></label>
+      </div>
+      ${/* THE ARITHMETIC IS SHOWN AS IT HAPPENS, and each half can be taken
+           over by typing into it (§4). An override is STATED rather than
+           merely obeyed — a figure that silently stopped matching the
+           calculation beside it is the one thing a quote must not do. */""}
+      <div class="cugrid">
+        <label class="f"><span>Total scheduled hours</span>
+          <input id="cu_hours" inputmode="decimal" data-act-input="wizCuDirty"
+            placeholder="${c.hours == null ? "from days × hours" : esc(String(c.hours))}"
+            value="${esc(w.cuHours || "")}"></label>
+        <label class="f"><span>Total due ($)</span>
+          <input id="cu_due" inputmode="decimal" data-act-input="wizCuDirty"
+            placeholder="${c.due == null ? "from hours × rate" : esc(Number(c.due).toFixed(2))}"
+            value="${esc(w.cuDue || "")}"></label>
+      </div>
+      <p class="hint cu-sum">${c.rate == null
+        ? "Enter the hourly rate to price this agreement."
+        : `${c.days != null && c.per != null
+            ? `${esc(String(c.days))} &times; ${esc(String(c.per))} = <b>${esc(String(c.hours))} hours</b> &middot; `
+            : ""}${c.useHours == null ? "" : `${esc(String(c.useHours))} &times; ${
+            esc(wizCuMoney(c.rate))} = `}<b class="cu-total">${esc(wizCuMoney(c.useDue))}</b>`}
+        ${c.hoursOverridden ? `<br><b>Total hours overridden</b> &mdash; the schedule works out to ${
+          c.hours == null ? "nothing yet" : esc(String(c.hours)) + " hours"}, and ${
+          esc(String(c.useHours))} is what will be sent.` : ""}
+        ${c.dueOverridden ? `<br><b>Total due overridden</b> &mdash; the rate works out to ${
+          esc(wizCuMoney(c.due))}, and ${esc(wizCuMoney(c.useDue))} is what will be sent.` : ""}</p>
+      <div class="cu-terms"><span class="cu-h">What the document states</span>
+        ${WIZ_CU_TERMS.map(([id, label]) => tick(id, label)).join("")}
+        <p class="hint">A term left unticked is <b>absent</b> from the document &mdash; no blank
+          line, no placeholder, and nothing standard put in its place.</p></div>
+      ${terms.includes("minimum_hours") ? `<div class="cugrid">
+        <label class="f"><span>Minimum hours per surveillance day</span>
+          <select id="cu_minpick" data-act="wizCuDirtySel">
+            <option value=""${minPick === "" ? " selected" : ""}>Choose the minimum&hellip;</option>
+            ${WIZ_CU_MINS.map(v => `<option value="${v}"${minPick === String(v) ? " selected" : ""}
+              >${v} hours</option>`).join("")}
+            <option value="custom"${minPick === "custom" ? " selected" : ""}>Custom&hellip;</option>
+          </select></label>
+        ${minPick === "custom" ? `<label class="f"><span>Custom minimum (hours)</span>
+          <input id="cu_mincustom" inputmode="decimal" data-act-input="wizCuDirty"
+            value="${esc(w.cuMinCustom || "")}"></label>` : ""}</div>` : ""}
+      ${terms.includes("non_refundable") ? `<label class="f"><span>Non-refundable portion ($)</span>
+        <input id="cu_nonref" inputmode="decimal" data-act-input="wizCuDirty"
+          value="${esc(w.cuNonRef || "")}">
+        <span class="hint">Yours to set. Nothing standard is filled in here, and it can be at most
+          the total above.</span></label>` : ""}
+      <label class="f"><span>How the money is described</span>
+        <select id="cu_labelkind" data-act="wizCuDirtySel">
+          <option value="total_due"${(w.cuLabelKind || "total_due") === "total_due" ? " selected" : ""}
+            >Total due before work begins</option>
+          <option value="retainer"${w.cuLabelKind === "retainer" ? " selected" : ""}>Retainer</option>
+          <option value="custom"${w.cuLabelKind === "custom" ? " selected" : ""}>Custom label&hellip;</option>
+        </select>
+        <span class="hint">The word <b>retainer</b> reaches the document only if you choose it here.</span></label>
+      ${w.cuLabelKind === "custom" ? `<label class="f"><span>Custom payment label</span>
+        <input id="cu_labelcustom" data-act-input="wizCuDirty" value="${esc(w.cuLabelCustom || "")}"
+          placeholder="e.g. Deposit due at signing"></label>` : ""}
+    </div>`}`;
+}
+
+/* THE PREVIEW IS THE WORKER'S, FETCHED (§12). The rehearsal route resolves the
+   agreement through exactly the functions the sender uses — it is a pinned
+   mirror of `emailSheet` and the suite holds the two together byte for byte —
+   so the figures on the Preview screen are the figures that will be emailed,
+   rather than a second rendering beside them.
+
+   A FAILED RESOLUTION DOES NOT ADVANCE, the `wizRetainerSave` rule: previewing
+   a document the sender would refuse is worse than staying on the form with
+   the reason on screen. */
+async function wizCustomResolve(){
+  const w = SHEET_WIZ;
+  if(!w || !wizCustomOn(w)) return true;
+  try{
+    const r = await api("/assistant/prepare-sheet", {method:"POST", body:{
+      id: w.sheet, to: w.to || "preview@example.com", note: w.note, case_no: w.caseNo,
+      include_intake: !!w.include, send_context: "private",
+      custom_agreement: wizCustomSpec(w),
+    }});
+    w.cuResolved = r.custom_agreement || null;
+    w.cuEngagement = r.engagement || null;
+    w.cuDocName = r.sheet_name || "";
+    return true;
+  }catch(e){ w.err = e.message; w.cuResolved = null; return false; }
+}
+
 function wizRetainerHtml(w){
   if(w.sheet !== "private_retainer") return "";
   const money = n => "$" + Number(n).toLocaleString("en-US");
@@ -9688,6 +9977,11 @@ async function wizRetainerSave(){
      and writing case_retainer on the way to Preview would file the flat fee
      as a retainer, the exact record the owner forbade (LEGAL-SERVICES.md). */
   if(wizLegalFixed(w)) return true;
+  /* A FULL CUSTOM AGREEMENT IS NOT A RETAINER, so there is no agreed retainer
+     to write. Its selector never drew; writing `case_retainer` on the way to
+     Preview would file a custom total as a retainer — the exact record §8
+     forbids the document from claiming, one layer down. */
+  if(wizCustomOn(w)) return true;
   /* NOTHING IS WRITTEN UNLESS SOMEONE CHOSE SOMETHING, and this guard is the
      whole safety of the feature.
 
@@ -9867,16 +10161,37 @@ function sheetWizardHtml(){
         ? "Carriers land on the Secure Assignment Intake — never the consumer picker."
         : "Private clients land on the private intake — the carrier path is never offered."}</p>
       ${wizLegalSvcHtml(w)}
-      ${wizLegalFixed(w) ? "" : wizRetainerHtml(w)}
+      ${wizCustomHtml(w)}
+      ${/* THE STANDARD RETAINER SELECTOR IS WITHDRAWN IN FULL CUSTOM, not
+           merely ignored. A custom agreement is not a retainer product, so an
+           agreed-retainer picker on it would be a control that writes a figure
+           the document never mentions — and `wizRetainerSave` stands down for
+           the same reason, so previewing one cannot re-cut a case's retainer
+           as a side effect. */""}
+      ${wizLegalFixed(w) || wizCustomOn(w) ? "" : wizRetainerHtml(w)}
       ${wizPaymentHtml(w)}`
     : `
       <dl class="detail">
-        <dt>Sheet</dt><dd>${esc(wizLegalFixed(w)
+        <dt>Sheet</dt><dd>${esc(wizCustomOn(w)
+          ? (w.cuDocName || (w.cuTitle || "").trim() || "Custom Surveillance Agreement")
+          : wizLegalFixed(w)
           /* A fixed service sends the concise flat-fee document the Worker
              builds — the preview must name THAT, with the RESOLVED fee, not
              the retainer card this screen renders (LEGAL-SERVICES.md D5/D12). */
           ? (wizFeeSheetName(w) || (wizLegalSvc(w) || {}).label || w.sheet)
           : (sheet.name || w.sheet))}</dd>
+        ${wizCustomOn(w) && w.cuResolved ? `<dt>Agreement</dt><dd>${(() => {
+          const r = w.cuResolved, bits = [];
+          if(r.hourly_rate != null) bits.push(esc(wizCuMoney(r.hourly_rate)) + " per hour");
+          if(r.days != null) bits.push(esc(String(r.days)) + (r.days === 1 ? " day" : " days"));
+          if(r.hours_per_day != null) bits.push(esc(String(r.hours_per_day)) + " hours per day");
+          if(r.total_hours != null) bits.push(esc(String(r.total_hours)) + " hours total");
+          bits.push("<b>" + esc(r.payment_label) + ": " + esc(wizCuMoney(r.total_due)) + "</b>");
+          return bits.join(" &middot; ");
+        })()}${w.cuResolved.hours_overridden || w.cuResolved.total_overridden
+          ? `<br><span class="opt">${[w.cuResolved.hours_overridden ? "total hours" : "",
+              w.cuResolved.total_overridden ? "total due" : ""].filter(Boolean).join(" and ")
+            } set by hand &mdash; sent exactly as entered</span>` : ""}</dd>` : ""}
         ${wizContext(w) === "legal" && wizLegalSvc(w) ? `<dt>Legal service</dt><dd>${
           esc(wizLegalSvc(w).label)}${wizLegalFixed(w) && wizFeeWanted(w) != null
             ? ` — $${esc(Number(wizFeeWanted(w)).toLocaleString("en-US"))} Flat Fee`
@@ -9888,7 +10203,7 @@ function sheetWizardHtml(){
             w.mailCheck ? "Mail Check &mdash; &ldquo;Mailing instructions provided with invoice.&rdquo;" : "",
             (w.billcom && BILLCOM_READY === true) ? "Bill.com &mdash; &ldquo;Electronic payment instructions provided with invoice.&rdquo;" : "",
           ].filter(Boolean).join("<br>") || "None included"}</dd>` : ""}
-        ${!wizLegalFixed(w) && w.sheet === "private_retainer" && (w.retainerOffered != null || w.retainer != null)
+        ${!wizLegalFixed(w) && !wizCustomOn(w) && w.sheet === "private_retainer" && (w.retainerOffered != null || w.retainer != null)
           /* The figure is named on the last screen before it goes, and said to
              be unrecorded where it is — this is the admin's final chance to add
              a case number, and after Send there is nothing to look it up by.
@@ -9914,13 +10229,18 @@ function sheetWizardHtml(){
            amount" is one object rendered twice rather than two numbers kept in
            step. A fixed legal service sends its own concise document and has
            no engagement block, so nothing draws. */""}
-      ${wizLegalFixed(w) ? "" : engBlockHtml(sheet.engagement)}
-      <p class="hint">${wizLegalFixed(w)
+      ${wizCustomOn(w) ? engBlockHtml(w.cuEngagement)
+        : wizLegalFixed(w) ? "" : engBlockHtml(sheet.engagement)}
+      <p class="hint">${wizCustomOn(w)
+        ? `The email is this custom agreement, composed from the figures above and nothing else —
+           no standard term is added to it`
+        : wizLegalFixed(w)
         ? `The email is the concise flat-fee sheet for this service — the full retainer
            sheet shown on the Rate sheets screen does not go`
         : `The email is the sheet exactly as shown on this page`}${w.include ? ", plus the intake button" : ""}${
         w.sheet === "private_retainer" && w.pay && (w.payMethods || []).length ? ", plus the payment buttons" : ""}.
-        Sending payment instructions does not mark the ${wizLegalFixed(w) ? "fee" : "retainer"} paid.</p>`;
+        Sending payment instructions does not mark the ${
+          wizCustomOn(w) ? "amount" : wizLegalFixed(w) ? "fee" : "retainer"} paid.</p>`;
   /* ===== THREE REGIONS, WHICH IS WHAT MAKES THE PHONE FIX POSSIBLE =========
      Owner, on an iPhone, 2026-09-21: scrolling the editor scrolled the
      dashboard behind it, the keyboard ate the screen, and it read as a
@@ -9947,9 +10267,17 @@ function sheetWizardHtml(){
      height simply excludes them. */
   return `<div class="amwrap rsw" data-act="wizClose">
     <div class="amsheet rsw" data-act="amNoop" role="dialog" aria-modal="true" aria-label="Send the rate sheet">
-      <div class="amhead rsw-head"><b>Send &mdash; ${esc(wizLegalFixed(w)
-        /* A fixed send's dialog names the document it will actually send —
-           not the retainer card whose route it shares (D5/D12). */
+      <div class="amhead rsw-head"><b>Send &mdash; ${esc(wizCustomOn(w)
+        /* A CUSTOM AGREEMENT'S DIALOG NAMES THE CUSTOM AGREEMENT. Left reading
+           the private card's label it would have named the standard retainer
+           sheet over a screen about to email a custom document with a
+           different total — a screen misnaming what it is about to send,
+           which is the same defect one step earlier that `wizLegalFixed`
+           already corrects for the flat-fee sheets. (Worded without a figure
+           on purpose: a test fails on any dollar amount in this file, and
+           comments ship in View Source.) */
+        ? `Private Client — ${(w.cuTitle || "").trim() || "Custom Surveillance Agreement"}`
+        : wizLegalFixed(w)
         ? `Legal / Law Firm — ${(wizLegalSvc(w) || {}).label || ""}`
         : (sheet.selector_label || sheet.name || ""))}</b>
         <button class="amx" data-act="wizClose" aria-label="Close">&times;</button></div>
@@ -24933,6 +25261,22 @@ function wizCollect(){
   if($("wiz_ret")) SHEET_WIZ.retainerPick = $("wiz_ret").value;
   if($("wiz_retc")) SHEET_WIZ.retainerCustom = $("wiz_retc").value.trim();
   if($("wiz_nr")) SHEET_WIZ.nonRef = $("wiz_nr").value.trim();
+  /* THE CUSTOM BUILDER'S FIELDS. Collected the same way every other control
+     here is — read off the DOM into the state object before any repaint, the
+     EDIT_DRAFT rule, because every paint rebuilds these inputs from `w`. */
+  if($("cu_title")) SHEET_WIZ.cuTitle = $("cu_title").value;
+  if($("cu_rate")) SHEET_WIZ.cuRate = $("cu_rate").value.trim();
+  if($("cu_days")) SHEET_WIZ.cuDays = $("cu_days").value.trim();
+  if($("cu_perday")) SHEET_WIZ.cuPerDay = $("cu_perday").value.trim();
+  if($("cu_hours")) SHEET_WIZ.cuHours = $("cu_hours").value.trim();
+  if($("cu_due")) SHEET_WIZ.cuDue = $("cu_due").value.trim();
+  if($("cu_minpick")) SHEET_WIZ.cuMinPick = $("cu_minpick").value;
+  if($("cu_mincustom")) SHEET_WIZ.cuMinCustom = $("cu_mincustom").value.trim();
+  if($("cu_nonref")) SHEET_WIZ.cuNonRef = $("cu_nonref").value.trim();
+  if($("cu_labelkind")) SHEET_WIZ.cuLabelKind = $("cu_labelkind").value;
+  if($("cu_labelcustom")) SHEET_WIZ.cuLabelCustom = $("cu_labelcustom").value;
+  const cuBoxes = [...document.querySelectorAll(".cu-term")];
+  if(cuBoxes.length) SHEET_WIZ.cuTerms = cuBoxes.filter(b => b.checked).map(b => b.dataset.t);
   if($("wiz_pay")) SHEET_WIZ.pay = $("wiz_pay").checked;
   if($("wiz_lsvc")) SHEET_WIZ.legalService = $("wiz_lsvc").value;
   const feeRadio = document.querySelector('input[name="wiz_fee"]:checked');
@@ -24998,8 +25342,15 @@ async function wizSend(){
            into the standard figure — the owner's rule that it must never
            disappear for being left empty is kept server-side, so it holds for
            every caller and not just this screen. */
-        ...(wizContext(w) === "private" && (w.nonRef || "") !== ""
+        ...(wizContext(w) === "private" && !wizCustomOn(w) && (w.nonRef || "") !== ""
           ? {non_refundable: w.nonRef} : {}),
+        /* THE CUSTOM AGREEMENT, sent as the ONE object the preview was
+           resolved from (`wizCustomSpec`) rather than re-read from the DOM
+           here — so the document that was rehearsed and the document that
+           goes are built from the same inputs by construction, which is §12.
+           The Worker refuses a retainer figure or a standard non-refundable
+           amount beside it BY NAME, and neither is sent. */
+        ...(wizCustomOn(w) ? {custom_agreement: wizCustomSpec(w)} : {}),
         /* Declared only where the screen actually chose a context — a send
            from a lead card leaves it out and the case decides, exactly as
            before. */
@@ -25007,7 +25358,7 @@ async function wizSend(){
         /* Only ever sent when there was nowhere to store it. The Worker
            ignores it outright if the case has a figure of its own, so this
            cannot overwrite what the office agreed. */
-        ...(w.retainerOffered != null ? {retainer_amount: w.retainerOffered} : {}),
+        ...(w.retainerOffered != null && !wizCustomOn(w) ? {retainer_amount: w.retainerOffered} : {}),
         ...(paying ? {include_payment: true, methods: w.payMethods} : {}),
         ...(npMethods.length ? {include_payment: true, methods: npMethods} : {})}});
     /* §13 — say what actually WENT, read back from the Worker's own answer
@@ -26164,7 +26515,15 @@ document.addEventListener("click", ev => {
         wizRetainerSave().then(okd => {
           if(!SHEET_WIZ) return;
           if(!okd) return paint();
-          SHEET_WIZ.step = s2; paint(); wizSheetLoad();
+          /* THE CUSTOM AGREEMENT IS RESOLVED BY THE WORKER BEFORE THE PREVIEW
+             DRAWS, and a refusal keeps the admin on the form with the reason
+             — the `wizRetainerSave` rule: previewing a document the sender
+             would reject is worse than not advancing. */
+          wizCustomResolve().then(okc => {
+            if(!SHEET_WIZ) return;
+            if(!okc) return paint();
+            SHEET_WIZ.step = s2; paint(); wizSheetLoad();
+          });
         });
       });
     }
@@ -26543,6 +26902,33 @@ document.addEventListener("input", ev => {
      rule. No `touched` flag: unlike the retainer this figure is never written
      to the case, so there is nothing an untouched control could overwrite. */
   if(din === "wizNrDirty" && SHEET_WIZ){ SHEET_WIZ.nonRef = (ev.target.value || "").trim(); return; }
+  /* THE CUSTOM BUILDER'S TEXT FIELDS, on the `dsDirtyCtl` pattern: the value
+     lands on the state object, the derived total is rewritten IN PLACE, and
+     there is NO repaint — the cursor is inside one of these boxes, and
+     rebuilding the field somebody is typing in is the defect this file has
+     already recorded twice (the package Combined Summary, the invoice
+     search). A resolved preview is dropped at the same moment, because the
+     figures it was resolved from have just changed. */
+  if(din === "wizCuDirty" && SHEET_WIZ){
+    wizCollect();
+    SHEET_WIZ.cuResolved = null;
+    const c = wizCustomCalc(SHEET_WIZ);
+    const sum = document.querySelector(".cu-sum");
+    if(sum){
+      sum.innerHTML = (c.rate == null
+        ? "Enter the hourly rate to price this agreement."
+        : `${c.days != null && c.per != null
+            ? `${esc(String(c.days))} &times; ${esc(String(c.per))} = <b>${esc(String(c.hours))} hours</b> &middot; `
+            : ""}${c.useHours == null ? "" : `${esc(String(c.useHours))} &times; ${
+            esc(wizCuMoney(c.rate))} = `}<b class="cu-total">${esc(wizCuMoney(c.useDue))}</b>`)
+        + (c.hoursOverridden ? `<br><b>Total hours overridden</b> &mdash; the schedule works out to ${
+            c.hours == null ? "nothing yet" : esc(String(c.hours)) + " hours"}, and ${
+            esc(String(c.useHours))} is what will be sent.` : "")
+        + (c.dueOverridden ? `<br><b>Total due overridden</b> &mdash; the rate works out to ${
+            esc(wizCuMoney(c.due))}, and ${esc(wizCuMoney(c.useDue))} is what will be sent.` : "");
+    }
+    return;
+  }
   /* Typing a custom flat fee counts as choosing one — same no-repaint rule. */
   if(din === "wizFeeDirty" && SHEET_WIZ){ SHEET_WIZ.feeTouched = true; SHEET_WIZ.feeMode = "custom"; return; }
   /* What will actually be burned in, following the typing. Only this one line
@@ -26618,6 +27004,30 @@ document.addEventListener("input", ev => {
   }
   if(ev.target.dataset && ev.target.dataset.act === "wizFeePick" && SHEET_WIZ){
     wizCollect(); SHEET_WIZ.feeTouched = true; SHEET_WIZ.err = ""; paint();
+  }
+  /* THE CUSTOM BUILDER'S OWN CONTROLS, on the `input` listener beside every
+     other select in this wizard — a `<select>` raises both `input` and
+     `change`, and this is where the wizard's are already read, so a control
+     added to the other chain is the "draws but does not work" defect this
+     file has recorded twice. Each collects FIRST, so the repaint that follows
+     discards nothing already typed. */
+  if(ev.target.dataset && ev.target.dataset.act === "wizModePick" && SHEET_WIZ){
+    wizCollect();
+    SHEET_WIZ.custom = ev.target.value === "custom";
+    /* Leaving the mode clears the agreement, the `wizSetType` rule: a builder
+       whose values survive being switched off is a send carrying figures
+       nobody is looking at. A NEW DOCUMENT IS A NEW ATTEMPT, so the key is
+       re-minted — reusing it would make a genuinely different send read as a
+       retry of the last one. */
+    wizCustomReset(SHEET_WIZ);
+    SHEET_WIZ.attemptKey = newAttemptKey();
+    SHEET_WIZ.err = ""; paint(); return;
+  }
+  if(ev.target.dataset && ev.target.dataset.act === "wizCuDirtySel" && SHEET_WIZ){
+    wizCollect(); SHEET_WIZ.cuResolved = null; SHEET_WIZ.err = ""; paint(); return;
+  }
+  if(ev.target.dataset && ev.target.dataset.act === "wizCuTerm" && SHEET_WIZ){
+    wizCollect(); SHEET_WIZ.cuResolved = null; SHEET_WIZ.err = ""; paint(); return;
   }
   if(ev.target.dataset && ev.target.dataset.act === "asstGuide" && ASST){
     ASST.guide = !!ev.target.checked;

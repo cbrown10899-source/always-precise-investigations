@@ -1243,6 +1243,184 @@ workbench, the rehearsal and the real send — are held together by the preview'
 body being **byte-identical** to what the send emails, rather than by three
 assertions that each check a number.
 
+## FULL CUSTOM is a document, not a second pricing system
+
+Owner brief 2026-09-23 (§1–§24), derived decisions D1–D17 in
+`case-portal/CUSTOM-AGREEMENT.md`. An **owner-only** mode inside the existing
+private Prepare & Send wizard, for the engagements the standard product does
+not describe — a flat schedule at an agreed hourly rate, with the owner
+choosing which terms the document states at all.
+
+**IT IS THE `legalFixedSheet` SHAPE ONE CONTEXT OVER, AND THAT IS THE WHOLE
+ARCHITECTURE.** A fixed legal service already swaps a different sheet object
+into the same send route — same renderer, same styling, same email, same
+`sent_document` record — chosen for that one send and writing nothing back to
+the product. `privateCustomSheet(spec)` is that, for private, and it returns
+`id: 'private_retainer'` for the same reason the fixed sheet does: the id is
+the PRODUCT the route is addressed by, so `sheetTakesPayment`,
+`contextForSheet` and the context allow-list keep answering as they always
+have. **What is custom is the document, never the door.**
+
+So `rateSheets()` is untouched and remains the only place a standard figure is
+set, and `PERSONAL`, `RETAINER_PRESETS`, `RETAINER_STANDARD`,
+`nonRefundableFor` and `engagementBlock` are exactly as they were. **A send
+that carries no `custom_agreement` skips every line of it** — §1 and §17 as
+control flow rather than as a promise, and the suite pins the standard
+document's own bytes beside it.
+
+**THE MONEY MULTIPLIES IN INTEGER CENTS, AND THE PROJECT'S USUAL PATTERN IS
+NOT ENOUGH HERE.** `Math.round(x * 100) / 100` appears twenty-eight times in
+this Worker and is right for a sum of figures; this is a MULTIPLY, and
+`$16.10 × 7` is `112.70000000000002` as doubles. Rounding that at the end
+happens to give the right answer, which is exactly why a demo passes and a
+longer schedule does not. `customCents` turns the rate into an integer number
+of cents first, so the multiply never leaves the integers. **Two assertions
+drive real figures that break in floating point** — 16.10 × 7 and 33.33 × 9 —
+through the form and through the Worker.
+
+**OFF MEANS ABSENT, AND A TERM TICKED WITHOUT ITS FIGURE IS REFUSED BY NAME.**
+Seven optional terms; the minimum per surveillance day and the non-refundable
+portion are **OFF by default**, which the brief says twice and calls critical.
+`PERSONAL.minHours` and `NON_REFUNDABLE_DEFAULT` are **never read by the custom
+builder** and a source pin says so — forcing the standard four hours or the
+standard $500 onto a custom agreement is precisely what the mode exists to step
+around, and §18's "do not silently convert blank optional terms into defaults"
+is enforced rather than remembered.
+
+**AND A SWITCHED-OFF TERM CANNOT COME BACK IN THE PAYMENT BLOCK OR THE
+CLOSING** — found by reading the composed document rather than the code. With
+the total off, `customPayLead` would still have quoted it in the one block a
+client reads last, and the closing pointed at "the amount above" with no amount
+above it. Both are conditional now, and both are asserted.
+
+**THE WORD "RETAINER" REACHES THE DOCUMENT ONLY WHEN IT IS CHOSEN (§8), AND
+THE PAYMENT BLOCK WAS THE PLACE THAT NEARLY LEAKED IT.** `paymentBlockText`
+and `paymentBlockHtml` open with *"A $1,500 retainer is required to begin
+investigative services"* — the standard product's sentence carrying the
+standard product's figure — so a custom send would have called an $1,800 total
+a retainer in the block the client actually pays from, **and quoted the wrong
+number while doing it**. The `lead` argument is optional, every existing caller
+omits it, and the standard output is byte-identical; the `pdfFromDoc` footer
+precedent. Four assertions read the whole document for `/retainer/i` and find
+nothing until the label is deliberately chosen.
+
+**THE TERMS READ AFTER THE FIGURES, AND THE FLAG IS ON THE SHEET OBJECT.**
+`engagement_last` is absent on every sheet that existed before, so the standard
+documents render exactly as they did. Getting this wrong is **a whitespace-only
+line in the HTML** — the first draft added `  ${engagementHtml(engAfter)}` on
+its own line and would have shipped two spaces of difference into every
+standard sheet — **and no wording assertion can see that.**
+
+**SO THE STANDARD DOCUMENTS ARE PINNED TO THE BYTE, AGAINST MASTER.** This
+file's first version of this section claimed a byte pin the suite did not
+have: every standard-sheet assertion checked WORDING, and the whitespace line
+above passes all of them. The pin is real now. Sixteen standard sends —
+private with and without payment, custom retainer and non-refundable, zero
+non-refundable, intake and note, the legal retainer card, Mail Check, both
+fixed legal services and a custom flat fee, insurance with and without its
+options, the payment-options email alone and the office's record copy — were
+rendered through **master's own Worker at `bb84259`** and through this branch,
+through the real route: **all sixteen byte-identical**, with only per-send
+randomness normalised (the intake door's document reference, the record copy's
+id, hash and send time). Their hashes are `GOLDEN` in the Worker suite, which
+prints the new ones on failure so a DELIBERATE change to a standard sheet is
+re-pinned rather than argued with. **Negative-tested with the exact first-draft
+line: fourteen named failures**, one per document that goes through the table.
+
+**THE PREVIEW IS THE WORKER'S, FETCHED (§12).** `wizCustomResolve` calls
+`POST /assistant/prepare-sheet`, which is a **pinned mirror of `emailSheet`**
+held byte for byte by the suite — so "no standard term may be silently inserted
+after Preview" is a property of where the figures come from rather than a rule
+somebody has to keep. A refusal does not advance: the `wizRetainerSave` rule,
+because previewing a document the sender would reject is worse than staying on
+the form with the reason on screen. The mirror gained the custom branch step
+for step, so a rehearsal cannot resolve one document while the send resolves
+another.
+
+**THE PAGE'S ARITHMETIC IS DISPLAY ONLY, AND IT IS PINNED AGAINST THE
+WORKER'S.** The builder shows `2 × 12 = 24 · 24 × $75.00 = $1,800.00` as it is
+typed, because that is §2's whole shape — but the document is only ever the
+Worker's. The suite drives the real form at three rates and compares the screen
+to the Worker's own answer on each. **Its text fields follow the `dsDirtyCtl`
+pattern** — collect, rewrite the derived total in place, **no repaint** —
+because rebuilding the box somebody is typing in is the defect this file
+already records against the package Combined Summary and the invoice search.
+
+**AN OVERRIDE IS OBEYED, MARKED, AND NEVER RECALCULATED (§4).** The spec
+carries the figures AS SENT and the figures the arithmetic produced, side by
+side, with two flags. A record keeping only the override could not answer later
+what the calculation had said. **Typing the figure the calculation already
+produced is not an override**, and the flags say so.
+
+**`sent_document_custom` IS A COMPANION TABLE, AND `sent_document` ALREADY DID
+THE HARD HALF.** `subject`, `body_text`, `body_html` and `content_hash` are the
+bytes the provider was handed, so §13's "never rebuilt from current settings"
+does not depend on the new table at all. What it adds is **the builder's
+inputs** — what was typed, what was overridden, which terms were ticked — so
+the record answers *why the document says that*, not only *what it says*. It is
+read back on `GET /documents/:id`, because a row nothing ever reads is a record
+the office cannot use.
+
+**A CUSTOM SEND REFUSES BY NAME UNTIL `portal-setup.yml` RUNS.** A custom
+document whose figures were never recorded is exactly what §13 exists to
+prevent, and the loss would be discovered by somebody asking, months later,
+what was quoted. **The standard sheets are untouched at that seam and send
+normally**, which is the half that matters, and there is a test that drops the
+table and proves both halves.
+
+**NOTHING IS WRITTEN TO `case_retainer`.** The retainer selector is WITHDRAWN
+in this mode and `wizRetainerSave` stands down, so previewing a custom
+agreement cannot re-cut a case's agreed retainer as a side effect. **Open for
+the owner:** a custom agreement therefore leaves no agreed figure on the case,
+so the invoice and balance blocks have nothing to draw against. Recording the
+total as a `case_retainer` row would mislabel it as a retainer — the thing §8
+forbids the document from doing — so it is left as a question rather than
+taken as a keystroke.
+
+**THE DIALOG STOPPED MISNAMING WHAT IT WAS ABOUT TO EMAIL.** The header read
+`sheet.selector_label`, so a custom send said *"Send — Private Client — $1,500
+Retainer"* over a screen about to email an $1,800 custom document. Same defect
+`wizLegalFixed` already corrects for the flat-fee sheets, and the same rule
+this file states about the send wizard's own wording: a screen that misnames
+what it is about to send is the defect one step earlier.
+
+**THE MINIMUM SELECT OPENED ON FOUR, AND THE SUITE FOUND IT THROUGH A PROBE
+THAT WAS ITSELF WRONG.** Ticking *Minimum hours* drew a select whose first real
+option was selected by default, so an owner who ticked the term and chose
+nothing sent **four hours** — the one figure the brief says twice must not be
+forced. It surfaced because a refusal test advanced to Preview: the probe had
+blanked the state object, `wizCollect` read `4` straight back out of the
+select, and the Worker was handed a valid figure nobody picked. **This is the
+private lead's Service picker again** — *"a select with no empty option
+asserts a value nobody chose"*, recorded under *Contact and intake*, where an
+unasked lead was filed as Surveillance. The select opens on *Choose the
+minimum…* now, a ticked term with nothing chosen is refused BY NAME, and the
+probe drives the real path — tick, choose nothing, press Preview — instead of
+poking state no person can reach.
+
+**THREE GUARDS FIRED ON MY OWN WORDS, AND NONE WAS LOOSENED.** Two source pins
+matched the prose explaining that `PERSONAL.minHours` and
+`NON_REFUNDABLE_DEFAULT` are deliberately not consulted — the property is that
+the builder does not READ them, and **a comment reads nothing**, so those pins
+strip comments, which is the honest fix for that class of guard. The third was
+the page's no-dollar-figure test, which caught a comment of mine quoting the
+standard retainer's label and a custom total; **comments ship in View Source**,
+so the comment was reworded and the guard is untouched. And one assertion of
+my own was simply too loose: a bare `/spec/i` meant to catch the builder's
+identifiers matched *"specifically"* in the document's summary sentence and
+failed a correct document. It names the identifiers now, and is negative-tested
+against the override leaking.
+
+**`simpleOpen` IS AN ACTION, NOT A FUNCTION** — the `wizClose` lesson a second
+time. A probe calling it by name would have thrown and crashed a section; the
+§15 walk presses the real Simple View card, with the exact call the action
+makes as a guarded fallback. That walk also got its own fresh intake, because
+an earlier section ACCEPTS the shared fixture and an accepted intake is —
+correctly — no longer offered the quote: a test borrowing it would have been
+measuring the order the suite runs in.
+
+**Adding this table means a manual `portal-setup.yml` dispatch after merge.**
+
 ## The exact document a client received, and what they signed
 
 Owner brief 2026-09-07; derived decisions D1–D14 in

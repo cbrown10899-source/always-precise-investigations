@@ -22435,6 +22435,870 @@ section('The Simple/Full view preference is one row per login');
      (await call(env, '/me/prefs')).status === 401);
 }
 
+
+/* ============================================================================
+   THE FULL CUSTOM PRIVATE AGREEMENT (owner brief 2026-09-23)
+
+   The brief's own risk is stated in §1 and §17: the standard Private sheets
+   must not move. So these run in two halves — what the new mode does, and a
+   pin on everything it sits beside — and the second half is written first in
+   the file below so a regression is reported before a feature.
+   ========================================================================= */
+
+/* ============================================================================
+   THE STANDARD DOCUMENTS, PINNED TO THE BYTE (FULL CUSTOM §1/§17)
+
+   The FULL CUSTOM unit touched the renderers every standard sheet goes
+   through — `sheetEmail`, `engagementText/Html`, `paymentBlockText/Html` — and
+   its promise is that none of them moved. Wording checks cannot hold that
+   promise: the first draft of this unit added a whitespace-only line to every
+   standard sheet's HTML, and every "the sheet still says X" assertion would
+   have passed over it.
+
+   So these are the bytes. Each GOLDEN row is SHA-256 (first 16 hex) of the
+   subject, the text part and the HTML part that MASTER at bb84259 — before
+   FULL CUSTOM existed — produced for the same send through the same route,
+   captured by running that commit's own Worker. The branch was measured
+   against it: all sixteen identical. Per-send randomness is normalised out
+   first (the document reference on the intake door, the record copy's
+   document id, content hash and send time), and nothing else is.
+
+   IF ONE OF THESE FAILS, a standard document changed. If that change is
+   deliberate — new approved wording, a new payment handle — replace the row
+   with the hashes printed in the failure. If it is not deliberate, it is the
+   regression this exists to catch.
+   ========================================================================= */
+section('The standard rate sheets are byte-identical to the pre-FULL-CUSTOM master');
+{
+  const crypto = await import('node:crypto');
+  const H = s => crypto.createHash('sha256').update(String(s)).digest('hex').slice(0, 16);
+  const realFetch = globalThis.fetch;
+  let mailed = null;
+  const all = [];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      mailed = JSON.parse(init.body); all.push(mailed);
+      return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'k'; env.MAIL_PER_MINUTE = '200'; env.INGEST_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const norm = s => String(s).replace(/ref=DOC-[0-9a-f]+/g, 'ref=DOC-X');
+  const normCopy = s => norm(s).replace(/DOC-[0-9a-f]+/g, 'DOC-X')
+    .replace(/\b[0-9a-f]{64}\b/g, 'HASH')
+    .replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d+Z/g, 'TIME');
+  const GOLDEN = {
+    'private, plain':                  ['9041ce89a9eb919d', 'e02b39b9d691db63', 'e4150aef8661265e'],
+    'private, both payment methods':   ['9041ce89a9eb919d', '0e2705edbbbadcff', 'bcf8bfd0470b945c'],
+    'private, Venmo only':             ['9041ce89a9eb919d', '375834ba73e91ab3', '3fe760b8cafa2a74'],
+    'private, custom retainer + NR':   ['4a20784b23abf4ee', '53800dd9c81c85bd', '6f3da7bc537f5cc1'],
+    'private, NR zero':                ['9041ce89a9eb919d', '6534eb739f67d5d2', '9db54b6731589e94'],
+    'private, with intake + note':     ['9041ce89a9eb919d', '3257e8fcd116dd4b', '69f6d19d2e897c92'],
+    'private, everything':             ['ef7a9c49c2e6d5b6', '012f87f7ed71cdc0', 'cd9ca56b33ad1f4f'],
+    'legal retainer card':             ['9041ce89a9eb919d', '9c52f9be957f2351', 'a3e76160728ac75c'],
+    'legal + mail check':              ['9041ce89a9eb919d', '5a27514a72ebaec7', '1b910e2f3c9ff968'],
+    'legal fixed: process':            ['36d72e57b875ddf0', '36e552b653bbe29c', '50f62d17d35ba463'],
+    'legal fixed: process $375':       ['e1380ebaed41726e', '731a6ce216387113', 'b3139926e7a12080'],
+    'legal fixed: locate + intake':    ['b1b7e6e9dcfc65dc', '548e5ee1e737b05b', '0e58d4f74c799a39'],
+    'insurance':                       ['488f922ef3bbc4ed', '53a4935b2107d8b1', '9548abda0cd8ed2b'],
+    'insurance + mail check + intake': ['488f922ef3bbc4ed', '52023175d1efd6de', '693fffde45ed2274'],
+    'payment options alone':           ['15f9acbfbd89b65f', 'd383becd82436a25', '64959b68c5d960cf'],
+    'owner record copy':               ['ba0c52d0a3b8d2a9', '25e6647836635ee1', '0bca946663ce3a1e'],
+  };
+  const MATRIX = [
+    ['private, plain',                  'private_retainer',     { to: 'a@example.com' }],
+    ['private, both payment methods',   'private_retainer',     { to: 'a@example.com', include_payment: true }],
+    ['private, Venmo only',             'private_retainer',     { to: 'a@example.com', include_payment: true, methods: ['venmo'] }],
+    ['private, custom retainer + NR',   'private_retainer',     { to: 'a@example.com', retainer_amount: 3000, non_refundable: 750 }],
+    ['private, NR zero',                'private_retainer',     { to: 'a@example.com', non_refundable: 0 }],
+    ['private, with intake + note',     'private_retainer',     { to: 'a@example.com', include_intake: true, note: 'As discussed.' }],
+    ['private, everything',             'private_retainer',     { to: 'a@example.com', include_intake: true, include_payment: true, note: 'Hi', case_no: 'REF-1' }],
+    ['legal retainer card',             'private_retainer',     { to: 'f@example.com', send_context: 'legal' }],
+    ['legal + mail check',              'private_retainer',     { to: 'f@example.com', send_context: 'legal', include_payment: true, methods: ['mail_check'] }],
+    ['legal fixed: process',            'private_retainer',     { to: 'f@example.com', send_context: 'legal', legal_service: 'process' }],
+    ['legal fixed: process $375',       'private_retainer',     { to: 'f@example.com', send_context: 'legal', legal_service: 'process', flat_fee: 375 }],
+    ['legal fixed: locate + intake',    'private_retainer',     { to: 'f@example.com', send_context: 'legal', legal_service: 'locate', include_intake: true }],
+    ['insurance',                       'insurance_assignment', { to: 'c@example.com' }],
+    ['insurance + mail check + intake', 'insurance_assignment', { to: 'c@example.com', include_payment: true, methods: ['mail_check'], include_intake: true }],
+  ];
+  const check = (name, got) => {
+    const want = GOLDEN[name];
+    ok(`byte-identical: ${name}`,
+       !!got && got[0] === want[0] && got[1] === want[1] && got[2] === want[2],
+       got ? `now ${JSON.stringify(got)} — was ${JSON.stringify(want)}` : 'nothing was sent');
+  };
+  for (const [name, id, body] of MATRIX) {
+    mailed = null;
+    await call(env, `/sheets/${id}/email`, { method: 'POST', cookie: admin, body });
+    check(name, mailed && [H(mailed.subject), H(norm(mailed.text)), H(norm(mailed.html))]);
+  }
+  mailed = null;
+  await call(env, '/payment-options/email',
+    { method: 'POST', cookie: admin, body: { to: 'a@example.com', name: 'Jane' } });
+  check('payment options alone', mailed && [H(mailed.subject), H(mailed.text), H(mailed.html)]);
+  await call(env, '/billing-settings', { method: 'POST', cookie: admin,
+    body: { owner_record_email: 'office@example.com' } });
+  all.length = 0;
+  await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'a@example.com', client_name: 'Jane Doe', retainer_amount: 2000 } });
+  const copy = all.find(m => String(m.to).includes('office@example.com'));
+  check('owner record copy',
+        copy && [H(copy.subject), H(normCopy(copy.text)), H(normCopy(copy.html))]);
+
+  /* NEGATIVE-TESTED IN PLACE: one space added to the standard HTML must move
+     the hash, or this whole section is a table of numbers nobody has watched
+     change. */
+  mailed = null;
+  await call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin, body: { to: 'a@example.com' } });
+  ok('and a single added space would fail the pin',
+     H(norm(mailed.html) + ' ') !== GOLDEN['private, plain'][2]);
+  globalThis.fetch = realFetch;
+}
+
+section('FULL CUSTOM: the standard private sheets did not move');
+{
+  const realFetch = globalThis.fetch;
+  let mailed = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      mailed = JSON.parse(init.body); return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '80';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const send = (body) => call(env, '/sheets/' + (body.id || 'private_retainer') + '/email',
+    { method: 'POST', cookie: admin, body });
+
+  /* THE STANDARD DOCUMENT, WORD FOR WORD. Every one of these is the approved
+     product and none of them is reachable from the new mode — the assertions
+     exist so a change to the shared renderer announces itself here rather
+     than in front of a client. */
+  mailed = null;
+  await send({ to: 'std@example.com', include_payment: true });
+  const std = mailed;
+  ok('the standard private sheet still opens with its own name',
+     std.subject === '$1,500 Retainer — Always Precise Investigations', std.subject);
+  ok('it still states the retainer', std.text.includes('Retainer: $1,500'));
+  ok('it still carries the standard non-refundable portion',
+     std.text.includes('NON-REFUNDABLE PORTION: $500'));
+  ok('it still carries the four-hour minimum per surveillance day',
+     std.text.includes('4-HOUR MINIMUM PER SURVEILLANCE DAY'));
+  ok('its terms still read BEFORE the rate lines, as they always have',
+     std.text.indexOf('NON-REFUNDABLE PORTION') < std.text.indexOf('Investigative rate'));
+  ok('its payment block still opens with the retainer sentence',
+     std.text.includes('A $1,500 retainer is required to begin investigative services.'));
+  ok('and the retainer is still what may be submitted',
+     std.text.includes('The retainer may be submitted using one of the approved methods below.'));
+  ok('the HTML half still carries the standard non-refundable portion',
+     std.html.includes('NON-REFUNDABLE PORTION: $500'));
+  ok('and its payment card still names the retainer',
+     std.html.includes('retainer is\n      required to begin investigative services'),
+     std.html.slice(std.html.indexOf('PAYMENT OPTIONS'), std.html.indexOf('PAYMENT OPTIONS') + 260));
+
+  /* A CUSTOM NON-REFUNDABLE AMOUNT ON THE STANDARD PATH is untouched — §21
+     names it, and it is the figure most easily broken by a unit that adds a
+     second non-refundable term one product over. */
+  mailed = null;
+  await send({ to: 'std2@example.com', retainer_amount: 3000, non_refundable: 750 });
+  ok('a custom non-refundable amount still resolves on the standard sheet',
+     mailed.text.includes('Retainer: $3,000')
+     && mailed.text.includes('NON-REFUNDABLE PORTION: $750'), mailed.text.slice(0, 200));
+
+  /* THE LEGAL CARD IS THE PRIVATE PRICING VERBATIM — the private PRODUCT'S
+     lines, which is a different thing from the private CARD'S engagement
+     block: that block is added in `sheetCards` to the private card alone,
+     precisely so a law firm cannot inherit it. The first draft of this
+     assertion looked for the engagement lines on a legal send and failed,
+     correctly, against a product that has never carried them. */
+  mailed = null;
+  const legal = await jsonOf(await send({ to: 'firm@example.com', send_context: 'legal' }));
+  ok('the legal card is still the private pricing verbatim',
+     legal.ok === true && mailed.text.includes('Retainer to begin')
+     && mailed.text.includes('$1,500')
+     && /4-hour minimum per surveillance day/i.test(mailed.text),
+     mailed && mailed.text.slice(0, 200));
+  ok('and it still carries the Mail Check line and no engagement block',
+     mailed.text.includes('Mail Check')
+     && !mailed.text.includes('NON-REFUNDABLE PORTION'), mailed.text.slice(0, 120));
+  mailed = null;
+  await send({ id: 'insurance_assignment', to: 'carrier@example.com' });
+  ok('the insurance sheet is still the insurance sheet',
+     mailed.subject.startsWith('Insurance Assignment Rates'), mailed.subject);
+
+  globalThis.fetch = realFetch;
+}
+
+section('FULL CUSTOM: the owner\'s real client — $75 x 2 days x 12 hours');
+{
+  const realFetch = globalThis.fetch;
+  let mailed = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      mailed = JSON.parse(init.body); return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '80';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const send = (body) => call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin, body });
+
+  /* §19 VERBATIM: the agreement the owner actually has to send. Minimum hours
+     OFF, non-refundable OFF, both payment methods. */
+  mailed = null;
+  const r = await jsonOf(await send({ to: 'client@example.com',
+    include_payment: true, methods: ['cash_app', 'venmo'],
+    custom_agreement: { hourly_rate: '75', days: '2', hours_per_day: '12' } }));
+  ok('it sends', r.ok === true, JSON.stringify(r).slice(0, 220));
+  const doc = mailed.text;
+  ok('the document states the hourly rate as the owner wrote it',
+     doc.includes('$75.00 per hour'), doc.slice(0, 400));
+  ok('it states the scheduled days', doc.includes('2 days'));
+  ok('it states the hours per day', doc.includes('12 hours'));
+  ok('it states the total scheduled hours', doc.includes('24 hours'));
+  ok('it states the total', doc.includes('$1,800.00'));
+  /* THE APPROVED RENDERER PRINTS "PAY WITH CASH APP" — the method names are
+     upper-cased by `paymentBlockText`, and have been since that block was
+     written. The brief names them in prose casing; the PROPERTY is that both
+     methods are offered and tappable, so that is what is measured, and the
+     destination is asserted beside the name so this cannot pass on a heading
+     with no link under it. */
+  ok('Cash App is offered', /cash app/i.test(doc) && doc.includes('https://cash.app/'), doc);
+  ok('Venmo is offered', /venmo/i.test(doc) && doc.includes('https://venmo.com/'), doc);
+  ok('and both are offered in the HTML half as real links',
+     mailed.html.includes('href="https://cash.app/$TreverB"')
+     && mailed.html.includes('href="https://venmo.com/u/Trever-Brown-9"'));
+
+  /* §6 AND §7 ARE THE POINT OF THE MODE: what is NOT there. */
+  ok('there is NO four-hour minimum', !doc.includes('4-HOUR MINIMUM PER SURVEILLANCE DAY'));
+  ok('there is NO minimum-per-surveillance-day language at all',
+     !/MINIMUM PER SURVEILLANCE DAY/i.test(doc));
+  ok('there is NO minimum-hours wording in any casing',
+     !/minimum/i.test(doc), (doc.match(/.{0,40}minimum.{0,40}/i) || [''])[0]);
+  ok('there is NO non-refundable portion', !/NON-REFUNDABLE PORTION/i.test(doc));
+  ok('there is NO non-refundable wording at all',
+     !/non-refundable/i.test(doc), (doc.match(/.{0,40}non-refundable.{0,40}/i) || [''])[0]);
+
+  /* §8 — the word "retainer" reaches the document ONLY when it is chosen, and
+     the payment block is exactly where it used to arrive unasked. */
+  ok('the word retainer appears NOWHERE in the text part',
+     !/retainer/i.test(doc), (doc.match(/.{0,50}retainer.{0,50}/i) || [''])[0]);
+  ok('nor anywhere in the HTML part',
+     !/retainer/i.test(mailed.html), (mailed.html.match(/.{0,50}retainer.{0,50}/i) || [''])[0]);
+  ok('the payment block opens with the total, not a retainer sentence',
+     doc.includes('$1,800.00 is due before investigative services begin.'), doc);
+  ok('the total reads AFTER the figures it is a total of',
+     doc.indexOf('$75.00 per hour') < doc.indexOf('TOTAL DUE BEFORE WORK BEGINS'));
+  ok('the subject line is the agreement, not the retainer product',
+     mailed.subject === 'Custom Surveillance Agreement — Always Precise Investigations',
+     mailed.subject);
+  ok('the standard $1,500 figure appears nowhere on it', !doc.includes('$1,500'));
+
+  /* §12 — the resolution the office is told about is the one that was sent. */
+  ok('the answer names the agreement it built',
+     r.custom_agreement && r.custom_agreement.total_due === 1800
+     && r.custom_agreement.total_hours === 24
+     && r.custom_agreement.hourly_rate === 75, JSON.stringify(r.custom_agreement));
+  ok('and says neither figure was overridden',
+     r.custom_agreement.hours_overridden === false
+     && r.custom_agreement.total_overridden === false);
+  ok('the figures were recorded', r.custom_agreement.custom === 'recorded',
+     r.custom_agreement.custom_reason || '');
+
+  /* §13 — the exact document, and the figures behind it. */
+  const row = await env.DB.prepare(
+    'SELECT * FROM sent_document WHERE doc_id = ?').bind(r.doc_id).first();
+  ok('the stored body is the bytes the provider was handed', row.body_text === mailed.text);
+  ok('and the stored subject is too', row.subject === mailed.subject);
+  ok('the document claims no retainer, because it quoted none', row.retainer_amount === null);
+  ok('and no non-refundable portion', row.non_refundable === null);
+  const cu = await env.DB.prepare(
+    'SELECT * FROM sent_document_custom WHERE doc_id = ?').bind(r.doc_id).first();
+  ok('the agreement\'s own figures are recorded against it',
+     cu && cu.hourly_rate === 75 && cu.scheduled_days === 2 && cu.hours_per_day === 12
+     && cu.total_hours === 24 && cu.total_due === 1800, JSON.stringify(cu));
+  ok('the arithmetic is kept beside what was sent',
+     cu.computed_total_hours === 24 && cu.computed_total_due === 1800);
+  ok('neither figure is marked overridden',
+     cu.hours_overridden === 0 && cu.total_overridden === 0);
+  ok('the payment description is recorded as the one that was printed',
+     cu.payment_label_kind === 'total_due'
+     && cu.payment_label === 'TOTAL DUE BEFORE WORK BEGINS');
+  ok('the two optional terms are recorded as OFF',
+     cu.minimum_hours_included === 0 && cu.non_refundable_included === 0
+     && cu.minimum_hours === null && cu.non_refundable === null);
+  ok('the terms actually shown are recorded',
+     JSON.parse(cu.terms_included).join() === 'hourly_rate,days,hours_per_day,total_hours,total_due',
+     cu.terms_included);
+  ok('the payment methods that rode with it are recorded',
+     JSON.parse(cu.payment_methods).sort().join() === 'cash_app,venmo', cu.payment_methods);
+  ok('and the whole resolved agreement is kept verbatim',
+     JSON.parse(cu.spec_json).agreement_type === 'full_custom');
+
+  /* THE REHEARSAL IS A PINNED MIRROR OF THE SENDER, for this product too — the
+     wizard's Preview is that route's answer, so a drift here is a preview
+     showing one document while another goes. */
+  const prep = await jsonOf(await call(env, '/assistant/prepare-sheet',
+    { method: 'POST', cookie: admin, body: { id: 'private_retainer', to: 'client@example.com',
+      send_context: 'private', include_payment: true, methods: ['cash_app', 'venmo'],
+      custom_agreement: { hourly_rate: '75', days: '2', hours_per_day: '12' } } }));
+  ok('the rehearsal of a custom agreement is byte-identical to the send',
+     prep.subject === mailed.subject && prep.body_text === mailed.text);
+  ok('and it resolves the same figures', prep.custom_agreement
+     && prep.custom_agreement.total_due === 1800);
+  ok('the rehearsal publishes the block the preview draws',
+     prep.engagement && prep.engagement.lines[0].text === 'TOTAL DUE BEFORE WORK BEGINS: $1,800.00');
+
+  globalThis.fetch = realFetch;
+}
+
+section('FULL CUSTOM: §20 — every optional term, on and off');
+{
+  const realFetch = globalThis.fetch;
+  let mailed = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      mailed = JSON.parse(init.body); return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '200';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const base = { hourly_rate: '75', days: '2', hours_per_day: '12' };
+  const ALL = ['hourly_rate', 'days', 'hours_per_day', 'total_hours', 'total_due'];
+  const sent = async (agreement, extra = {}) => {
+    mailed = null;
+    const r = await jsonOf(await call(env, '/sheets/private_retainer/email',
+      { method: 'POST', cookie: admin,
+        body: { to: 'c@example.com', custom_agreement: agreement, ...extra } }));
+    return { r, text: mailed ? mailed.text : '' };
+  };
+
+  // A — minimum OFF
+  let out = await sent({ ...base });
+  ok('A: minimum off leaves no minimum language', !/minimum/i.test(out.text));
+  // B — minimum ON at 4
+  out = await sent({ ...base, terms: [...ALL, 'minimum_hours'], minimum_hours: '4' });
+  ok('B: minimum on at 4 states four hours per surveillance day',
+     out.text.includes('4-HOUR MINIMUM PER SURVEILLANCE DAY'), out.text);
+  // C — minimum ON at 6: the number is the owner's, never the standard four
+  out = await sent({ ...base, terms: [...ALL, 'minimum_hours'], minimum_hours: '6' });
+  ok('C: minimum on at 6 states SIX, not the standard four',
+     out.text.includes('6-HOUR MINIMUM PER SURVEILLANCE DAY')
+     && !out.text.includes('4-HOUR'), out.text);
+  // D — non-refundable OFF
+  out = await sent({ ...base });
+  ok('D: non-refundable off leaves no non-refundable wording',
+     !/non-refundable/i.test(out.text));
+  // E — non-refundable ON, the owner's own amount, and NOT the standard $500
+  out = await sent({ ...base, terms: [...ALL, 'non_refundable'], non_refundable: '900' });
+  ok('E: non-refundable on states the owner\'s amount',
+     out.text.includes('NON-REFUNDABLE PORTION: $900.00'), out.text);
+  ok('E: and the standard $500 default is nowhere near it', !out.text.includes('$500'));
+  ok('E: its explanatory sentence arrives with it',
+     out.text.includes('non-refundable upon engagement'));
+  // F — Cash App only
+  out = await sent({ ...base }, { include_payment: true, methods: ['cash_app'] });
+  ok('F: Cash App alone is offered alone',
+     /cash app/i.test(out.text) && !/venmo/i.test(out.text), out.text);
+  // G — Venmo only
+  out = await sent({ ...base }, { include_payment: true, methods: ['venmo'] });
+  ok('G: Venmo alone is offered alone',
+     /venmo/i.test(out.text) && !/cash app/i.test(out.text), out.text);
+  // H — both
+  out = await sent({ ...base }, { include_payment: true, methods: ['cash_app', 'venmo'] });
+  ok('H: both are offered together',
+     /venmo/i.test(out.text) && /cash app/i.test(out.text));
+  // I — Total Due label
+  out = await sent({ ...base, payment_label_kind: 'total_due' },
+                   { include_payment: true, methods: ['venmo'] });
+  ok('I: the total-due label prints and no retainer word appears',
+     out.text.includes('TOTAL DUE BEFORE WORK BEGINS: $1,800.00') && !/retainer/i.test(out.text),
+     (out.text.match(/.{0,40}retainer.{0,40}/i) || [''])[0]);
+  // J — Retainer label, the only way that word reaches the document
+  out = await sent({ ...base, payment_label_kind: 'retainer' },
+                   { include_payment: true, methods: ['venmo'] });
+  ok('J: choosing Retainer is what puts the word on the document',
+     out.text.includes('RETAINER: $1,800.00'), out.text);
+  ok('J: and the payment block says it too',
+     out.text.includes('A $1,800.00 retainer is required to begin investigative services.'));
+  // K — a custom label
+  out = await sent({ ...base, payment_label_kind: 'custom',
+                     payment_label_custom: 'Deposit due at signing' },
+                   { include_payment: true, methods: ['venmo'] });
+  ok('K: a custom label prints in the owner\'s own words',
+     out.text.includes('DEPOSIT DUE AT SIGNING: $1,800.00'), out.text);
+  ok('K: and it is still not called a retainer', !/retainer/i.test(out.text));
+
+  /* §5/§10 — a schedule detail switched off is ABSENT, not blank. */
+  out = await sent({ ...base, terms: ['hourly_rate', 'total_due'] });
+  ok('the days line is absent when its term is off', !out.text.includes('2 days'));
+  ok('the hours-per-day line is absent too', !out.text.includes('12 hours'));
+  ok('the total-hours line is absent too', !out.text.includes('24 hours'));
+  ok('and no blank row is left where they were',
+     !/Scheduled days/.test(out.text) && !/Hours per day/.test(out.text)
+     && !/Total scheduled hours/.test(out.text), out.text);
+  ok('what was kept is still there',
+     out.text.includes('$75.00 per hour') && out.text.includes('$1,800.00'));
+
+  /* Every term off at once is a legitimate, if terse, document — and it must
+     not fall back to the standard product. */
+  out = await sent({ ...base, terms: [] }, { include_payment: true, methods: ['venmo'] });
+  ok('with every term off the document states no figures',
+     !out.text.includes('$1,800.00') && !out.text.includes('$75.00 per hour'));
+  ok('and still does not become the standard sheet',
+     !/retainer/i.test(out.text) && !/minimum/i.test(out.text), out.text);
+  /* A TERM SWITCHED OFF DOES NOT COME BACK IN THE PAYMENT BLOCK, which is the
+     one part of the document written last and read first. */
+  ok('the payment block does not quote the total the owner chose not to state',
+     out.text.includes('Payment is due before investigative services begin.')
+     && !/\$1,800/.test(out.text), out.text);
+  ok('nor does the closing point at an amount that is not above it',
+     out.text.includes('Work begins once payment and any required authorization are received'),
+     out.text);
+
+  globalThis.fetch = realFetch;
+}
+
+section('FULL CUSTOM: the arithmetic, the overrides and the refusals');
+{
+  const realFetch = globalThis.fetch;
+  let mailed = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      mailed = JSON.parse(init.body); return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '200';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const send = (body) => call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin, body });
+  const agree = (a, extra = {}) => send({ to: 'c@example.com', custom_agreement: a, ...extra });
+
+  /* §3 — THE FLOAT TRAP. $16.10 x 7 hours is 112.70000000000002 in IEEE-754
+     doubles; in integer cents it is 11270 exactly. A quote that reads
+     $112.70000000000002 is the defect this rule exists to prevent, and a
+     round-at-the-end that happens to work on the demo figures is not the
+     same thing as arithmetic that cannot go wrong. */
+  let r = await jsonOf(await agree({ hourly_rate: '16.10', days: '1', hours_per_day: '7' }));
+  ok('cents multiply exactly: $16.10 x 7 = $112.70',
+     r.custom_agreement.total_due === 112.7, String(r.custom_agreement.total_due));
+  ok('and the document prints it cleanly', mailed.text.includes('$112.70'), mailed.text);
+  r = await jsonOf(await agree({ hourly_rate: '33.33', days: '3', hours_per_day: '3' }));
+  ok('and again on another figure that breaks in floating point',
+     r.custom_agreement.total_due === 299.97, String(r.custom_agreement.total_due));
+  r = await jsonOf(await agree({ hourly_rate: '75', days: '2.5', hours_per_day: '6' }));
+  ok('a fractional day is arithmetic, not a refusal',
+     r.custom_agreement.total_hours === 15 && r.custom_agreement.total_due === 1125);
+  ok('and its wording keeps the plural', mailed.text.includes('2.5 days'));
+  r = await jsonOf(await agree({ hourly_rate: '200', days: '1', hours_per_day: '1' }));
+  ok('a single day and a single hour read in the singular',
+     mailed.text.includes('1 day') && mailed.text.includes('1 hour')
+     && !mailed.text.includes('1 days'), mailed.text);
+
+  /* §4 — AN OVERRIDE IS OBEYED, MARKED, AND NEVER SILENTLY RECALCULATED. */
+  r = await jsonOf(await agree({ hourly_rate: '75', days: '2', hours_per_day: '12',
+                                 total_due: '1500' }));
+  ok('an overridden total is what is sent', mailed.text.includes('$1,500.00')
+     && !mailed.text.includes('$1,800.00'), mailed.text);
+  ok('and the answer says it was overridden',
+     r.custom_agreement.total_overridden === true
+     && r.custom_agreement.total_due === 1500);
+  let cu = await env.DB.prepare('SELECT * FROM sent_document_custom WHERE doc_id = ?')
+    .bind(r.doc_id).first();
+  ok('the record keeps both the override and what the arithmetic said',
+     cu.total_due === 1500 && cu.computed_total_due === 1800 && cu.total_overridden === 1);
+  /* §22 — THE CLIENT IS NOT SHOWN THE OFFICE'S WORKINGS. The computed figure,
+     the override flags and the builder's own vocabulary stay in the record;
+     the document states the agreement, which is what the client agreed to. */
+  /* THE BUILDER'S OWN IDENTIFIERS, not English fragments. The first version
+     listed a bare "spec", which matched "specifically" in the document's own
+     summary sentence and failed a document that was correct — the instrument,
+     not the product. What must not reach a client is the office's vocabulary:
+     the override, the computation behind it and the builder's field names. */
+  const WORKINGS = /overrid|computed|agreement_type|full_custom|custom_spec|terms_included/i;
+  ok('§22 — and the client document shows none of the office workings',
+     !WORKINGS.test(mailed.text) && !WORKINGS.test(mailed.html),
+     (mailed.text.match(/.{0,40}(overrid|computed|agreement_type|full_custom|custom_spec).{0,40}/i)
+       || mailed.html.match(/.{0,40}(overrid|computed|agreement_type|full_custom|custom_spec).{0,40}/i)
+       || [''])[0]);
+  /* NEGATIVE-TESTED against the leak it is written for, so it is a guard
+     somebody has watched fail. */
+  ok('§22 — and that check really would catch the override leaking',
+     WORKINGS.test(mailed.text + ' (total overridden)'));
+  r = await jsonOf(await agree({ hourly_rate: '75', days: '2', hours_per_day: '12',
+                                 total_hours: '30' }));
+  ok('an overridden hour count re-prices from the override',
+     r.custom_agreement.total_hours === 30 && r.custom_agreement.total_due === 2250
+     && r.custom_agreement.hours_overridden === true, JSON.stringify(r.custom_agreement));
+  cu = await env.DB.prepare('SELECT * FROM sent_document_custom WHERE doc_id = ?')
+    .bind(r.doc_id).first();
+  ok('and the record keeps the schedule it departed from',
+     cu.total_hours === 30 && cu.computed_total_hours === 24 && cu.hours_overridden === 1);
+  r = await jsonOf(await agree({ hourly_rate: '75', days: '2', hours_per_day: '12',
+                                 total_hours: '24', total_due: '1800' }));
+  ok('typing the figures the arithmetic already produced is not an override',
+     r.custom_agreement.hours_overridden === false
+     && r.custom_agreement.total_overridden === false);
+  /* THE STORED DOCUMENT IS THE STORED DOCUMENT. An override must survive
+     anything that later re-reads the record, which is the whole of §4's
+     "historical sent documents must remain immutable". */
+  const ov = await jsonOf(await agree({ hourly_rate: '75', days: '2', hours_per_day: '12',
+                                        total_due: '1500' }));
+  const kept = await env.DB.prepare('SELECT body_text FROM sent_document WHERE doc_id = ?')
+    .bind(ov.doc_id).first();
+  ok('and the preserved bytes still carry the overridden figure',
+     kept.body_text.includes('$1,500.00') && !kept.body_text.includes('$1,800.00'));
+  const hist = await jsonOf(await call(env, '/documents/' + ov.doc_id,
+    { cookie: admin }));
+  ok('reading the document back months later returns those same bytes',
+     (hist.document || {}).body_text === kept.body_text,
+     JSON.stringify(hist).slice(0, 160));
+  ok('and the agreement behind it reads back with its override intact',
+     hist.custom_agreement && hist.custom_agreement.total_due === 1500
+     && hist.custom_agreement.computed_total_due === 1800
+     && hist.custom_agreement.total_overridden === true
+     && hist.custom_agreement.payment_label === 'TOTAL DUE BEFORE WORK BEGINS',
+     JSON.stringify(hist.custom_agreement));
+  ok('its terms come back as a list, not as stored JSON',
+     Array.isArray(hist.custom_agreement.terms_included)
+     && hist.custom_agreement.terms_included.includes('total_due'));
+  /* A STANDARD DOCUMENT HAS NO AGREEMENT, and says so as absence rather than
+     as an empty object somebody could mistake for one. */
+  const stdDoc = await jsonOf(await send({ to: 'plain@example.com' }));
+  const stdRead = await jsonOf(await call(env, '/documents/' + stdDoc.doc_id, { cookie: admin }));
+  ok('a standard sheet reads back with no custom agreement at all',
+     stdRead.custom_agreement === null, JSON.stringify(stdRead.custom_agreement));
+
+  /* §18 — VALIDATION, each refused BY NAME. */
+  const code = async (a, extra) => (await jsonOf(await agree(a, extra))).code;
+  ok('a missing rate is refused by name',
+     await code({ days: '2', hours_per_day: '12' }) === 'custom_rate_required');
+  ok('a negative rate is refused',
+     await code({ hourly_rate: '-75', days: '2', hours_per_day: '12' }) === 'bad_custom_hourly_rate');
+  ok('a zero rate is refused rather than quoting $0.00',
+     await code({ hourly_rate: '0', days: '2', hours_per_day: '12' }) === 'bad_custom_hourly_rate');
+  ok('a rate that is not a number is refused',
+     await code({ hourly_rate: 'lots', days: '2' }) === 'bad_custom_hourly_rate');
+  ok('Infinity is refused',
+     await code({ hourly_rate: 'Infinity', days: '2' }) === 'bad_custom_hourly_rate');
+  ok('NaN is refused',
+     await code({ hourly_rate: 'NaN', days: '2' }) === 'bad_custom_hourly_rate');
+  ok('negative days are refused',
+     await code({ hourly_rate: '75', days: '-2', hours_per_day: '12' }) === 'bad_custom_number_of_days');
+  ok('more than twenty-four hours in a day is refused',
+     await code({ hourly_rate: '75', days: '1', hours_per_day: '30' }) === 'bad_custom_hours_per_day');
+  ok('a negative total is refused',
+     await code({ hourly_rate: '75', days: '2', hours_per_day: '12', total_due: '-1' })
+       === 'bad_custom_total_due');
+  ok('an agreement with nothing to total is refused',
+     await code({ hourly_rate: '75' }) === 'custom_total_missing');
+  ok('a term nobody has heard of is refused by name',
+     await code({ hourly_rate: '75', days: '2', hours_per_day: '12', terms: ['sparkles'] })
+       === 'unknown_custom_term');
+
+  /* §18's own line: a blank optional term is NOT quietly turned into a
+     default. Both of these refuse rather than reaching for the standard
+     product's four hours and $500. */
+  ok('ticking the minimum without a figure refuses rather than assuming four',
+     await code({ hourly_rate: '75', days: '2', hours_per_day: '12',
+                  terms: ['total_due', 'minimum_hours'] }) === 'custom_minimum_required');
+  ok('ticking non-refundable without a figure refuses rather than assuming $500',
+     await code({ hourly_rate: '75', days: '2', hours_per_day: '12',
+                  terms: ['total_due', 'non_refundable'] }) === 'custom_non_refundable_required');
+  ok('a non-refundable portion larger than the whole is refused by name',
+     await code({ hourly_rate: '75', days: '2', hours_per_day: '12',
+                  terms: ['total_due', 'non_refundable'], non_refundable: '5000' })
+       === 'custom_non_refundable_over_total');
+  ok('zero is honoured, because typing it is a deliberate act',
+     (await jsonOf(await agree({ hourly_rate: '75', days: '2', hours_per_day: '12',
+       terms: ['total_due', 'non_refundable'], non_refundable: '0' })))
+       .custom_agreement.non_refundable === 0);
+  ok('a custom label with no words is refused',
+     await code({ hourly_rate: '75', days: '2', hours_per_day: '12',
+                  payment_label_kind: 'custom' }) === 'custom_payment_label_required');
+  ok('a payment description nobody offers is refused',
+     await code({ hourly_rate: '75', days: '2', hours_per_day: '12',
+                  payment_label_kind: 'whatever' }) === 'bad_custom_payment_label');
+
+  /* §1/§17 — THE MODE CANNOT ESCAPE THE PRIVATE CONTEXT, and every refusal is
+     by name rather than a silent drop: a figure ignored because it arrived on
+     the wrong send is a screen that accepted something it did not use. */
+  ok('a custom agreement on a legal send is refused by name',
+     (await jsonOf(await send({ to: 'f@example.com', send_context: 'legal',
+       custom_agreement: { hourly_rate: '75', days: '2', hours_per_day: '12' } }))).code
+       === 'custom_agreement_not_private');
+  ok('a custom agreement on the carrier sheet is refused by name',
+     (await jsonOf(await call(env, '/sheets/insurance_assignment/email',
+       { method: 'POST', cookie: admin, body: { to: 'c@example.com',
+         custom_agreement: { hourly_rate: '75', days: '2', hours_per_day: '12' } } }))).code
+       === 'custom_agreement_not_private');
+  ok('a retainer figure beside a custom agreement is refused by name',
+     await code({ hourly_rate: '75', days: '2', hours_per_day: '12' },
+                { retainer_amount: 2000 }) === 'retainer_not_custom');
+  ok('a standard non-refundable amount beside one is refused by name',
+     await code({ hourly_rate: '75', days: '2', hours_per_day: '12' },
+                { non_refundable: 500 }) === 'non_refundable_not_custom');
+  ok('a custom agreement asking for Mail Check is still refused',
+     (await jsonOf(await agree({ hourly_rate: '75', days: '2', hours_per_day: '12' },
+       { include_payment: true, methods: ['mail_check'] }))).code === 'mail_check_not_private');
+
+  /* §22 — the builder is the office's, at the door rather than on the page. */
+  const invLink = (await jsonOf(await invite(env, admin,
+    { username: 'fieldcu', display_name: 'Field', role: 'investigator' }))).url;
+  const invTok = new URL(invLink, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${invTok}/accept`,
+    { method: 'POST', body: { password: 'FieldCustom1x' } });
+  const field = (await login(env, 'fieldcu', 'FieldCustom1x')).cookie;
+  ok('the investigator account really exists, so the two checks below are not vacuous',
+     !!field && (await jsonOf(await call(env, '/auth/me', { cookie: field }))).user.role
+       === 'investigator');
+  ok('an investigator cannot send a custom agreement',
+     (await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: field,
+       body: { to: 'c@example.com',
+               custom_agreement: { hourly_rate: '75', days: '2', hours_per_day: '12' } } })).status
+       === 403);
+  ok('nor rehearse one',
+     (await call(env, '/assistant/prepare-sheet', { method: 'POST', cookie: field,
+       body: { id: 'private_retainer', to: 'c@example.com',
+               custom_agreement: { hourly_rate: '75' } } })).status === 403);
+  ok('and an anonymous caller cannot either',
+     (await call(env, '/sheets/private_retainer/email', { method: 'POST',
+       body: { to: 'c@example.com',
+               custom_agreement: { hourly_rate: '75' } } })).status === 401);
+
+  globalThis.fetch = realFetch;
+}
+
+section('FULL CUSTOM: idempotency, a failed send, and the seam before setup');
+{
+  const realFetch = globalThis.fetch;
+  let mailed = null, sends = 0, fail = false;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      sends++;
+      if (fail) return new Response('{"message":"provider down"}', { status: 500 });
+      mailed = JSON.parse(init.body); return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '80';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const A = { hourly_rate: '75', days: '2', hours_per_day: '12' };
+  const send = (body) => call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin, body });
+
+  /* §21 — the attempt key works exactly as it does for a standard sheet. */
+  const first = await jsonOf(await send({ to: 'c@example.com', attempt_key: 'cu-attempt-1',
+    custom_agreement: A }));
+  const again = await jsonOf(await send({ to: 'c@example.com', attempt_key: 'cu-attempt-1',
+    custom_agreement: A }));
+  ok('repeating an attempt emails nobody a second time', sends === 1, String(sends));
+  ok('and reads back the document that attempt already produced',
+     again.duplicate === true && again.doc_id === first.doc_id);
+  ok('exactly one agreement row exists for it',
+     Number((await env.DB.prepare(
+       'SELECT COUNT(*) AS n FROM sent_document_custom').first()).n) === 1);
+
+  /* A FAILED SEND STILL RECORDS WHAT WAS COMPOSED — a document that did not
+     arrive is still a document the office wrote, and what it said is exactly
+     what somebody will want to know. */
+  fail = true;
+  const bad = await jsonOf(await send({ to: 'c@example.com', attempt_key: 'cu-attempt-2',
+    custom_agreement: { ...A, total_due: '2400' } }));
+  ok('a provider failure is reported as one', bad.reason === 'send failed' || !!bad.error,
+     JSON.stringify(bad).slice(0, 140));
+  const failRow = await env.DB.prepare(
+    'SELECT d.doc_id, d.ok, c.total_due FROM sent_document d '
+    + 'LEFT JOIN sent_document_custom c ON c.doc_id = d.doc_id WHERE d.ok = 0').first();
+  ok('the failed document is kept with its agreement beside it',
+     failRow && failRow.ok === 0 && failRow.total_due === 2400, JSON.stringify(failRow));
+  fail = false;
+
+  /* THE SEAM: portal-setup is a manual dispatch, so between a merge and that
+     run the companion table does not exist. A custom agreement refuses BY
+     NAME; the STANDARD sheets are untouched and send normally, which is the
+     half that matters. */
+  const env2 = freshEnv();
+  env2.RESEND_API_KEY = 'test-resend-key';
+  env2.MAIL_PER_MINUTE = '80';
+  await bootstrapAdmin(env2);
+  const admin2 = (await login(env2, 'trever', 'FirstAdminPass1')).cookie;
+  await env2.DB.prepare('DROP TABLE sent_document_custom').run();
+  const refused = await call(env2, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin2, body: { to: 'c@example.com', custom_agreement: A } });
+  const rj = await jsonOf(refused);
+  ok('without the table a custom agreement refuses by name',
+     refused.status === 503 && rj.code === 'custom_agreement_not_set_up', JSON.stringify(rj));
+  ok('and it names the workflow to run', /portal-setup/.test(rj.error || ''), rj.error);
+  ok('nothing was emailed for it', sends === 2, String(sends));
+  const stdOk = await jsonOf(await call(env2, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin2, body: { to: 'c@example.com' } }));
+  ok('while the standard sheet sends exactly as it always did', stdOk.ok === true);
+
+  globalThis.fetch = realFetch;
+}
+
+
+section('FULL CUSTOM: §14/§21 — one document system, one record copy, one packet');
+{
+  const realFetch = globalThis.fetch;
+  let mails = [];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      mails.push(JSON.parse(init.body)); return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '80';
+  env.INGEST_PER_MINUTE = '50';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await call(env, '/billing-settings', { method: 'POST', cookie: admin,
+    body: { owner_record_email: 'office@alwaysprecise.example' } });
+  await ingest(env, { case_no: 'API-CU-1', client_name: 'Vanessa Hart',
+    client_email: 'vanessa@example.com', service: 'Surveillance', objective: 'Document' });
+
+  mails = [];
+  const A = { hourly_rate: '75', days: '2', hours_per_day: '12',
+              terms: ['hourly_rate', 'days', 'hours_per_day', 'total_hours', 'total_due',
+                      'minimum_hours'], minimum_hours: '6' };
+  const r = await jsonOf(await call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin,
+      body: { to: 'vanessa@example.com', case_no: 'API-CU-1', include_intake: true,
+              client_name: 'Vanessa Hart', custom_agreement: A } }));
+  ok('a custom agreement sends against a real case', r.ok === true,
+     JSON.stringify(r).slice(0, 200));
+
+  /* §14 — THE LINKAGE IS THE ONE THAT ALREADY EXISTED. Nothing about the
+     intake, the lead ladder or the acceptance door is a second system. */
+  const log = await env.DB.prepare(
+    'SELECT case_no, kind, sheet_id FROM send_log ORDER BY id DESC LIMIT 1').first();
+  ok('§14 — it writes the ordinary send_log row, on the case',
+     log.case_no === 'API-CU-1' && log.kind === 'rate_sheet'
+     && log.sheet_id === 'private_retainer', JSON.stringify(log));
+  const lead = await env.DB.prepare(
+    'SELECT status FROM lead_status WHERE case_no = ?').bind('API-CU-1').first();
+  ok('§14 — and the lead is stamped by the same writer as any other sheet',
+     lead && lead.status === 'intake_sent', JSON.stringify(lead));
+  const doc = await env.DB.prepare(
+    'SELECT case_no, intake_door, intake_included FROM sent_document WHERE doc_id = ?')
+    .bind(r.doc_id).first();
+  ok('§14 — the document is tied to the case and carries the intake door',
+     doc.case_no === 'API-CU-1' && doc.intake_included === 1
+     /* The door's parameter is `ref=`, which is what `doorWithDoc` writes —
+        measured off the product rather than guessed at. */
+     && String(doc.intake_door).includes('ref=' + r.doc_id),
+     JSON.stringify(doc).slice(0, 220));
+
+  /* §21 — THE OFFICE'S RECORD COPY CARRIES THE DOCUMENT'S OWN TERMS, and the
+     custom ones rather than the standard product's, because it is handed the
+     rendered block rather than re-composing figures. */
+  const copy = mails.find(m => String(m.to).includes('alwaysprecise.example'));
+  ok('§21 — the office is copied on a custom send too', !!copy,
+     JSON.stringify(mails.map(m => m.to)));
+  ok('§21 — and the copy states the custom total as the client saw it',
+     !!copy && /TOTAL DUE BEFORE WORK BEGINS: \$1,800\.00/.test(copy.text),
+     copy ? copy.text.slice(0, 500) : 'no copy');
+  ok('§21 — with the SIX-hour minimum, not the standard four',
+     !!copy && /6-HOUR MINIMUM PER SURVEILLANCE DAY/.test(copy.text)
+     && !/4-HOUR/.test(copy.text), copy ? copy.text.slice(0, 500) : 'no copy');
+  ok('§21 — and it names the document version that went',
+     !!copy && /Custom Surveillance Agreement/.test(copy.text),
+     copy ? copy.text.slice(0, 300) : 'no copy');
+  ok('§21 — the office is still not recorded as having been sent a rate sheet',
+     ((await jsonOf(await call(env, '/sends', { cookie: admin }))).sends || [])
+       .every(x => !String(x.recipient || '').includes('alwaysprecise.example')));
+
+  /* §21 — THE CLIENT RECORD PACKET REPRODUCES THE DOCUMENT, from the stored
+     bytes and not from a renderer. It needed no change for this, and that is
+     the assertion: `sent_document.body_text` IS the custom agreement. */
+  const pk = await jsonOf(await call(env, '/cases/API-CU-1/record-packet', { cookie: admin }));
+  const rs = pk.rate_sheet || {};
+  ok('§21 — the record packet carries the custom document itself',
+     String(rs.body_text || '').includes('$1,800.00')
+     && String(rs.body_text || '').includes('$75.00 per hour'),
+     JSON.stringify(Object.keys(pk)) + ' | ' + String(rs.body_text || '').slice(0, 120));
+  ok('§21 — and it is the bytes that were sent, not a re-render',
+     String(rs.body_text || '') === String(
+       (await env.DB.prepare('SELECT body_text FROM sent_document WHERE doc_id = ?')
+         .bind(r.doc_id).first()).body_text));
+  ok('§21 — the packet does not call the custom agreement a retainer',
+     !/retainer/i.test(String(rs.body_text || '')),
+     (String(rs.body_text || '').match(/.{0,40}retainer.{0,40}/i) || [''])[0]);
+
+  /* §21 — AND THE CASE'S DOCUMENT LIST SHOWS IT LIKE ANY OTHER SEND. */
+  const list = await jsonOf(await call(env, '/cases/API-CU-1/documents', { cookie: admin }));
+  ok('§21 — the case\'s own document list carries it',
+     (list.documents || []).length === 1
+     && list.documents[0].doc_id === r.doc_id, JSON.stringify(list).slice(0, 200));
+
+  globalThis.fetch = realFetch;
+}
+
+section('FULL CUSTOM: the source is one builder, and the standard one is untouched');
+{
+  const src = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+  ok('the standard engagement block still reads the standard minimum',
+     /function engagementBlock\([^)]*\)[\s\S]{0,900}PERSONAL\.minHours/.test(src));
+  /* THESE TWO FIRED ON MY OWN COMMENTS, which say in prose that the standard
+     minimum and the standard default are deliberately NOT consulted here. The
+     property the pin protects is that the builder does not READ them, and a
+     comment reads nothing — so the guard strips comments rather than being
+     loosened, and the prose that explains the rule is allowed to name it. The
+     fourth time this project has recorded a source pin matching its author's
+     own explanation. */
+  const strip = t => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const cut = strip(src.slice(src.indexOf('function customAgreementSpec('),
+                              src.indexOf('function privateCustomSheet(')));
+  ok('the custom builder never reaches for the standard minimum',
+     !cut.includes('PERSONAL.minHours'), 'PERSONAL.minHours leaked into the custom builder');
+  ok('nor for the standard non-refundable default',
+     !cut.includes('NON_REFUNDABLE_DEFAULT'), 'the standard default leaked in');
+  ok('nor for the standard retainer',
+     !cut.includes('PERSONAL.retainer'), 'the standard retainer leaked in');
+  /* NEGATIVE-TESTED: the guard is watched failing on the exact leak it is
+     written for, so it is not a rule nobody has seen work. */
+  ok('and the guard really would catch one',
+     strip(cut + '\n  const m = PERSONAL.minHours;').includes('PERSONAL.minHours'));
+  const doc = strip(src.slice(src.indexOf('function privateCustomSheet('),
+                              src.indexOf('function customPayLead(')));
+  ok('and the custom DOCUMENT holds no figure of its own',
+     !/[^a-zA-Z_$.]\d{2,}/.test(doc),
+     (doc.match(/[^a-zA-Z_$.]\d{2,}[^\n]{0,40}/) || [''])[0]);
+  ok('there is exactly one custom agreement validator',
+     src.split('function customAgreementSpec(').length - 1 === 1);
+  ok('and exactly one custom document builder',
+     src.split('function privateCustomSheet(').length - 1 === 1);
+  ok('the new table is registered so /health cannot report a clean schema without it',
+     src.includes("'sent_document_custom',"));
+  ok('and it is swept before the document it hangs off',
+     src.indexOf("['sent_document_custom',") < src.indexOf("['sent_document',"));
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));
