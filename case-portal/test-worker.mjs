@@ -22814,10 +22814,21 @@ section('FULL CUSTOM: the arithmetic, the overrides and the refusals');
   /* §22 — THE CLIENT IS NOT SHOWN THE OFFICE'S WORKINGS. The computed figure,
      the override flags and the builder's own vocabulary stay in the record;
      the document states the agreement, which is what the client agreed to. */
+  /* THE BUILDER'S OWN IDENTIFIERS, not English fragments. The first version
+     listed a bare "spec", which matched "specifically" in the document's own
+     summary sentence and failed a document that was correct — the instrument,
+     not the product. What must not reach a client is the office's vocabulary:
+     the override, the computation behind it and the builder's field names. */
+  const WORKINGS = /overrid|computed|agreement_type|full_custom|custom_spec|terms_included/i;
   ok('§22 — and the client document shows none of the office workings',
-     !/overrid|computed|agreement_type|full_custom|spec/i.test(mailed.text)
-     && !/overrid|computed|agreement_type|full_custom/i.test(mailed.html),
-     (mailed.text.match(/.{0,40}(overrid|computed).{0,40}/i) || [''])[0]);
+     !WORKINGS.test(mailed.text) && !WORKINGS.test(mailed.html),
+     (mailed.text.match(/.{0,40}(overrid|computed|agreement_type|full_custom|custom_spec).{0,40}/i)
+       || mailed.html.match(/.{0,40}(overrid|computed|agreement_type|full_custom|custom_spec).{0,40}/i)
+       || [''])[0]);
+  /* NEGATIVE-TESTED against the leak it is written for, so it is a guard
+     somebody has watched fail. */
+  ok('§22 — and that check really would catch the override leaking',
+     WORKINGS.test(mailed.text + ' (total overridden)'));
   r = await jsonOf(await agree({ hourly_rate: '75', days: '2', hours_per_day: '12',
                                  total_hours: '30' }));
   ok('an overridden hour count re-prices from the override',

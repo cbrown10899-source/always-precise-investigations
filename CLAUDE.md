@@ -1245,7 +1245,7 @@ assertions that each check a number.
 
 ## FULL CUSTOM is a document, not a second pricing system
 
-Owner brief 2026-09-23 (§1–§24), derived decisions D1–D16 in
+Owner brief 2026-09-23 (§1–§24), derived decisions D1–D17 in
 `case-portal/CUSTOM-AGREEMENT.md`. An **owner-only** mode inside the existing
 private Prepare & Send wizard, for the engagements the standard product does
 not describe — a flat schedule at an agreed hourly rate, with the owner
@@ -1368,13 +1368,40 @@ Retainer"* over a screen about to email an $1,800 custom document. Same defect
 this file states about the send wizard's own wording: a screen that misnames
 what it is about to send is the defect one step earlier.
 
-**TWO SOURCE PINS FIRED ON MY OWN COMMENTS, AND THE GUARD WAS FIXED RATHER
-THAN LOOSENED.** The prose explaining that `PERSONAL.minHours` and
-`NON_REFUNDABLE_DEFAULT` are deliberately not consulted *names* them, and the
-pin matched by substring. The property it protects is that the builder does not
-READ them, and **a comment reads nothing** — so the pin strips comments, which
-is the honest fix for that class of guard and the fourth time this project has
-recorded it.
+**THE MINIMUM SELECT OPENED ON FOUR, AND THE SUITE FOUND IT THROUGH A PROBE
+THAT WAS ITSELF WRONG.** Ticking *Minimum hours* drew a select whose first real
+option was selected by default, so an owner who ticked the term and chose
+nothing sent **four hours** — the one figure the brief says twice must not be
+forced. It surfaced because a refusal test advanced to Preview: the probe had
+blanked the state object, `wizCollect` read `4` straight back out of the
+select, and the Worker was handed a valid figure nobody picked. **This is the
+private lead's Service picker again** — *"a select with no empty option
+asserts a value nobody chose"*, recorded under *Contact and intake*, where an
+unasked lead was filed as Surveillance. The select opens on *Choose the
+minimum…* now, a ticked term with nothing chosen is refused BY NAME, and the
+probe drives the real path — tick, choose nothing, press Preview — instead of
+poking state no person can reach.
+
+**THREE GUARDS FIRED ON MY OWN WORDS, AND NONE WAS LOOSENED.** Two source pins
+matched the prose explaining that `PERSONAL.minHours` and
+`NON_REFUNDABLE_DEFAULT` are deliberately not consulted — the property is that
+the builder does not READ them, and **a comment reads nothing**, so those pins
+strip comments, which is the honest fix for that class of guard. The third was
+the page's no-dollar-figure test, which caught a comment of mine quoting the
+standard retainer's label and a custom total; **comments ship in View Source**,
+so the comment was reworded and the guard is untouched. And one assertion of
+my own was simply too loose: a bare `/spec/i` meant to catch the builder's
+identifiers matched *"specifically"* in the document's summary sentence and
+failed a correct document. It names the identifiers now, and is negative-tested
+against the override leaking.
+
+**`simpleOpen` IS AN ACTION, NOT A FUNCTION** — the `wizClose` lesson a second
+time. A probe calling it by name would have thrown and crashed a section; the
+§15 walk presses the real Simple View card, with the exact call the action
+makes as a guarded fallback. That walk also got its own fresh intake, because
+an earlier section ACCEPTS the shared fixture and an accepted intake is —
+correctly — no longer offered the quote: a test borrowing it would have been
+measuring the order the suite runs in.
 
 **Adding this table means a manual `portal-setup.yml` dispatch after merge.**
 

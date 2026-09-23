@@ -141,6 +141,13 @@ rewrite the derived total in place, NO repaint — because rebuilding the box
 somebody is typing in is the defect already recorded against the package
 Combined Summary and the invoice search.
 
+**D17 — The minimum opens on no figure.** The select's first option is an
+empty *Choose the minimum…*, so ticking the term chooses nothing and the Worker
+refuses it by name until a figure is picked. The first build opened on four —
+a select with no empty option asserts a value nobody chose, the private lead's
+Service picker defect — and it was found because a refusal test advanced when
+it should have stopped.
+
 ## Deferred, by name
 
 - A second custom agreement shape (`agreement_type` is ready for one; no CHECK

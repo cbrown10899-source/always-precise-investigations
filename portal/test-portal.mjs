@@ -25106,7 +25106,13 @@ section('FULL CUSTOM: the arithmetic on screen, and the Worker agrees with it');
   ok('§6 — ticking the minimum draws its own figure', minOn.drawn === true,
      JSON.stringify(minOn));
   ok('§6 — offering the owner\'s own choices rather than forcing four hours',
-     minOn.options === '4,6,8,12,custom', minOn.options);
+     minOn.options === ',4,6,8,12,custom', minOn.options);
+  /* A SELECT WITH NO EMPTY OPTION ASSERTS A VALUE NOBODY CHOSE — the first
+     run of this suite found the minimum quietly reading back as four, the
+     same defect CLAUDE.md records against the private lead's Service picker.
+     Ticking the term must leave the figure genuinely unchosen. */
+  ok('§6 — and it opens on NO figure, so four hours is never assumed',
+     minOn.value === '', JSON.stringify(minOn));
   await page.locator('.cu-term[data-t="non_refundable"]').click();
   await page.waitForTimeout(250);
   const nrOn = await page.evaluate(() => {
@@ -25142,13 +25148,14 @@ section('FULL CUSTOM: Preview is the Worker\'s, and Send is what was previewed')
   await page.locator('#cu_perday').fill('12');
   await page.waitForTimeout(250);
 
-  /* A REFUSAL KEEPS THE ADMIN ON THE FORM. Ticking a term without its figure
-     is exactly the case §18 forbids being defaulted, so the Worker refuses and
-     the wizard must not advance to a preview of a document it would reject. */
+  /* A REFUSAL KEEPS THE ADMIN ON THE FORM. Ticking a term without choosing
+     its figure is exactly the case §18 forbids being defaulted, so the Worker
+     refuses it by name and the wizard must not advance to a preview of a
+     document it would reject. Driven the way a person does it — tick, choose
+     nothing, press Preview — because the first version of this probe poked
+     the state object instead and measured a path no person can take. */
   await page.locator('.cu-term[data-t="minimum_hours"]').click();
-  await page.waitForTimeout(200);
-  await page.evaluate(() => { SHEET_WIZ.cuMinPick = ''; paint(); });
-  await page.waitForTimeout(200);
+  await page.waitForTimeout(250);
   await page.locator('.rsw-acts .btn', { hasText: 'Preview' }).click();
   await page.waitForTimeout(900);
   const refused = await page.evaluate(() => ({
@@ -25158,6 +25165,13 @@ section('FULL CUSTOM: Preview is the Worker\'s, and Send is what was previewed')
   ok('a term with no figure refuses, and the admin stays on the form',
      refused.step === 1 && refused.onForm === true && /minimum/i.test(refused.err || ''),
      JSON.stringify(refused));
+  /* GUARDED, so a wizard that wrongly advanced FAILS above by name rather than
+     crashing the run here looking for a control Preview does not draw — which
+     is exactly how this section's first run ended. */
+  if (await page.evaluate(() => SHEET_WIZ && SHEET_WIZ.step !== 1)) {
+    await page.locator('.rsw-acts .btn', { hasText: 'Back' }).click();
+    await page.waitForTimeout(300);
+  }
   await page.locator('.cu-term[data-t="minimum_hours"]').click();
   await page.waitForTimeout(250);
 
@@ -25224,6 +25238,13 @@ section('FULL CUSTOM: Preview is the Worker\'s, and Send is what was previewed')
 
 section('FULL CUSTOM: §15 — Simple View, open intake, custom agreement, back to the intake');
 {
+  /* ITS OWN INTAKE. The Simple View sections above ACCEPT the shared fixture,
+     and an accepted intake is — correctly — no longer offered the quote, so a
+     test borrowing it would be measuring the order the suite runs in. */
+  await post('/ingest', { case_no: 'API-CU-SV', service: 'Surveillance',
+    client_name: 'Vera Custom', client_email: 'vera@example.test',
+    subject_name: 'Subject Custom', objective: 'Document two days' },
+    { 'X-Ingest-Key': 'e2e-ingest-key' });
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
   await simpleOnFor(page);
@@ -25231,18 +25252,29 @@ section('FULL CUSTOM: §15 — Simple View, open intake, custom agreement, back 
   /* THE DOOR IS THE ONE THE INTAKE ALREADY HAD. `leadSheet` is the Simple View
      action bar's own Send rate sheet — the same control, the same handler, the
      same route — so this is one flow with two doors rather than a second
-     rate-sheet system, which §4 and §14 both forbid. */
-  await page.evaluate(() => { simpleOpen('API-SV-NEW'); });
-  await page.waitForFunction(() => WS_CASE === 'API-SV-NEW' && WS, null, { timeout: 6000 });
+     rate-sheet system, which §4 and §14 both forbid.
+
+     OPENED BY PRESSING THE CARD, because `simpleOpen` is a delegated ACTION
+     and not a function: calling it by name throws, the `wizClose` lesson. The
+     fallback is the exact call the action makes, so a card that failed to
+     draw is still measured rather than crashing the run. */
+  const pressed = await page.evaluate(() => {
+    const b = document.querySelector('[data-act="simpleOpen"][data-case="API-CU-SV"]');
+    if (b) { b.click(); return 'card'; }
+    openCase('API-CU-SV', 'details'); return 'fallback';
+  });
+  ok('§15 — the fresh intake is opened from its own Simple View card',
+     pressed === 'card', pressed);
+  await page.waitForFunction(() => WS_CASE === 'API-CU-SV' && WS, null, { timeout: 6000 });
   await page.waitForTimeout(400);
   const bar = await page.evaluate(() => {
     const b = [...document.querySelectorAll('[data-act="leadSheet"]')]
-      .find(x => x.dataset.case === 'API-SV-NEW');
+      .find(x => x.dataset.case === 'API-CU-SV');
     return { there: !!b, label: b ? b.textContent.trim() : '' };
   });
   ok('§15 — the opened intake carries Send rate sheet', bar.there === true, JSON.stringify(bar));
 
-  await page.locator('[data-act="leadSheet"][data-case="API-SV-NEW"]').click();
+  await page.locator('[data-act="leadSheet"][data-case="API-CU-SV"]').click();
   await page.waitForSelector('.amsheet.rsw', { timeout: 6000 });
   await page.waitForTimeout(300);
   const opened = await page.evaluate(() => ({
@@ -25253,7 +25285,7 @@ section('FULL CUSTOM: §15 — Simple View, open intake, custom agreement, back 
     typeSel: !!document.getElementById('wiz_type'),
   }));
   ok('§15 — it opens from the lead, on the intake\'s own case and address',
-     opened.fromLead === true && opened.caseNo === 'API-SV-NEW' && !!opened.to,
+     opened.fromLead === true && opened.caseNo === 'API-CU-SV' && !!opened.to,
      JSON.stringify(opened));
   ok('§15 — the FULL CUSTOM mode is offered here too, and still opens on Standard',
      opened.mode === 'standard' && opened.builder === false, JSON.stringify(opened));
@@ -25300,7 +25332,7 @@ section('FULL CUSTOM: §15 — Simple View, open intake, custom agreement, back 
     onScreen: !!document.querySelector('[data-act="leadSheet"]'),
   }));
   ok('§15 — the wizard closes and the same intake is still what is open',
-     back.caseNo === 'API-SV-NEW' && back.wiz === null && back.onScreen === true,
+     back.caseNo === 'API-CU-SV' && back.wiz === null && back.onScreen === true,
      JSON.stringify(back));
 
   /* §14 — ONE DOCUMENT SYSTEM. The send is linked to the case exactly as a
@@ -25309,8 +25341,8 @@ section('FULL CUSTOM: §15 — Simple View, open intake, custom agreement, back 
      document's own id so an acceptance can link back to it. */
   const rec = await page.evaluate(async () => {
     const s = await api('/sends?limit=50');
-    const d = await api('/cases/API-SV-NEW/documents');
-    return { sends: (s.sends || []).filter(x => x.case_no === 'API-SV-NEW').length,
+    const d = await api('/cases/API-CU-SV/documents');
+    return { sends: (s.sends || []).filter(x => x.case_no === 'API-CU-SV').length,
              docs: (d.documents || []).map(x => ({ id: x.doc_id, ctx: x.send_context })) };
   });
   ok('§14 — the office send history gained the row, on the case',

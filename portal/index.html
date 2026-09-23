@@ -9754,7 +9754,11 @@ function wizCuTerms(w){
    built from different inputs. */
 function wizCustomSpec(w){
   const t = wizCuTerms(w);
-  const minPick = w.cuMinPick || String(WIZ_CU_MINS[0]);
+  /* An unchosen minimum is sent as BLANK, never as the first option — the
+     Worker then refuses the ticked term by name, which is §18's "do not
+     silently convert blank optional terms into defaults" held at the door
+     that actually decides. */
+  const minPick = w.cuMinPick == null ? "" : String(w.cuMinPick);
   return {
     title: (w.cuTitle || "").trim(),
     hourly_rate: (w.cuRate || "").trim(),
@@ -9781,7 +9785,7 @@ function wizCustomSpec(w){
 function wizCustomReset(w){
   w.cuTitle = ""; w.cuRate = ""; w.cuDays = ""; w.cuPerDay = "";
   w.cuHours = ""; w.cuDue = ""; w.cuTerms = WIZ_CU_DEFAULT_TERMS.slice();
-  w.cuMinPick = String(WIZ_CU_MINS[0]); w.cuMinCustom = ""; w.cuNonRef = "";
+  w.cuMinPick = ""; w.cuMinCustom = ""; w.cuNonRef = "";
   w.cuLabelKind = "total_due"; w.cuLabelCustom = "";
   w.cuResolved = null; w.cuEngagement = null; w.cuDocName = "";
 }
@@ -9798,7 +9802,13 @@ function wizCustomHtml(w){
   const terms = wizCuTerms(w);
   const tick = (id, label) => `<label class="cap cu-t"><input type="checkbox" class="cu-term"
       data-act="wizCuTerm" data-t="${id}"${terms.includes(id) ? " checked" : ""}><span>${label}</span></label>`;
-  const minPick = w.cuMinPick || String(WIZ_CU_MINS[0]);
+  /* NOTHING IS PRE-CHOSEN. A select whose first real option is selected by
+     default asserts a figure nobody picked, and on this term the brief says
+     twice that four hours must not be forced — so the control opens on an
+     empty choice and the Worker refuses the term by name until one is made.
+     The same correction this file records against the private lead's Service
+     picker, which filed an unasked lead as Surveillance. */
+  const minPick = w.cuMinPick == null ? "" : String(w.cuMinPick);
   return `<label class="f" style="margin:10px 0 0"><span>Agreement</span>
       <select id="wiz_mode" data-act="wizModePick">
         <option value="standard"${on ? "" : " selected"}>Standard private rate sheet</option>
@@ -9856,6 +9866,7 @@ function wizCustomHtml(w){
       ${terms.includes("minimum_hours") ? `<div class="cugrid">
         <label class="f"><span>Minimum hours per surveillance day</span>
           <select id="cu_minpick" data-act="wizCuDirtySel">
+            <option value=""${minPick === "" ? " selected" : ""}>Choose the minimum&hellip;</option>
             ${WIZ_CU_MINS.map(v => `<option value="${v}"${minPick === String(v) ? " selected" : ""}
               >${v} hours</option>`).join("")}
             <option value="custom"${minPick === "custom" ? " selected" : ""}>Custom&hellip;</option>
@@ -10251,11 +10262,13 @@ function sheetWizardHtml(){
     <div class="amsheet rsw" data-act="amNoop" role="dialog" aria-modal="true" aria-label="Send the rate sheet">
       <div class="amhead rsw-head"><b>Send &mdash; ${esc(wizCustomOn(w)
         /* A CUSTOM AGREEMENT'S DIALOG NAMES THE CUSTOM AGREEMENT. Left reading
-           the private card's label it would have said "Private Client —
-           $1,500 Retainer" over a screen about to email an $1,800 custom
-           document — a screen misnaming what it is about to send, which is
-           the same defect one step earlier that `wizLegalFixed` already
-           corrects for the flat-fee sheets. */
+           the private card's label it would have named the standard retainer
+           sheet over a screen about to email a custom document with a
+           different total — a screen misnaming what it is about to send,
+           which is the same defect one step earlier that `wizLegalFixed`
+           already corrects for the flat-fee sheets. (Worded without a figure
+           on purpose: a test fails on any dollar amount in this file, and
+           comments ship in View Source.) */
         ? `Private Client — ${(w.cuTitle || "").trim() || "Custom Surveillance Agreement"}`
         : wizLegalFixed(w)
         ? `Legal / Law Firm — ${(wizLegalSvc(w) || {}).label || ""}`
