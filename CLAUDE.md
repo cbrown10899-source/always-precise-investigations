@@ -1421,6 +1421,60 @@ measuring the order the suite runs in.
 
 **Adding this table means a manual `portal-setup.yml` dispatch after merge.**
 
+### The checkbox builder: the owner's list, the owner's `[ 4 ]`, and a tick always appears
+
+Owner brief 2026-09-23, the follow-up to the unit above; D18–D22 in
+`case-portal/CUSTOM-AGREEMENT.md`. **INCLUDE ON CLIENT RATE SHEET** is one box
+of nine rows in the owner's order and words — Hourly Rate, Scheduled Days,
+Hours Per Day, Total Scheduled Hours, Minimum Hours Per Surveillance Day,
+Non-Refundable Portion, Total Due Before Work Begins, Cash App, Venmo — and
+each optional figure sits directly under its own box.
+
+**THE OWNER'S `[ 4 ]` SUPERSEDED MY EMPTY SELECT, AND THE REASON FOR THE
+SELECT SURVIVED THE CHANGE.** I had just shipped the minimum as a select
+opening on *"Choose…"*, because a select opening on four asserts a figure
+nobody picked. The owner's spec draws the field with 4 in it. Both are right
+about different things: 4 appearing **the moment the owner ticks the box** is a
+figure they can see and change, which is different from a figure assumed where
+they cannot see it. So it is written on the minimum's OWN tick, only into an
+empty field — and a field the owner clears **stays** clear, refused by name at
+send. The looser rule ("term on, field empty, fill it") also fires when a
+different box is ticked; the negative test proved it would refill a field the
+owner had emptied.
+
+**CASH APP AND VENMO ARE THE STANDARD SEND'S OWN SELECTION**, drawn in this
+box and bound through the `wiz-pm` class the collector already reads — so the
+owner's choice is one record that survives switching modes in both
+directions, as §3 asks. **The standard payment block is withdrawn in this
+mode**, and the negative test showed why this is correctness rather than
+tidiness: with both drawn, both sets feed the one collector, and the standard
+block's still-ticked boxes quietly put back a method the owner had unticked.
+
+**A TICKED TERM ALWAYS APPEARS; A TICKED TERM WITHOUT A FIGURE IS REFUSED.**
+The shipped build let the figure decide, so a ticked *Scheduled Days* with no
+days simply vanished. That was a Preview that did not mirror the selection,
+which §4 forbids. And the Preview's summary line had the mirror-image defect:
+it tested the TYPED value, so unticked days still read *"2 days"*. It follows
+the Worker's resolved term list now.
+
+**THE SUITE GOT A FAST LANE FOR THIS UNIT, AND IT PAID FOR ITSELF THREE
+TIMES.** A throwaway copy of `portal/test-portal.mjs` keeping every top-level
+helper and only the FULL CUSTOM sections ran in minutes instead of thirty-five,
+which is what made a real page-side negative batch affordable. **A section can
+own SEVERAL top-level blocks** with comments between them, so a trimmer keyed
+on "`section(` then `{`" keeps other features' tests running without their
+setup; key each block to the most recent `section(` line instead. Two
+failures in the trimmed run are always out-of-context noise from another
+feature's top-level loop — the full run is still the evidence.
+
+**A NEGATIVE BATCH CAN HIDE ITS OWN MUTATIONS.** Pre-ticking every term blocked
+every later Preview, and the first batch crashed before three of the six
+mutations ran. The dependent-field fills go through `fillOr` now, so a
+missing field fails by name, and a mutation that poisons the flow runs on its
+own. Result: every mutation caught by at least one assertion naming it — the
+page batch 14 named failures plus 3 for the pre-tick, and the Worker refusal
+3.
+
 ## The exact document a client received, and what they signed
 
 Owner brief 2026-09-07; derived decisions D1–D14 in

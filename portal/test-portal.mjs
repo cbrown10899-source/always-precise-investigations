@@ -22755,6 +22755,17 @@ section('The view preference is this login\'s own');
    top whenever a select or a checkbox repainted. Everything below is those
    two numbers, asserted. */
 
+/* A FIELD THAT IS NOT ON SCREEN FAILS BY NAME, never by a 30-second wait.
+   The builder draws the minimum and portion fields only while their boxes are
+   ticked, so a regression that leaves a box in the wrong state would otherwise
+   crash the run at the next fill — which is exactly how the first negative
+   batch for the checkbox builder ended, hiding three of its six mutations. */
+const fillOr = async (page, sel, value, what) => {
+  if (await page.locator(sel).count()) { await page.locator(sel).fill(value); return true; }
+  ok(`${what} — its field is on screen to type into`, false, `${sel} is not drawn`);
+  return false;
+};
+
 const openWiz = async page => {
   await page.evaluate(() => { SHEET_WIZ = { sheet: 'private_retainer', context: 'private',
     legal: false, attemptKey: 'e2e-rsw', step: 1, to: '', caseNo: '', note: '',
@@ -24940,8 +24951,12 @@ section('FULL CUSTOM: the mode is offered, opens on Standard, and withdraws the 
     retainer: !!document.getElementById('wiz_ret'),
     nonRef: !!document.getElementById('wiz_nr'),
     labelKind: (document.getElementById('cu_labelkind') || {}).value,
-    minBox: !!document.getElementById('cu_minpick'),
+    minBox: !!document.getElementById('cu_min'),
     nrBox: !!document.getElementById('cu_nonref'),
+    head: (document.querySelector('.cu-terms .cu-h') || {}).innerText || '',
+    rows: [...document.querySelectorAll('.cu-terms .cu-t')].map(l => l.innerText.replace(/\s+/g, ' ').trim()),
+    pay: [...document.querySelectorAll('.cu-terms .wiz-pm')].map(b => b.dataset.pm + ':' + b.checked),
+    payBlock: !!document.getElementById('wiz_pay'),
   }));
   ok('choosing Full custom draws the builder', after.builder === true, JSON.stringify(after));
   /* A SCREEN MUST NOT MISNAME WHAT IT IS ABOUT TO EMAIL. Left reading the
@@ -24955,9 +24970,24 @@ section('FULL CUSTOM: the mode is offered, opens on Standard, and withdraws the 
      }), await page.evaluate(() => document.querySelector('.rsw-head b').textContent));
   ok('with every figure the brief names', after.rate && after.days && after.perDay
      && after.hours && after.due, JSON.stringify(after));
-  ok('and all seven optional terms', after.terms.join() ===
-     'hourly_rate,days,hours_per_day,total_hours,total_due,non_refundable,minimum_hours',
+  /* THE OWNER'S LIST, IN THE OWNER'S ORDER AND WORDS (checkbox brief §1). */
+  ok('the section is headed INCLUDE ON CLIENT RATE SHEET',
+     after.head === 'INCLUDE ON CLIENT RATE SHEET', JSON.stringify(after.head));
+  ok('and its seven terms are in the owner\'s order', after.terms.join() ===
+     'hourly_rate,days,hours_per_day,total_hours,minimum_hours,non_refundable,total_due',
      after.terms.join());
+  ok('all nine rows carry the owner\'s own labels, payment methods last',
+     after.rows.map(r => r.replace(/ \$\S+| @\S+/g, '')).join('|') === ['Hourly Rate', 'Scheduled Days',
+       'Hours Per Day', 'Total Scheduled Hours', 'Minimum Hours Per Surveillance Day',
+       'Non-Refundable Portion', 'Total Due Before Work Begins', 'Cash App', 'Venmo'].join('|'),
+     JSON.stringify(after.rows));
+  /* §3 — "preserve the owner's explicit Cash App / Venmo selections": the rows
+     ARE the standard send's own selection, which starts with every sendable
+     method ticked, and nothing about entering this mode re-decided it. */
+  ok('Cash App and Venmo are rows in the box, carrying the send\'s existing selection',
+     after.pay.join() === 'cash_app:true,venmo:true', JSON.stringify(after.pay));
+  ok('ONE door for one choice — the standard payment block is not drawn beside them',
+     after.payBlock === false, JSON.stringify(after.payBlock));
   ok('§6/§7 — the minimum and the non-refundable portion are OFF by default',
      !after.ticked.includes('minimum_hours') && !after.ticked.includes('non_refundable'),
      after.ticked.join());
@@ -24984,6 +25014,29 @@ section('FULL CUSTOM: the mode is offered, opens on Standard, and withdraws the 
   ok('switching back to Standard restores the retainer selector',
      back.retainer === true && back.nonRef === true && back.builder === false,
      JSON.stringify(back));
+  ok('and the standard payment block with it',
+     await page.evaluate(() => !!document.getElementById('wiz_pay')));
+
+  /* §3 — THE SELECTION SURVIVES BOTH DIRECTIONS. Unticked in the standard
+     block, it is unticked in the custom box; unticked in the custom box, it
+     is unticked back in the standard block. One record, two drawings. */
+  await page.locator('.wiz-pm[data-pm="venmo"]').click();
+  await page.selectOption('#wiz_mode', 'custom');
+  await page.waitForTimeout(300);
+  const carried = await page.evaluate(() =>
+    [...document.querySelectorAll('.cu-terms .wiz-pm')].map(b => b.dataset.pm + ':' + b.checked).join());
+  ok('§3 — Venmo unticked on the standard send stays unticked in FULL CUSTOM',
+     carried === 'cash_app:true,venmo:false', carried);
+  await page.locator('.cu-terms .wiz-pm[data-pm="cash_app"]').click();
+  await page.selectOption('#wiz_mode', 'standard');
+  await page.waitForTimeout(300);
+  const carriedBack = await page.evaluate(() =>
+    [...document.querySelectorAll('.wiz-pm')].map(b => b.dataset.pm + ':' + b.checked).join());
+  ok('§3 — and Cash App unticked in FULL CUSTOM stays unticked on the standard send',
+     carriedBack === 'cash_app:false,venmo:false', carriedBack);
+  await page.locator('.wiz-pm[data-pm="cash_app"]').click();
+  await page.locator('.wiz-pm[data-pm="venmo"]').click();
+  await page.waitForTimeout(150);
   ok('and it opens on the standard figure, as it always did',
      back.ret === String(await page.evaluate(() => RETAINER_STANDARD)), back.ret);
 
@@ -25099,20 +25152,47 @@ section('FULL CUSTOM: the arithmetic on screen, and the Worker agrees with it');
   await page.locator('.cu-term[data-t="minimum_hours"]').click();
   await page.waitForTimeout(250);
   const minOn = await page.evaluate(() => {
-    const sel = document.getElementById('cu_minpick');
-    return { drawn: !!sel, value: sel ? sel.value : '',
-             options: sel ? [...sel.options].map(o => o.value).join() : '' };
+    const el = document.getElementById('cu_min');
+    const box = document.querySelector('.cu-term[data-t="minimum_hours"]');
+    return { drawn: !!el, value: el ? el.value : 'MISSING', tag: el ? el.tagName : '',
+             label: el ? el.closest('label').innerText.replace(/\s+/g, ' ').trim() : '',
+             underItsBox: !!(el && box && box.closest('label').nextElementSibling
+               && box.closest('label').nextElementSibling.contains(el)) };
   });
-  ok('§6 — ticking the minimum draws its own figure', minOn.drawn === true,
+  /* THE OWNER'S OWN SPEC (checkbox brief §2): "If checked: show: Minimum
+     Hours Per Surveillance Day [ 4 ]". It supersedes the empty "Choose…"
+     select this unit shipped with — four is now a figure ON SCREEN the moment
+     the owner ticks the term, which is a different thing from a figure
+     assumed behind their back, and the refusal below is what keeps it so. */
+  ok('§2 — ticking the minimum draws its own field, directly under its box',
+     minOn.drawn === true && minOn.tag === 'INPUT' && minOn.underItsBox === true,
      JSON.stringify(minOn));
-  ok('§6 — offering the owner\'s own choices rather than forcing four hours',
-     minOn.options === ',4,6,8,12,custom', minOn.options);
-  /* A SELECT WITH NO EMPTY OPTION ASSERTS A VALUE NOBODY CHOSE — the first
-     run of this suite found the minimum quietly reading back as four, the
-     same defect CLAUDE.md records against the private lead's Service picker.
-     Ticking the term must leave the figure genuinely unchosen. */
-  ok('§6 — and it opens on NO figure, so four hours is never assumed',
-     minOn.value === '', JSON.stringify(minOn));
+  ok('§2 — labelled exactly as the owner wrote it',
+     /^Minimum Hours Per Surveillance Day/.test(minOn.label), minOn.label);
+  ok('§2 — showing 4, as the owner\'s spec draws it', minOn.value === '4', JSON.stringify(minOn));
+  await fillOr(page, '#cu_min', '8', '#cu_min fill');
+  await page.waitForTimeout(150);
+  ok('§2 — "or another valid number": the field takes what is typed',
+     await page.evaluate(() => (document.getElementById('cu_min') || {}).value === '8'));
+  /* A TYPED FIGURE SURVIVES AN UNTICK AND A RE-TICK; a CLEARED field is never
+     refilled by ticking some OTHER box — the handler keys off the minimum's
+     own tick, and this is the case that tells the two rules apart. */
+  await page.locator('.cu-term[data-t="minimum_hours"]').click();
+  await page.waitForTimeout(200);
+  ok('unticking the minimum takes its field away',
+     await page.evaluate(() => !document.getElementById('cu_min')));
+  await page.locator('.cu-term[data-t="minimum_hours"]').click();
+  await page.waitForTimeout(200);
+  ok('re-ticking it brings back the 8 that was typed, not a 4',
+     await page.evaluate(() => (document.getElementById('cu_min') || {}).value === '8'));
+  await fillOr(page, '#cu_min', '', '#cu_min fill');
+  await page.locator('.cu-term[data-t="non_refundable"]').click();
+  await page.waitForTimeout(250);
+  ok('§2 — a CLEARED minimum stays clear when another box is ticked — four is never put back',
+     await page.evaluate(() => (document.getElementById('cu_min') || {}).value === ''),
+     await page.evaluate(() => JSON.stringify((document.getElementById('cu_min') || {}).value)));
+  await page.locator('.cu-term[data-t="non_refundable"]').click();
+  await page.waitForTimeout(200);
   await page.locator('.cu-term[data-t="non_refundable"]').click();
   await page.waitForTimeout(250);
   const nrOn = await page.evaluate(() => {
@@ -25154,15 +25234,19 @@ section('FULL CUSTOM: Preview is the Worker\'s, and Send is what was previewed')
      document it would reject. Driven the way a person does it — tick, choose
      nothing, press Preview — because the first version of this probe poked
      the state object instead and measured a path no person can take. */
+  /* The minimum now SHOWS 4 on its tick (the owner's spec), so the path to a
+     blank one is the owner clearing it — which is exactly the case that must
+     be refused rather than quietly filled back in. */
   await page.locator('.cu-term[data-t="minimum_hours"]').click();
   await page.waitForTimeout(250);
+  await fillOr(page, '#cu_min', '', '#cu_min fill');
   await page.locator('.rsw-acts .btn', { hasText: 'Preview' }).click();
   await page.waitForTimeout(900);
   const refused = await page.evaluate(() => ({
     step: SHEET_WIZ.step, err: SHEET_WIZ.err,
     onForm: !!document.getElementById('cu_rate'),
   }));
-  ok('a term with no figure refuses, and the admin stays on the form',
+  ok('a cleared minimum refuses by name, and the admin stays on the form',
      refused.step === 1 && refused.onForm === true && /minimum/i.test(refused.err || ''),
      JSON.stringify(refused));
   /* GUARDED, so a wizard that wrongly advanced FAILS above by name rather than
@@ -25235,6 +25319,106 @@ section('FULL CUSTOM: Preview is the Worker\'s, and Send is what was previewed')
   await page.close();
 }
 
+
+
+section('Checkbox builder §4: the Preview is exactly the ticked set, and so is the email');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await openWiz(page);
+  await page.selectOption('#wiz_mode', 'custom');
+  await page.waitForTimeout(250);
+  await page.locator('#wiz_to').fill('mirror@example.com');
+  await page.locator('#cu_rate').fill('75');
+  await page.locator('#cu_days').fill('2');
+  await page.locator('#cu_perday').fill('12');
+  await page.waitForTimeout(200);
+
+  /* A deliberate mix, driven through the real controls: a schedule term OFF
+     while its figure is still typed (the days drive the arithmetic and must
+     not be printed), the minimum ON at 8, the portion ON at 250, and Cash App
+     OFF with Venmo ON. */
+  await page.locator('.cu-term[data-t="days"]').click();
+  await page.locator('.cu-term[data-t="minimum_hours"]').click();
+  await page.waitForTimeout(200);
+  await fillOr(page, '#cu_min', '8', '#cu_min fill');
+  await page.locator('.cu-term[data-t="non_refundable"]').click();
+  await page.waitForTimeout(200);
+  await fillOr(page, '#cu_nonref', '250', '#cu_nonref fill');
+  await page.locator('.cu-terms .wiz-pm[data-pm="cash_app"]').click();
+  await page.waitForTimeout(150);
+
+  await page.locator('.rsw-acts .btn', { hasText: 'Preview' }).click();
+  await page.waitForFunction(() => SHEET_WIZ && SHEET_WIZ.step === 2, null, { timeout: 6000 });
+  await page.waitForTimeout(300);
+  const pv = await page.evaluate(() => {
+    const dl = [...document.querySelectorAll('.rsw-body dt')].map(dt =>
+      [dt.textContent.trim(), (dt.nextElementSibling || {}).innerText || '']);
+    const get = k => ((dl.find(([t]) => t === k) || [])[1] || '').replace(/\s+/g, ' ').trim();
+    return { agreement: get('Agreement'), payment: get('Payment options'),
+             eng: [...document.querySelectorAll('.rs-eng .eng-l')].map(e => e.textContent.trim()),
+             all: document.querySelector('.rsw-body').innerText.replace(/\s+/g, ' ') };
+  });
+  ok('§4 — the Preview states the hourly rate that is ticked',
+     /\$75\.00 per hour/.test(pv.agreement), pv.agreement);
+  ok('§4 — and NOT the days that were typed and unticked',
+     !/\b2 days\b/.test(pv.all), pv.agreement);
+  ok('§4 — while the ticked schedule figures are there, derived from them',
+     /12 hours per day/.test(pv.agreement) && /24 hours total/.test(pv.agreement), pv.agreement);
+  ok('§4 — the money terms appear once each, exactly as the client reads them',
+     pv.eng.join('|') === 'TOTAL DUE BEFORE WORK BEGINS: $1,800.00|NON-REFUNDABLE PORTION: $250.00|'
+       + '8-HOUR MINIMUM PER SURVEILLANCE DAY', JSON.stringify(pv.eng));
+  ok('§4 — the payment row names Venmo alone',
+     /Venmo/.test(pv.payment) && !/Cash App/.test(pv.payment), pv.payment);
+  ok('§4 — and no standard term is anywhere on the Preview',
+     !/4-HOUR/.test(pv.all) && !/\$500\b/.test(pv.all) && !/Agreed retainer/.test(pv.all), pv.all.slice(0, 400));
+
+  MAILED = null;
+  env.RESEND_API_KEY = 'e2e-resend-key';
+  await page.evaluate(() => wizSend());
+  await page.waitForFunction(() => SHEET_WIZ === null, null, { timeout: 8000 });
+  const mail = REAL_MAIL();
+  delete env.RESEND_API_KEY;
+  const t = mail ? mail.text : '';
+  ok('the email went', !!mail && mail.to === 'mirror@example.com', JSON.stringify(mail && mail.to));
+  ok('§4 — the email is the Preview: no days', !/\b2 days\b/.test(t) && !/Scheduled days/.test(t), t.slice(0, 400));
+  ok('§4 — the ticked schedule is there', /12 hours/.test(t) && /24 hours/.test(t));
+  ok('§4 — the minimum at exactly the chosen value', t.includes('8-HOUR MINIMUM PER SURVEILLANCE DAY')
+     && !t.includes('4-HOUR'));
+  ok('§4 — the portion at exactly the chosen amount', t.includes('NON-REFUNDABLE PORTION: $250.00'));
+  ok('§4 — Venmo offered and Cash App not, in both parts',
+     /venmo/i.test(t) && !/cash app/i.test(t) && mail.html.includes('venmo.com')
+     && !mail.html.includes('https://cash.app/'));
+
+  /* AND WITH BOTH METHODS UNTICKED THERE IS NO PAYMENT BLOCK — the rows are
+     the decision, with no separate switch that could still say yes. */
+  await openWiz(page);
+  await page.selectOption('#wiz_mode', 'custom');
+  await page.waitForTimeout(250);
+  await page.locator('#wiz_to').fill('nopay@example.com');
+  await page.locator('#cu_rate').fill('75');
+  await page.locator('#cu_days').fill('2');
+  await page.locator('#cu_perday').fill('12');
+  await page.locator('.cu-terms .wiz-pm[data-pm="cash_app"]').click();
+  await page.locator('.cu-terms .wiz-pm[data-pm="venmo"]').click();
+  await page.locator('.rsw-acts .btn', { hasText: 'Preview' }).click();
+  await page.waitForFunction(() => SHEET_WIZ && SHEET_WIZ.step === 2, null, { timeout: 6000 });
+  const noPay = await page.evaluate(() => {
+    const dt = [...document.querySelectorAll('.rsw-body dt')].find(d => d.textContent.trim() === 'Payment options');
+    return dt ? dt.nextElementSibling.innerText.trim() : 'NO ROW';
+  });
+  ok('with both unticked the Preview says payment is not included', noPay === 'Not included', noPay);
+  MAILED = null;
+  env.RESEND_API_KEY = 'e2e-resend-key';
+  await page.evaluate(() => wizSend());
+  await page.waitForFunction(() => SHEET_WIZ === null, null, { timeout: 8000 });
+  const m2 = REAL_MAIL();
+  delete env.RESEND_API_KEY;
+  ok('and the email carries no payment block at all',
+     !!m2 && !/PAYMENT OPTIONS/.test(m2.text) && !/cash app|venmo/i.test(m2.text),
+     m2 ? m2.text.slice(-300) : 'no mail');
+  await page.close();
+}
 
 section('FULL CUSTOM: §15 — Simple View, open intake, custom agreement, back to the intake');
 {
@@ -25388,13 +25572,21 @@ section('FULL CUSTOM: the builder on a phone, at 390 and 320');
     await page.locator('#cu_rate').fill('75');
     await page.locator('#cu_days').fill('2');
     await page.locator('#cu_perday').fill('12');
+    /* Both optional figures ticked, so their fields are measured too — the
+       longest the box gets, which is the shape that must still fit. */
+    await page.locator('.cu-term[data-t="minimum_hours"]').click();
+    await page.waitForTimeout(200);
+    await page.locator('.cu-term[data-t="non_refundable"]').click();
     await page.waitForTimeout(300);
 
     const geo = await page.evaluate(() => {
       const body = document.getElementById('rsw_body');
       const box = document.querySelector('.cubox');
-      const fields = ['cu_rate', 'cu_days', 'cu_perday', 'cu_hours', 'cu_due']
+      const fields = ['cu_rate', 'cu_days', 'cu_perday', 'cu_hours', 'cu_due', 'cu_min', 'cu_nonref']
         .map(id => document.getElementById(id)).filter(Boolean);
+      const acts = document.querySelector('.rsw-acts');
+      const prevBtn = acts && [...acts.querySelectorAll('button')].find(b => /Preview/.test(b.textContent));
+      const pr = prevBtn ? prevBtn.getBoundingClientRect() : null;
       const terms = [...document.querySelectorAll('.cu-terms .cu-t')];
       const r = box.getBoundingClientRect();
       return {
@@ -25410,8 +25602,34 @@ section('FULL CUSTOM: the builder on a phone, at 390 and 320');
           .split(' ').length,
         total: (document.querySelector('.cu-total') || {}).textContent || '',
         locked: getComputedStyle(document.documentElement).overflow === 'hidden',
+        nFields: fields.length,
+        labelPx: terms.map(t => parseFloat(getComputedStyle(t.querySelector('span')).fontSize)),
+        labelWt: terms.map(t => parseInt(getComputedStyle(t.querySelector('span')).fontWeight, 10)),
+        /* THE NEIGHBOUR, not an invented number: the label of the rate field on
+           this same screen is the text the owner already reads here. */
+        nbrPx: parseFloat(getComputedStyle(document.getElementById('cu_rate').closest('label')
+          .querySelector('span')).fontSize),
+        prev: pr ? { top: Math.round(pr.top), bottom: Math.round(pr.bottom), h: Math.round(pr.height),
+                     vh: window.innerHeight,
+                     hit: document.elementFromPoint(Math.round(pr.left + pr.width / 2),
+                       Math.round(pr.top + pr.height / 2)) === prevBtn } : null,
       };
     });
+    ok(`${width}: the minimum and portion fields are drawn and measured with the rest`,
+       geo.nFields === 7, String(geo.nFields));
+    /* READABLE IS MEASURED AGAINST THE SCREEN'S OWN TEXT. The first version
+       of this assertion invented a 14px bar and failed labels that are the
+       portal's standard size — every checkbox label and every field label in
+       this wizard is .85rem, 13.6px, weight 600. What would be a defect is a
+       term label SMALLER or LIGHTER than the labels around it. */
+    ok(`${width}: every row label is as large as the screen's own field labels`,
+       geo.labelPx.length === 9 && geo.labelPx.every(px => px >= geo.nbrPx),
+       JSON.stringify({ rows: geo.labelPx, neighbour: geo.nbrPx }));
+    ok(`${width}: and set in the same weight, so none reads as a footnote`,
+       geo.labelWt.every(w => w >= 600), JSON.stringify(geo.labelWt));
+    ok(`${width}: §6 — Preview is on screen and pressable with the whole box open`,
+       !!geo.prev && geo.prev.top >= 0 && geo.prev.bottom <= geo.prev.vh && geo.prev.h >= 44
+       && geo.prev.hit === true, JSON.stringify(geo.prev));
     ok(`${width}: the builder stays inside the screen`,
        geo.boxRight <= geo.vw && geo.boxLeft >= 0 && geo.widest <= geo.vw,
        JSON.stringify(geo));
@@ -25423,8 +25641,8 @@ section('FULL CUSTOM: the builder on a phone, at 390 and 320');
        geo.heights.every(h => h >= 44), JSON.stringify(geo.heights));
     ok(`${width}: the figures stack one per row rather than squeezing`,
        geo.cols === 1, geo.cols + ' columns');
-    ok(`${width}: all seven terms are on their own rows`,
-       geo.termRows === 7, String(geo.termRows));
+    ok(`${width}: all nine rows — seven terms, two payment methods — are on their own rows`,
+       geo.termRows === 9, String(geo.termRows));
     /* THE PORTAL'S FLOOR IS 44, and the first version of this assertion
        allowed 40 — lenient enough that it still failed, at 22, which is the
        only reason the defect was seen. It asks for the real floor now. */

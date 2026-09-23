@@ -991,13 +991,25 @@ function customAgreementSpec(raw) {
   }
   const wanted = askedTerms === null ? CUSTOM_TERMS_DEFAULT_ON.slice() : [...new Set(askedTerms)];
 
-  /* A TERM CANNOT BE SHOWN WITHOUT ITS FIGURE. Ticking "hours per day" on an
-     agreement that has none would print a label over nothing, which is the
-     blank row §5 forbids — so the figure decides and the tick only ever
-     narrows. */
-  const has = { hourly_rate: true, days: days.value !== null, hours_per_day: perDay.value !== null,
-                total_hours: totalHours !== null, total_due: true,
-                non_refundable: true, minimum_hours: true };
+  /* A TICKED TERM WITH NO FIGURE IS REFUSED BY NAME, NEVER QUIETLY DROPPED
+     (owner, 2026-09-23, the checkbox brief §4: "If ON: the exact value
+     appears"). The first build let the figure decide — a ticked "Scheduled
+     days" with no days typed simply vanished from the document — which was
+     tidy and was also a Preview that did not mirror the selections: the
+     owner ticked a term and the agreement went out without it, with nothing
+     on screen saying why. Printing the label over nothing is the blank row §5
+     forbids, so the only honest answer is to stop and name the gap. */
+  const SCHEDULE_FIGURE = {
+    days: [days.value, 'the scheduled number of days'],
+    hours_per_day: [perDay.value, 'the hours per day'],
+    total_hours: [totalHours, 'the total scheduled hours'],
+  };
+  for (const [term, [figure, words]] of Object.entries(SCHEDULE_FIGURE)) {
+    if (wanted.includes(term) && figure === null) {
+      return { error: `Enter ${words}, or untick that term so it is left off the rate sheet.`,
+               code: `custom_${term}_required` };
+    }
+  }
 
   /* THE MINIMUM IS OPTIONAL AND OFF BY DEFAULT (§6), AND ITS NUMBER IS THE
      OWNER'S. `PERSONAL.minHours` is the STANDARD product's four hours and is
@@ -1057,7 +1069,9 @@ function customAgreementSpec(raw) {
     .replace(/[\r\n\t]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 80)
     || 'Custom Surveillance Agreement';
 
-  const terms = CUSTOM_TERMS.filter(t => wanted.includes(t) && has[t]);
+  /* Every ticked term has its figure by now — refused above if it did not —
+     so the selection IS the document's term list, in the one fixed order. */
+  const terms = CUSTOM_TERMS.filter(t => wanted.includes(t));
   return {
     spec: {
       agreement_type: 'full_custom',
