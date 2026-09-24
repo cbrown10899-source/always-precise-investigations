@@ -20472,6 +20472,13 @@ section('Case closeout: a refund is its own event and the payment is never touch
      && /FINAL BALANCE\.+ \$0/.test(mailed.text), mailed.text.slice(0, 400));
   ok('it names the client and the case, and states the status in words',
      /Vanessa Reed/.test(doc) && /API-CLO-A/.test(doc) && /CASE STATUS: CLOSED/.test(mailed.text));
+  /* A RETAINER CASE'S STATEMENT KEEPS ITS EXACT WORDS — the agreed-amount unit
+     (2026-09-24) routed three of them through `closeoutWords`, and this pins
+     both halves to what they were, whitespace included. */
+  ok('the standard statement keeps its retainer wording, in both halves, byte for byte',
+     mailed.text.includes('This statement documents the disposition of the retainer held on this case.')
+     && mailed.html.includes('This statement documents the disposition of the\n    retainer held on this case.')
+     && />Retainer received</.test(mailed.html) && />Non-refundable retained<\/td>/.test(mailed.html));
   ok('it asks for no money and quotes no rate',
      !/amount due|please remit|pay now|per hour|\/hr/i.test(doc));
   mailed = null;
@@ -23432,6 +23439,330 @@ section('Checkbox builder: §7 A–F, and a ticked term always appears');
      && o.text.includes('24 hours') && o.text.includes('8-HOUR MINIMUM PER SURVEILLANCE DAY'),
      o.text.slice(0, 300));
   globalThis.fetch = realFetch;
+}
+
+section('Agreed amount: a Full Custom case carries its own figure, and never calls it a retainer');
+{
+  /* OWNER, 2026-09-24: "A Full Custom agreement needs an agreed financial figure
+     on the case ... Do NOT store or display the Full Custom total as 'Retainer'
+     unless the owner explicitly selected Retainer as the payment type." And §6:
+     the exact real configuration — $75 x 2 days x 12 hours = $1,800, minimum
+     OFF, non-refundable OFF, Cash App and Venmo ON — driven end to end through
+     the ordinary send route against a real case, then read back through every
+     screen's own Worker read. */
+  const realFetch = globalThis.fetch;
+  let mails = [];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      mails.push(JSON.parse(init.body)); return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '80';
+  env.INGEST_PER_MINUTE = '80';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const row = (sql, ...b) => env.DB.prepare(sql).bind(...b).first();
+  const ws = async no => jsonOf(await call(env, `/cases/${no}/workspace`, { cookie: admin }));
+  const REAL = { hourly_rate: '75', days: '2', hours_per_day: '12' };
+  const sendTo = (no, custom, extra = {}) => call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin, body: { to: 'client@example.com', case_no: no,
+      include_intake: true, include_payment: true, methods: ['cash_app', 'venmo'],
+      custom_agreement: custom, ...extra } });
+
+  await ingest(env, { case_no: 'API-AGR-1', service: 'Surveillance', client_name: 'Dana Real',
+    client_email: 'client@example.com', subject_name: 'R. Subject', objective: 'Document activity' });
+
+  /* ---- §6 PREVIEW: the rehearsal of the exact configuration ---------------- */
+  const prep = await jsonOf(await call(env, '/assistant/prepare-sheet', { method: 'POST', cookie: admin,
+    body: { id: 'private_retainer', to: 'client@example.com', case_no: 'API-AGR-1',
+            send_context: 'private', include_intake: true, include_payment: true,
+            methods: ['cash_app', 'venmo'], custom_agreement: REAL } }));
+  ok('§6 Preview succeeds on the real configuration', prep.ok !== false && !!prep.body_text,
+     JSON.stringify(prep).slice(0, 200));
+  ok('§6 Preview states $1,800.00 and no minimum and no retainer',
+     prep.body_text.includes('$1,800.00') && !/MINIMUM PER SURVEILLANCE DAY/i.test(prep.body_text)
+     && !/retainer/i.test(prep.body_text), prep.body_text.slice(0, 300));
+
+  /* ---- §6 SEND ----------------------------------------------------------- */
+  mails = [];
+  const sent = await jsonOf(await sendTo('API-AGR-1', REAL));
+  ok('§6 Send succeeds', sent.ok === true, JSON.stringify(sent).slice(0, 240));
+  const email = mails[0] || { text: '', html: '' };
+  /* The rehearsal carries no per-send document reference — a preview showing
+     a reference that will never exist would be untrue — so that one field is
+     normalised out, the mirror pin's own rule. */
+  const noRef = t => String(t).replace(/[?&]ref=DOC-[0-9a-f]{32}/g, '');
+  ok('§6 the email the client got is the preview, byte for byte (less the per-send reference)',
+     noRef(email.text) === noRef(prep.body_text) && email.subject === prep.subject,
+     `${noRef(email.text).length} vs ${noRef(prep.body_text).length}`);
+  ok('§6 no minimum-hours wording anywhere on it',
+     !/minimum/i.test(email.text) && !/minimum/i.test(email.html));
+  ok('§6 Cash App and Venmo both appear, as working links',
+     email.html.includes('href="https://cash.app/') && email.html.includes('href="https://venmo.com/'));
+  ok('§6 the word retainer appears nowhere on the document',
+     !/retainer/i.test(email.text) && !/retainer/i.test(email.html));
+
+  /* §6 — the custom agreement, the exact document and the intake link persist. */
+  const doc = await row('SELECT * FROM sent_document WHERE doc_id = ?', sent.doc_id);
+  ok('§6 the exact sent document persists, on this case', doc && doc.ok === 1
+     && doc.case_no === 'API-AGR-1' && doc.body_text === email.text && doc.body_html === email.html);
+  ok('§6 the intake link persists with the document it came from',
+     doc.intake_included === 1 && String(doc.intake_door).includes('ref=' + sent.doc_id)
+     && email.text.includes(doc.intake_door), String(doc.intake_door));
+  const cu = await row('SELECT * FROM sent_document_custom WHERE doc_id = ?', sent.doc_id);
+  ok('§6 the custom agreement persists with its own figures',
+     cu && cu.hourly_rate === 75 && cu.scheduled_days === 2 && cu.hours_per_day === 12
+     && cu.total_hours === 24 && cu.total_due === 1800 && cu.minimum_hours_included === 0
+     && cu.non_refundable_included === 0 && JSON.parse(cu.payment_methods).sort().join() === 'cash_app,venmo',
+     JSON.stringify(cu));
+  const reopened = await jsonOf(await call(env, `/documents/${sent.doc_id}`, { cookie: admin }));
+  ok('§6 reopened later it is exactly as sent', reopened.document
+     && reopened.document.body_text === email.text && reopened.document.body_html === email.html
+     && reopened.document.subject === email.subject
+     && reopened.custom_agreement && reopened.custom_agreement.total_due === 1800);
+
+  /* ---- §2 THE AGREED AMOUNT ON THE CASE ----------------------------------- */
+  let w = await ws('API-AGR-1');
+  let r = w.authorization.retainer;
+  ok('§2 the case shows the agreed amount — $1,800', r.amount === 1800 && r.agreed === 1800,
+     JSON.stringify(r).slice(0, 200));
+  ok('§2 under its own word, not Retainer', r.model === 'agreement' && r.term === 'Agreed amount',
+     `${r.model} / ${r.term}`);
+  ok('§2 and it names the document it came from', r.agreement && r.agreement.doc_id === sent.doc_id
+     && r.agreement.hourly_rate === 75 && r.agreement.total_hours === 24);
+  ok('§2 balances reference it: $1,800 owed, nothing received',
+     r.outstanding === 1800 && r.received_total === 0 && r.status === 'pending');
+  ok('§2 the work arithmetic runs at the AGREED rate, not the standard hourly',
+     w.authorization.billed_at_rate === 75 && r.approx_hours_remaining === 24,
+     `${w.authorization.billed_at_rate} / ${r.approx_hours_remaining}`);
+  ok('§2 NOTHING was written as a retainer — no retainer row exists',
+     !(await row('SELECT 1 AS x FROM case_retainer WHERE case_no = ?', 'API-AGR-1')));
+
+  /* The list row carries it too — Simple View's words read it. */
+  const list = await jsonOf(await call(env, '/submissions', { cookie: admin }));
+  const lr = (list.rows || list.submissions || []).find(x => x.case_no === 'API-AGR-1') || {};
+  ok('§2 the case list row carries the agreed total and its kind',
+     lr.agreement_total === 1800 && lr.agreement_kind === 'total_due', JSON.stringify(lr).slice(0, 200));
+
+  /* The intake screen's associated document states it. */
+  const docs = await jsonOf(await call(env, '/cases/API-AGR-1/documents', { cookie: admin }));
+  const d0 = (docs.documents || [])[0] || {};
+  ok('§2 the associated rate sheet states the agreed amount',
+     d0.agreement && d0.agreement.total_due === 1800 && d0.agreement.term === 'Agreed amount');
+
+  /* The closeout checklist's billing fact names it, as a fact. */
+  const facts = (await jsonOf(await call(env, '/cases/API-AGR-1/closeout', { cookie: admin }))).facts || {};
+  ok('§2 the closeout fact states the unpaid agreed amount',
+     /agreed amount of \$1800\.00 is not recorded as received/.test((facts.billing || {}).note || ''),
+     JSON.stringify(facts.billing));
+  ok('§2 and never calls it a retainer', !/retainer/i.test((facts.billing || {}).note || ''));
+
+  /* The attention list alerts on the money the client was actually sent. */
+  let att = await jsonOf(await call(env, '/attention', { cookie: admin }));
+  let al = (att.items || att.alerts || []).filter(x => x.case_no === 'API-AGR-1');
+  ok('§2 the office is alerted: agreed amount outstanding, $1,800',
+     al.some(x => /Agreed amount outstanding/.test(x.what || x.title || '')
+       && /\$1,800/.test(x.why || x.detail || '')), JSON.stringify(al).slice(0, 300));
+  ok('§2 and never as a retainer', !al.some(x => /Retainer/.test(x.what || x.title || '')));
+
+  /* ---- RECORDING THE PAYMENT ---------------------------------------------- */
+  mails = [];
+  await call(env, '/cases/API-AGR-1/retainer', { method: 'POST', cookie: admin,
+    body: { received: true, amount_received: 1800, method: 'cash_app', paid_on: '2026-09-24' } });
+  w = await ws('API-AGR-1'); r = w.authorization.retainer;
+  ok('§2 the payment lands against the agreed amount', r.received_total === 1800
+     && r.outstanding === 0 && r.status === 'received' && r.amount === 1800, JSON.stringify(r).slice(0, 200));
+  ok('§2 the agreed amount does not become the standard figure once a row exists',
+     r.amount === 1800 && r.model === 'agreement');
+  att = await jsonOf(await call(env, '/attention', { cookie: admin }));
+  ok('§2 and the alert leaves because the money arrived',
+     !(att.items || att.alerts || []).some(x => x.case_no === 'API-AGR-1' && x.kind === 'payments'));
+  const recent = await jsonOf(await call(env, '/recent-activity', { cookie: admin }));
+  const pay = (recent.items || recent.activity || []).find(x => x.case_no === 'API-AGR-1' && x.kind === 'payment');
+  ok('§2 recent activity says a PAYMENT was recorded, not a retainer payment',
+     pay && pay.detail === 'Payment recorded', JSON.stringify(pay || {}));
+  const tl = await jsonOf(await call(env, '/cases/API-AGR-1/timeline', { cookie: admin }));
+  const tlPay = (tl.events || []).find(e => e.type === 'payment');
+  ok('§2 the timeline says payment recorded, without the word retainer',
+     tlPay && /payment recorded/.test(tlPay.title) && !/retainer/i.test(tlPay.title), JSON.stringify(tlPay || {}));
+
+  /* ---- INVOICES REFERENCE THE REAL FIGURE ---------------------------------- */
+  const made = await jsonOf(await call(env, '/cases/API-AGR-1/invoices', { method: 'POST', cookie: admin,
+    body: { from_authorization: true } }));
+  const iv = made.invoice || {};
+  ok('§2 the opening invoice bills the agreed amount under the agreement\'s own name',
+     iv.lines && iv.lines.length === 1 && iv.lines[0].amount === 1800
+     && iv.lines[0].description === 'Custom Surveillance Agreement', JSON.stringify(iv.lines));
+  ok('§2 with no retainer sentence on it', !iv.client_notes || !/retainer/i.test(iv.client_notes),
+     String(iv.client_notes));
+  ok('§2 the invoice money block is the agreement, under its word',
+     iv.retainer && iv.retainer.model === 'agreement' && iv.retainer.term === 'Agreed amount'
+     && iv.retainer.amount === 1800, JSON.stringify(iv.retainer));
+  ok('§2 and the invoice that asks for it is not counted as work against it',
+     !!(await row('SELECT 1 AS x FROM invoice_retainer WHERE invoice_id = ?', iv.id)));
+
+  /* ---- THE RECORD PACKET ---------------------------------------------------- */
+  const pk = await jsonOf(await call(env, '/cases/API-AGR-1/record-packet', { cookie: admin }));
+  ok('§2 the record packet carries the agreed amount under its own word',
+     pk.retainer && pk.retainer.agreed_amount === 1800 && pk.retainer.term === 'Agreed amount'
+     && pk.retainer.agreement && pk.retainer.agreement.doc_id === sent.doc_id, JSON.stringify(pk.retainer).slice(0, 200));
+  ok('§2 and states what the document quoted — the total, not a retainer',
+     pk.retainer.document_amount === 1800 && pk.rate_sheet && pk.rate_sheet.agreement_total === 1800
+     && pk.rate_sheet.retainer_amount === null);
+
+  /* ---- CLOSEOUT: the ledger and the client's statement ---------------------- */
+  const ALL = { field_work: true, activity_logs: true, evidence: true, report: true,
+                admin_review: true, deliverables: true, expenses: true, billing: true };
+  await call(env, '/cases/API-AGR-1/closure', { method: 'POST', cookie: admin, body: { checklist: ALL } });
+  let money = await jsonOf(await call(env, '/cases/API-AGR-1/closeout-money', { cookie: admin }));
+  ok('§2 the closeout ledger references the agreed amount',
+     money.agreement && money.agreement.amount === 1800 && money.agreement.term === 'Agreed amount');
+  ok('§2 and publishes the statement\'s own words — no retainer',
+     money.words && money.words.received === 'Payment received'
+     && money.words.retained === 'Amount retained' && /payment held/.test(money.words.closing),
+     JSON.stringify(money.words));
+  await call(env, '/cases/API-AGR-1/closeout/prepare', { method: 'POST', cookie: admin,
+    body: { retained: 1800, refund: 0, refund_status: 'none_due' } });
+  await call(env, '/cases/API-AGR-1/closeout/confirm', { method: 'POST', cookie: admin, body: {} });
+  mails = [];
+  const em = await call(env, '/cases/API-AGR-1/closeout/email', { method: 'POST', cookie: admin,
+    body: { to: 'client@example.com' } });
+  const st = mails[0] || { text: '', html: '' };
+  ok('§2 the closeout statement goes', em.status === 200 && !!st.text, `${em.status} ${st.text.slice(0, 80)}`);
+  ok('§2 the client\'s statement says Payment received and Amount retained',
+     st.text.includes('Payment received') && st.text.includes('Amount retained')
+     && st.html.includes('Payment received') && st.html.includes('Amount retained'), st.text);
+  ok('§2 and uses the word retainer nowhere — neither half',
+     !/retainer/i.test(st.text) && !/retainer/i.test(st.html),
+     ((st.text + ' || ' + st.html).match(/.{0,40}retainer.{0,40}/i) || [''])[0]);
+  ok('§2 nor "non-refundable" — this agreement stated no such portion',
+     !/non-refundable/i.test(st.text) && !/non-refundable/i.test(st.html));
+
+  /* ---- A STALE RETAINER FIGURE DOES NOT SPEAK FOR AN AGREEMENT CASE -------- */
+  /* The standard wizard writes an agreed retainer the moment its selector is
+     touched; a case quoted that way and THEN sent a Full Custom agreement holds
+     both. The attention list must alert on the agreement's figure, once, and
+     never on the retainer row it replaced. */
+  await ingest(env, { case_no: 'API-AGR-STALE', service: 'Surveillance', client_name: 'Stale Row',
+    client_email: 'client@example.com', subject_name: 'T. Subject', objective: 'x' });
+  await call(env, '/cases/API-AGR-STALE/retainer', { method: 'POST', cookie: admin,
+    body: { retainer_amount: 2000 } });
+  await sendTo('API-AGR-STALE', REAL);
+  att = await jsonOf(await call(env, '/attention', { cookie: admin }));
+  al = (att.items || att.alerts || []).filter(x => x.case_no === 'API-AGR-STALE');
+  ok('a stale retainer row does not raise a retainer alert on an agreement case',
+     !al.some(x => /Retainer/.test(x.what || x.title || '')), JSON.stringify(al).slice(0, 300));
+  const pal = al.filter(x => x.kind === 'payments');
+  ok('the agreement raises exactly one MONEY alert, on its own figure',
+     pal.length === 1 && /Agreed amount outstanding/.test(pal[0].what || '')
+     && /\$1,800/.test(pal[0].why || ''), JSON.stringify(pal).slice(0, 300));
+  ok('and the case reads its agreed amount, not the stale retainer',
+     (await ws('API-AGR-STALE')).authorization.retainer.amount === 1800);
+
+  /* ---- THE MOST RECENT OFFER GOVERNS --------------------------------------- */
+  await ingest(env, { case_no: 'API-AGR-2', service: 'Surveillance', client_name: 'Sam Latest',
+    client_email: 'client@example.com', subject_name: 'L. Subject', objective: 'x' });
+  await sendTo('API-AGR-2', REAL);
+  ok('a custom agreement makes the case an agreement case',
+     (await ws('API-AGR-2')).authorization.retainer.model === 'agreement');
+  await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'client@example.com', case_no: 'API-AGR-2' } });
+  r = (await ws('API-AGR-2')).authorization.retainer;
+  ok('a later STANDARD sheet returns it to the retainer model and the standard figure',
+     r.model === 'retainer' && r.amount === 1500 && r.term === undefined, JSON.stringify(r).slice(0, 160));
+  await sendTo('API-AGR-2', { hourly_rate: '80', days: '3', hours_per_day: '10' });
+  r = (await ws('API-AGR-2')).authorization.retainer;
+  ok('a later custom agreement replaces the figure — $80 x 30 = $2,400',
+     r.model === 'agreement' && r.amount === 2400 && r.agreement.hourly_rate === 80, JSON.stringify(r).slice(0, 160));
+
+  /* ---- THE OWNER'S OWN "RETAINER" LABEL KEEPS THE RETAINER WORDS ---------- */
+  await ingest(env, { case_no: 'API-AGR-3', service: 'Surveillance', client_name: 'Ret Label',
+    client_email: 'client@example.com', subject_name: 'Q. Subject', objective: 'x' });
+  await sendTo('API-AGR-3', { ...REAL, payment_label_kind: 'retainer' });
+  r = (await ws('API-AGR-3')).authorization.retainer;
+  ok('a custom agreement the owner LABELLED a retainer is called Retainer',
+     r.model === 'agreement' && r.term === 'Retainer' && r.amount === 1800, JSON.stringify(r).slice(0, 160));
+  const iv3 = (await jsonOf(await call(env, '/cases/API-AGR-3/invoices', { method: 'POST', cookie: admin,
+    body: { from_authorization: true } }))).invoice || {};
+  ok('and its opening invoice is the existing retainer line, carrying the agreement\'s figure',
+     iv3.lines && iv3.lines[0].description === 'Investigation Retainer' && iv3.lines[0].amount === 1800
+     && /Retainer is applied/.test(iv3.client_notes || ''), JSON.stringify(iv3.lines));
+  const m3 = await jsonOf(await call(env, '/cases/API-AGR-3/closeout-money', { cookie: admin }));
+  ok('and its closeout keeps the retainer words, byte for byte',
+     m3.words.received === 'Retainer received' && m3.words.retained === 'Non-refundable retained'
+     && m3.words.closing === 'This statement documents the disposition of the retainer held on this case.');
+
+  /* ---- A STANDARD CASE DID NOT MOVE ---------------------------------------- */
+  await ingest(env, { case_no: 'API-AGR-STD', service: 'Surveillance', client_name: 'Standard Sue',
+    client_email: 'client@example.com', subject_name: 'S. Subject', objective: 'x' });
+  await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'client@example.com', case_no: 'API-AGR-STD' } });
+  const ws0 = await ws('API-AGR-STD');
+  r = ws0.authorization.retainer;
+  ok('a standard case reads exactly as before: retainer model, no term, no agreement key',
+     r.model === 'retainer' && !('term' in r && r.term !== undefined) && !r.agreement
+     && r.amount === 1500 && ws0.authorization.billed_at_rate === 100, JSON.stringify(r).slice(0, 160));
+  const m0 = await jsonOf(await call(env, '/cases/API-AGR-STD/closeout-money', { cookie: admin }));
+  ok('and its closeout words are the original three',
+     m0.agreement === null && m0.words.received === 'Retainer received'
+     && m0.words.retained === 'Non-refundable retained');
+  const ivs = (await jsonOf(await call(env, '/cases/API-AGR-STD/invoices', { method: 'POST', cookie: admin,
+    body: { from_authorization: true } }))).invoice || {};
+  ok('and its opening invoice is the Investigation Retainer line with its note, as ever',
+     ivs.lines && ivs.lines[0].description === 'Investigation Retainer' && ivs.lines[0].amount === 1500
+     && ivs.client_notes === 'Retainer is applied toward authorized investigative services.');
+
+  /* ---- A PRE-CASE AGREEMENT REACHES ITS CASE THROUGH THE DOOR --------------- */
+  const pre = await jsonOf(await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'newcaller@example.com', client_name: 'New Caller', include_intake: true,
+            include_payment: true, methods: ['cash_app', 'venmo'], custom_agreement: REAL } }));
+  ok('a pre-case agreement sends with no case', pre.ok === true
+     && (await row('SELECT case_no FROM sent_document WHERE doc_id = ?', pre.doc_id)).case_no === null);
+  await ingest(env, { case_no: 'API-AGR-PRE', service: 'Surveillance', client_name: 'New Caller',
+    client_email: 'newcaller@example.com', subject_name: 'N. Subject', objective: 'x',
+    signed_name: 'New Caller', signature: 'data:image/png;base64,iVBORw0KGgo=', doc_ref: pre.doc_id });
+  r = (await ws('API-AGR-PRE')).authorization.retainer;
+  ok('signing through its door puts the agreed amount on the new case',
+     r.model === 'agreement' && r.amount === 1800 && r.agreement.doc_id === pre.doc_id, JSON.stringify(r).slice(0, 160));
+
+  /* ---- THE BOUNDARY: an investigator is never sent the paying side --------- */
+  const invLink = (await jsonOf(await invite(env, admin,
+    { username: 'agrfield', role: 'investigator', display_name: 'Agr Field' }))).url;
+  const invTok = new URL(invLink, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${invTok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const field = (await login(env, 'agrfield', 'FieldWork2026x')).cookie;
+  await call(env, '/submissions/API-AGR-1/assign', { method: 'POST', cookie: admin,
+    body: { user_id: (await row("SELECT id FROM users WHERE username = 'agrfield'")).id } });
+  const fl = await jsonOf(await call(env, '/submissions', { cookie: field }));
+  const frow = (fl.rows || fl.submissions || []).find(x => x.case_no === 'API-AGR-1');
+  ok('an investigator\'s list row carries no agreed amount', frow
+     && !('agreement_total' in frow) && !('agreement_kind' in frow), JSON.stringify(frow || {}).slice(0, 160));
+  const fw = await jsonOf(await call(env, '/cases/API-AGR-1/workspace', { cookie: field }));
+  ok('and their workspace carries no money block', fw.authorization && !fw.authorization.retainer);
+
+  globalThis.fetch = realFetch;
+}
+
+section('Agreed amount: the source is one reader, and it writes nothing');
+{
+  const src = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+  const strip = t => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const body = name => {
+    const i = src.indexOf(`async function ${name}(`);
+    const j = src.indexOf('\n}\n', i);
+    return i < 0 ? '' : strip(src.slice(i, j));
+  };
+  const ca = body('caseAgreement');
+  ok('caseAgreement exists and only READS', ca.includes('SELECT') && !/INSERT|UPDATE|DELETE/.test(ca));
+  ok('it reads the latest SENT private rate sheet', /d\.ok = 1/.test(ca) && /send_context = 'private'/.test(ca)
+     && /ORDER BY d\.id DESC LIMIT 1/.test(ca));
+  ok('nothing writes an agreement total into case_retainer',
+     !/INSERT INTO case_retainer[\s\S]{0,400}agreement/.test(strip(src)));
+  ok('the list SQL fragment only accepts its own two field names',
+     /AGREEMENT_FIELDS = \['total_due', 'payment_label_kind'\]/.test(src));
 }
 
 /* ------------------------------------------------------------------ report */

@@ -510,6 +510,18 @@ async function caseDocuments(env, user, caseNo) {
             ok, record_copy, record_reason, sent_at
        FROM sent_document WHERE case_no = ? ORDER BY id DESC LIMIT 50`)
     .bind(caseNo).all()).results || [];
+  /* A FULL CUSTOM DOCUMENT'S TOTAL, read beside it, so the intake screen's
+     ASSOCIATED RATE SHEET can state the figure the client was sent under the
+     agreement's own word — its `retainer_amount` is null by design. One
+     statement for the whole page of documents, the rule below. */
+  const customs = new Map();
+  if (rows.length && !miss.includes('sent_document_custom')) {
+    const cs = (await env.DB.prepare(
+      `SELECT c.doc_id, c.total_due, c.payment_label_kind, c.title
+         FROM sent_document_custom c JOIN sent_document d ON d.doc_id = c.doc_id
+        WHERE d.case_no = ? ORDER BY d.id DESC LIMIT 50`).bind(caseNo).all()).results || [];
+    for (const c of cs) customs.set(c.doc_id, c);
+  }
   let accepted = new Map();
   if (rows.length && !miss.includes('document_acceptance')) {
     /* ONE STATEMENT for the whole page of documents, the Unit 10 rule — a case
@@ -523,9 +535,12 @@ async function caseDocuments(env, user, caseNo) {
     let terms = null;
     try { terms = r.terms_json ? JSON.parse(r.terms_json) : null; } catch { terms = null; }
     const a = accepted.get(r.doc_id) || null;
+    const c = customs.get(r.doc_id) || null;
     return { ...r, terms_json: undefined, terms,
              intake_included: !!r.intake_included, ok: !!r.ok,
              record_copy: !!r.record_copy,
+             agreement: c ? { total_due: c.total_due == null ? null : Number(c.total_due),
+                              term: agreementTerm(c.payment_label_kind), title: c.title } : null,
              accepted: a ? { submission_id: a.submission_id, signed_name: a.signed_name,
                              signed: !!a.signed, accepted_at: a.accepted_at } : null };
   }) });
@@ -1226,6 +1241,96 @@ function customPayLead(spec) {
     return `${spec.payment_label_custom}: ${amount}, due before investigative services begin.`;
   }
   return `${amount} is due before investigative services begin.`;
+}
+
+/* ==== THE AGREED AMOUNT (owner, 2026-09-24) ===============================
+
+   "A Full Custom agreement needs an agreed financial figure on the case ...
+   Do NOT store or display the Full Custom total as 'Retainer' unless the
+   owner explicitly selected Retainer as the payment type."
+
+   IT IS READ FROM THE DOCUMENT THE CASE WAS ACTUALLY SENT, never stored a
+   second time. `sent_document` and `sent_document_custom` already hold the
+   exact figures every client received, so a case's agreed amount is the total
+   of the MOST RECENT private rate sheet sent to that case, when that sheet was
+   a Full Custom agreement. Three things follow from the shape rather than from
+   a rule somebody has to remember:
+
+   - it cannot drift from the document, because it IS the document's figure;
+   - the most recent offer governs — a later custom agreement replaces the
+     figure, and a later STANDARD sheet returns the case to the retainer model,
+     which is the rule the office's own retainer pick already follows;
+   - nothing is written to `case_retainer`, and no existing row is touched.
+
+   A pre-case agreement reaches its case when the client signs through the
+   agreement's own door: acceptance fills `sent_document.case_no` once, and
+   this read sees it with no second write.
+
+   THE WORD IS THE OWNER'S CHOICE ON THE DOCUMENT (§8 of the Full Custom
+   brief). A payment label of kind "retainer" means the owner deliberately
+   called the money a retainer, and only then does the case say Retainer. */
+const AGREED_AMOUNT_TERM = 'Agreed amount';
+const agreementTerm = kind => kind === 'retainer' ? 'Retainer' : AGREED_AMOUNT_TERM;
+
+/* The latest successfully SENT private rate sheet on a case, joined to its
+   custom figures. `field` is one of a fixed list below — never caller text —
+   and the read is an index seek on `idx_sentdoc_case (case_no, id DESC)`, so a
+   list of cases pays one seek per row rather than a scan. */
+const AGREEMENT_FIELDS = ['total_due', 'payment_label_kind'];
+function agreementSql(caseCol, field) {
+  if (!AGREEMENT_FIELDS.includes(field)) throw new Error('agreementSql: unknown field');
+  return `(SELECT c.${field} FROM sent_document d
+             LEFT JOIN sent_document_custom c ON c.doc_id = d.doc_id
+            WHERE d.case_no = ${caseCol} AND d.kind = 'rate_sheet' AND d.ok = 1
+              AND d.send_context = 'private'
+            ORDER BY d.id DESC LIMIT 1)`;
+}
+
+async function caseAgreement(env, caseNo, missing) {
+  if (!caseNo) return null;
+  const miss = missing || await missingTables(env);
+  /* Guarded like every companion read: before portal-setup applies the table
+     there is no agreement to find, which is the truth on that database. */
+  if (miss.includes('sent_document') || miss.includes('sent_document_custom')) return null;
+  const r = await env.DB.prepare(
+    `SELECT d.doc_id, d.sent_at, c.title, c.hourly_rate, c.total_hours, c.total_due,
+            c.payment_label_kind, c.payment_label, c.non_refundable_included, c.non_refundable
+       FROM sent_document d LEFT JOIN sent_document_custom c ON c.doc_id = d.doc_id
+      WHERE d.case_no = ? AND d.kind = 'rate_sheet' AND d.ok = 1 AND d.send_context = 'private'
+      ORDER BY d.id DESC LIMIT 1`).bind(caseNo).first();
+  if (!r || r.total_due == null) return null;
+  const kind = r.payment_label_kind || 'total_due';
+  const num = v => v == null ? null : Math.round(Number(v) * 100) / 100;
+  return {
+    amount: num(r.total_due),
+    hourly_rate: num(r.hourly_rate),
+    total_hours: num(r.total_hours),
+    label_kind: kind,
+    payment_label: r.payment_label || null,
+    title: r.title || null,
+    non_refundable_included: !!Number(r.non_refundable_included),
+    non_refundable: r.non_refundable_included ? num(r.non_refundable) : null,
+    doc_id: r.doc_id, sent_at: r.sent_at,
+    term: agreementTerm(kind),
+  };
+}
+
+/* THE OPENING LINE OF A PRIVATE INVOICE — the one writer of whether it asks
+   for a retainer or for an agreed amount, read by the real Create and by the
+   Assistant's preview so the two cannot disagree. Without an agreement it is
+   exactly the line and the sentence it always was. With one, the line is the
+   agreement's own name and carries no retainer sentence: the client was sent
+   a document that never used the word, and an invoice that introduced it would
+   be the office relabelling their money after the fact. The owner's own
+   choice of "Retainer" on the agreement keeps the retainer line. */
+function openingInvoiceLine(agreement, retainerAmount) {
+  if (agreement && agreement.label_kind !== 'retainer') {
+    return { description: agreement.title || 'Custom Surveillance Agreement',
+             amount: agreement.amount, note: null };
+  }
+  return { description: 'Investigation Retainer',
+           amount: agreement ? agreement.amount : retainerAmount,
+           note: 'Retainer is applied toward authorized investigative services.' };
 }
 
 /* THE TWO FLAT-FEE LEGAL SERVICES (LEGAL-SERVICES.md D1, owner 2026-09-02) and
@@ -3464,10 +3569,17 @@ async function recentActivity(env) {
                  ORDER BY id DESC LIMIT ${per}`),
     'evidence', r => `${String(r.r2_key || '').startsWith('dropbox:') ? 'Filed to Dropbox' : 'Media added'} — ${r.filename}`);
   if (!missing.includes('retainer_payment')) {
-    push(await q(`SELECT id, case_no, recorded_at AS at FROM retainer_payment
+    /* A payment on a Full Custom case is not a retainer payment unless the
+       owner labelled the agreement one — the case's own word, read per row by
+       an index seek, the `agreementSql` rule. */
+    const agreeKind = !missing.includes('sent_document') && !missing.includes('sent_document_custom')
+      ? `, ${agreementSql('retainer_payment.case_no', 'payment_label_kind')} AS ag_kind,
+           ${agreementSql('retainer_payment.case_no', 'total_due')} AS ag_total` : '';
+    push(await q(`SELECT id, case_no, recorded_at AS at${agreeKind} FROM retainer_payment
                    WHERE 1 = 1 ${hide('payment', 'retainer_payment.id')}
                    ORDER BY id DESC LIMIT ${per}`),
-      'payment', () => 'Retainer payment recorded');
+      'payment', r => r.ag_total != null && r.ag_kind !== 'retainer'
+        ? 'Payment recorded' : 'Retainer payment recorded');
   }
   push(await q(`SELECT e.id AS id, b.case_no, e.at AS at, e.action FROM build_events e
                  JOIN case_builds b ON b.id = e.build_id
@@ -4127,12 +4239,17 @@ async function auditTrail(request, env, user) {
     r => ({ at: r.at, case_no: r.case_no, who: r.who, kind: 'package',
             what: `Package ${String(r.action).replace(/_/g, ' ')}` }));
 
+  const auditMissing = await missingTables(env);
+  const auditAgree = !auditMissing.includes('sent_document') && !auditMissing.includes('sent_document_custom')
+    ? `, ${agreementSql('p.case_no', 'payment_label_kind')} AS ag_kind,
+         ${agreementSql('p.case_no', 'total_due')} AS ag_total` : '';
   await q('retainer_payment',
-    `SELECT p.recorded_at AS at, p.case_no, u.display_name AS who
+    `SELECT p.recorded_at AS at, p.case_no, u.display_name AS who${auditAgree}
        FROM retainer_payment p LEFT JOIN users u ON u.id = p.recorded_by
       ORDER BY p.id DESC LIMIT ?`,
     r => ({ at: r.at, case_no: r.case_no, who: r.who, kind: 'payment',
-            what: 'Retainer payment recorded' }));
+            what: r.ag_total != null && r.ag_kind !== 'retainer'
+              ? 'Payment recorded' : 'Retainer payment recorded' }));
 
   await q('case_closure',
     `SELECT c.closed_at AS at, c.case_no, u.display_name AS who
@@ -4270,10 +4387,17 @@ async function needsAttention(env, user) {
                       ${have('retainer_payment_void')
                         ? 'AND rp.id NOT IN (SELECT payment_id FROM retainer_payment_void)' : ''}), 0)`
       : '0';
+    /* A FULL CUSTOM CASE IS NOT A RETAINER CASE, whatever its retainer row
+       says (owner, 2026-09-24). Its agreed amount is the latest private sheet's
+       total, so this arm stands down on it and the arm below speaks for it —
+       otherwise one case could be alerted twice, once under a figure the
+       client was never sent. */
+    const haveAgree = have('sent_document') && have('sent_document_custom');
+    const notAgreement = haveAgree ? `AND ${agreementSql('cr.case_no', 'total_due')} IS NULL` : '';
     for (const r of (await q(
       `SELECT cr.case_no, cr.retainer_amount, cr.received, ${paidCol} AS paid
          FROM case_retainer cr JOIN submissions s ON s.case_no = cr.case_no
-        WHERE cr.retainer_amount > 0 AND s.status != 'closed'
+        WHERE cr.retainer_amount > 0 AND s.status != 'closed' ${notAgreement}
         LIMIT ${ATTN.PER_KIND * 2}`)).filter(visible)) {
       const owed = Number(r.retainer_amount) - Number(r.paid || 0);
       if (Number(r.received) && owed <= 0) continue;
@@ -4285,6 +4409,38 @@ async function needsAttention(env, user) {
           : `${attnMoney(r.retainer_amount)} agreed, nothing recorded yet`,
         { label: 'Open billing', view: 'case', tab: 'billing' }));
       if (out.length >= ATTN.TOTAL) break;
+    }
+    /* THE AGREED AMOUNT A CLIENT WAS SENT AND HAS NOT PAID. The same money
+       rule as above — the ledger decides, summed across instalments, voids
+       excluded — over the figure the agreement stated. Worded with the
+       agreement's own term, so the owner's "Retainer" label still says
+       Retainer and nothing else does. */
+    if (haveAgree && out.length < ATTN.TOTAL) {
+      const paidAg = paidCol.replace(/cr\.case_no/g, 's.case_no');
+      for (const r of (await q(
+        `SELECT * FROM (
+           SELECT s.case_no, ${agreementSql('s.case_no', 'total_due')} AS agreed,
+                  ${agreementSql('s.case_no', 'payment_label_kind')} AS label_kind,
+                  (SELECT cr.received FROM case_retainer cr WHERE cr.case_no = s.case_no) AS received,
+                  ${paidAg} AS paid
+             FROM submissions s
+            WHERE s.kind = 'consumer' AND s.status != 'closed'
+              AND EXISTS (SELECT 1 FROM sent_document d0 WHERE d0.case_no = s.case_no
+                            AND d0.kind = 'rate_sheet'))
+          WHERE agreed IS NOT NULL
+          LIMIT ${ATTN.PER_KIND * 2}`)).filter(visible)) {
+        const owed = Number(r.agreed) - Number(r.paid || 0);
+        if (owed <= 0) continue;
+        if (Number(r.received) && !(Number(r.paid) > 0)) continue;
+        const term = agreementTerm(r.label_kind);
+        const partial = Number(r.paid) > 0;
+        out.push(attnRow(partial ? 'attention' : 'urgent', 'payments', r.case_no,
+          partial ? `${term} part paid` : `${term} outstanding`,
+          partial ? `${attnMoney(owed)} of ${attnMoney(r.agreed)} still to come`
+            : `${attnMoney(r.agreed)} agreed, nothing recorded yet`,
+          { label: 'Open billing', view: 'case', tab: 'billing' }));
+        if (out.length >= ATTN.TOTAL) break;
+      }
     }
   }
   if (have('invoices', 'overdue invoices')) {
@@ -5053,6 +5209,7 @@ function redactRow(row) {
      FIELD_KEEP and the client_* columns above. */
   const { carrier, claim_number, client_name, client_email, client_phone, lead_status,
           send_count, last_sent_at, retainer_received, pay_sent_at, pay_methods,
+          agreement_total, agreement_kind,
           /* the firm IS the paying side (Unit 6) — the LEGAL category stays,
              the identity goes */
           legal_firm, legal_attorney, legal_assignment, legal_deadline, legal_arrangement,
@@ -5120,6 +5277,14 @@ async function listSubmissions(request, env, user) {
   const retCol = haveRet
     ? '(SELECT cr.received FROM case_retainer cr WHERE cr.case_no = s.case_no) AS retainer_received'
     : 'NULL AS retainer_received';
+  /* THE AGREED AMOUNT, so a list row can name a Full Custom case's money in
+     its own word instead of calling it a retainer (owner, 2026-09-24). One
+     index seek per row on `idx_sentdoc_case`; guarded because both tables
+     arrive by portal-setup. Stripped by redactRow — it is the paying side. */
+  const agreeCols = !missing.includes('sent_document') && !missing.includes('sent_document_custom')
+    ? `${agreementSql('s.case_no', 'total_due')} AS agreement_total,
+       ${agreementSql('s.case_no', 'payment_label_kind')} AS agreement_kind`
+    : 'NULL AS agreement_total, NULL AS agreement_kind';
   const payCols = havePay
     ? `(SELECT ps.sent_at FROM payment_send ps WHERE ps.case_no = s.case_no AND ps.ok = 1
           ORDER BY ps.id DESC LIMIT 1) AS pay_sent_at,
@@ -5167,7 +5332,7 @@ async function listSubmissions(request, env, user) {
             (SELECT COUNT(*) FROM send_log sl WHERE sl.case_no = s.case_no AND sl.ok = 1) AS send_count,
             (SELECT MAX(sent_at) FROM send_log sl WHERE sl.case_no = s.case_no AND sl.ok = 1) AS last_sent_at,
             s.carrier, s.claim_number, s.created_at, s.assigned_to, u.display_name AS assigned_name,
-            cs.stage, ls.status AS lead_status, ${retCol}, ${payCols}, ${legalCols}, ${archCol}, ${delCol}
+            cs.stage, ls.status AS lead_status, ${retCol}, ${agreeCols}, ${payCols}, ${legalCols}, ${archCol}, ${delCol}
        FROM submissions s LEFT JOIN users u ON u.id = s.assigned_to
        LEFT JOIN case_status cs ON cs.case_no = s.case_no
        LEFT JOIN lead_status ls ON ls.case_no = s.case_no
@@ -6481,7 +6646,18 @@ async function closeoutFacts(env, caseNo) {
   if (sub && sub.kind === 'consumer') {
     const ret = await env.DB.prepare(
       'SELECT retainer_amount, received FROM case_retainer WHERE case_no = ?').bind(caseNo).first();
-    if (ret && Number(ret.retainer_amount) > 0 && !ret.received) {
+    /* A FULL CUSTOM CASE'S FACT IS ABOUT ITS AGREED AMOUNT, from the ledger —
+       the retainer row may not exist on such a case at all, so asking it
+       would say nothing about money the client was actually asked for. */
+    const agreement = await caseAgreement(env, caseNo);
+    if (agreement) {
+      const paid = await retainerPaid(env, caseNo);
+      if (paid.total <= 0 && !(ret && ret.received)) {
+        bits.push(`the ${agreement.term.toLowerCase()} of $${agreement.amount.toFixed(2)} is not recorded as received`);
+      } else if (paid.total > 0 && paid.total < agreement.amount) {
+        bits.push(`$${paid.total.toFixed(2)} of the $${agreement.amount.toFixed(2)} ${agreement.term.toLowerCase()} is recorded as received`);
+      }
+    } else if (ret && Number(ret.retainer_amount) > 0 && !ret.received) {
       bits.push('the agreed retainer is not recorded as received');
     }
   }
@@ -6690,8 +6866,22 @@ async function closeoutMoney(env, caseNo) {
   const projected = retained == null
     ? null : money2(received - retained - refunded - pendingRefund);
 
+  /* THE AGREED AMOUNT, when the case's latest private sheet was a Full
+     Custom agreement — carried so the review screen can state the figure the
+     client was sent, and so the statement below can name the money in the
+     agreement's own word rather than calling it a retainer. */
+  const agreement = await caseAgreement(env, caseNo, missing);
+
   return {
     retainer_received: received,
+    agreement: agreement ? {
+      amount: agreement.amount, term: agreement.term, label_kind: agreement.label_kind,
+      non_refundable_included: agreement.non_refundable_included,
+      doc_id: agreement.doc_id, sent_at: agreement.sent_at, title: agreement.title,
+    } : null,
+    /* The statement's own three words, published so the page's printed copy
+       uses the strings the emailed copy uses rather than a second opinion. */
+    words: closeoutWords(agreement),
     refunded, refunds,
     retained,
     final_balance: finalBalance,
@@ -6845,6 +7035,18 @@ async function recordPacket(env, user, caseNo) {
       accepted: a ? { submission_id: a.submission_id, signed_name: a.signed_name,
                       signed: !!a.signed, accepted_at: a.accepted_at } : null,
     };
+    /* A FULL CUSTOM DOCUMENT QUOTED A TOTAL, NOT A RETAINER — its own
+       `retainer_amount` is null by design — so the figure it carried is read
+       from its companion record, under its own word. */
+    if (have('sent_document_custom')) {
+      const c = await env.DB.prepare(
+        'SELECT total_due, payment_label_kind FROM sent_document_custom WHERE doc_id = ?')
+        .bind(chosen.doc_id).first();
+      if (c && c.total_due != null) {
+        rateSheet.agreement_total = money2(c.total_due);
+        rateSheet.agreement_term = agreementTerm(c.payment_label_kind);
+      }
+    }
   }
 
   /* ---- THE SIGNATURE ITSELF (§4) --------------------------------------- */
@@ -6934,12 +7136,22 @@ async function recordPacket(env, user, caseNo) {
       'SELECT retainer_amount FROM case_retainer WHERE case_no = ?').bind(caseNo).first();
     agreed = r && r.retainer_amount != null ? money2(r.retainer_amount) : null;
   }
+  /* A FULL CUSTOM CASE'S AGREED FIGURE IS ITS AGREEMENT'S TOTAL, and the
+     packet says so under the agreement's own word — a dispute file that
+     called it a retainer would be the office's record contradicting the
+     document the client signed against. */
+  const agreement = await caseAgreement(env, caseNo, miss);
+  if (agreement) agreed = agreement.amount;
   const retainer = {
     agreed_amount: agreed,
+    term: agreement ? agreement.term : 'Retainer',
+    agreement: agreement ? { doc_id: agreement.doc_id, sent_at: agreement.sent_at,
+                             title: agreement.title, label_kind: agreement.label_kind } : null,
     /* The document's own figure is kept beside it deliberately: what the client
        was QUOTED is the snapshot's, what the case AGREED is the ledger's, and
        a packet that showed one number could not tell a dispute which it was. */
-    document_amount: rateSheet ? rateSheet.retainer_amount : null,
+    document_amount: rateSheet ? (rateSheet.agreement_total != null
+      ? rateSheet.agreement_total : rateSheet.retainer_amount) : null,
     non_refundable: rateSheet ? rateSheet.non_refundable : null,
     payments: payments.map(p => ({ ...p, voided: !!(p.voided_at) })),
   };
@@ -7508,6 +7720,21 @@ async function closeoutRefundDone(request, env, user, caseNo) {
    ONE COMPOSER, TWO MEDIA, the `sheetEmail` shape: the page prints its own
    rendering of the same figures and the email carries these. Neither invents a
    number, so the printed copy and the emailed copy cannot disagree. */
+/* THE THREE WORDS A CLOSEOUT STATEMENT USES FOR THE MONEY — the one writer,
+   read by the statement and published on the ledger for the page. Without an
+   agreement (or with one the owner labelled Retainer) they are the original
+   strings, byte for byte. */
+function closeoutWords(agreement) {
+  const ag = agreement && agreement.label_kind !== 'retainer' ? agreement : null;
+  return {
+    agreement: !!ag,
+    received: ag ? 'Payment received' : 'Retainer received',
+    retained: ag && !ag.non_refundable_included ? 'Amount retained' : 'Non-refundable retained',
+    closing: ag ? 'This statement documents the disposition of the payment held on this case.'
+      : 'This statement documents the disposition of the retainer held on this case.',
+  };
+}
+
 function closeoutStatement(caseNo, clientName, m, closedOn) {
   const row = (label, amount) => `${label}${'.'.repeat(Math.max(2, 34 - label.length))} ${nrMoney(amount)}`;
   const drow = (label, v) => `${label}${'.'.repeat(Math.max(2, 34 - label.length))} ${v}`;
@@ -7542,12 +7769,18 @@ function closeoutStatement(caseNo, clientName, m, closedOn) {
   const docBalance = money2(m.retainer_received - (m.retained || 0)
     - (m.refunded > 0 ? m.refunded : (status === 'requested' ? agreed : 0)));
 
+  /* THE MONEY IS NAMED IN THE AGREEMENT'S OWN WORD (owner, 2026-09-24). A
+     Full Custom client was sent a total, not a retainer — so their closeout
+     says the PAYMENT was received, and says "non-refundable" only where their
+     agreement actually stated a non-refundable portion. Every other case reads
+     exactly as it did: `closeoutWords` returns the original three strings. */
+  const words = closeoutWords(m.agreement);
   const lines = [
     ...(m.work_performed
       ? [drow('Work performed', WORK_PERFORMED[m.work_performed] || m.work_performed)] : []),
-    row('Retainer received', m.retainer_received),
+    row(words.received, m.retainer_received),
     ...(m.received_on ? [drow('Date received', m.received_on)] : []),
-    row('Non-refundable retained', m.retained || 0),
+    row(words.retained, m.retained || 0),
     ...refundLines,
   ];
   const reasonLabel = closeoutReasonLabel(m);
@@ -7567,7 +7800,7 @@ ${row('FINAL BALANCE', docBalance)}
 
 CASE STATUS: CLOSED
 ${reasonLabel ? `\nReason:\n${reasonLabel}\n` : ''}${externalNote ? `\n${externalNote}\n` : ''}
-This statement documents the disposition of the retainer held on this case.
+${words.closing}
 Questions: (434) 907-0975
 Always Precise Investigations, LLC`;
 
@@ -7581,10 +7814,10 @@ Always Precise Investigations, LLC`;
   <p style="margin:0 0 4px"><b>Case:</b> ${escHtml(caseNo)}</p>
   <p style="margin:0 0 18px"><b>Closed:</b> ${escHtml(closedOn)}</p>
   <table style="width:100%;border-collapse:collapse;margin:0 0 12px">
-    <tr><td style="padding:8px 0;border-bottom:1px solid #e4e9ed">Retainer received${
+    <tr><td style="padding:8px 0;border-bottom:1px solid #e4e9ed">${escHtml(words.received)}${
       m.received_on ? `<span style="color:#5c6775;font-size:.85em"> &middot; ${escHtml(m.received_on)}</span>` : ''}</td>
         <td style="padding:8px 0;border-bottom:1px solid #e4e9ed;text-align:right">${money(m.retainer_received)}</td></tr>
-    <tr><td style="padding:8px 0;border-bottom:1px solid #e4e9ed">Non-refundable retained</td>
+    <tr><td style="padding:8px 0;border-bottom:1px solid #e4e9ed">${escHtml(words.retained)}</td>
         <td style="padding:8px 0;border-bottom:1px solid #e4e9ed;text-align:right;color:#c14133;font-weight:700">${money(m.retained || 0)}</td></tr>
     ${m.work_performed
       ? `<tr><td style="padding:8px 0;border-bottom:1px solid #e4e9ed">Work performed</td>
@@ -7609,8 +7842,8 @@ Always Precise Investigations, LLC`;
   <p style="margin:0 0 14px;font-weight:800;color:#12305a">CASE STATUS: CLOSED</p>
   ${reasonLabel ? `<p style="margin:0 0 14px;font-size:.92rem"><b>Reason:</b> ${escHtml(reasonLabel)}</p>` : ''}
   ${externalNote ? `<p style="margin:0 0 14px;font-size:.92rem">${escHtml(externalNote)}</p>` : ''}
-  <p style="margin:0 0 14px;font-size:.92rem">This statement documents the disposition of the
-    retainer held on this case.</p>
+  <p style="margin:0 0 14px;font-size:.92rem">${words.agreement ? escHtml(words.closing) : `This statement documents the disposition of the
+    retainer held on this case.`}</p>
   <hr style="border:0;border-top:1px solid #dfe3e8">
   <p style="font-size:.82rem;color:#5c6775">Questions? (434) 907-0975<br>
      Always Precise Investigations, LLC</p>
@@ -8662,7 +8895,10 @@ async function authorizationFor(env, caseNo, forAdmin) {
 
      PUTTING THE DAY BACK RESTORES THE HOURS, with no second write, because
      nothing here is stored. */
-  const dayGate = (await missingTables(env)).includes('case_content_removed') ? '' :
+  /* One schema read for the whole block — the day gate below and the agreed
+     amount further down both need it, and this is the most-opened screen. */
+  const missAuth = await missingTables(env);
+  const dayGate = missAuth.includes('case_content_removed') ? '' :
     `AND NOT EXISTS (SELECT 1 FROM case_content_removed r
        WHERE r.kind = 'day' AND r.ref_id = case_days.id)`;
   const used = await env.DB.prepare(
@@ -8708,7 +8944,17 @@ async function authorizationFor(env, caseNo, forAdmin) {
        marker, which is every case that predates the catalogue, so historical
        cases render exactly as they always did. */
     const legalPricing = legalPricingFor(sub);
+    /* A FULL CUSTOM AGREEMENT CARRIES ITS OWN RATE AND ITS OWN TOTAL (owner,
+       2026-09-24). Read once here because the rate below depends on it: work
+       on a $75/hr agreement is not work at the standard $100/hr, and applying
+       the standard rate would draw the agreement down a third too fast. An
+       explicit per-case rate still outranks it, exactly as it outranks the
+       standard. A FIXED legal case never has one — the agreement is a private
+       document and the send refuses it on any other context. */
+    const fixedCase = !!(legalPricing && legalPricing.model === 'fixed');
+    const agreement = kind === 'consumer' && !fixedCase ? await caseAgreement(env, caseNo, missAuth) : null;
     const rate = st.client_hourly != null ? Number(st.client_hourly)
+      : agreement && agreement.hourly_rate > 0 ? agreement.hourly_rate
       : (kind === 'consumer' ? PERSONAL.hourly : RATES.surveillance.standard);
     const budget = meta && meta.authorized_budget != null ? Number(meta.authorized_budget) : null;
     const billable = Math.round(hoursUsed * rate * 100) / 100;
@@ -8736,8 +8982,14 @@ async function authorizationFor(env, caseNo, forAdmin) {
          PERSONAL.retainer — a fresh $250 locate must not read $1,500 (D7).
          An explicitly agreed per-case figure still outranks the default, the
          agreedRetainer principle applied to a flat fee. */
-      const fixed = !!(legalPricing && legalPricing.model === 'fixed');
-      const amount = ret && ret.retainer_amount != null ? Number(ret.retainer_amount)
+      const fixed = fixedCase;
+      /* THE AGREED AMOUNT OUTRANKS THE RETAINER COLUMN on a case whose latest
+         private sheet was a Full Custom agreement: the client was sent that
+         total, and a `case_retainer` figure on the same case is either the
+         standard it replaced or nothing at all. Nothing is written — the
+         figure is the document's. */
+      const amount = agreement ? agreement.amount
+        : ret && ret.retainer_amount != null ? Number(ret.retainer_amount)
         : fixed ? await legalFlatDefault(env, legalPricing.service) : PERSONAL.retainer;
       /* The panel's own fee line reads the CASE's figure, so the money block
          and the Legal panel cannot show two numbers for one case (D11). */
@@ -8774,8 +9026,19 @@ async function authorizationFor(env, caseNo, forAdmin) {
            are the retainer model's figures and are NULL here rather than
            zero — null is "does not apply", zero would be a numeric claim. The
            page keys every money word off `model`. */
-        model: fixed ? 'fixed' : 'retainer',
+        model: fixed ? 'fixed' : agreement ? 'agreement' : 'retainer',
         service_label: fixed ? legalPricing.service_label : undefined,
+        /* THE WORD FOR THIS FIGURE, from the Worker, so every screen says the
+           same one: "Agreed amount", or "Retainer" only where the owner chose
+           that label on the agreement itself. Absent on the other two models,
+           whose pages already key their words off `model`. */
+        term: agreement ? agreement.term : undefined,
+        /* Where the figure came from — the document the client received. */
+        agreement: agreement ? {
+          doc_id: agreement.doc_id, sent_at: agreement.sent_at, title: agreement.title,
+          hourly_rate: agreement.hourly_rate, total_hours: agreement.total_hours,
+          payment_label: agreement.payment_label, label_kind: agreement.label_kind,
+        } : undefined,
         applied: fixed ? null : applied,
         remaining: fixed ? null : Math.round((amount - applied) * 100) / 100,
         approx_hours_remaining: (fixed || !(rate > 0)) ? null
@@ -11562,9 +11825,14 @@ async function retainerBlock(env, inv, sub) {
      `model` instead of the deposit table. */
   const legalPricing = legalPricingFor(sub);
   const fixed = !!(legalPricing && legalPricing.model === 'fixed');
+  /* A FULL CUSTOM CASE'S DOCUMENT DRAWS DOWN ITS AGREED AMOUNT, under its own
+     word (owner, 2026-09-24) — the same resolution `authorizationFor` makes, so
+     the invoice and the case screen cannot name two figures for one case. */
+  const agreement = !fixed ? await caseAgreement(env, inv.case_no) : null;
   const ret = await env.DB.prepare(
     'SELECT retainer_amount, received FROM case_retainer WHERE case_no = ?').bind(inv.case_no).first();
-  const amount = ret && ret.retainer_amount != null ? Number(ret.retainer_amount)
+  const amount = agreement ? agreement.amount
+    : ret && ret.retainer_amount != null ? Number(ret.retainer_amount)
     : fixed ? await legalFlatDefault(env, legalPricing.service) : PERSONAL.retainer;
   /* A DRAFT INVOICE IS NOT EARNED MONEY (owner decision, 2026-08-21): "UNSENT
      or DRAFT invoices MUST NOT reduce the client-facing retainer balance. Only
@@ -11611,8 +11879,9 @@ async function retainerBlock(env, inv, sub) {
   const budget = meta && meta.authorized_budget != null ? Number(meta.authorized_budget) : null;
   return {
     amount,
-    model: fixed ? 'fixed' : 'retainer',
+    model: fixed ? 'fixed' : agreement ? 'agreement' : 'retainer',
     service_label: fixed ? legalPricing.service_label : undefined,
+    term: agreement ? agreement.term : undefined,
     received: !!(ret && ret.received),
     applied: fixed ? null : applied,
     balance: fixed ? null : Math.round((amount - applied) * 100) / 100,
@@ -11774,18 +12043,25 @@ async function createInvoice(request, env, user, caseNo) {
          directly beneath it (audit, 2026-08-14). */
       const ret = await env.DB.prepare(
         'SELECT retainer_amount FROM case_retainer WHERE case_no = ?').bind(caseNo).first();
-      const retAmount = ret && ret.retainer_amount != null
-        ? Number(ret.retainer_amount) : PERSONAL.retainer;
+      /* A FULL CUSTOM CASE BILLS ITS AGREED AMOUNT, under the agreement's own
+         name and with no retainer sentence, unless the owner called it a
+         retainer on the agreement — then the existing retainer line applies,
+         carrying the agreement's figure. `openingInvoiceLine` is the one
+         writer of that choice; the Assistant's preview reads it too. */
+      const opening = openingInvoiceLine(await caseAgreement(env, caseNo),
+        ret && ret.retainer_amount != null ? Number(ret.retainer_amount) : PERSONAL.retainer);
       await env.DB.prepare(
         `INSERT INTO invoice_lines (invoice_id, sort, description, qty, rate, amount)
-         VALUES (?, 0, 'Investigation Retainer', 1, NULL, ?)`)
-        .bind(id, retAmount).run();
+         VALUES (?, 0, ?, 1, NULL, ?)`)
+        .bind(id, opening.description, opening.amount).run();
       // Mark it, so the deposit is never counted as work against itself.
       await env.DB.prepare(
         'INSERT OR IGNORE INTO invoice_retainer (invoice_id, amount, at) VALUES (?, ?, ?)')
-        .bind(id, retAmount, nowIso()).run();
-      await env.DB.prepare('UPDATE invoices SET client_notes = ? WHERE id = ?')
-        .bind('Retainer is applied toward authorized investigative services.', id).run();
+        .bind(id, opening.amount, nowIso()).run();
+      if (opening.note) {
+        await env.DB.prepare('UPDATE invoices SET client_notes = ? WHERE id = ?')
+          .bind(opening.note, id).run();
+      }
     }
   }
 
@@ -14652,6 +14928,7 @@ async function casePackages(env) {
                                    /* The card's money words follow the model
                                       (LEGAL-SERVICES.md D7). */
                                    model: auth.retainer.model,
+                                   term: auth.retainer.term,
                                    service_label: auth.retainer.service_label } : null;
     }
     packages.push({
@@ -16133,6 +16410,9 @@ async function caseTimeline(env, user, caseNo, url) {
   if (admin) {
     if (have('retainer_payment', 'retainer payments')) {
       const voidOk = have('retainer_payment_void', 'voided payments');
+      /* One read for the whole arm: a Full Custom case names its payments
+         without the word retainer (owner, 2026-09-24). */
+      const tlAgreement = await caseAgreement(env, caseNo);
       const pays = cap((await env.DB.prepare(
         `SELECT p.id, p.amount, p.method, p.paid_on, p.reference, p.recorded_at,
                 u.display_name AS who
@@ -16146,7 +16426,8 @@ async function caseTimeline(env, user, caseNo, url) {
         const when = p.paid_on ? tlLocal(p.paid_on, null) : tlAt(p.recorded_at);
         if (inRange(when)) {
           push(tlEvent('payment', when, {
-            title: tlMoney(p.amount) + ' retainer payment recorded',
+            title: tlMoney(p.amount) + (tlAgreement && tlAgreement.label_kind !== 'retainer'
+              ? ' payment recorded' : ' retainer payment recorded'),
             detail: [TL_METHOD_WORD[p.method] || p.method || '',
                      p.reference ? 'ref ' + p.reference : ''].filter(Boolean).join(' · '),
             who: p.who || '',
@@ -16589,6 +16870,9 @@ const RECORD_DOC = {
      client is not emailed anything by recording a payment, and this document
      type says what the office did, for the office. */
   retainer_payment: 'Retainer payment recorded',
+  /* The same record on a Full Custom case, where the money is the agreed
+     amount the client was sent rather than a retainer (owner, 2026-09-24). */
+  agreement_payment: 'Payment recorded',
 };
 
 /* THE OFFICE'S OWN RECORD OF A RETAINER PAYMENT (owner brief 2026-09-07 §13).
@@ -16627,7 +16911,13 @@ async function retainerRecordCopy(env, user, caseNo, pay) {
     }
     let terms = null;
     try { terms = doc && doc.terms_json ? JSON.parse(doc.terms_json) : null; } catch { terms = null; }
-    return await ownerRecordCopy(env, 'retainer_payment', {
+    /* A Full Custom case's money is its agreed amount, so the office's own
+       copy says a PAYMENT was recorded — unless the owner labelled the
+       agreement a retainer, which keeps the retainer wording. */
+    const agreement = await caseAgreement(env, caseNo);
+    const docKind = agreement && agreement.label_kind !== 'retainer'
+      ? 'agreement_payment' : 'retainer_payment';
+    return await ownerRecordCopy(env, docKind, {
       to: '', client, case_no: caseNo,
       amount: pay.amount, method: RETAINER_METHOD_LABEL[pay.method] || pay.method,
       paid_on: pay.paid_on || '', reference: pay.reference || '',
@@ -17905,9 +18195,10 @@ async function assistantInvoicePreview(env, caseNo) {
   } else {
     const ret = await env.DB.prepare(
       'SELECT retainer_amount FROM case_retainer WHERE case_no = ?').bind(caseNo).first();
-    const retAmount = ret && ret.retainer_amount != null ? Number(ret.retainer_amount) : PERSONAL.retainer;
-    lines.push({ description: 'Investigation Retainer', qty: 1, rate: null, amount: retAmount });
-    clientNotes = 'Retainer is applied toward authorized investigative services.';
+    const opening = openingInvoiceLine(await caseAgreement(env, caseNo),
+      ret && ret.retainer_amount != null ? Number(ret.retainer_amount) : PERSONAL.retainer);
+    lines.push({ description: opening.description, qty: 1, rate: null, amount: opening.amount });
+    clientNotes = opening.note;
   }
 
   const money = invoiceMoney(lines, 0, []);
@@ -17934,7 +18225,8 @@ async function assistantInvoicePreview(env, caseNo) {
     lines.length ? null : `  (no authorization on file — the real Create would open with no lines)`,
     ``,
     `Subtotal ${fmt(money.subtotal)} · Total ${fmt(money.total)} · Balance due ${fmt(money.balance_due)}`,
-    retainer ? `${retainer.model === 'fixed' ? 'Agreed flat fee' : 'Retainer'}: ${fmt(retainer.amount)}`
+    retainer ? `${retainer.model === 'fixed' ? 'Agreed flat fee'
+      : retainer.model === 'agreement' ? retainer.term : 'Retainer'}: ${fmt(retainer.amount)}`
       + ` · received: ${retainer.received ? 'yes' : 'not yet'}`
       + (retainer.applied != null ? ` · applied ${fmt(retainer.applied)} · remaining ${fmt(retainer.balance)}` : '') : null,
     clientNotes ? `Note: ${clientNotes}` : null,

@@ -1366,7 +1366,9 @@ document whose figures were never recorded is exactly what §13 exists to
 prevent, and the loss would be discovered by somebody asking, months later,
 what was quoted. **The standard sheets are untouched at that seam and send
 normally**, which is the half that matters, and there is a test that drops the
-table and proves both halves.
+table and proves both halves. **It ran on 2026-09-24** (run #60 at `483eed1`):
+the live health check answered `schema_missing: 0`, so the refusal no longer
+fires on the live portal.
 
 **NOTHING IS WRITTEN TO `case_retainer`.** The retainer selector is WITHDRAWN
 in this mode and `wizRetainerSave` stands down, so previewing a custom
@@ -1375,7 +1377,9 @@ the owner:** a custom agreement therefore leaves no agreed figure on the case,
 so the invoice and balance blocks have nothing to draw against. Recording the
 total as a `case_retainer` row would mislabel it as a retainer — the thing §8
 forbids the document from doing — so it is left as a question rather than
-taken as a keystroke.
+taken as a keystroke. **The owner answered on 2026-09-24**, and the answer is
+the next subsection but one: an agreed amount read from the agreement, with
+`case_retainer` still untouched.
 
 **THE DIALOG STOPPED MISNAMING WHAT IT WAS ABOUT TO EMAIL.** The header read
 `sheet.selector_label`, so a custom send said *"Send — Private Client — $1,500
@@ -1474,6 +1478,59 @@ missing field fails by name, and a mutation that poisons the flow runs on its
 own. Result: every mutation caught by at least one assertion naming it — the
 page batch 14 named failures plus 3 for the pre-tick, and the Worker refusal
 3.
+
+### The agreed amount is the document's, and the word is the owner's
+
+Owner brief 2026-09-24; D23–D31 in `case-portal/CUSTOM-AGREEMENT.md`. *"A Full
+Custom agreement needs an agreed financial figure on the case ... Do NOT store
+or display the Full Custom total as 'Retainer' unless the owner explicitly
+selected Retainer."*
+
+**IT IS READ, NOT STORED.** `caseAgreement()` takes the case's most recent
+successfully sent PRIVATE rate sheet; when that sheet was a Full Custom
+agreement, its total is the case's agreed amount. No table, no writer, no setup
+run — and so it cannot drift from what the client received, the most recent
+offer governs (a later standard sheet returns the case to the retainer model),
+and a pre-case agreement arrives on its case when the client signs through its
+door. `model: 'agreement'` beside `retainer` and `fixed`; `term` is the word.
+
+**THE WORD IS THE OWNER'S LABEL ON THE AGREEMENT.** "Agreed amount", or
+"Retainer" only where the owner chose that description — which is the brief's
+"existing retainer behavior may still apply". The Worker publishes it; the
+page's `agreedMoney()`/`agreedRow()` are false on every retainer case, which is
+how every retainer screen kept its exact strings. **Audit by CLAIM, not by
+screen:** the word reached ~30 places — the client's closeout statement, the
+opening invoice line, the office's payment record copy, the attention list and
+three event feeds among them — and a first search for the literal missed the
+statement's HTML half because the sentence was split across two lines. The
+test that reads the whole email found it.
+
+**THE AGREEMENT'S RATE IS THE CASE'S RATE**, unless the case carries an explicit
+one: drawing a $75/hr agreement down at the standard $100/hr reads a third too
+fast. **Its figure is not a field** — an amount input there would edit a column
+the agreement outranks, a control that changes nothing on screen. The payment
+route's bookkeeping row (`retainer_amount NOT NULL DEFAULT 1500`) was left as
+it was, on purpose: writing the custom total there would make a later standard
+sheet quote it as a retainer.
+
+**THE CASE RE-READS ITSELF AFTER A SEND.** The live-path walk found the intake
+screen saying *"none sent from the portal"* straight after a send — the case's
+document list was fetched once and never again — and the workspace drawing the
+pre-send money model. Both refresh now. **A probe that reloads the page for
+itself cannot catch a page that never reloads**, so the walk waits for the
+product to do it.
+
+**ONE SEND RATE SHEET ON THE SIMPLE VIEW INTAKE SCREEN** — `simpleBarShown()`
+is the one writer; the case actions copy stands down there only. **Full Custom
+opens with Cash App and Venmo ticked** unless the owner already chose in that
+wizard (`payTouched`). The wizard already ticked every configured method, so
+that rule pins the default rather than changing today's outcome, and the
+ledger says so.
+
+**Left for the owner, found on the way:** a FIXED legal case still reads
+*Retainer paid*, *Retainer received* on its closeout statement, and an
+*Investigation Retainer* opening invoice line — pre-existing, and changing
+them is a Legal change this brief ruled out.
 
 ## The exact document a client received, and what they signed
 
