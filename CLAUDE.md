@@ -3723,7 +3723,7 @@ know the cap they are working to. The price fields (`package`, `package_price`,
 Tests, which intercept form delivery so a run never reaches the firm's inbox:
 
 ```bash
-node intake/test-intake.mjs      # 933 checks (2026-09-24); needs Playwright, skips cleanly without it
+node intake/test-intake.mjs      # 934 checks (2026-09-24); needs Playwright, skips cleanly without it
 node visitor-alerts/test-worker.mjs   # 49 checks (2026-09-24)
 ```
 
@@ -3857,7 +3857,7 @@ Tests:
 
 ```bash
 node case-portal/test-worker.mjs   # 4389 checks (2026-09-24): auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 4082 checks (2026-09-24): the page against the real Worker
+node portal/test-portal.mjs        # 4093 checks (2026-09-24): the page against the real Worker
 ```
 
 **WRITE A SUITE'S OUTPUT TO A FILE, NEVER A PIPE.** Every suite ends in
