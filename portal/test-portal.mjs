@@ -4535,7 +4535,8 @@ section('An adjuster assignment: the office reads every field, the field reads t
     .run(no, payload.carrier, payload.client_name, payload.client_email, payload.subject_name,
          payload.claim_number, JSON.stringify(payload), new Date().toISOString());
   plant('API-AS-3001', PAY);
-  plant('API-AS-3002', { ...PAY, known_schedule: '', known_schedule_status: 'not_available' });
+  plant('API-AS-3002', { ...PAY, known_schedule: '', known_schedule_status: 'not_available',
+    billing_reference: '', billing_reference_status: 'not_available' });
 
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
@@ -4562,6 +4563,10 @@ section('An adjuster assignment: the office reads every field, the field reads t
   ok('a schedule marked unknown is listed as still needed, in words',
      has(gap, 'Information still needed') && /Known schedule \/ activity — not available at submission/i.test(gap),
      gap.slice(0, 400));
+  ok('and so is a billing reference marked to follow',
+     /Billing reference — not available at submission/i.test(gap), gap.slice(0, 400));
+  ok('whose row says so rather than drawing a blank',
+     /Billing reference\s*Not available at submission/i.test(gap), gap.slice(0, 600));
   await p2.close();
 
   const danaId = db.prepare("SELECT id FROM users WHERE username = 'dana'").get().id;
