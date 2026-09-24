@@ -855,6 +855,50 @@ section('The manifest describes the site honestly');
     ok(`${rel.split('/')[1] === 'index.html' ? 'the insurance page' : 'the vendor page'} calls its door Submit an Insurance Assignment`,
        /Submit an Insurance Assignment/.test(t) && !/>Submit an Assignment</.test(t));
   }
+
+  /* --- ONE INSURANCE FOOTPRINT, AND NO DRIVE-TIME RADIUS (owner, 2026-09-24) ---
+     The Insurance page said assignments are accepted within roughly 100 miles
+     of Lynchburg while the Vendor page said the covered markets were "an hour's
+     drive" of it — two radii for one service, on the two pages a carrier reads
+     side by side. Both state the footprint now. And no public page may state a
+     drive time at all: the process-service hour was retired on 2026-09-13 for
+     the reason that applies here too — a hard number invites argument about
+     the localities a few minutes either side of it. Comments ship, so the whole
+     file is read. */
+  const FOOTPRINT = /within roughly 100 miles of Lynchburg, Virginia/;
+  for (const rel of ['insurance-investigations/index.html', 'insurance-investigations/vendor-information/index.html']) {
+    ok(`${rel.split('/')[1] === 'index.html' ? 'the insurance page' : 'the vendor page'} states the roughly-100-mile insurance footprint`,
+       FOOTPRINT.test(readAll(path.join(site, rel)).replace(/\s+/g, ' ')));
+  }
+  const DRIVE = /hour'?s drive|hours' drive|an hour of Lynchburg|hour from Lynchburg/i;
+  const driveTime = publicPages.filter(f => DRIVE.test(readAll(f).replace(/\s+/g, ' ')))
+    .map(f => path.relative(site, f));
+  ok('no public page states a drive-time radius', driveTime.length === 0, driveTime.join(' | '));
+
+  /* --- NO CLAIM THE RECORD CANNOT SUPPORT (owner, 2026-09-24) --------------
+     The vendor packet listed "References — from carriers, TPAs or defense
+     counsel, provided with permission". It arrived with an agent-built page on
+     2026-08-12 and nothing in this repository records a firm that can supply
+     one, so the owner's rule applied: remove it rather than invent it. A
+     reference offer is a claim about named clients, so this reads every public
+     page rather than only the one it was found on. */
+  const refs = publicPages.filter(f => {
+    const t = readAll(f).replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/\s+/g, ' ');
+    return />\s*References\s*</i.test(t) || /\breferences\b[^.<]{0,80}\b(carriers?|TPAs?|counsel|clients?|permission|on request|available)/i.test(t);
+  }).map(f => path.relative(site, f));
+  ok('no public page offers references', refs.length === 0, refs.join(' | '));
+
+  /* --- THE HOMEPAGE'S CLAIMS CARD IS A DOOR (owner, 2026-09-24) -------------
+     "How we work claims" pointed a carrier at a page ABOUT submitting; the card
+     now submits, through the existing carrier door. The Insurance page is still
+     linked from the homepage navigation, which is checked too, so the page does
+     not lose its homepage link in the change. */
+  const home = readAll(path.join(site, 'index.html'));
+  ok('the homepage claims card is Submit an Insurance Assignment, to the carrier door',
+     /<div class="card"><h3>Workers' Comp &amp; Auto Claims<\/h3><p>[^<]*<a href="\/intake\/\?assignment=insurance">Submit an Insurance Assignment &rarr;<\/a><\/p><\/div>/.test(home)
+     && !/How we work claims/i.test(home));
+  ok('and the homepage still links the Insurance page from its navigation',
+     /<nav[\s\S]*?href="\/insurance-investigations\/"[\s\S]*?<\/nav>/.test(home));
 }
 
 /* UNIT 37A — every public content route gets the same header treatment.
