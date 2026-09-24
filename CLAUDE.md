@@ -147,7 +147,7 @@ published. The stager **fails if a listed path is missing**, so a renamed
 directory is caught at build time instead of by someone finding a 404 later.
 
 ```bash
-node .github/test-deploy.mjs   # 68 checks: what may and may not be published
+node .github/test-deploy.mjs   # 121 checks (2026-09-24): what may and may not be published
 ```
 
 It runs the real stager and asserts both halves — that the site is complete,
@@ -3636,8 +3636,8 @@ know the cap they are working to. The price fields (`package`, `package_price`,
 Tests, which intercept form delivery so a run never reaches the firm's inbox:
 
 ```bash
-node intake/test-intake.mjs      # 205 checks; needs Playwright, skips cleanly without it
-node visitor-alerts/test-worker.mjs   # 47 checks
+node intake/test-intake.mjs      # 933 checks (2026-09-24); needs Playwright, skips cleanly without it
+node visitor-alerts/test-worker.mjs   # 49 checks (2026-09-24)
 ```
 
 Note the payment handles in `FIRM` are still personal accounts — the source
@@ -3769,7 +3769,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 4301 checks: auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 4369 checks (2026-09-24): auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # the page against the real Worker
 ```
 
