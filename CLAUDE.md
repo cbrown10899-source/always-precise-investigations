@@ -1039,10 +1039,12 @@ asked for yet.
 
   The authorization step offers 8 / 16 / 24 hours or custom — **hours, never a
   rate**, because that page is public. It also collects the not-to-exceed
-  amount, start date, permitted days and times, weekend authorization, priority
-  and geographic limits. Everything there except the not-to-exceed is
-  allow-listed to investigators: they cannot work inside an authorization they
-  cannot see, but a budget is commercial.
+  amount, permitted days and times, weekend authorization and geographic
+  limits; the requested start and the urgency (stored in `priority`) moved to
+  the claim step on 2026-09-24, because they describe the assignment rather
+  than the hours authorized for it. Everything there except the not-to-exceed
+  is allow-listed to investigators: they cannot work inside an authorization
+  they cannot see, but a budget is commercial.
 
 The step list is chosen by `steps()`; all three share the first two steps,
 which is what makes switching service mid-flow safe. **No claims rate is
@@ -1107,6 +1109,125 @@ Three things this found, which is the point of auditing rather than assuming:
   record asserting something the office was never told, under a label that
   already said "(optional)". The picker opens on *Not decided yet* now; the
   code was made to match the label rather than the other way round.
+
+## The carrier door speaks to a claims desk, and the adjuster gets a receipt
+
+Owner brief 2026-09-24 (overnight local SEO + insurance adjuster assignment UX).
+Record of the SEO half is `SEO.md` §14; this is the durable part of both.
+
+**THE CARRIER PATH IS THE SAME EIGHT STEPS, RE-SPOKEN — not a second intake.**
+`steps()`, `CLAIM_STEPS`, the shared first two steps, the agreement, the
+signature, `buildPayload`'s one payload and the portal ingest are all as they
+were; Private and Legal are untouched and a suite section proves a phone-only
+private client still passes the bare door. What moved is the vocabulary and the
+order a claims desk refers work in: *Adjuster / referring contact*,
+*Assignment & claim information* (what is needed and how soon, then the claim),
+*Subject information*, *Assignment objective* (with *Known schedule / activity*
+and *Special instructions / restrictions*), then *Billing / reference
+information*. **Two new payload keys reuse fields the field already reads**:
+urgency is stored in `priority` and special instructions in `notes`, so what an
+adjuster writes there reaches the investigator exactly as those fields always
+did.
+
+**THE SUBMITTER'S EMAIL IS THE ONE REQUIRED CONTACT, AND IT HAS NO "I DON'T HAVE
+THIS" BOX** — the receipt goes there. `validEmail` is the page's one reader of
+the shape and it matches the Worker's. **The company is asked on the first step
+on the insurance door and on the claim step on the bare door**, whose first step
+is shared with every service; `companyField()` is its one writer, so the two
+cannot word it differently.
+
+**A FIELD DECIDED PER PAINT VANISHES MID-EDIT.** The bare door's claim step asks
+for the email the shared step did not get. The first draft drew that field
+whenever `val.c_email` was not yet valid — so the moment a valid address was
+typed and ANY other control repainted the step (the requested-start select
+does), the field disappeared under the person using it. `S.askEmail` is decided
+once, when the contact step is left. A mutation restoring the per-paint test is
+caught by name.
+
+**THE RECEIPT IS A RECEIPT, AND IT GOES TO AN ADDRESS A STRANGER TYPED.**
+`sendAssignmentReceipt` in the Worker: carrier assignments only, fresh inserts
+only (an identical retry returns before it, so a retry emails nobody), through
+the one sender `sendMail`, with the office's copy through the one
+`ownerRecordCopy`. It carries the request number, company, claim or reference
+number, subject, service and requested start and the submission time on the
+firm's clock — **and nothing else the form collected**: no address, injury,
+objective, schedule, authorization or signature. Every echoed value goes through
+`receiptText` (control and direction characters out, anything shaped like a link
+or a domain replaced, 80 characters), and the service must be one of the form's
+five. **Three limits**, each a different shape of abuse: three per inbox per
+hour with case, space and `+tags` folded; a `receipt:` bucket in `ingest_rate`
+of its own, so a flood of public submissions cannot use up the minute an admin
+needs to send a rate sheet; and a pause past fifty carrier intakes in a day. The
+intake is recorded in every case — the receipt is a courtesy, never the thing
+the submission depends on — and the office's copy goes only when the receipt
+did. **A prefixed rate key sorts after every bare minute**, so the sweep needed
+its own branch or those rows would never age out; a test plants an old one.
+
+**THE PAGE SAYS AN EMAIL WENT ONLY WHEN THE WORKER SAYS SO.** `INGEST_REPLY`
+holds the ingest's answer and the confirmation prints *"A confirmation has been
+emailed to…"* only on `receipt: 'sent'`. The public confirmation never promises
+acceptance, availability or a start — *"Submitting an assignment does not by
+itself constitute acceptance"* — and the approved same-day sentence is a hedge,
+never a guarantee.
+
+**`FIELD_KEEP` GAINED FIELDWORK AND NOTHING ELSE**: `service_requested`,
+`known_schedule` and its status. Department, insured, PO number and invoice
+reference are the paying side and stay admin-only by the allow-list's default;
+the office's intake screen shows every submitted field, the Subject tab and the
+field view's case drawer show the two fieldwork ones.
+
+**UPLOAD REFERRAL — OWNER REVIEW.** The public form has no safe attachment path
+(a test asserts it offers no upload it cannot honour), and building one is new
+public storage the brief forbade overnight. The objective step says where
+referral documents go instead: attached to the case by the office once the
+assignment is accepted.
+
+**THE STATEWIDE LINE HAD THREE SHAPES, AND THE GUARD SAW ONE.** *"Serving all
+of Virginia"* was guarded; *"Serving Virginia since 2014"* was on four footers
+and a vendor-table row, `areaServed: {State: Virginia}` was in the Vendor and
+Legal schema (on Legal beside a process offer with no geography of its own, so
+the schema offered process service statewide), and Infidelity's social titles
+said *in Virginia*. Each is a class guard now, over the staged bytes. **Licensing
+and Virginia law stay statewide on purpose** — *Va DCJS #11-9159* is a fact about
+the licence, not a claim about where the firm travels.
+
+**EVERY INTERNAL LINK IS CHECKED AGAINST THE STAGED TREE**, resolving both the
+absolute and root-relative spellings and `_redirects` sources — and the resolver
+is itself asserted both ways, because a guard nobody has watched fail is a guard
+nobody knows works. **My first "never deployed" example was a retired city page,
+and the check failed on it correctly**: `/private-investigator/forest-va/` is
+still a `_redirects` source, so a link to it lands. A path nothing answers is
+refused and a retired page's 301 is honoured; both halves are pinned.
+
+**TWO OF MY OWN WORDS FAILED THE SUITE, AND BOTH WERE RIGHT.** Rewording the
+carrier door's lead dropped *"can be provided later"*, the phrase an existing
+assertion holds as the door's promise that partial information is enough — the
+wording went back rather than the test. And my own *"no screen promises
+acceptance"* pattern matched *"once the assignment is accepted"* and *"cannot
+guarantee"* — a condition and a disclaimer, the opposite of a promise. The
+instrument was narrowed to what a promise actually says; the product was right.
+
+**AN ASSERTION THAT CRASHES IS CAUGHT, NOT NAMED.** Removing the company field
+from the carrier door's first step failed the run only as a locator timeout.
+The carrier-door fills of `k_carrier` go through `need()` now, which fails by
+name when the field is not on the step, the `fillOr` lesson from the Full
+Custom unit.
+
+**SIMPLE VIEW LISTED A RETAINER STEP ON A CARRIER ASSIGNMENT.** The opened
+intake's retainer ROW was already withdrawn for a claim, but the status strip
+above it still read *Intake · Rate sheet · Acceptance · Retainer · Case* — and,
+because the next missing item is emphasised, could highlight *Retainer* as the
+thing to do next on a file that is invoiced to a carrier and will never have
+one. Found by walking a carrier intake through Simple View for this unit, not by
+any assertion: every Simple View test used a private intake. The strip is four
+steps on a claim now, and the walk is a test.
+
+**A BILLING REFERENCE CAN BE "TO FOLLOW"**, the one optional field the brief
+named for the not-available pattern that did not have it — a PO is often issued
+after the assignment is accepted, and the status tells the office to expect it
+rather than leaving a blank that reads as forgotten. **There is deliberately no
+claimant phone field**: the firm's standard is no contact with the claimant, so
+asking for the number would collect something the work must not use.
 
 ## The private retainer has a non-refundable portion, and one function knows it
 

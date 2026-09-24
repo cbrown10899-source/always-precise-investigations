@@ -672,7 +672,11 @@ section('The manifest describes the site honestly');
      AUTHORITY page is reached from the BODY of every city page and the hub,
      which is the only kind of link that says what the page is about. Cut the
      document at <footer and look before it. */
-  const AUTHORITY = ['infidelity-investigations', 'child-custody-investigations'];
+  /* The two B2B authority pages were added to the class on 2026-09-24. Their
+     body links from the city pages already existed; pinning them is what stops
+     the next rewrite of a city template quietly moving them into the footer. */
+  const AUTHORITY = ['infidelity-investigations', 'child-custody-investigations',
+                     'insurance-investigations', 'legal-investigations'];
   const localPages = html.filter(f => /private-investigator[\\/]/.test(f));
   const bodyOf = (f) => readAll(f).split(/<footer[\s>]/)[0];
   for (const rel of AUTHORITY) {
@@ -757,6 +761,99 @@ section('The manifest describes the site honestly');
   for (const p of ['index.html', '404.html']) {
     ok(`${p} carries the current brand line`,
        /Serving Greater Lynchburg and Central Virginia since 2014/i.test(readAll(path.join(site, p))));
+  }
+
+  /* --- THE SHORT STATEWIDE LINE, AND THE STATEWIDE SCHEMA (2026-09-24) -------
+     The guard above caught "serving ALL of Virginia" and missed its shorter
+     sibling: "Serving Virginia since 2014" was still the footer of the Vendor,
+     Legal, Infidelity and Custody pages and a row of the vendor table — the
+     same statewide claim in four fewer words. And the Vendor and Legal pages
+     declared `areaServed: {State: Virginia}` in structured data, which says
+     the same thing to a search engine that the footer said to a reader — on
+     the Legal page beside a process-service offer with no geography of its
+     own, so the schema offered process service across the state. Each is
+     written as a CLASS, because each was found on one page and then on the
+     next. */
+  const shortLine = [], stateSchema = [], stateTitles = [];
+  for (const f of publicPages) {
+    const t = readAll(f), rel = path.relative(site, f);
+    if (/serving\s+virginia\s+since/i.test(t)) shortLine.push(rel);
+    for (const m of t.matchAll(/<script[^>]*application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)) {
+      let data; try { data = JSON.parse(m[1]); } catch { continue; }
+      const walk = n => {
+        if (Array.isArray(n)) return n.forEach(walk);
+        if (!n || typeof n !== 'object') return;
+        if ('areaServed' in n) {
+          for (const a of [].concat(n.areaServed)) {
+            const name = typeof a === 'string' ? a : (a && a.name) || '';
+            const type = typeof a === 'object' && a ? a['@type'] : '';
+            if (/^virginia$/i.test(String(name).trim()) || (type === 'State' && /virginia/i.test(name))) {
+              stateSchema.push(`${rel}: ${n['@type'] || '?'} areaServed ${JSON.stringify(a)}`);
+            }
+          }
+        }
+        Object.values(n).forEach(walk);
+      };
+      walk(data);
+    }
+    for (const tm of t.matchAll(/<title>([^<]*)<\/title>|<meta\s+(?:property|name)="(?:og|twitter):title"\s+content="([^"]*)"/gi)) {
+      const title = (tm[1] || tm[2] || '').replace(/&amp;/g, '&');
+      if (/\bin Virginia\b|\bVirginia Law Firms\b/i.test(title)) stateTitles.push(`${rel}: ${title}`);
+    }
+  }
+  ok('no public page carries the short statewide line "Serving Virginia since"',
+     shortLine.length === 0, shortLine.join(' | '));
+  ok('no structured data names the whole state as the area served',
+     stateSchema.length === 0, stateSchema.join(' | '));
+  ok('no page title or social title frames the service statewide',
+     stateTitles.length === 0, stateTitles.join(' | '));
+
+  /* --- EVERY INTERNAL LINK LANDS ON SOMETHING THAT WAS DEPLOYED -------------
+     Read off the STAGED tree, so a link to a page that exists in the repo but
+     was left out of the manifest counts as broken — which, on the live site,
+     it is. Links on this site are absolute, so both spellings are resolved;
+     a `_redirects` source is a real destination too. */
+  const reds = fs.readFileSync(path.join(site, '_redirects'), 'utf8');
+  const redSrc = [...reds.matchAll(/^(\/\S*)\s+\S+/gm)].map(m => m[1]);
+  const lands = h => {
+    const p0 = h.split('#')[0].split('?')[0] || '/';
+    const rel = p0.replace(/^\//, '');
+    const cands = p0 === '/' ? ['index.html']
+      : [rel, rel.endsWith('/') ? rel + 'index.html' : rel + '/index.html', rel + '.html'];
+    if (cands.some(c => { const q = path.join(site, c); return fs.existsSync(q) && fs.statSync(q).isFile(); })) return true;
+    return redSrc.some(r => r.endsWith('*') ? p0.startsWith(r.slice(0, -1))
+      : r.replace(/\/$/, '') === p0.replace(/\/$/, ''));
+  };
+  const broken = [];
+  for (const f of publicPages) {
+    const body = readAll(f).replace(/<script[\s\S]*?<\/script>/gi, '');
+    for (const m of body.matchAll(/<a\s[^>]*href="([^"]+)"/gi)) {
+      let h = m[1];
+      if (/^(tel:|mailto:|#|javascript:)/i.test(h)) continue;
+      if (h.startsWith('https://alwayspreciseinvestigations.net')) h = h.slice('https://alwayspreciseinvestigations.net'.length) || '/';
+      if (!h.startsWith('/')) continue;
+      if (!lands(h)) broken.push(`${path.relative(site, f)} -> ${h}`);
+    }
+  }
+  ok('every internal link on every public page lands on a deployed page or a redirect',
+     broken.length === 0, broken.slice(0, 8).join(' | '));
+  /* A guard nobody has watched fail is a guard nobody knows works: the same
+     resolver must refuse a path that was never deployed. The first version of
+     this check used /private-investigator/forest-va/ as its "never deployed"
+     page and failed — correctly: Forest is a RETIRED page, and `_redirects`
+     still 301s it to Lynchburg, so a link to it lands. Both halves are pinned
+     now: a redirect source counts, a path nothing answers does not. */
+  ok('and the link check refuses a page nothing answers, while honouring a retired page\'s redirect',
+     !lands('/private-investigator/nowhere-va/') && lands('/private-investigator/forest-va/')
+     && lands('/private-investigator/lynchburg-va/'));
+
+  /* --- THE CARRIER PAGES NEVER SEND AN ADJUSTER THROUGH ANOTHER DOOR -------- */
+  for (const rel of ['insurance-investigations/index.html', 'insurance-investigations/vendor-information/index.html']) {
+    const t = readAll(path.join(site, rel));
+    ok(`${rel.split('/')[1] === 'index.html' ? 'the insurance page' : 'the vendor page'} links no private or legal door`,
+       !/assignment=(private|legal)/.test(t));
+    ok(`${rel.split('/')[1] === 'index.html' ? 'the insurance page' : 'the vendor page'} calls its door Submit an Insurance Assignment`,
+       /Submit an Insurance Assignment/.test(t) && !/>Submit an Assignment</.test(t));
   }
 }
 

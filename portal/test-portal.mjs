@@ -4512,6 +4512,99 @@ section('A partial intake reads as intentional, not broken');
   await inv.close();
 }
 
+/* THE ADJUSTER'S ASSIGNMENT FIELDS (owner brief 2026-09-24, Part E): the office
+   reads every field the carrier door now collects, and the field reads the two
+   that are fieldwork — the service asked for and the schedule to plan around —
+   and none of the paying side's references. Planted the way the public form's
+   carrier door writes them. */
+section('An adjuster assignment: the office reads every field, the field reads the fieldwork');
+{
+  const PAY = {
+    assignment: 'insurance', service: 'Insurance Claim Assignment',
+    carrier: 'Example Carrier', client_name: 'Jordan Smith', client_email: 'jordan.smith@example-carrier.test',
+    contact_title: 'Claims Adjuster', department: 'WC Claims', organization_type: 'Insurance carrier',
+    service_requested: 'Surveillance', claim_number: 'WC-2026-12345', insured_name: 'Example Employer Inc',
+    subject_name: 'Taylor Example', objective: 'Document current physical activity and routine.',
+    known_schedule: 'Physical therapy Thursday at 10:00 AM.', notes: 'Do not approach the residence.',
+    start_date: '', start_date_status: 'asap', priority: 'Urgent / time sensitive',
+    po_number: 'PO-7781', billing_reference: 'BR-311', invoice_reference: 'INV-REF-9',
+    payment_method: 'Invoiced to carrier', fee_due: 0,
+  };
+  const plant = (no, payload) => db.prepare(`INSERT INTO submissions (case_no, kind, status, carrier, client_name,
+      client_email, subject_name, claim_number, payload, created_at) VALUES (?, 'claims', 'new', ?, ?, ?, ?, ?, ?, ?)`)
+    .run(no, payload.carrier, payload.client_name, payload.client_email, payload.subject_name,
+         payload.claim_number, JSON.stringify(payload), new Date().toISOString());
+  plant('API-AS-3001', PAY);
+  plant('API-AS-3002', { ...PAY, known_schedule: '', known_schedule_status: 'not_available' });
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-AS-3001').click();
+  await page.waitForTimeout(500);
+  await wsTab(page, 'Intake details');
+  const office = await text(page, '#dlgBody');
+  for (const [label, value] of [['Service requested', 'Surveillance'], ['Insured', 'Example Employer Inc'],
+       ['Title', 'Claims Adjuster'], ['Department / team', 'WC Claims'], ['Organization type', 'Insurance carrier'],
+       ['Known schedule / activity', 'Physical therapy Thursday at 10:00 AM.'],
+       ['Special instructions / restrictions', 'Do not approach the residence.'],
+       ['PO number', 'PO-7781'], ['Billing reference', 'BR-311'], ['Invoice reference', 'INV-REF-9'],
+       ['Requested start', 'As soon as available'], ['Priority', 'Urgent / time sensitive']]) {
+    ok(`the office reads ${label}`, has(office, label) && has(office, value), `${label}: ${value}`);
+  }
+  await page.close();
+
+  const p2 = await newPage();
+  await signIn(p2, 'trever', 'AdminPassword1x');
+  await rowFor(p2, 'API-AS-3002').click();
+  await p2.waitForTimeout(500);
+  await wsTab(p2, 'Intake details');
+  const gap = await text(p2, '#dlgBody');
+  ok('a schedule marked unknown is listed as still needed, in words',
+     has(gap, 'Information still needed') && /Known schedule \/ activity — not available at submission/i.test(gap),
+     gap.slice(0, 400));
+  await p2.close();
+
+  const danaId = db.prepare("SELECT id FROM users WHERE username = 'dana'").get().id;
+  db.prepare("UPDATE submissions SET assigned_to = ?, status = 'assigned' WHERE case_no IN ('API-AS-3001', 'API-AS-3002')")
+    .run(danaId);
+  const inv = await newPage();
+  await signIn(inv, 'dana', 'FieldWork2026x');
+  await rowFor(inv, 'API-AS-3001').click();
+  await inv.waitForTimeout(500);
+  await wsTab(inv, 'Subject');
+  const field = await text(inv, '#dlgBody');
+  ok('the field reads the service requested', has(field, 'Service requested') && has(field, 'Surveillance'));
+  ok('and the schedule to plan around', has(field, 'Physical therapy Thursday at 10:00 AM.'));
+  for (const [what, needle] of [['the department', 'WC Claims'], ['the insured', 'Example Employer'],
+       ['the purchase order', 'PO-7781'], ['the invoice reference', 'INV-REF-9'], ['the company', 'Example Carrier'],
+       ['the adjuster', 'Jordan Smith']]) {
+    ok(`the field is never shown ${what}`, !has(field, needle), needle);
+  }
+  /* The field view's own case drawer is where an investigator reads this out
+     there, one-handed — so it carries the two fieldwork facts too. */
+  await inv.locator('[data-act="svEnter"]:visible').first().click();
+  await inv.waitForTimeout(700);
+  await inv.locator('.sv-nav button', { hasText: 'Case' }).click();
+  await inv.waitForTimeout(400);
+  const drawer = await text(inv, '.sv-body');
+  ok('the field drawer carries the service requested', has(drawer, 'Service requested') && has(drawer, 'Surveillance'));
+  ok('and the known schedule', has(drawer, 'Physical therapy Thursday at 10:00 AM.'));
+  ok('and still no paying-side reference', !/PO-7781|INV-REF-9|WC Claims|Example Employer/.test(drawer), drawer.slice(0, 300));
+  await inv.close();
+
+  const inv2 = await newPage();
+  await signIn(inv2, 'dana', 'FieldWork2026x');
+  await rowFor(inv2, 'API-AS-3002').click();
+  await inv2.waitForTimeout(500);
+  await inv2.locator('[data-act="svEnter"]:visible').first().click();
+  await inv2.waitForTimeout(700);
+  await inv2.locator('.sv-nav button', { hasText: 'Case' }).click();
+  await inv2.waitForTimeout(400);
+  ok('an unknown schedule reads as not known yet in the field, never blank',
+     /Known schedule\s*Not known yet/.test(await text(inv2, '.sv-body')), (await text(inv2, '.sv-body')).slice(0, 300));
+  await inv2.close();
+}
+
 /* UIBUILD phase 6: the leads desk, the manual intake, and both landing as
    ordinary submissions — no parallel store. */
 section('Leads and intakes: cards, decisions, and the phone-call lead');
