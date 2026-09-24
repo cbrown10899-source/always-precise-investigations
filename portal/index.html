@@ -148,6 +148,27 @@
   .lead{color:var(--muted);font-size:.92rem;margin-bottom:18px;}
   label.f{display:block;margin-bottom:14px;}
   label.f > span{display:block;font-size:.85rem;font-weight:600;margin-bottom:5px;}
+  /* The business notification email (owner, 2026-09-24): its helper sits under
+     the box, then a status line that says what happened, then its own Save.
+     Every colour is a palette token, each measured on the white card: ok-ink
+     6.54:1, warn 5.28:1, bad 5.16:1, muted clears 4.5 too. The status wraps
+     inside its own line (min-width:0), which a long error needs at 320; why it
+     is above the button and not beside it is in `billEmailHtml`. The button
+     has no size rule of its own: a plain .btn measures 46px tall at 390 and
+     320, and the suite asserts the floor on that measurement — a min-height
+     here was tried, removed nothing when deleted, and so did nothing. */
+  .bs-email{margin-bottom:14px;}
+  .bs-email label.f{margin-bottom:6px;}
+  .bs-help{margin:0 0 4px;font-size:.85rem;line-height:1.45;color:var(--muted);}
+  .bs-save{display:flex;flex-direction:column;align-items:flex-start;gap:6px;}
+  /* The line is reserved even when empty, so "Unsaved changes" appearing does
+     not move the button out from under the thumb about to press it. */
+  .bs-status{display:block;align-self:stretch;min-height:1.35em;min-width:0;font-size:.92rem;
+    font-weight:700;line-height:1.35;overflow-wrap:anywhere;}
+  .bs-status.is-saved{color:var(--ok-ink);}
+  .bs-status.is-dirty{color:var(--warn);}
+  .bs-status.is-busy{color:var(--muted);font-weight:600;}
+  .bs-status.is-error{color:var(--bad);}
   input,select,textarea{width:100%;font-size:16px;font-family:inherit;color:var(--ink);background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px 12px;}
   input:focus,select:focus{outline:2px solid var(--teal-2);border-color:var(--teal-2);}
   /* UNIT 13 — PRIMARY IS NAVY (owner: "Primary: dark navy / Light text"; teal
@@ -3732,6 +3753,11 @@ let PAYCFG = null;      // [{id,label,enabled,display_name,handle,url,instructio
    BILL_DRAFT holds what they typed, because every paint rebuilds the inputs
    (the EDIT_DRAFT rule). */
 let BILL_SET = null, BILL_DRAFT = {}, BILL_MSG = "", BILL_ERR = "", BILL_SAVING = false;
+/* THE BUSINESS NOTIFICATION EMAIL SAVES ON ITS OWN (owner, 2026-09-24: "make
+   save obvious"). Only what happened is held here — saving, saved or an error
+   and its words. "Unsaved changes" is never stored: it is the field disagreeing
+   with the stored value, worked out by `billEmailStatus` whenever it is asked. */
+let BILL_EMAIL = { state: "", msg: "" };
 /* UNIT 30 — case types. Same three read-states, same draft rule. */
 let CTYPES = null, CT_ERR = "", CT_MSG = "", CT_SAVING = false, CT_DRAFT = { label: "", side: "private" };
 /* What the admin typed but has not successfully saved, per method.
@@ -11629,9 +11655,12 @@ const BILL_FIELDS = [
      which intake rode along and which document version went. Blank, nothing
      is sent and nothing else changes. Since 2026-09-24 it is also where each
      new insurance assignment is announced, once, with its detail and a link —
-     the label says so, because a field that quietly gains a job is a setting
-     nobody can reason about. */
-  ["owner_record_email",   "Send the office a record copy of every send, and one email per new insurance assignment — business email (leave empty for none)", "text"],
+     the helper text says so, because a field that quietly gains a job is a
+     setting nobody can reason about. The label is the owner's own words
+     (2026-09-24); the key is unchanged, so the stored value is the same one.
+     `own` gives it a Save of its own beside it — see `billEmailHtml`. */
+  ["owner_record_email",   "Business notification email", "text",
+   { own: true, help: "Receives one detailed email for each new insurance assignment and office record copies. Leave blank for none." }],
   /* BILLCOM.md — prepared, not connected. All four start empty; none is a
      secret; Bill.com is offered NOWHERE until the enable word AND a real
      https payment link are both typed here. Credentials, if a full API
@@ -11672,7 +11701,8 @@ function billingSettingsHtml(){
   return `<div class="card">${head}
     <p class="note">What a new invoice starts from. An invoice you have already opened keeps
       whatever was typed on it &mdash; these are the defaults, never an override.</p>
-    ${BILL_FIELDS.map(([k, label, kind]) => `<label class="f"><span>${esc(label)}</span>${
+    ${BILL_FIELDS.map(([k, label, kind, opt]) => opt && opt.own ? billEmailHtml(k, label, opt, val(k))
+      : `<label class="f"><span>${esc(label)}</span>${
       kind === "area"
         ? `<textarea id="bs_${k}" rows="2">${esc(val(k))}</textarea>`
         : `<input id="bs_${k}" value="${esc(val(k))}">`}</label>`).join("")}
@@ -11693,6 +11723,99 @@ function billCollect(){
   for(const [k] of BILL_FIELDS){ const el = $("bs_" + k); if(el) BILL_DRAFT[k] = el.value; }
 }
 
+/* ---- The business notification email: one field, its own Save (owner, 2026-09-24)
+
+   SAME SETTING, SAME ROUTE. Save Email posts `owner_record_email` and nothing
+   else to the `/billing-settings` the bottom button uses. That route writes
+   only the keys a body carries, so no other default is touched, and what is
+   typed in the other fields stays a draft rather than being saved behind the
+   person's back. There is no second setting and no second writer on the Worker.
+
+   THE STATUS IS DERIVED. Saving, Saved and an error are things that happened;
+   "Unsaved changes" is the box disagreeing with what is stored, compared
+   trimmed because the Worker trims. So typing back to the saved address reads
+   Saved again, and a save the Worker stored differently could never read as
+   Saved.
+
+   TYPING DOES NOT REPAINT. The status and the button are updated where they
+   stand, the box being typed in is never rebuilt, and the status element stays
+   the same node so a screen reader hears it change (`role="status"`). The page's
+   one announcer reads the first `.note` on the screen, and Settings has several
+   above this field, so this status speaks for itself instead. */
+const BILL_EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;   // what ownerRecordCopy and the office notice accept
+
+function billEmailStatus(current){
+  const stored = String((BILL_SET && BILL_SET.owner_record_email) || "").trim();
+  if(BILL_EMAIL.state === "saving") return { cls: "is-busy", text: "Saving\u2026" };
+  if(BILL_EMAIL.state === "error") return { cls: "is-error", text: BILL_EMAIL.msg };
+  if(String(current ?? "").trim() !== stored) return { cls: "is-dirty", text: "Unsaved changes" };
+  if(BILL_EMAIL.state === "saved") return { cls: "is-saved", text: "Saved \u2713" };
+  return { cls: "", text: "" };
+}
+
+/* The label names the box and the helper describes it. The helper sits OUTSIDE
+   the <label>, because text inside one becomes part of the field's name; the
+   button is outside it too, because a <label> may hold only one control.
+   THE STATUS IS ABOVE THE BUTTON, AT THE LEFT, AND THAT WAS MEASURED: beside the
+   button it sat on the right, where the floating CEO and Assistant pills live,
+   and at 320 a field scrolled low put "Saved ✓" underneath them. Above it and
+   at the left it is clear of both wherever the button is on screen. */
+function billEmailHtml(k, label, opt, value){
+  const st = billEmailStatus(value);
+  return `<div class="bs-email">
+    <label class="f" for="bs_${k}"><span id="bsl_${k}">${esc(label)}</span>
+      <input id="bs_${k}" value="${esc(value)}" data-act-input="billEmail" inputmode="email"
+        autocapitalize="off" autocorrect="off" spellcheck="false"
+        aria-labelledby="bsl_${k}" aria-describedby="bsh_${k} bs_email_status"></label>
+    <p class="bs-help" id="bsh_${k}">${esc(opt.help)}</p>
+    <div class="bs-save">
+      <span id="bs_email_status" class="bs-status${st.cls ? " " + st.cls : ""}" role="status">${esc(st.text)}</span>
+      <button class="btn" data-act="billEmailSave"${
+        BILL_EMAIL.state === "saving" ? " disabled" : ""}>Save Email</button>
+    </div>
+  </div>`;
+}
+
+function billEmailStatusPaint(){
+  const el = $("bs_email_status"), box = $("bs_owner_record_email");
+  if(!el || !box) return;
+  const st = billEmailStatus(box.value);
+  el.className = "bs-status" + (st.cls ? " " + st.cls : "");
+  if(el.textContent !== st.text) el.textContent = st.text;
+  const btn = document.querySelector('[data-act="billEmailSave"]');
+  if(btn) btn.disabled = BILL_EMAIL.state === "saving";
+}
+
+async function saveBillingEmail(){
+  if(BILL_EMAIL.state === "saving" || !BILL_SET) return;
+  const box = $("bs_owner_record_email");
+  const sent = String(box ? box.value : (BILL_DRAFT.owner_record_email ?? BILL_SET.owner_record_email ?? "")).trim();
+  /* Blank is allowed — it is how the email is turned off. An address the
+     senders would skip is refused here, where the person can still fix it. */
+  if(sent && !BILL_EMAIL_SHAPE.test(sent)){
+    BILL_EMAIL = { state: "error",
+      msg: "Not saved \u2014 that does not look like an email address. Check it, or leave it blank for none." };
+    return billEmailStatusPaint();
+  }
+  BILL_EMAIL = { state: "saving", msg: "" };
+  billEmailStatusPaint();
+  try{
+    const d = await api("/billing-settings", { method: "POST", body: { owner_record_email: sent } });
+    if(d && d.settings) BILL_SET = d.settings;
+    BILL_EMAIL = { state: "saved", msg: "" };
+    /* Show what was stored — but only if nothing was typed while it saved. */
+    const now = $("bs_owner_record_email");
+    if(now && now.value.trim() === sent){
+      now.value = BILL_SET.owner_record_email || "";
+      delete BILL_DRAFT.owner_record_email;
+    }
+  }catch(e){
+    BILL_EMAIL = { state: "error",
+      msg: "Not saved \u2014 " + (e.message || "the portal could not be reached") + ". Try again." };
+  }
+  billEmailStatusPaint();
+}
+
 async function saveBillingSettings(){
   billCollect();
   BILL_MSG = ""; BILL_ERR = "";
@@ -11702,11 +11825,16 @@ async function saveBillingSettings(){
     BILL_MSG = "The prefix can use letters, numbers and hyphens, up to 20 characters.";
     return paint();
   }
+  /* The email rides in this save too, so when it had changed, the status beside
+     it says Saved as well — "saving from either place" is one stored value. */
+  const emailChanged = BILL_SET && "owner_record_email" in BILL_DRAFT
+    && String(BILL_DRAFT.owner_record_email).trim() !== String(BILL_SET.owner_record_email || "").trim();
   BILL_SAVING = true; paint();
   try{
     const d = await api("/billing-settings", {method:"POST", body: {...BILL_DRAFT}});
     BILL_SET = d.settings || BILL_SET; BILL_DRAFT = {};
     BILL_MSG = "Saved. New invoices will start from these.";
+    if(emailChanged) BILL_EMAIL = { state: "saved", msg: "" };
   }catch(e){ BILL_MSG = e.message || "Could not save."; }
   BILL_SAVING = false; paint();
 }
@@ -15713,7 +15841,7 @@ function vstHtml(){
    Dialogs are untouched and stay untouched — `ls_to` and `pi_to` focus after
    the user has explicitly opened that form, which the owner's rule allows by
    name. */
-const FOCUS_KEEP = ["q", "prof_q", "nl_pick", "gsearch", "am_q", "inv_q", "asst_in"];
+const FOCUS_KEEP = ["q", "prof_q", "nl_pick", "gsearch", "am_q", "inv_q", "asst_in", "bs_owner_record_email"];
 let INV_Q_TIMER = null;   // the invoice search's debounce, the srchSoon shape
 let FOCUS_WAS = null;
 function focusCapture(){
@@ -26017,6 +26145,7 @@ document.addEventListener("click", ev => {
       DBX = null; DBX_MSG = ""; DBX_SAVING = false; DBX_DRAFT = null; loadDropbox();
       SH = { state: "never", data: null }; loadStorageHealth();
       BILL_SET = null; BILL_DRAFT = {}; BILL_MSG = ""; BILL_ERR = ""; BILL_SAVING = false;
+      BILL_EMAIL = { state: "", msg: "" };
       loadBillingSettings();
       CTYPES = null; CT_ERR = ""; CT_MSG = ""; CT_SAVING = false;
       CT_DRAFT = { label: "", side: "private" }; loadCaseTypes();
@@ -26047,6 +26176,7 @@ document.addEventListener("click", ev => {
   }
   else if(act === "paySave"){ savePaymentMethod(el.dataset.id, el.dataset.on === "1"); }
   else if(act === "billSave"){ saveBillingSettings(); }
+  else if(act === "billEmailSave"){ saveBillingEmail(); }
   else if(act === "ctAdd"){ addCaseType(); }
   else if(act === "ctRetry"){ CT_ERR = ""; CTYPES = null; loadCaseTypes(); }
   else if(act === "billRetry"){ BILL_ERR = ""; BILL_SET = null; loadBillingSettings(); }
@@ -27106,6 +27236,15 @@ document.addEventListener("input", ev => {
   /* The composer, same rule: a repaint from anywhere rebuilds this input, so
      what is being typed lives on ASST rather than only in the DOM. */
   if(din === "asstDraft"){ if(ASST) ASST.draft = ev.target.value; return; }
+  /* The business notification email: Settings repaints as each of its panels
+     loads, so what is typed lives in the draft, and the status beside it moves
+     where it stands rather than rebuilding the box. */
+  if(din === "billEmail"){
+    BILL_DRAFT.owner_record_email = ev.target.value;
+    if(BILL_EMAIL.state === "error") BILL_EMAIL = { state: "", msg: "" };
+    billEmailStatusPaint();
+    return;
+  }
   /* Typing IN the paragraph is the writer taking it over: the flag flips and
      nothing rewrites the box — no repaint here, the cursor is in it. */
   if(din === "dsText"){
