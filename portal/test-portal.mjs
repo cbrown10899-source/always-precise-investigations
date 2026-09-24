@@ -22771,8 +22771,10 @@ section('Simple View: a carrier assignment is accepted in one tap and never show
   });
   ok('the carrier assignment is on Needs action, named for the company', !!card, JSON.stringify(card));
   const ct = (card && card.text) || '';
+  /* The chips are CSS-uppercased, and innerText reports what is RENDERED —
+     "INSURANCE", "SIGNED" — so every one of these reads case-insensitively. */
   ok('it is chipped Insurance and says it is ready to accept',
-     /Insurance/.test(ct) && /Ready to Create Case/i.test(ct) && /Signed/.test(ct), ct);
+     /Insurance/i.test(ct) && /Ready to Create Case/i.test(ct) && /Signed/i.test(ct), ct);
   ok('the card offers no retainer, flat fee or payment to record',
      !!card && !card.acts.some(a => /retainer|flat fee|payment/i.test(a)), JSON.stringify(card && card.acts));
 
