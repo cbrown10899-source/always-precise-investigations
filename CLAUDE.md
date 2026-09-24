@@ -1222,7 +1222,20 @@ never show whether a column can shrink. With an unbroken reference the defect
 was real and **older than this unit** — `.record dl` is a grid of `auto 1fr`
 whose items default to their content's width, so one unbroken value widened
 EVERY path's final record past a 320 screen. The wrap moved from the receipt to
-`.record dd`, which fixes the private and legal records too.
+`.record dd`, which fixes the private and legal records too. **The same fixture
+found a second one a step earlier**: the billing step echoes the claim reference
+in a `.feebox` flex row, and an unbroken value pushed that step 179px past a 390
+screen, far enough that the Submit tap landed on a label. Both halves of that
+row may shrink now.
+
+**A PHONE-EMULATED BROWSER HIDES ITS OWN OVERFLOW.** With `isMobile: true`,
+Chrome widens the layout viewport to fit content that overflows (the broken
+billing step reported `innerWidth` 569 at 390), so `scrollWidth - innerWidth`
+reads **zero on exactly the page that scrolls sideways**. Every per-step check
+in the carrier walk passed over both defects above for that reason. They measure
+against the device width now, and removing either wrap fails by name, at 227px
+and 179px. The walk is the only `isMobile` context in any suite, and every other
+overflow check uses a plain viewport, where `innerWidth` stays put.
 
 **MUTATE IN A WORKTREE, NOT IN THE WORKING TREE.** A mutation runner that
 rewrites the real file leaves a deliberately broken copy in the tree for as long
