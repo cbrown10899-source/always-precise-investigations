@@ -1899,7 +1899,11 @@ for (const width of [390, 320]) {
      can also make the next tap land on the wrong element, and a run that dies
      there never reaches a summary assertion to name what went wrong. */
   const check = async tag => {
-    const o = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    /* Against the DEVICE width, never `innerWidth`: in a phone-emulated
+       context Chrome widens the layout viewport to fit overflowing content,
+       so `scrollWidth - innerWidth` reads 0 on exactly the page that scrolls.
+       Measured: an overflowing billing step reported innerWidth 569 at 390. */
+    const o = await page.evaluate(w => document.documentElement.scrollWidth - w, width);
     steps.push(`${tag}:${o}`);
     ok(`${width}px: the ${tag} step does not scroll sideways`, o <= 0, String(o));
   };
