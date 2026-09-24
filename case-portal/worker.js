@@ -1323,7 +1323,15 @@ async function caseAgreement(env, caseNo, missing) {
    a document that never used the word, and an invoice that introduced it would
    be the office relabelling their money after the fact. The owner's own
    choice of "Retainer" on the agreement keeps the retainer line. */
-function openingInvoiceLine(agreement, retainerAmount) {
+function openingInvoiceLine(agreement, retainerAmount, flatFee) {
+  /* A LEGAL FLAT-FEE CASE OPENS ON ITS FLAT FEE (owner, 2026-09-24): the line
+     names what the firm bought, carries no retainer sentence, and bills
+     exactly the figure this line always billed — the words moved, the amount
+     did not. */
+  if (flatFee) {
+    return { description: FLAT_FEE_INVOICE_LINE,
+             amount: agreement ? agreement.amount : retainerAmount, note: null };
+  }
   if (agreement && agreement.label_kind !== 'retainer') {
     return { description: agreement.title || 'Custom Surveillance Agreement',
              amount: agreement.amount, note: null };
@@ -1965,6 +1973,50 @@ function legalPricingFor(sub) {
        (D7); this is the default the model carries. */
     fee: svc && svc.model === 'fixed' ? LEGAL_FLAT[svc.id] : null,
   };
+}
+
+/* A LEGAL FLAT FEE IS NEVER CALLED A RETAINER (owner, 2026-09-24): "When a
+   LEGAL matter is actually sold as a FLAT FEE, do not describe that payment
+   later as a retainer ... Use the actual Legal Rate Sheet / agreement payment
+   type as source of truth ... Do not infer from amount alone."
+
+   THE SOURCE OF TRUTH IS THE CASE'S OWN SERVICE MARKER, read through the
+   catalogue — exactly the model `legalPricingFor` answers, and the one the
+   send route used to pick the fixed sheet the firm was quoted on. Nothing here
+   looks at a figure: a $250 retainer is still a retainer, and a flat fee
+   agreed at any amount is still a flat fee.
+
+   A LEGAL CASE WITH NO MARKER IS NOT GUESSED AT. It predates the catalogue,
+   so it answers `retainer` and keeps every retainer word it has always had —
+   the owner's "do not guess ... leave it unchanged".
+
+   TWO READERS OF ONE QUESTION: a row the Worker already holds, and a case
+   number inside a feed's SQL, where shipping a whole payload per row (the
+   signature image rides in it) to ask one question would be the wrong trade.
+   The SQL only EXTRACTS the marker; the model is still decided here, by the
+   catalogue, so the two cannot answer differently for one case. */
+const FLAT_FEE_INVOICE_LINE = 'Legal Services Flat Fee';
+const isFlatFeeSvc = id => {
+  const svc = id == null ? null : legalServiceById(id);
+  return !!(svc && svc.model === 'fixed');
+};
+const isFlatFeeSub = sub => {
+  const p = legalPricingFor(sub);
+  return !!(p && p.model === 'fixed');
+};
+/* The marker as SQL over a submissions row already in the statement — NULL
+   for a case that is not legal, which is `isLegalSub`'s own test. */
+const legalSvcExpr = alias => `CASE WHEN json_valid(${alias}.payload)
+      AND json_extract(${alias}.payload, '$.assignment') = 'legal'
+     THEN json_extract(${alias}.payload, '$.legal_service') END`;
+/* ...and over a case number, for the feeds whose rows are payments. */
+const legalServiceSql = caseCol =>
+  `(SELECT ${legalSvcExpr('lsx')} FROM submissions lsx WHERE lsx.case_no = ${caseCol})`;
+async function caseIsFlatFee(env, caseNo) {
+  try {
+    const r = await env.DB.prepare(`SELECT ${legalServiceSql('?')} AS svc`).bind(caseNo).first();
+    return isFlatFeeSvc(r && r.svc);
+  } catch { return false; }
 }
 
 /* ---------------------------------------------- UNIT 7: client profiles
@@ -3571,14 +3623,18 @@ async function recentActivity(env) {
   if (!missing.includes('retainer_payment')) {
     /* A payment on a Full Custom case is not a retainer payment unless the
        owner labelled the agreement one — the case's own word, read per row by
-       an index seek, the `agreementSql` rule. */
+       an index seek, the `agreementSql` rule. Nor is one on a legal flat-fee
+       case, which reads its own service marker the same way. */
     const agreeKind = !missing.includes('sent_document') && !missing.includes('sent_document_custom')
       ? `, ${agreementSql('retainer_payment.case_no', 'payment_label_kind')} AS ag_kind,
            ${agreementSql('retainer_payment.case_no', 'total_due')} AS ag_total` : '';
-    push(await q(`SELECT id, case_no, recorded_at AS at${agreeKind} FROM retainer_payment
+    push(await q(`SELECT id, case_no, recorded_at AS at${agreeKind},
+                         ${legalServiceSql('retainer_payment.case_no')} AS legal_svc
+                    FROM retainer_payment
                    WHERE 1 = 1 ${hide('payment', 'retainer_payment.id')}
                    ORDER BY id DESC LIMIT ${per}`),
-      'payment', r => r.ag_total != null && r.ag_kind !== 'retainer'
+      'payment', r => isFlatFeeSvc(r.legal_svc) ? 'Flat fee payment recorded'
+        : r.ag_total != null && r.ag_kind !== 'retainer'
         ? 'Payment recorded' : 'Retainer payment recorded');
   }
   push(await q(`SELECT e.id AS id, b.case_no, e.at AS at, e.action FROM build_events e
@@ -4244,11 +4300,13 @@ async function auditTrail(request, env, user) {
     ? `, ${agreementSql('p.case_no', 'payment_label_kind')} AS ag_kind,
          ${agreementSql('p.case_no', 'total_due')} AS ag_total` : '';
   await q('retainer_payment',
-    `SELECT p.recorded_at AS at, p.case_no, u.display_name AS who${auditAgree}
+    `SELECT p.recorded_at AS at, p.case_no, u.display_name AS who${auditAgree},
+            ${legalServiceSql('p.case_no')} AS legal_svc
        FROM retainer_payment p LEFT JOIN users u ON u.id = p.recorded_by
       ORDER BY p.id DESC LIMIT ?`,
     r => ({ at: r.at, case_no: r.case_no, who: r.who, kind: 'payment',
-            what: r.ag_total != null && r.ag_kind !== 'retainer'
+            what: isFlatFeeSvc(r.legal_svc) ? 'Flat fee payment recorded'
+              : r.ag_total != null && r.ag_kind !== 'retainer'
               ? 'Payment recorded' : 'Retainer payment recorded' }));
 
   await q('case_closure',
@@ -4395,7 +4453,8 @@ async function needsAttention(env, user) {
     const haveAgree = have('sent_document') && have('sent_document_custom');
     const notAgreement = haveAgree ? `AND ${agreementSql('cr.case_no', 'total_due')} IS NULL` : '';
     for (const r of (await q(
-      `SELECT cr.case_no, cr.retainer_amount, cr.received, ${paidCol} AS paid
+      `SELECT cr.case_no, cr.retainer_amount, cr.received, ${paidCol} AS paid,
+              ${legalSvcExpr('s')} AS legal_svc
          FROM case_retainer cr JOIN submissions s ON s.case_no = cr.case_no
         WHERE cr.retainer_amount > 0 AND s.status != 'closed' ${notAgreement}
         LIMIT ${ATTN.PER_KIND * 2}`)).filter(visible)) {
@@ -4404,7 +4463,8 @@ async function needsAttention(env, user) {
       if (owed <= 0) continue;
       const partial = Number(r.paid) > 0;
       out.push(attnRow(partial ? 'attention' : 'urgent', 'payments', r.case_no,
-        partial ? 'Retainer part paid' : 'Retainer outstanding',
+        isFlatFeeSvc(r.legal_svc) ? (partial ? 'Flat fee part paid' : 'Flat fee outstanding')
+          : partial ? 'Retainer part paid' : 'Retainer outstanding',
         partial ? `${attnMoney(owed)} of ${attnMoney(r.retainer_amount)} still to come`
           : `${attnMoney(r.retainer_amount)} agreed, nothing recorded yet`,
         { label: 'Open billing', view: 'case', tab: 'billing' }));
@@ -4489,11 +4549,12 @@ async function needsAttention(env, user) {
        it stays awaiting until the office records the money — so this says
        "still awaiting", never "unpaid". */
     for (const r of (await q(
-      `SELECT li.case_no, li.firm_name FROM legal_intake li
+      `SELECT li.case_no, li.firm_name, ${legalSvcExpr('s')} AS legal_svc FROM legal_intake li
          JOIN submissions s ON s.case_no = li.case_no
         WHERE li.payment_arrangement = 'check_pickup' AND s.status != 'closed'
         LIMIT ${ATTN.PER_KIND}`)).filter(visible)) {
-      out.push(attnRow('info', 'legal', r.case_no, 'Retainer cheque awaiting pickup',
+      out.push(attnRow('info', 'legal', r.case_no, isFlatFeeSvc(r.legal_svc)
+        ? 'Flat fee cheque awaiting pickup' : 'Retainer cheque awaiting pickup',
         `${r.firm_name || 'The firm'} asked us to collect it at their office`,
         { label: 'Open billing', view: 'case', tab: 'billing' }));
     }
@@ -5210,6 +5271,8 @@ function redactRow(row) {
   const { carrier, claim_number, client_name, client_email, client_phone, lead_status,
           send_count, last_sent_at, retainer_received, pay_sent_at, pay_methods,
           agreement_total, agreement_kind,
+          /* how the firm pays (2026-09-24) is the paying side too */
+          legal_model,
           /* the firm IS the paying side (Unit 6) — the LEGAL category stays,
              the identity goes */
           legal_firm, legal_attorney, legal_assignment, legal_deadline, legal_arrangement,
@@ -5319,6 +5382,7 @@ async function listSubmissions(request, env, user) {
             CASE WHEN json_valid(s.payload)
                   AND json_extract(s.payload, '$.assignment') = 'legal'
                  THEN 1 ELSE 0 END AS legal,
+            ${legalSvcExpr('s')} AS legal_svc,
             /* DID THE CLIENT SIGN IT? Computed in SQL so the boolean travels
                and the 50KB payload does not — the intake list draws dozens of
                rows and none of them needs the signature image, only the fact
@@ -5346,7 +5410,18 @@ async function listSubmissions(request, env, user) {
     `SELECT COUNT(*) AS n FROM submissions s ${joins} ${scope}`)
     .bind(...where).first();
 
-  const rows = results || [];
+  /* THE PRICING MODEL, ON A LEGAL ROW ONLY (owner, 2026-09-24): a flat-fee
+     matter's card must not ask for a retainer. Decided by the catalogue from
+     the marker the SQL extracted; the raw marker itself never leaves, and a
+     row that is not legal gains no key at all. */
+  const rows = (results || []).map(r => {
+    const { legal_svc, ...row } = r;
+    if (Number(row.legal)) {
+      const svc = legalServiceById(legal_svc);
+      row.legal_model = svc ? svc.model : 'retainer';
+    }
+    return row;
+  });
   return json({
     submissions: user.role === 'admin' ? rows : rows.map(redactRow),
     total: countRow ? countRow.n : 0, limit, offset,
@@ -6658,7 +6733,9 @@ async function closeoutFacts(env, caseNo) {
         bits.push(`$${paid.total.toFixed(2)} of the $${agreement.amount.toFixed(2)} ${agreement.term.toLowerCase()} is recorded as received`);
       }
     } else if (ret && Number(ret.retainer_amount) > 0 && !ret.received) {
-      bits.push('the agreed retainer is not recorded as received');
+      bits.push(await caseIsFlatFee(env, caseNo)
+        ? 'the agreed flat fee is not recorded as received'
+        : 'the agreed retainer is not recorded as received');
     }
   }
   if (bits.length) say('billing', bits.join('; '));
@@ -6871,6 +6948,10 @@ async function closeoutMoney(env, caseNo) {
      client was sent, and so the statement below can name the money in the
      agreement's own word rather than calling it a retainer. */
   const agreement = await caseAgreement(env, caseNo, missing);
+  /* A legal flat fee's statement names the flat fee (owner, 2026-09-24). The
+     service the case was sold as outranks an agreement, as it does on the
+     case screen — and only the WORDS follow it; every figure is the ledger's. */
+  const flatFee = await caseIsFlatFee(env, caseNo);
 
   return {
     retainer_received: received,
@@ -6881,7 +6962,7 @@ async function closeoutMoney(env, caseNo) {
     } : null,
     /* The statement's own three words, published so the page's printed copy
        uses the strings the emailed copy uses rather than a second opinion. */
-    words: closeoutWords(agreement),
+    words: closeoutWords(flatFee ? null : agreement, flatFee),
     refunded, refunds,
     retained,
     final_balance: finalBalance,
@@ -7142,16 +7223,20 @@ async function recordPacket(env, user, caseNo) {
      document the client signed against. */
   const agreement = await caseAgreement(env, caseNo, miss);
   if (agreement) agreed = agreement.amount;
+  /* A LEGAL FLAT FEE is named as one (owner, 2026-09-24). Only the word
+     follows the service: the figure is exactly the one read above. */
+  const flatFee = await caseIsFlatFee(env, caseNo);
   const retainer = {
     agreed_amount: agreed,
-    term: agreement ? agreement.term : 'Retainer',
+    term: flatFee ? 'Flat fee' : agreement ? agreement.term : 'Retainer',
     agreement: agreement ? { doc_id: agreement.doc_id, sent_at: agreement.sent_at,
                              title: agreement.title, label_kind: agreement.label_kind } : null,
     /* The document's own figure is kept beside it deliberately: what the client
        was QUOTED is the snapshot's, what the case AGREED is the ledger's, and
        a packet that showed one number could not tell a dispute which it was. */
     document_amount: rateSheet ? (rateSheet.agreement_total != null
-      ? rateSheet.agreement_total : rateSheet.retainer_amount) : null,
+      ? rateSheet.agreement_total : rateSheet.retainer_amount != null
+      ? rateSheet.retainer_amount : rateSheet.flat_fee != null ? rateSheet.flat_fee : null) : null,
     non_refundable: rateSheet ? rateSheet.non_refundable : null,
     payments: payments.map(p => ({ ...p, voided: !!(p.voided_at) })),
   };
@@ -7724,7 +7809,21 @@ async function closeoutRefundDone(request, env, user, caseNo) {
    read by the statement and published on the ledger for the page. Without an
    agreement (or with one the owner labelled Retainer) they are the original
    strings, byte for byte. */
-function closeoutWords(agreement) {
+function closeoutWords(agreement, flatFee) {
+  /* A LEGAL FLAT FEE (owner, 2026-09-24) was received for a service, not held
+     on deposit, and its sheet stated no non-refundable portion — so what the
+     firm kept is the plain "Amount retained", the agreement's own wording where
+     it stated none. `flat_fee` is set only here, so every other case publishes
+     exactly the object it always did. */
+  if (flatFee) {
+    return {
+      agreement: false,
+      flat_fee: true,
+      received: 'Flat Fee Received',
+      retained: 'Amount retained',
+      closing: 'This statement documents the disposition of the flat fee received on this case.',
+    };
+  }
   const ag = agreement && agreement.label_kind !== 'retainer' ? agreement : null;
   return {
     agreement: !!ag,
@@ -7774,7 +7873,7 @@ function closeoutStatement(caseNo, clientName, m, closedOn) {
      says the PAYMENT was received, and says "non-refundable" only where their
      agreement actually stated a non-refundable portion. Every other case reads
      exactly as it did: `closeoutWords` returns the original three strings. */
-  const words = closeoutWords(m.agreement);
+  const words = m.words || closeoutWords(m.agreement);
   const lines = [
     ...(m.work_performed
       ? [drow('Work performed', WORK_PERFORMED[m.work_performed] || m.work_performed)] : []),
@@ -7842,7 +7941,7 @@ Always Precise Investigations, LLC`;
   <p style="margin:0 0 14px;font-weight:800;color:#12305a">CASE STATUS: CLOSED</p>
   ${reasonLabel ? `<p style="margin:0 0 14px;font-size:.92rem"><b>Reason:</b> ${escHtml(reasonLabel)}</p>` : ''}
   ${externalNote ? `<p style="margin:0 0 14px;font-size:.92rem">${escHtml(externalNote)}</p>` : ''}
-  <p style="margin:0 0 14px;font-size:.92rem">${words.agreement ? escHtml(words.closing) : `This statement documents the disposition of the
+  <p style="margin:0 0 14px;font-size:.92rem">${words.agreement || words.flat_fee ? escHtml(words.closing) : `This statement documents the disposition of the
     retainer held on this case.`}</p>
   <hr style="border:0;border-top:1px solid #dfe3e8">
   <p style="font-size:.82rem;color:#5c6775">Questions? (434) 907-0975<br>
@@ -12049,7 +12148,8 @@ async function createInvoice(request, env, user, caseNo) {
          carrying the agreement's figure. `openingInvoiceLine` is the one
          writer of that choice; the Assistant's preview reads it too. */
       const opening = openingInvoiceLine(await caseAgreement(env, caseNo),
-        ret && ret.retainer_amount != null ? Number(ret.retainer_amount) : PERSONAL.retainer);
+        ret && ret.retainer_amount != null ? Number(ret.retainer_amount) : PERSONAL.retainer,
+        isFlatFeeSub(sub));
       await env.DB.prepare(
         `INSERT INTO invoice_lines (invoice_id, sort, description, qty, rate, amount)
          VALUES (?, 0, ?, 1, NULL, ?)`)
@@ -16413,6 +16513,7 @@ async function caseTimeline(env, user, caseNo, url) {
       /* One read for the whole arm: a Full Custom case names its payments
          without the word retainer (owner, 2026-09-24). */
       const tlAgreement = await caseAgreement(env, caseNo);
+      const tlFlat = await caseIsFlatFee(env, caseNo);
       const pays = cap((await env.DB.prepare(
         `SELECT p.id, p.amount, p.method, p.paid_on, p.reference, p.recorded_at,
                 u.display_name AS who
@@ -16426,7 +16527,8 @@ async function caseTimeline(env, user, caseNo, url) {
         const when = p.paid_on ? tlLocal(p.paid_on, null) : tlAt(p.recorded_at);
         if (inRange(when)) {
           push(tlEvent('payment', when, {
-            title: tlMoney(p.amount) + (tlAgreement && tlAgreement.label_kind !== 'retainer'
+            title: tlMoney(p.amount) + (tlFlat ? ' flat fee payment recorded'
+              : tlAgreement && tlAgreement.label_kind !== 'retainer'
               ? ' payment recorded' : ' retainer payment recorded'),
             detail: [TL_METHOD_WORD[p.method] || p.method || '',
                      p.reference ? 'ref ' + p.reference : ''].filter(Boolean).join(' · '),
@@ -16873,6 +16975,8 @@ const RECORD_DOC = {
   /* The same record on a Full Custom case, where the money is the agreed
      amount the client was sent rather than a retainer (owner, 2026-09-24). */
   agreement_payment: 'Payment recorded',
+  /* ...and on a legal flat-fee case, where it is the flat fee (2026-09-24). */
+  flat_fee_payment: 'Flat fee payment recorded',
 };
 
 /* THE OFFICE'S OWN RECORD OF A RETAINER PAYMENT (owner brief 2026-09-07 §13).
@@ -16915,7 +17019,8 @@ async function retainerRecordCopy(env, user, caseNo, pay) {
        copy says a PAYMENT was recorded — unless the owner labelled the
        agreement a retainer, which keeps the retainer wording. */
     const agreement = await caseAgreement(env, caseNo);
-    const docKind = agreement && agreement.label_kind !== 'retainer'
+    const docKind = isFlatFeeSub(sub) ? 'flat_fee_payment'
+      : agreement && agreement.label_kind !== 'retainer'
       ? 'agreement_payment' : 'retainer_payment';
     return await ownerRecordCopy(env, docKind, {
       to: '', client, case_no: caseNo,
@@ -18196,7 +18301,8 @@ async function assistantInvoicePreview(env, caseNo) {
     const ret = await env.DB.prepare(
       'SELECT retainer_amount FROM case_retainer WHERE case_no = ?').bind(caseNo).first();
     const opening = openingInvoiceLine(await caseAgreement(env, caseNo),
-      ret && ret.retainer_amount != null ? Number(ret.retainer_amount) : PERSONAL.retainer);
+      ret && ret.retainer_amount != null ? Number(ret.retainer_amount) : PERSONAL.retainer,
+      isFlatFeeSub(sub));
     lines.push({ description: opening.description, qty: 1, rate: null, amount: opening.amount });
     clientNotes = opening.note;
   }
@@ -19469,8 +19575,9 @@ async function assistantCommandCore(body, env, user) {
             + (m.retainer_received > 0
                 ? 'How much of that the firm earned is your decision, not something I can work out '
                 + 'from the record, so I will not suggest a figure. '
-                : 'No retainer payment is recorded on this case, so there is nothing to dispose of '
-                + 'until one is. ')
+                : `No ${m.words && m.words.flat_fee ? 'flat fee payment'
+                    : m.words && m.words.agreement ? 'payment' : 'retainer payment'} is recorded `
+                + 'on this case, so there is nothing to dispose of until one is. ')
             + (open.length
                 ? `The closing checklist still has ${open.length} unconfirmed: ${open.join('; ')}. `
                 + 'The closeout records the money either way; the case stays open until those are '

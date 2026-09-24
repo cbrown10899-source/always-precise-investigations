@@ -311,10 +311,17 @@ standard, is one tap away in ASSOCIATED RATE SHEET.
   is what the brief asks of it.
 - ~~Recording a custom total as the case's agreed figure — D14.~~ Done as D23,
   without a retainer row.
-- **Found and not fixed, outside this brief (the Legal no-regression line):** a
-  FIXED legal case still meets the retainer word in three places — the case
-  actions button *Retainer paid*, the closeout statement's *Retainer received*,
-  and the opening invoice line *Investigation Retainer*, which for that model
-  bills the case's retainer column (the flat fee if one was agreed, else the
-  standard figure). LEGAL-SERVICES.md D7 says a fixed case is never called a
-  retainer; these three predate it and are an owner decision to change.
+- ~~**Found and not fixed, outside this brief (the Legal no-regression line):**
+  a FIXED legal case still meets the retainer word in three places.~~ The owner
+  asked for it the same day: LEGAL-SERVICES.md D15–D22 (*Flat Fee Paid*, *Flat
+  Fee Received*, *Legal Services Flat Fee* and every other surface), with the
+  opening line's figure deliberately unchanged.
+- **Four leftovers of this unit, corrected there (LEGAL-SERVICES.md D22)** —
+  found because the flat-fee unit had the same lines open: the Simple View
+  card's *Record retainer* on an accepted, unpaid agreement (now *Record
+  payment*), the closeout form's *Non-refundable retained* label (now the
+  statement's own word, so *Amount retained* where the agreement stated no
+  non-refundable portion), the Billing panel's *Create from retainer* (now
+  *Create from agreement*), and the Assistant's closeout sentence. The claim
+  this file made — that a Full Custom case is never called a retainer — was
+  wider than the code until then.

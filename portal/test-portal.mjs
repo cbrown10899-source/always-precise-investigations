@@ -17365,8 +17365,12 @@ section('LEGAL-SERVICES: the wizard generates the sheet from the service, and a 
     }catch(e){ return { card: 'API-ERROR: ' + (e.message || e), pricing: null }; }
   }, caseNo);
   const moneyF = await openStatusCard('API-LSV-F');
-  ok('a fixed case\'s Overview reads Fee (flat) $250 and never Retainer',
-     /Fee \(flat\)/.test(moneyF.card) && /\$250\b/.test(moneyF.card)
+  /* "Fee (flat)" until 2026-09-24, when the owner named the terminology:
+     "Use the same terminology consistently in: case overview ..." — so the
+     row says Flat Fee, and the property this pins is unchanged: a fixed
+     case's Overview never says Retainer. */
+  ok('a fixed case\'s Overview reads Flat Fee $250 and never Retainer',
+     /Flat Fee/.test(moneyF.card) && /\$250\b/.test(moneyF.card)
      && !/Retainer/.test(moneyF.card), moneyF.card.slice(0, 300));
   ok('and its record knows the service and model',
      moneyF.pricing && moneyF.pricing.service === 'locate'
@@ -17374,7 +17378,7 @@ section('LEGAL-SERVICES: the wizard generates the sheet from the service, and a 
   const moneyH = await openStatusCard('API-LSV-H');
   ok('a historical legal case still reads Retainer $1,500 — unchanged',
      /Retainer/.test(moneyH.card) && /\$1,500\b/.test(moneyH.card)
-     && !/Fee \(flat\)/.test(moneyH.card), moneyH.card.slice(0, 300));
+     && !/Flat Fee/.test(moneyH.card), moneyH.card.slice(0, 300));
 
   /* ---- the Quick Legal form offers the optional service, defaulting to none ----
      The case view is left FIRST: paint() routes to the case whenever
@@ -25976,6 +25980,353 @@ section('FULL CUSTOM: the builder on a phone, at 390 and 320');
        await page.evaluate(() => window.scrollY) === 0);
     await page.close();
   }
+}
+
+section('LEGAL FLAT FEE: a matter sold as a flat fee reads Flat Fee on every screen, and nothing else moved');
+{
+  /* OWNER, 2026-09-24: "When a LEGAL matter is actually sold as a FLAT FEE, do
+     not describe that payment later as a retainer ... Flat Fee Paid ... Flat
+     Fee Received ... Legal Services Flat Fee." A Process Service matter is
+     driven through the real screens and read back; a legal retainer matter
+     and a private client beside it keep the retainer's exact words. */
+  const ING = { 'X-Ingest-Key': 'e2e-ingest-key' };
+  const legalLead = (no, svc, firm, extra = {}) => post('/ingest', { case_no: no, assignment: 'legal',
+    ...(svc ? { legal_service: svc } : {}), firm_name: firm, attorney_name: 'A. Torney',
+    client_name: firm, client_email: 'office@' + no.toLowerCase() + '.example',
+    subject_name: 'R. Recipient', objective: 'Serve the complaint', payment_arrangement: 'check_pickup',
+    ...extra }, ING);
+  await legalLead('API-FFP-A', 'process', 'Serve Right LLP');
+  await legalLead('API-FFP-B', 'general', 'Hourly Sons LLP');
+  await post('/ingest', { case_no: 'API-FFP-C', service: 'Surveillance', client_name: 'Paula Private',
+    client_email: 'paula@example.test', subject_name: 'S. Spouse', objective: 'Document' }, ING);
+  await legalLead('API-FFP-L', 'locate', 'Pending Locate LLP');
+  await legalLead('API-FFP-R', 'general', 'Pending Hourly LLP');
+  await legalLead('API-FFP-M', null, 'Marked Later LLP');
+  await post('/ingest', { case_no: 'API-FFP-G', service: 'Surveillance', client_name: 'Gail Agreed',
+    client_email: 'gail@example.test', subject_name: 'S. Two', objective: 'Two days' }, ING);
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  /* Acceptance through the route the Accept button posts — a flat fee's
+     figure is snapshotted there — and a retainer figure agreed the way the
+     office agrees one. */
+  await page.evaluate(async () => {
+    for (const no of ['API-FFP-A', 'API-FFP-B', 'API-FFP-C', 'API-FFP-M'])
+      await api(`/leads/${no}/status`, { method: 'POST', body: { status: 'converted' } });
+    for (const no of ['API-FFP-L', 'API-FFP-R'])
+      await api(`/leads/${no}/status`, { method: 'POST', body: { status: 'intake_received' } });
+    await api('/cases/API-FFP-B/retainer', { method: 'POST', body: { retainer_amount: 1500 } });
+    await api('/cases/API-FFP-C/retainer', { method: 'POST', body: { retainer_amount: 1500 } });
+  });
+  /* A FULL CUSTOM agreement, accepted and sent through the real route — the
+     case for the three Full Custom leftovers corrected on lines this unit had
+     open anyway. */
+  env.RESEND_API_KEY = 'e2e-resend-key';
+  const gSent = await page.evaluate(async () => {
+    await api('/leads/API-FFP-G/status', { method: 'POST', body: { status: 'converted' } });
+    return api('/sheets/private_retainer/email', { method: 'POST', body: { to: 'gail@example.test',
+      case_no: 'API-FFP-G', include_payment: true, methods: ['cash_app', 'venmo'],
+      custom_agreement: { hourly_rate: '75', days: '2', hours_per_day: '12' } } });
+  });
+  delete env.RESEND_API_KEY;
+  ok('the Full Custom fixture really went', gSent && gSent.ok === true, JSON.stringify(gSent).slice(0, 160));
+
+  /* ---- THE LISTS: Simple View's states and the Intakes desk card ---------- */
+  const listWords = () => page.evaluate(async () => {
+    const d = await api('/submissions?limit=200');
+    const rows = d.submissions || [];
+    const r = no => rows.find(x => x.case_no === no) || {};
+    const acts = no => { const b = document.createElement('div'); b.innerHTML = simpleActions(r(no));
+                         return b.textContent.replace(/\s+/g, ' ').trim(); };
+    const st = no => (simpleState(r(no)) || [])[0] || null;
+    return { L: st('API-FFP-L'), R: st('API-FFP-R'), M: st('API-FFP-M'), Mact: acts('API-FFP-M'),
+             G: st('API-FFP-G'), Gact: acts('API-FFP-G'),
+             model: { L: r('API-FFP-L').legal_model, R: r('API-FFP-R').legal_model,
+                      M: r('API-FFP-M').legal_model, C: 'legal_model' in r('API-FFP-C') } };
+  });
+  let lw = await listWords();
+  ok('LIST — an unmarked legal matter, accepted, still reads Retainer Pending and Record retainer',
+     lw.M === 'Retainer Pending' && /Record retainer/.test(lw.Mact) && lw.model.M === 'retainer', JSON.stringify(lw));
+  /* The office marks it Process Service later: the words are DERIVED, so they
+     follow the service at once, with nothing stored and nothing rewritten. */
+  await page.evaluate(async () => {
+    await api('/cases/API-FFP-M/legal', { method: 'POST', body: { legal_service: 'process' } });
+  });
+  lw = await listWords();
+  ok('LIST — marked Process Service, the same row reads Flat Fee Pending and Record flat fee',
+     lw.M === 'Flat Fee Pending' && /Record flat fee/.test(lw.Mact) && !/retainer/i.test(lw.Mact)
+     && lw.model.M === 'fixed', JSON.stringify(lw));
+  ok('LIST — an undecided flat-fee intake awaiting payment reads Flat Fee Pending',
+     lw.L === 'Flat Fee Pending' && lw.model.L === 'fixed', JSON.stringify(lw));
+  ok('LIST — an undecided retainer intake beside it still reads Retainer Pending',
+     lw.R === 'Retainer Pending' && lw.model.R === 'retainer', JSON.stringify(lw));
+  ok('LIST — a private row carries no legal model at all', lw.model.C === false);
+  ok('FULL CUSTOM — an accepted, unpaid agreement reads Payment Pending and offers Record payment',
+     lw.G === 'Payment Pending' && /Record payment/.test(lw.Gact) && !/retainer/i.test(lw.Gact),
+     JSON.stringify({ G: lw.G, Gact: lw.Gact }));
+  /* Simple View's own home, as drawn — after the page re-reads its list, since
+     every fixture above moved after sign-in loaded it. */
+  await page.evaluate(async () => { await render(); });
+  await simpleOnFor(page);
+  const drawn = await page.evaluate(() => {
+    const card = no => { const b = document.querySelector(`.simp-need [data-case="${no}"]`);
+                         return b ? b.closest('.simp-need').innerText : ''; };
+    return { L: card('API-FFP-L'), R: card('API-FFP-R'), M: card('API-FFP-M') };
+  });
+  ok('SIMPLE VIEW — the flat-fee intake\'s card says Flat Fee Pending and never retainer',
+     /Flat Fee Pending/i.test(drawn.L) && !/retainer/i.test(drawn.L), drawn.L.slice(0, 200));
+  ok('SIMPLE VIEW — the marked matter\'s card offers Record flat fee',
+     /Record flat fee/i.test(drawn.M) && !/retainer/i.test(drawn.M), drawn.M.slice(0, 200));
+  ok('SIMPLE VIEW — the retainer intake\'s card keeps Retainer Pending',
+     /Retainer Pending/i.test(drawn.R), drawn.R.slice(0, 200));
+  /* The Intakes desk card. */
+  await page.evaluate(async () => { await setViewMode('full'); TAB = 'leads'; paint(); });
+  await page.waitForTimeout(800);
+  const desk = await page.evaluate(() => {
+    const card = t => ([...document.querySelectorAll('.pcard')].find(c => c.innerText.includes(t)) || {}).innerText || '';
+    return { L: card('Pending Locate LLP'), R: card('Pending Hourly LLP') };
+  });
+  ok('INTAKES — the flat-fee card says Flat fee pending and a check awaiting pickup, no retainer',
+     /Flat fee pending/i.test(desk.L) && /Awaiting pickup — check at the firm/i.test(desk.L)
+     && !/retainer/i.test(desk.L), desk.L.slice(0, 400));
+  ok('INTAKES — the retainer card keeps Retainer pending and the retainer check',
+     /Retainer pending/i.test(desk.R) && /retainer check at the firm/i.test(desk.R), desk.R.slice(0, 400));
+
+  /* ---- THE CASE: every screen of the flat-fee matter ---------------------- */
+  await simpleOnFor(page);
+  const openOn = async (no, tab) => {
+    await page.evaluate(([n, t]) => openCase(n, t), [no, tab]);
+    await page.waitForFunction(n => WS_CASE === n && WS && WS.authorization, no, { timeout: 8000 });
+    await page.waitForTimeout(600);
+  };
+  const tabTo = async tab => { await page.evaluate(t => { WS_TAB = t; paint(); }, tab); await page.waitForTimeout(500); };
+  const screen = () => page.evaluate(() => (document.querySelector('.casepage') || document.querySelector('#app')).innerText);
+  const inText = (sel) => page.evaluate(q => (document.querySelector(q) || {}).innerText || '', sel);
+
+  await openOn('API-FFP-A', 'details');
+  let t = await screen();
+  ok('A INTAKE SCREEN — the case actions say Flat Fee Paid', /Flat Fee Paid/.test(await inText('.caseacts')),
+     await inText('.caseacts'));
+  ok('A INTAKE SCREEN — the Simple View status names the Flat fee', /Flat fee/.test(await inText('.simp-stat')),
+     await inText('.simp-stat'));
+  ok('A INTAKE SCREEN — the Simple View money row says Flat fee and Record flat fee',
+     /Flat fee — not recorded/.test(await inText('.simp-bar')) && /Record flat fee/.test(await inText('.simp-bar')),
+     await inText('.simp-bar'));
+  ok('A INTAKE SCREEN — the summary states Flat Fee: Not yet received',
+     await page.evaluate(() => [...document.querySelectorAll('.isum-c')].some(c =>
+       /Flat Fee/.test((c.querySelector('.isum-k') || {}).textContent || '')
+       && /Not yet received/.test((c.querySelector('.isum-v') || {}).textContent || ''))));
+  ok('A INTAKE SCREEN — nothing on it says retainer', !/retainer/i.test(t),
+     (t.match(/.{0,60}retainer.{0,60}/i) || [''])[0]);
+
+  await tabTo('overview');
+  await page.waitForFunction(() => document.querySelector('.clrec .clrec-row'), null, { timeout: 6000 }).catch(() => {});
+  t = await screen();
+  ok('A OVERVIEW — Flat Fee $250, and never retainer', /Flat Fee\s*\$250/.test(t) && !/retainer/i.test(t),
+     (t.match(/.{0,60}(Flat Fee|retainer).{0,60}/i) || [''])[0]);
+  /* The row labels are CSS-uppercased and innerText returns what is DRAWN. */
+  const clrecA = await inText('.clrec');
+  ok('A CLIENT RECORD — the money row is the Flat Fee, agreed and not yet received',
+     /Flat Fee[\s\S]{0,60}Agreed, not yet received/i.test(clrecA) && !/retainer/i.test(clrecA), clrecA);
+
+  await tabTo('auth');
+  t = await screen();
+  const noNever = x => x.replace(/never a retainer/g, '');
+  ok('A AUTHORIZATION — the status is Flat Fee Pending', /Flat Fee Pending/i.test(t), (t.match(/Status.{0,60}/) || [''])[0]);
+  ok('A AUTHORIZATION — "The flat fee stays pending until a payment is recorded"',
+     /The flat fee stays pending until a payment is recorded/.test(t));
+  ok('A AUTHORIZATION — the office\'s form ticks Flat Fee Received',
+     await page.evaluate(() => { const b = document.getElementById('m_retrec');
+       return !b || /Flat Fee Received/.test(b.closest('label').innerText); }));
+  ok('A AUTHORIZATION — nothing on it calls the money a retainer (its form says it is "never a retainer")',
+     !/retainer/i.test(noNever(t)), (noNever(t).match(/.{0,60}retainer.{0,60}/i) || [''])[0]);
+
+  /* RECORDING THE FLAT FEE, through the case's own Flat Fee Paid button. */
+  await tabTo('overview');
+  await page.locator('.caseacts [data-act="retQuick"]').click();
+  await page.waitForSelector('#ret_amt', { timeout: 6000 });
+  await page.locator('#ret_amt').fill('250');
+  await page.evaluate(() => { const m = document.getElementById('ret_method');
+    if (m && [...m.options].some(o => o.value === 'mail_check')) m.value = 'mail_check'; });
+  await page.locator('[data-act="retSave"]').first().click();
+  await page.waitForFunction(() => WS && WS.authorization.retainer.received, null, { timeout: 8000 })
+    .catch(() => {});
+  await page.waitForTimeout(400);
+  t = await screen();
+  ok('A PAYMENT — recording it says "The flat fee now reads as received"',
+     /The flat fee now reads as received/.test(t), (t.match(/Payment recorded.{0,80}/) || [''])[0]);
+  ok('A PAYMENT — and the figure is the $250 it always was',
+     await page.evaluate(() => WS.authorization.retainer.amount === 250
+       && WS.authorization.retainer.received_total === 250));
+  await tabTo('auth');
+  t = await screen();
+  ok('A AUTHORIZATION — now Flat Fee Received', /Flat Fee Received/i.test(t) && !/retainer/i.test(noNever(t)),
+     (noNever(t).match(/.{0,60}(Received|retainer).{0,40}/i) || [''])[0]);
+  /* The timeline loads the way the tab does. */
+  await page.evaluate(() => { WS_TAB = 'timeline'; paintCase(); loadTimeline(); });
+  await page.waitForFunction(() => TL && TL_CASE === 'API-FFP-A', null, { timeout: 8000 }).catch(() => {});
+  await page.waitForTimeout(400);
+  t = await screen();
+  ok('A TIMELINE — the payment history says "$250.00 flat fee payment recorded"',
+     /\$250\.00 flat fee payment recorded/.test(t) && !/retainer/i.test(t),
+     (t.match(/.{0,40}payment recorded.{0,20}/) || [''])[0]);
+
+  await tabTo('legal');
+  const legalP = await page.evaluate(() => {
+    const sel = document.getElementById('lg_payment_arrangement');
+    return { opt: sel ? sel.options[sel.selectedIndex].text : 'NONE',
+             note: (document.querySelector('.ex-note') || {}).innerText || '',
+             hint: [...document.querySelectorAll('.card .hint')].map(h => h.innerText)
+               .find(h => /itself stays on the Billing panel/.test(h)) || '' };
+  });
+  ok('A LEGAL — the arrangement reads "Check — pick up at firm", not a retainer check',
+     legalP.opt === 'Check — pick up at firm', legalP.opt);
+  ok('A LEGAL — "The firm asked us to collect the check", and the flat fee is recorded on Billing',
+     /collect the\s+check at their office/.test(legalP.note) && !/retainer/i.test(legalP.note)
+     && /Recording the flat fee itself/.test(legalP.hint), JSON.stringify(legalP));
+
+  /* THE INVOICE the office creates from the case. */
+  const invScr = await page.evaluate(async () => {
+    const made = await api('/cases/API-FFP-A/invoices', { method: 'POST', body: { from_authorization: true } });
+    const d = await api('/invoices/' + made.invoice.id);
+    INV_OPEN = d.invoice; INV_SETTINGS = d.settings || INV_SETTINGS;
+    const box = document.createElement('div'); box.innerHTML = invoiceDocHtml(d.invoice);
+    const edit = document.createElement('div'); edit.innerHTML = invoiceDetailView();
+    INV_OPEN = null;
+    return { doc: box.textContent, edit: edit.textContent, line: d.invoice.lines[0],
+             notes: d.invoice.client_notes };
+  });
+  ok('A INVOICE — the line is "Legal Services Flat Fee" at the $250 it always billed',
+     invScr.line.description === 'Legal Services Flat Fee' && invScr.line.amount === 250,
+     JSON.stringify(invScr.line));
+  ok('A INVOICE — the printed document never says retainer', /Legal Services Flat Fee/.test(invScr.doc)
+     && !/retainer/i.test(invScr.doc), (invScr.doc.match(/.{0,50}retainer.{0,50}/i) || [''])[0]);
+  ok('A INVOICE — nor does the editor, nor a client note', !/retainer/i.test(invScr.edit) && !invScr.notes,
+     (invScr.edit.match(/.{0,50}retainer.{0,50}/i) || [''])[0]);
+
+  /* THE CLOSEOUT, through the case's own Close case button. */
+  await page.evaluate(async () => {
+    await api('/cases/API-FFP-A/closure', { method: 'POST', body: { checklist: { field_work: true,
+      activity_logs: true, evidence: true, report: true, admin_review: true, deliverables: true,
+      expenses: true, billing: true } } });
+  });
+  await tabTo('overview');
+  await page.locator('.caseacts [data-act="fcQuick"]').click();
+  await page.waitForSelector('#fc_retained', { timeout: 8000 });
+  await page.waitForTimeout(300);
+  const fcForm = await page.evaluate(() => ({
+    label: document.getElementById('fc_retained').closest('label').innerText,
+    led: (document.querySelector('.fc-led') || {}).innerText || '',
+    create: (document.querySelector('[data-act="createInvoiceAuth"]') || {}).innerText || '' }));
+  ok('A BILLING — the invoice door reads "Create from flat fee"', fcForm.create === 'Create from flat fee',
+     fcForm.create);
+  ok('A CLOSEOUT — the form asks for the Amount retained, and states the Flat Fee Received',
+     /Amount retained/.test(fcForm.label) && /Flat Fee Received/.test(fcForm.led)
+     && !/retainer|Non-refundable/i.test(fcForm.label + fcForm.led), JSON.stringify(fcForm));
+  await page.evaluate(async () => {
+    await api('/cases/API-FFP-A/closeout/prepare', { method: 'POST',
+      body: { retained: 250, refund: 0, reason: 'completed' } });
+    await api('/cases/API-FFP-A/closeout/confirm', { method: 'POST', body: {} });
+    await fcReload();
+  });
+  await page.waitForTimeout(500);
+  t = await screen();
+  ok('A CLOSEOUT — the closed statement on screen says Flat Fee Received and no retainer',
+     /Flat Fee Received/.test(t) && !/retainer/i.test(t), (t.match(/.{0,60}retainer.{0,60}/i) || [''])[0]);
+
+  /* THE RECORD PACKET, from the Client Record's own door on the Overview. */
+  await tabTo('overview');
+  await page.locator('.clrec [data-act="crPacket"]').click();
+  await page.waitForFunction(() => CR_PACKET || CR_PACKET_ERR, null, { timeout: 8000 });
+  await page.waitForTimeout(400);
+  t = await screen();
+  ok('A PACKET — the preview lists the Flat Fee', /Flat Fee/.test(t), (t.match(/.{0,40}Flat Fee.{0,40}/) || [''])[0]);
+  ok('A PACKET — the document states "Flat fee and payments", the Agreed flat fee and its status',
+     /Flat fee and payments/i.test(t) && /Agreed flat fee/.test(t) && /Flat fee status/.test(t));
+  ok('A PACKET — and its closeout says Flat Fee Received', /Flat Fee Received/.test(t));
+  ok('A PACKET — nothing in the packet says retainer', !/retainer/i.test(t),
+     (t.match(/.{0,60}retainer.{0,60}/i) || [''])[0]);
+  await page.evaluate(() => crPacketClose());
+
+  /* ---- B, C: A RETAINER MATTER AND A PRIVATE CLIENT KEEP THEIR WORDS ------ */
+  for (const [no, who] of [['API-FFP-B', 'legal retainer'], ['API-FFP-C', 'private']]) {
+    await openOn(no, 'details');
+    ok(`${who} — the case actions still say Retainer paid`, /Retainer paid/.test(await inText('.caseacts'))
+       && !/flat fee/i.test(await inText('.caseacts')), await inText('.caseacts'));
+    t = await screen();
+    ok(`${who} — nothing on the intake screen says flat fee`, !/flat fee/i.test(t),
+       (t.match(/.{0,60}flat fee.{0,60}/i) || [''])[0]);
+    await tabTo('overview');
+    await page.waitForFunction(() => document.querySelector('.clrec .clrec-row'), null, { timeout: 6000 }).catch(() => {});
+    t = await screen();
+    ok(`${who} — the Overview still reads Retainer $1,500`, /Retainer\s*\$1,500/.test(t) && !/flat fee/i.test(t));
+    const clrec = await inText('.clrec');
+    ok(`${who} — the Client Record row is still the Retainer`,
+       /Retainer[\s\S]{0,60}Agreed, not yet received/i.test(clrec) && !/flat fee/i.test(clrec), clrec);
+    await tabTo('auth');
+    t = await screen();
+    ok(`${who} — Authorization still reads Retainer pending`, /Retainer pending/i.test(t) && !/flat fee/i.test(t));
+    await page.locator('.caseacts [data-act="fcQuick"]').click().catch(() => {});
+    await page.waitForSelector('#fc_retained', { timeout: 8000 }).catch(() => {});
+    ok(`${who} — the closeout form still asks for the Non-refundable retained`,
+       await page.evaluate(() => { const i = document.getElementById('fc_retained');
+         return !!i && /^Non-refundable retained/.test(i.closest('label').innerText); }));
+    ok(`${who} — and the invoice door still reads "Create from retainer"`,
+       await page.evaluate(() => (document.querySelector('[data-act="createInvoiceAuth"]') || {}).innerText)
+       === 'Create from retainer');
+  }
+  /* The Full Custom case's Billing panel. */
+  await openOn('API-FFP-G', 'overview');
+  await page.locator('.caseacts [data-act="fcQuick"]').click();
+  await page.waitForSelector('#fc_retained', { timeout: 8000 });
+  const gBill = await page.evaluate(() => ({
+    create: (document.querySelector('[data-act="createInvoiceAuth"]') || {}).innerText || '',
+    label: document.getElementById('fc_retained').closest('label').innerText }));
+  ok('FULL CUSTOM — the invoice door reads "Create from agreement", not retainer',
+     gBill.create === 'Create from agreement', gBill.create);
+  ok('FULL CUSTOM — and the closeout form asks for the Amount retained, as its own statement says',
+     /^Amount retained/.test(gBill.label), gBill.label);
+  await openOn('API-FFP-B', 'legal');
+  const legalB = await page.evaluate(() => {
+    const sel = document.getElementById('lg_payment_arrangement');
+    return { opt: sel ? sel.options[sel.selectedIndex].text : 'NONE',
+             note: (document.querySelector('.ex-note') || {}).innerText || '' };
+  });
+  ok('legal retainer — the arrangement still reads "Retainer check — pick up at firm"',
+     legalB.opt === 'Retainer check — pick up at firm' && /collect the retainer\s+check/.test(legalB.note),
+     JSON.stringify(legalB));
+
+  /* ---- THE FULL CUSTOM LEFTOVERS, corrected while these lines were open ---- */
+  const leftovers = await page.evaluate(() => {
+    const row = extra => ({ case_no: 'X-FC', kind: 'consumer', stage: 'open', status: 'open',
+      lead_status: 'converted', retainer_received: null, ...extra });
+    const txt = h => { const b = document.createElement('div'); b.innerHTML = h; return b.textContent; };
+    return { agreed: txt(simpleActions(row({ agreement_total: 1800, agreement_kind: 'total_due' }))),
+             labelled: txt(simpleActions(row({ agreement_total: 1800, agreement_kind: 'retainer' }))),
+             standard: txt(simpleActions(row({}))) };
+  });
+  ok('a Full Custom row\'s card offers Record payment, not Record retainer',
+     /Record payment/.test(leftovers.agreed) && !/retainer/i.test(leftovers.agreed), leftovers.agreed);
+  ok('while an agreement the owner labelled Retainer, and a standard case, keep Record retainer',
+     /Record retainer/.test(leftovers.labelled) && /Record retainer/.test(leftovers.standard),
+     JSON.stringify(leftovers));
+
+  /* ---- PHONE WIDTHS: the new words fit where the old ones did ------------ */
+  await openOn('API-FFP-M', 'details');
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: width === 320 ? 568 : 844 });
+    await page.evaluate(() => paint());
+    await page.waitForTimeout(400);
+    const fit = await page.evaluate(() => {
+      const b = document.querySelector('.caseacts [data-act="retQuick"]');
+      const r = b ? b.getBoundingClientRect() : null;
+      return { label: b ? b.innerText : '', w: r ? r.width : 0, h: r ? r.height : 0,
+               over: document.documentElement.scrollWidth > window.innerWidth + 1 };
+    });
+    ok(`${width} — Flat Fee Paid draws whole, at the tap floor, with nothing sideways`,
+       fit.label === 'Flat Fee Paid' && fit.h >= 44 && !fit.over, JSON.stringify(fit));
+  }
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.close();
 }
 
 await browser.close();

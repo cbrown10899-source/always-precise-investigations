@@ -1527,10 +1527,9 @@ wizard (`payTouched`). The wizard already ticked every configured method, so
 that rule pins the default rather than changing today's outcome, and the
 ledger says so.
 
-**Left for the owner, found on the way:** a FIXED legal case still reads
-*Retainer paid*, *Retainer received* on its closeout statement, and an
-*Investigation Retainer* opening invoice line — pre-existing, and changing
-them is a Legal change this brief ruled out.
+**Left for the owner, found on the way — and asked for the same day:** a
+FIXED legal case read *Retainer paid*, *Retainer received* and *Investigation
+Retainer*. See *A flat fee is received, never held* below.
 
 ## The exact document a client received, and what they signed
 
@@ -2112,6 +2111,45 @@ historical cases" structural rather than hoped-for.
 
 No schema change, no portal-setup dispatch. Insurance and Private pricing are
 untouched, asserted by the suites' existing guards.
+
+## A flat fee is received, never held — the words follow the service
+
+Owner brief 2026-09-24; D15–D22 in `case-portal/LEGAL-SERVICES.md`. *"When a
+LEGAL matter is actually sold as a FLAT FEE, do not describe that payment
+later as a retainer."*
+
+**THE SOURCE IS THE SERVICE MARKER, NEVER THE AMOUNT.** `isFlatFeeSub` (a row
+in hand) and `legalServiceSql` / `legalSvcExpr` (a case number inside a feed's
+SQL) both end at the catalogue's model — the SQL only extracts the marker, so
+a feed and a screen cannot answer differently for one case. A $1,500 flat fee
+is a flat fee, a $250 retainer is a retainer, and both are asserted. **A legal
+case with no marker is a retainer** — the D3 default, the owner's "do not
+guess".
+
+**ONE WRITER PER WORD.** *Legal Services Flat Fee* (`FLAT_FEE_INVOICE_LINE`),
+*Flat Fee Received* and *Amount retained* (`closeoutWords`), *Flat fee payment
+recorded* (three feeds and `RECORD_DOC`), *Flat fee outstanding / part paid /
+cheque awaiting pickup*, the packet's term; on the page `flatFee(r)` and
+`flatRow(c)` ask while `simplePendingWord`, `legalArrLabels` and
+`crpMoneyWords` write. **Nothing about a retainer, private or carrier case
+moved**: a probe of every route, email and Assistant answer, master against
+branch, is byte-identical for private and insurance, and identical for a
+legal retainer matter except the additive `legal_model` list key.
+
+**NOT "NON-REFUNDABLE RETAINED".** The fixed sheet states no non-refundable
+portion, so its statement says *Amount retained* — the Full Custom precedent.
+
+**NO FIGURE MOVED, AND ONE IS KNOWINGLY LEFT.** A flat-fee case with no agreed
+figure on record — invoiced before acceptance, or marked flat after it — still
+opens its invoice at the private standard figure while the flat-fee block
+beneath states the catalogue fee. Pre-existing, measured, and left for the
+owner, because the brief forbids changing amounts.
+
+**THE LEFTOVERS WERE ON THE SAME LINES.** Four Full Custom surfaces still said
+retainer — the Simple View card, the closeout form's label, the invoice door
+and the Assistant's closeout sentence — while this file said a Full Custom
+case never does. Found because this unit opened those exact lines; fixed there
+rather than claimed a second time.
 
 ## A profile is a default; a case is a snapshot
 
@@ -3571,9 +3609,18 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 2357 checks: auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 4301 checks: auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # the page against the real Worker
 ```
+
+**WRITE A SUITE'S OUTPUT TO A FILE, NEVER A PIPE.** Every suite ends in
+`process.exit()`, which drops whatever a pipe had not yet drained — so
+`node case-portal/test-worker.mjs | tail` stops mid-line with **no totals
+line**, and anything parsing that pipe sees no FAIL at all. A mutation runner
+built that way (2026-09-24) reported all twenty-two mutations uncaught; every
+one was caught once the output went to a file. The exit code was never wrong
+— only the text was missing — so trust the totals line from a file, or the
+exit code, and nothing read through a pipe.
 
 The portal tests run the real page against the real Worker against real SQLite,
 so they catch SQL and permission mistakes rather than mocking past them.

@@ -391,3 +391,177 @@ settings override — the owner's brief adjusts Process Service only.
 - Surveillance pricing was NOT invented: legal surveillance remains the
   retainer/hourly product the legal card already presents (the brief:
   "existing Legal surveillance pricing/rules already in the repo").
+
+## Addendum — a flat fee is never called a retainer (owner, 2026-09-24)
+
+### Owner brief (verbatim)
+
+> LEGAL FLAT-FEE PAYMENT WORDING — FINAL TERMINOLOGY CLEANUP
+>
+> Make one focused legal-case wording correction.
+>
+> GOAL:
+> When a LEGAL matter is actually sold as a FLAT FEE, do not describe that
+> payment later as a retainer.
+>
+> Do NOT change pricing.
+> Do NOT change payment amounts.
+> Do NOT change Private or Insurance.
+> Do NOT change legal matters that genuinely use a retainer.
+>
+> 1. DISTINGUISH PAYMENT TYPE
+> Use the actual Legal Rate Sheet / agreement payment type as source of truth.
+> If payment type = FLAT FEE: Use flat-fee wording throughout the case
+> lifecycle.
+> If payment type = RETAINER: Keep existing retainer wording.
+> Do not infer from amount alone.
+>
+> 2. FLAT-FEE WORDING
+> For a Legal flat-fee matter, replace inappropriate wording such as:
+> "Retainer paid" with: "Flat Fee Paid"
+> Replace: "Retainer received" with: "Flat Fee Received"
+> Replace invoice wording: "Investigation Retainer" with: "Legal Services Flat
+> Fee"
+> Use the same terminology consistently in:
+> - case overview
+> - payment history
+> - invoice
+> - final invoice
+> - closeout statement
+> - Client Record
+> - record packet
+> - Simple View where payment status appears
+> Only where the matter is actually Flat Fee.
+>
+> 3. RETAINER CASES MUST NOT CHANGE
+> If a Legal matter genuinely uses a retainer: preserve: Retainer / Retainer
+> Paid / Retainer Received and existing retainer/refund/non-refundable
+> behavior.
+> Do not globally search-and-replace the word "retainer."
+>
+> 4. EXISTING / HISTORICAL CASES
+> Do not rewrite historical financial values.
+> Render terminology from the stored agreement/payment type where available.
+> If an old case lacks enough information to safely distinguish Flat Fee from
+> Retainer: do not guess. Leave it unchanged and report it under OWNER REVIEW.
+>
+> 5. TEST
+> Prove:
+> A. Legal Flat Fee case → invoice says Legal Services Flat Fee → payment
+> status says Flat Fee Paid / Received → closeout does not call it a retainer
+> B. Legal Retainer case → existing retainer wording remains unchanged
+> C. Private cases unchanged
+> D. Insurance unchanged
+> Run relevant: worker, portal, legal/payment, closeout, Client Record, deploy
+> guard
+>
+> 6. SHIP
+> If green: CODED TESTED PUSHED MERGED DEPLOYED
+> Report: places corrected; how Flat Fee vs Retainer is determined;
+> historical-case handling; tests; PR; merge SHA; deploy status
+> Do not claim LIVE VERIFIED.
+
+### Derived decisions
+
+**D15 — the source of truth is the case's stored service marker, read through
+the catalogue.** "The actual Legal Rate Sheet / agreement payment type" is the
+service a legal matter was sold as — `payload.legal_service`, the marker the
+send route already reads to choose the fixed sheet the firm was quoted on — and
+its MODEL comes from `LEGAL_SERVICES`, exactly `legalPricingFor`'s answer. No
+amount is consulted anywhere: a flat fee agreed at $1,500 is still a flat fee
+and a retainer agreed at $250 is still a retainer, and both are asserted. There
+are two readers of the one question, `isFlatFeeSub` for a row the Worker
+already holds and `legalServiceSql` / `legalSvcExpr` for a case number inside a
+feed's SQL — which only EXTRACTS the marker (shipping a whole payload per row,
+signature image included, to ask one question would be the wrong trade). The
+model is still decided by the catalogue in JS, so the two cannot disagree; a
+test drives an oddly typed marker (` Process `) through both, and a private
+payload carrying a stray `legal_service` key through both (not legal, so not a
+flat fee).
+
+**D16 — one writer per word.** Worker: `FLAT_FEE_INVOICE_LINE` for the invoice
+line; `closeoutWords(agreement, flatFee)` for the statement, the ledger, the
+panel and the packet's closeout; `RECORD_DOC.flat_fee_payment` for the office's
+record copy; the feeds' one label each. Page: `flatFee(r)` over the case's money
+block and `flatRow(c)` over a list row ask the question; `simplePendingWord`,
+`legalArrLabels` and `crpMoneyWords` each write their words once.
+
+**D17 — "Amount retained", not "Non-refundable retained".** The fixed sheet's
+words are its boundary (D5): no retainer, no minimum, no deposit — and no
+non-refundable portion. A statement saying "Non-refundable retained" would
+assert a term the firm was never quoted, so the row is the plain "Amount
+retained" the Full Custom agreement already uses where it stated none. The
+closing reads *"This statement documents the disposition of the flat fee
+received on this case."*
+
+**D18 — no figure moves.** The flat branch of `openingInvoiceLine` bills the
+exact expression the line always billed; the packet's agreed figure is the one
+it already read; the ledger is untouched. The one figure ADDED is the packet's
+"Amount the document stated", which printed nothing for a fixed sheet (whose
+`retainer_amount` is null by design) and now prints the flat fee that document
+actually stated. A probe of every route and email over a flat-fee case, before
+and after, shows words changing and no number.
+
+**D19 — history is read, not rewritten.** A legal case with NO marker answers
+`retainer` — the D3 default — and keeps every retainer word: the owner's "do
+not guess". A stored invoice line is a record: an invoice issued as
+"Investigation Retainer" keeps that line when the case is later marked Process
+Service, while every DERIVED word (statement, feeds, screens) follows the
+service on the next read. Both halves are asserted.
+
+**D20 — the list carries the model on legal rows only, and only to an admin.**
+`/submissions` gains `legal_model` on a legal row (so Simple View and the
+Intakes card can word a flat fee) and no key at all on any other row; the raw
+marker never leaves; `redactRow` strips it, because how a firm pays is the
+paying side.
+
+**D21 — "the same terminology consistently".** The fixed-branch words that
+predated this brief — *Fee (flat)*, *Fee received*, *Fee pending*, *The fee
+stays pending* — now read *Flat Fee*, *Flat Fee Received*, *Flat Fee Pending*,
+*The flat fee stays pending*. D7's property is unchanged and still pinned: a
+fixed case never says Retainer. Each replacement is the same length as the
+retainer word it stands beside, so no control grows; *Flat Fee Paid* is
+measured whole at 390 and 320.
+
+**D22 — found in passing and corrected, because the lines were already open:**
+the Billing panel's invoice door read *Create from retainer* on every
+non-claims case (now *Create from flat fee* / *Create from agreement*); and
+three Full Custom leftovers of the 2026-09-24 agreed-amount unit — the Simple
+View card's *Record retainer*, the closeout form's *Non-refundable retained*
+label (now the statement's own word) and the Assistant's closeout sentence.
+Standard private and legal-retainer output is unchanged.
+
+### OWNER REVIEW
+
+- **Historical legal cases with no service marker are NOT guessed at.** They
+  keep the retainer words. To move one, choose its service on the case's Legal
+  panel; its words follow at once and its issued invoices keep their lines.
+- **A flat-fee case with no agreed figure on record bills the private standard
+  figure on its opening invoice line** (pre-existing, measured, NOT changed —
+  the brief forbids changing amounts). Acceptance snapshots the flat fee, so an
+  accepted case is right; a flat-fee case invoiced before acceptance, or marked
+  Process Service after acceptance, has no agreed figure and its opening line
+  defaults to the $1,500 private retainer while the flat-fee block beneath it
+  states the $250 catalogue fee. The line now reads *Legal Services Flat Fee*
+  over that figure. Whether it should default to the flat fee is a pricing
+  decision.
+- **Simple View's list shows a money state only when a case has NO agreed
+  figure.** An accepted flat-fee case carries its snapshot, so its row shows no
+  *Flat Fee Pending* chip — the same pre-existing rule every accepted retainer
+  case with an agreed figure follows. The payment status on the Simple View
+  intake screen (the status strip and the money row) does show it.
+- **Deliberately unchanged:** the office-facing refusal *"law firms are billed
+  by BILL.com invoice or retainer check"* (a general statement about law firms,
+  mirrored byte for byte by the Assistant's rehearsal); a firm profile's
+  *Usual payment arrangement* list (a firm default, not a matter); the
+  dashboard's aggregate *Retainer / authorization* card; the CEO Bot's usage
+  label for the case-actions button; and the Intakes card's *Private intake
+  received* line on a legal lead — a category label, not a payment word, and
+  pre-existing.
+
+### What was deliberately NOT done (addendum)
+
+- No schema change, no new table, no portal-setup dispatch.
+- No global search-and-replace: every change is a branch on the model, and a
+  probe of every route, email and Assistant answer shows private and insurance
+  byte-identical and legal retainer identical except the additive list key.

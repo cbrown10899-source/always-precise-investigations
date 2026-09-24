@@ -23765,6 +23765,355 @@ section('Agreed amount: the source is one reader, and it writes nothing');
      /AGREEMENT_FIELDS = \['total_due', 'payment_label_kind'\]/.test(src));
 }
 
+section('Legal flat fee: a matter sold as a flat fee is never called a retainer');
+{
+  /* OWNER, 2026-09-24: "When a LEGAL matter is actually sold as a FLAT FEE, do
+     not describe that payment later as a retainer ... Do NOT change pricing. Do
+     NOT change payment amounts. Do NOT change Private or Insurance. Do NOT
+     change legal matters that genuinely use a retainer."
+
+     The same lifecycle is walked through the ordinary routes for each kind of
+     matter — accept, two payments, the invoice, the closeout, the statement,
+     the packet — and every surface is read back as it is published. A is a
+     Process Service flat fee, B a legal retainer matter (and the historical
+     legal case with no marker, which must not be guessed at), C a private
+     client, D a carrier assignment. */
+  const realFetch = globalThis.fetch;
+  let mails = [];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      mails.push(JSON.parse(init.body)); return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '400';
+  env.INGEST_PER_MINUTE = '80';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await call(env, '/billing-settings', { method: 'POST', cookie: admin,
+    body: { owner_record_email: 'office@example.test' } });
+  const J = async (p, o = {}) => jsonOf(await call(env, p, { cookie: admin, ...o }));
+  const POST = (p, body) => J(p, { method: 'POST', body });
+  /* Every STRING VALUE in a payload. Key names such as retainer_received are
+     the API's own vocabulary and nobody reads them; the words are the values. */
+  const strings = (v, out = []) => {
+    if (typeof v === 'string') out.push(v);
+    else if (Array.isArray(v)) v.forEach(x => strings(x, out));
+    else if (v && typeof v === 'object') Object.values(v).forEach(x => strings(x, out));
+    return out;
+  };
+  const said = (v, re) => strings(v).filter(x => re.test(x));
+  const TICKS = { field_work: true, activity_logs: true, evidence: true, report: true,
+                  admin_review: true, deliverables: true, expenses: true, billing: true };
+  const legal = (no, svc, extra = {}) => ingest(env, { case_no: no, assignment: 'legal',
+    ...(svc === undefined ? {} : { legal_service: svc }),
+    firm_name: 'Flat & Co LLP', attorney_name: 'A. Torney', client_name: 'A. Torney',
+    client_email: 'atty@flatco.example', subject_name: 'R. Recipient',
+    objective: 'Serve the summons', payment_arrangement: 'check_pickup', ...extra });
+
+  /* THE LIFECYCLE, read back surface by surface. Feeds are read straight after
+     this case's own payments, so the newest rows in them are this case's. */
+  const walk = async (no, method, agree) => {
+    const out = {};
+    await POST(`/leads/${no}/status`, { status: 'converted' });
+    /* A retainer matter has no agreed figure until the office sets one; a
+       flat fee's is snapshotted at acceptance. */
+    if (agree) await POST(`/cases/${no}/retainer`, { retainer_amount: agree });
+    out.attNone = (await J('/attention')).alerts.filter(a => a.case_no === no);
+    mails = [];
+    await POST(`/cases/${no}/retainer/payment`,
+      { amount: 100, method, paid_on: '2026-09-20', reference: 'first' });
+    out.attPart = (await J('/attention')).alerts.filter(a => a.case_no === no);
+    await POST(`/cases/${no}/retainer/payment`,
+      { amount: 150, method, paid_on: '2026-09-21', reference: 'second' });
+    out.copies = mails.slice();
+    out.recent = (await J('/recent-activity')).activity
+      .filter(r => r.case_no === no && r.kind === 'payment');
+    out.audit = (await J('/audit')).entries.filter(r => r.case_no === no);
+    out.timeline = await J(`/cases/${no}/timeline`);
+    out.ws = await J(`/cases/${no}/workspace`);
+    out.preview = await POST('/assistant/command',
+      { text: 'invoice preview', context: { case_no: no, route: 'case' } });
+    out.inv = (await POST(`/cases/${no}/invoices`, { from_authorization: true })).invoice;
+    out.invRead = (await J(`/invoices/${out.inv.id}`)).invoice;
+    out.list = (await J('/submissions')).submissions.find(r => r.case_no === no);
+    await POST(`/cases/${no}/closure`, { checklist: TICKS });
+    out.prep = await POST(`/cases/${no}/closeout/prepare`, { retained: 250, refund: 0, reason: 'completed' });
+    out.conf = await POST(`/cases/${no}/closeout/confirm`, {});
+    mails = [];
+    out.emailRes = await POST(`/cases/${no}/closeout/email`, { to: 'atty@flatco.example' });
+    out.statement = mails[0] || { subject: '', text: '', html: '' };
+    out.money = await J(`/cases/${no}/closeout-money`);
+    out.packet = await J(`/cases/${no}/record-packet`);
+    return out;
+  };
+
+  /* ---- A. A LEGAL FLAT FEE ------------------------------------------------ */
+  await legal('API-FF-A', 'process');
+  const a = await walk('API-FF-A', 'mail_check');
+  ok('A the case knows it was sold as a flat fee — from its own service, not a figure',
+     a.ws.authorization.retainer.model === 'fixed' && a.list.legal_model === 'fixed',
+     JSON.stringify([a.ws.authorization.retainer.model, a.list.legal_model]));
+  ok('A the list never ships the raw service marker, only the model',
+     !('legal_svc' in a.list), Object.keys(a.list).join(','));
+  ok('A before any money: the attention list says "Flat fee outstanding"',
+     a.attNone.some(x => x.what === 'Flat fee outstanding'), JSON.stringify(a.attNone.map(x => x.what)));
+  ok('A part paid: the attention list says "Flat fee part paid"',
+     a.attPart.some(x => x.what === 'Flat fee part paid'), JSON.stringify(a.attPart.map(x => x.what)));
+  ok('A the firm\'s pickup request is a flat-fee cheque, not a retainer cheque',
+     a.attPart.some(x => x.what === 'Flat fee cheque awaiting pickup'), JSON.stringify(a.attPart.map(x => x.what)));
+  ok('A no attention row for this matter says retainer', said(a.attNone.concat(a.attPart), /retainer/i).length === 0,
+     JSON.stringify(said(a.attNone.concat(a.attPart), /retainer/i)));
+  ok('A payment history — recent activity says "Flat fee payment recorded"',
+     a.recent.length === 2 && a.recent.every(r => r.detail === 'Flat fee payment recorded'),
+     JSON.stringify(a.recent.map(r => r.detail)));
+  ok('A payment history — the audit trail says "Flat fee payment recorded"',
+     a.audit.filter(r => r.kind === 'payment').length === 2
+     && a.audit.filter(r => r.kind === 'payment').every(r => r.what === 'Flat fee payment recorded'),
+     JSON.stringify(a.audit.map(r => r.what)));
+  const aPays = a.timeline.events.filter(e => e.type === 'payment').map(e => e.title);
+  ok('A payment history — the timeline says "$150.00 flat fee payment recorded"',
+     aPays.includes('$150.00 flat fee payment recorded') && aPays.includes('$100.00 flat fee payment recorded'),
+     JSON.stringify(aPays));
+  ok('A the office\'s record copy of each payment is a flat-fee payment, in subject, text and HTML',
+     a.copies.length === 2 && a.copies.every(m => /Flat fee payment recorded/.test(m.subject)
+       && /FLAT FEE PAYMENT RECORDED/.test(m.text) && /Flat fee payment recorded/.test(m.html)
+       && !/retainer/i.test(m.subject + m.text + m.html)),
+     JSON.stringify(a.copies.map(m => m.subject)));
+  ok('A INVOICE: the opening line is "Legal Services Flat Fee"',
+     a.invRead.lines[0].description === 'Legal Services Flat Fee', a.invRead.lines[0].description);
+  ok('A and it bills the case\'s own agreed figure, exactly as the line always did — $250',
+     a.invRead.lines[0].amount === 250 && a.ws.authorization.retainer.amount === 250,
+     JSON.stringify([a.invRead.lines[0].amount, a.ws.authorization.retainer.amount]));
+  ok('A and it carries no retainer sentence to the client', !a.invRead.client_notes,
+     String(a.invRead.client_notes));
+  ok('A the whole invoice payload says retainer nowhere', said(a.invRead, /retainer/i).length === 0,
+     JSON.stringify(said(a.invRead, /retainer/i)));
+  ok('A the Assistant\'s invoice preview opens on the same line as the real Create',
+     a.preview.preview && a.preview.preview.lines[0].description === 'Legal Services Flat Fee'
+     && a.preview.preview.lines[0].amount === 250 && !/retainer/i.test(a.preview.text || ''),
+     JSON.stringify(a.preview.preview && a.preview.preview.lines));
+  ok('A CLOSEOUT: the ledger\'s words are the flat fee\'s',
+     a.money.words.received === 'Flat Fee Received' && a.money.words.retained === 'Amount retained'
+     && a.money.words.closing === 'This statement documents the disposition of the flat fee received on this case.'
+     && a.money.words.flat_fee === true, JSON.stringify(a.money.words));
+  ok('A and the figures are the ledger\'s, untouched: $250 in, $250 kept, $0 left',
+     a.money.retainer_received === 250 && a.money.retained === 250 && a.money.final_balance === 0,
+     JSON.stringify([a.money.retainer_received, a.money.retained, a.money.final_balance]));
+  ok('A the closeout was confirmed and the statement went', a.conf.case_closed === true && a.emailRes.ok === true,
+     JSON.stringify([a.conf.case_closed, a.emailRes.ok]));
+  const aTxt = a.statement.text, aHtml = a.statement.html;
+  ok('A the STATEMENT says Flat Fee Received, in the text and in the HTML',
+     /^Flat Fee Received\.+ \$250$/m.test(aTxt) && />Flat Fee Received</.test(aHtml), aTxt.slice(0, 400));
+  ok('A and "Amount retained" where a retainer statement says "Non-refundable retained"',
+     /^Amount retained\.+ \$250$/m.test(aTxt) && />Amount retained</.test(aHtml)
+     && !/Non-refundable/i.test(aTxt + aHtml));
+  ok('A and closes on the flat fee', aTxt.includes('disposition of the flat fee received on this case.')
+     && aHtml.includes('disposition of the flat fee received on this case.'));
+  ok('A THE WHOLE STATEMENT — subject, text and HTML — never calls it a retainer',
+     !/retainer/i.test(a.statement.subject + aTxt + aHtml), (aTxt.match(/.*retainer.*/i) || [''])[0]);
+  ok('A the balance line is unchanged: FINAL BALANCE $0', /^FINAL BALANCE\.+ \$0$/m.test(aTxt));
+  ok('A RECORD PACKET: the money section is the flat fee, over the same agreed figure',
+     a.packet.retainer.term === 'Flat fee' && a.packet.retainer.agreed_amount === 250,
+     JSON.stringify([a.packet.retainer.term, a.packet.retainer.agreed_amount]));
+  ok('A and the packet\'s closeout reads the flat fee\'s words',
+     a.packet.closeout && a.packet.closeout.words.received === 'Flat Fee Received');
+  ok('A the timeline, the ledger and the packet say retainer nowhere',
+     said([a.timeline, a.money, a.packet.retainer, a.packet.closeout], /retainer/i).length === 0,
+     JSON.stringify(said([a.timeline, a.money, a.packet.retainer, a.packet.closeout], /retainer/i)));
+
+  /* A with nothing paid yet: the closeout's facts and the Assistant's answer. */
+  await legal('API-FF-A2', 'locate');
+  await POST('/leads/API-FF-A2/status', { status: 'converted' });
+  const a2facts = await J('/cases/API-FF-A2/closeout');
+  ok('A2 an unpaid flat fee is "the agreed flat fee", in the closeout\'s own facts',
+     JSON.stringify(a2facts).includes('the agreed flat fee is not recorded as received')
+     && said(a2facts, /retainer/i).length === 0, JSON.stringify(said(a2facts, /flat fee|retainer/i)));
+  const a2asst = await POST('/assistant/command',
+    { text: 'close out this case', context: { case_no: 'API-FF-A2', route: 'case' } });
+  ok('A2 and the Assistant says no FLAT FEE payment is recorded — never a retainer payment',
+     /No flat fee payment is recorded on this case/.test(a2asst.text || '')
+     && !/retainer/i.test(a2asst.text || ''), a2asst.text);
+
+  /* A3 — the packet states the flat fee the DOCUMENT stated. A fixed sheet
+     records no retainer figure by design, so the packet read "—" there. */
+  await legal('API-FF-A3', 'process');
+  await POST('/leads/API-FF-A3/status', { status: 'converted' });
+  const a3send = await POST('/sheets/private_retainer/email', { to: 'atty@flatco.example',
+    case_no: 'API-FF-A3', send_context: 'legal', legal_service: 'process' });
+  const a3 = await J('/cases/API-FF-A3/record-packet');
+  ok('A3 the fixed sheet went, and the packet states the $250 flat fee the document stated',
+     a3send.ok === true && a3.retainer.document_amount === 250 && a3.retainer.term === 'Flat fee',
+     JSON.stringify([a3send.ok, a3.retainer.document_amount, a3.retainer.term]));
+
+  /* ---- B. A LEGAL RETAINER MATTER: nothing moves ------------------------- */
+  await legal('API-FF-B', 'general');
+  const b = await walk('API-FF-B', 'mail_check', 1500);
+  ok('B a legal retainer matter is still a retainer, and its row says so',
+     b.ws.authorization.retainer.model === 'retainer' && b.list.legal_model === 'retainer');
+  ok('B attention keeps "Retainer part paid" and the retainer cheque',
+     b.attPart.some(x => x.what === 'Retainer part paid')
+     && b.attPart.some(x => x.what === 'Retainer cheque awaiting pickup'), JSON.stringify(b.attPart.map(x => x.what)));
+  ok('B payment history keeps "Retainer payment recorded" in all three feeds',
+     b.recent.every(r => r.detail === 'Retainer payment recorded')
+     && b.audit.filter(r => r.kind === 'payment').every(r => r.what === 'Retainer payment recorded')
+     && b.timeline.events.filter(e => e.type === 'payment').every(e => / retainer payment recorded$/.test(e.title)));
+  ok('B the invoice keeps "Investigation Retainer" and its retainer sentence',
+     b.invRead.lines[0].description === 'Investigation Retainer'
+     && b.invRead.client_notes === 'Retainer is applied toward authorized investigative services.');
+  ok('B the statement keeps the retainer\'s three words, byte for byte',
+     /^Retainer received\.+ \$250$/m.test(b.statement.text)
+     && /^Non-refundable retained\.+ \$250$/m.test(b.statement.text)
+     && b.statement.text.includes('This statement documents the disposition of the retainer held on this case.')
+     && b.statement.html.includes('This statement documents the disposition of the\n    retainer held on this case.'));
+  ok('B the ledger\'s words are the original object — no flat_fee key at all',
+     JSON.stringify(b.money.words) === JSON.stringify({ agreement: false, received: 'Retainer received',
+       retained: 'Non-refundable retained',
+       closing: 'This statement documents the disposition of the retainer held on this case.' }),
+     JSON.stringify(b.money.words));
+  ok('B the record copy and the packet keep the retainer',
+     b.copies.every(m => /Retainer payment recorded/.test(m.subject)) && b.packet.retainer.term === 'Retainer');
+  ok('B nothing about a retainer matter says flat fee',
+     said([b.attPart, b.recent, b.audit, b.timeline, b.invRead, b.money, b.packet.retainer], /flat fee/i).length === 0
+     && !/flat fee/i.test(b.statement.text + b.statement.html));
+
+  /* The historical legal case with NO service marker is not guessed at. */
+  await legal('API-FF-H', undefined);
+  const h = await walk('API-FF-H', 'mail_check', 1500);
+  ok('HISTORICAL a legal case with no marker keeps every retainer word — not guessed at',
+     h.ws.authorization.retainer.model === 'retainer' && h.list.legal_model === 'retainer'
+     && h.invRead.lines[0].description === 'Investigation Retainer'
+     && /^Retainer received/m.test(h.statement.text) && h.packet.retainer.term === 'Retainer'
+     && said([h.recent, h.audit, h.timeline, h.money], /flat fee/i).length === 0);
+  /* ...and a Custom legal service is not a flat fee either. */
+  await legal('API-FF-CU', 'custom');
+  const cu = await walk('API-FF-CU', 'mail_check', 1500);
+  ok('a legal Other / Custom service keeps the retainer words — only a FIXED service is a flat fee',
+     cu.list.legal_model === 'custom' && cu.invRead.lines[0].description === 'Investigation Retainer'
+     && /^Retainer received/m.test(cu.statement.text));
+
+  /* ---- C. PRIVATE: unchanged ----------------------------------------------- */
+  await ingest(env, { case_no: 'API-FF-C', service: 'Surveillance', client_name: 'Vanessa Reed',
+    client_email: 'v@example.test', subject_name: 'S. Subject', objective: 'Watch' });
+  const c = await walk('API-FF-C', 'venmo', 1500);
+  ok('C a private row gains no legal_model key at all', c.list && !('legal_model' in c.list) && !('legal_svc' in c.list),
+     Object.keys(c.list || {}).join(','));
+  ok('C private keeps the retainer everywhere: attention, feeds, record copy, invoice, statement, packet',
+     c.attPart.some(x => x.what === 'Retainer part paid')
+     && c.recent.every(r => r.detail === 'Retainer payment recorded')
+     && c.audit.filter(r => r.kind === 'payment').every(r => r.what === 'Retainer payment recorded')
+     && c.copies.every(m => /Retainer payment recorded/.test(m.subject))
+     && c.invRead.lines[0].description === 'Investigation Retainer'
+     && /^Retainer received\.+ \$250$/m.test(c.statement.text)
+     && c.packet.retainer.term === 'Retainer');
+  ok('C and nothing on a private case says flat fee',
+     said([c.attPart, c.recent, c.audit, c.timeline, c.invRead, c.money, c.packet], /flat fee/i).length === 0
+     && !/flat fee/i.test(c.statement.text + c.statement.html));
+  /* A private payload carrying a stray legal_service key is still private —
+     the marker is read only on a LEGAL case, in both readers. */
+  await ingest(env, { case_no: 'API-FF-CX', service: 'Surveillance', legal_service: 'process',
+    client_name: 'Stray Key', client_email: 's@example.test', subject_name: 'S', objective: 'Watch' });
+  const cx = await walk('API-FF-CX', 'venmo', 1500);
+  ok('C a private case with a stray legal_service key is NOT a flat fee, on either reader',
+     !('legal_model' in cx.list) && cx.invRead.lines[0].description === 'Investigation Retainer'
+     && cx.money.words.received === 'Retainer received' && cx.copies.every(m => /Retainer/.test(m.subject)),
+     JSON.stringify([cx.invRead.lines[0].description, cx.money.words.received]));
+
+  /* ---- D. INSURANCE: unchanged --------------------------------------------- */
+  await ingest(env, { case_no: 'API-FF-D', kind: 'claims', service: 'Claims', carrier: 'Blue Mutual',
+    claim_number: 'CLM-FF-1', client_name: 'Adj. Ster', client_email: 'adj@carrier.example',
+    subject_name: 'C. Laimant', objective: 'Check activity' });
+  await POST('/cases/API-FF-D/meta', { authorized_hours: 8 });
+  const dInv = (await POST('/cases/API-FF-D/invoices', { from_authorization: true })).invoice;
+  const dRow = (await J('/submissions')).submissions.find(r => r.case_no === 'API-FF-D');
+  ok('D a carrier assignment still bills its hour block, with no flat-fee or retainer line',
+     dInv.lines.length === 1 && dInv.lines[0].description === '8-Hour Surveillance Authorization'
+     && dInv.lines[0].amount === 1200, JSON.stringify(dInv.lines));
+  ok('D and its row gains no legal_model key', dRow && !('legal_model' in dRow));
+
+  /* ---- THE SOURCE OF TRUTH IS THE SERVICE, NEVER THE AMOUNT --------------- */
+  await legal('API-FF-E1', 'process');
+  await POST('/leads/API-FF-E1/status', { status: 'converted' });
+  await POST('/cases/API-FF-E1/retainer', { retainer_amount: 1500 });
+  const e1Inv = (await POST('/cases/API-FF-E1/invoices', { from_authorization: true })).invoice;
+  const e1Money = await J('/cases/API-FF-E1/closeout-money');
+  ok('a flat fee agreed at $1,500 — the retainer\'s own figure — is still a flat fee',
+     e1Inv.lines[0].description === 'Legal Services Flat Fee' && e1Inv.lines[0].amount === 1500
+     && e1Money.words.received === 'Flat Fee Received',
+     JSON.stringify([e1Inv.lines[0], e1Money.words.received]));
+  await legal('API-FF-E2', 'general');
+  await POST('/leads/API-FF-E2/status', { status: 'converted' });
+  await POST('/cases/API-FF-E2/retainer', { retainer_amount: 250 });
+  const e2Inv = (await POST('/cases/API-FF-E2/invoices', { from_authorization: true })).invoice;
+  ok('and a retainer agreed at $250 — the flat fee\'s figure — is still a retainer',
+     e2Inv.lines[0].description === 'Investigation Retainer' && e2Inv.lines[0].amount === 250,
+     JSON.stringify(e2Inv.lines[0]));
+  /* Odd casing and spacing in the marker: the JS reader (the invoice) and the
+     SQL reader (the ledger, the list) must give ONE answer for one case. */
+  await legal('API-FF-E3', ' Process ');
+  await POST('/leads/API-FF-E3/status', { status: 'converted' });
+  const e3Inv = (await POST('/cases/API-FF-E3/invoices', { from_authorization: true })).invoice;
+  const e3Money = await J('/cases/API-FF-E3/closeout-money');
+  const e3Row = (await J('/submissions')).submissions.find(r => r.case_no === 'API-FF-E3');
+  ok('the two readers agree on an oddly-typed marker — invoice, ledger and list all say flat fee',
+     e3Inv.lines[0].description === 'Legal Services Flat Fee' && e3Money.words.received === 'Flat Fee Received'
+     && e3Row.legal_model === 'fixed', JSON.stringify([e3Inv.lines[0].description, e3Money.words.received, e3Row.legal_model]));
+
+  /* ---- HISTORY IS NOT REWRITTEN ------------------------------------------- */
+  /* The words are DERIVED from the service; a stored invoice line is a record.
+     Changing the case's service moves every derived word and no stored one. */
+  await legal('API-FF-S', 'general');
+  await POST('/leads/API-FF-S/status', { status: 'converted' });
+  await POST('/cases/API-FF-S/retainer', { retainer_amount: 250 });
+  const sInv = (await POST('/cases/API-FF-S/invoices', { from_authorization: true })).invoice;
+  const sBefore = await J('/cases/API-FF-S/closeout-money');
+  await POST('/cases/API-FF-S/legal', { legal_service: 'process' });
+  const sAfter = await J('/cases/API-FF-S/closeout-money');
+  const sInvAfter = (await J(`/invoices/${sInv.id}`)).invoice;
+  ok('switching a matter to Process Service moves its derived words to the flat fee',
+     sBefore.words.received === 'Retainer received' && sAfter.words.received === 'Flat Fee Received',
+     JSON.stringify([sBefore.words.received, sAfter.words.received]));
+  ok('and the invoice already issued keeps the line it was written with — history is not rewritten',
+     sInvAfter.lines[0].description === 'Investigation Retainer' && sInvAfter.lines[0].amount === 250,
+     JSON.stringify(sInvAfter.lines[0]));
+
+  /* ---- THE BOUNDARY: how a firm pays is the paying side ------------------- */
+  const invLink = (await jsonOf(await invite(env, admin,
+    { username: 'fieldff', role: 'investigator', display_name: 'Field FF' }))).url;
+  const invTok = new URL(invLink, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${invTok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const field = (await login(env, 'fieldff', 'FieldWork2026x')).cookie;
+  const fieldId = (await env.DB.prepare("SELECT id FROM users WHERE username = 'fieldff'").first()).id;
+  await POST('/submissions/API-FF-A2/assign', { user_id: fieldId });
+  const fRows = (await jsonOf(await call(env, '/submissions', { cookie: field }))).submissions || [];
+  const fRow = fRows.find(r => r.case_no === 'API-FF-A2');
+  ok('an investigator\'s row carries neither the legal model nor the raw marker',
+     fRow && !('legal_model' in fRow) && !('legal_svc' in fRow), JSON.stringify(fRow && Object.keys(fRow)));
+
+  globalThis.fetch = realFetch;
+}
+
+section('Legal flat fee: the question is asked of the service, and nothing else');
+{
+  const src = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+  const strip = t => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const decl = name => {
+    const i = src.indexOf(`const ${name} = `);
+    return i < 0 ? '' : strip(src.slice(i, src.indexOf('};', i) + 2));
+  };
+  const flatSvc = decl('isFlatFeeSvc'), flatSub = decl('isFlatFeeSub');
+  ok('the flat-fee question reads the catalogue\'s model and no figure',
+     /legalServiceById/.test(flatSvc) && /model === 'fixed'/.test(flatSvc)
+     && /legalPricingFor/.test(flatSub) && /model === 'fixed'/.test(flatSub)
+     && !/amount|retainer_amount|fee\b|LEGAL_FLAT|PERSONAL/.test(flatSvc + flatSub),
+     flatSvc + ' | ' + flatSub);
+  ok('the invoice line\'s words have one writer', (src.match(/'Legal Services Flat Fee'/g) || []).length === 1);
+  ok('and the statement\'s flat-fee words have one writer',
+     (src.match(/'Flat Fee Received'/g) || []).length === 1);
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));
