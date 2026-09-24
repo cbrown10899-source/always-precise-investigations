@@ -1212,6 +1212,18 @@ acceptance"* pattern matched *"once the assignment is accepted"* and *"cannot
 guarantee"* — a condition and a disclaimer, the opposite of a promise. The
 instrument was narrowed to what a promise actually says; the product was right.
 
+**TWO MUTATIONS WALKED STRAIGHT PAST THE FIRST TESTS, AND BOTH TAUGHT
+SOMETHING.** Dropping the billing reference from the office's still-needed list
+failed nothing, because the portal test covered the schedule's status and not
+the reference's — the assertion was added, not assumed. And removing the
+record's wrap failed nothing because my "long" claim reference was
+hyphenated: **a browser breaks at a hyphen on its own**, so the fixture could
+never show whether a column can shrink. With an unbroken reference the defect
+was real and **older than this unit** — `.record dl` is a grid of `auto 1fr`
+whose items default to their content's width, so one unbroken value widened
+EVERY path's final record past a 320 screen. The wrap moved from the receipt to
+`.record dd`, which fixes the private and legal records too.
+
 **MUTATE IN A WORKTREE, NOT IN THE WORKING TREE.** A mutation runner that
 rewrites the real file leaves a deliberately broken copy in the tree for as long
 as it runs — twenty minutes of a portal that must not be committed, while the
