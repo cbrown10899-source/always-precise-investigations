@@ -1273,6 +1273,62 @@ carrier door while the nav still links the page — negative-tested seven ways,
 including a drive time planted on a city page and a references line planted on
 Legal.
 
+### The business notification email says what it does, and saves where it is typed
+
+Owner, 2026-09-24, two follow-ups the same evening. The Invoice defaults field
+that holds `owner_record_email` is labelled **Business notification email**,
+with the owner's sentence under it — *"Receives one detailed email for each new
+insurance assignment and office record copies. Leave blank for none."* — and it
+has a **Save Email** of its own, because the only Save used to be the one at
+the bottom of a twelve-field panel. **Same key, same stored value, same route,
+no Worker change.**
+
+**ONE KEY THROUGH THE EXISTING ROUTE.** `/billing-settings` writes only the keys
+a body carries — absent means unchanged — so Save Email posts
+`owner_record_email` alone: no second setting, and a draft typed in another
+field stays a draft rather than being saved behind the person's back. The
+bottom button is the save it always was, and when it carries a changed email
+the status beside the field says Saved too: one stored value, two doors.
+
+**THE STATUS IS DERIVED, AND TYPING NEVER REPAINTS THE BOX.** Saving, Saved and
+an error are events held in `BILL_EMAIL`; *Unsaved changes* is the box
+disagreeing with the stored value, compared trimmed because the Worker trims —
+so typing back to the saved address reads Saved again, and a value the Worker
+stored differently could never read as Saved. The input handler moves the
+status where it stands. The typed value lives in `BILL_DRAFT` on every
+keystroke and the box is in `FOCUS_KEEP`, because Settings repaints as six
+panels land and a repaint mid-address would otherwise take the text and the
+caret.
+
+**IT SPEAKS FOR ITSELF.** `announceRendered` reads the FIRST `.note`/`.err` on
+the screen and Settings has several above this field, so the status is its own
+`role="status"` node, updated in place so a screen reader hears it change. The
+helper sits outside the `<label>` and is wired by `aria-describedby` — text
+inside a label becomes part of the field's name — and the button is outside it
+too, because a label may hold only one control.
+
+**THE STATUS IS ABOVE THE BUTTON, AND THAT WAS MEASURED.** Beside it, it sat on
+the right, where the floating CEO and Assistant pills live: with Save Email
+scrolled to just above the bottom nav, "Saved ✓" was covered at 320 and its
+right end at 390, and at 320 *Unsaved changes* wrapped below the button to
+y=514 — under the bottom nav, which starts at 501. Above the button, at the
+left, on a line reserved even when empty (so the words appearing cannot move
+the button out from under a thumb), it is clear of all three wherever the
+button can be pressed. The suite checks it there by `elementFromPoint`, and
+restoring the beside layout fails that check at both widths.
+
+**An address the senders would skip is refused before posting**, with the one
+shape `ownerRecordCopy` and the office notice both use; blank is allowed,
+because blank is how the email is turned off. A double tap saves once.
+
+**Measured at 390 and 320:** the box is 16px text inside its card, Save Email
+133×46, *Saved ✓* 14.7px at 6.54:1 on the card, and nothing scrolls sideways.
+**Negative-tested sixteen ways in a worktree; fifteen fail by name. The
+sixteenth removed the button's `min-height:44px` and failed nothing** — a plain
+`.btn` already measures 46px there — so the rule was deleted rather than kept
+under a comment claiming it was the floor. The assertion on the measured size
+is what holds the floor now.
+
 **THE STATEWIDE LINE HAD THREE SHAPES, AND THE GUARD SAW ONE.** *"Serving all
 of Virginia"* was guarded; *"Serving Virginia since 2014"* was on four footers
 and a vendor-table row, `areaServed: {State: Virginia}` was in the Vendor and

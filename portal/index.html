@@ -153,12 +153,14 @@
      Every colour is a palette token, each measured on the white card: ok-ink
      6.54:1, warn 5.28:1, bad 5.16:1, muted clears 4.5 too. The status wraps
      inside its own line (min-width:0), which a long error needs at 320; why it
-     is above the button and not beside it is in `billEmailHtml`. */
+     is above the button and not beside it is in `billEmailHtml`. The button
+     has no size rule of its own: a plain .btn measures 46px tall at 390 and
+     320, and the suite asserts the floor on that measurement — a min-height
+     here was tried, removed nothing when deleted, and so did nothing. */
   .bs-email{margin-bottom:14px;}
   .bs-email label.f{margin-bottom:6px;}
   .bs-help{margin:0 0 4px;font-size:.85rem;line-height:1.45;color:var(--muted);}
   .bs-save{display:flex;flex-direction:column;align-items:flex-start;gap:6px;}
-  .bs-savebtn{min-height:44px;min-width:44px;}
   /* The line is reserved even when empty, so "Unsaved changes" appearing does
      not move the button out from under the thumb about to press it. */
   .bs-status{display:block;align-self:stretch;min-height:1.35em;min-width:0;font-size:.92rem;
@@ -11768,7 +11770,7 @@ function billEmailHtml(k, label, opt, value){
     <p class="bs-help" id="bsh_${k}">${esc(opt.help)}</p>
     <div class="bs-save">
       <span id="bs_email_status" class="bs-status${st.cls ? " " + st.cls : ""}" role="status">${esc(st.text)}</span>
-      <button class="btn bs-savebtn" data-act="billEmailSave"${
+      <button class="btn" data-act="billEmailSave"${
         BILL_EMAIL.state === "saving" ? " disabled" : ""}>Save Email</button>
     </div>
   </div>`;
