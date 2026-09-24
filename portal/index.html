@@ -23672,6 +23672,7 @@ function stillNeeded(p, claim){
     ["subject_description", "Vehicle / description"],
     ["start_date", "Requested start"], ["authorized_hours", "Authorization"],
     ["billing_email", "Billing contact"], ["known_schedule", "Known schedule / activity"],
+    ["billing_reference", "Billing reference"],
   ];
   const items = [];
   for(const [k, lbl] of map){
@@ -23752,7 +23753,7 @@ function detailList(s, mode){
     ${rowS("Requested authorization", p.authorized_hours, p.authorized_hours_status)}${row("Not to exceed", p.not_to_exceed)}
     ${rowS("Requested start", p.start_date, p.start_date_status)}${row("Priority", p.priority)}
     ${row(claim ? "Deadline" : "Timeline", p.timeline)}${row("Attachments", p.attachments)}
-    ${claim ? `${row("PO number", p.po_number)}${row("Billing reference", p.billing_reference)}${row("Invoice reference", p.invoice_reference)}${rowS("Invoices to", p.billing_email, p.billing_email_status)}${row("Billing notes", p.billing_notes)}` : ""}
+    ${claim ? `${row("PO number", p.po_number)}${rowS("Billing reference", p.billing_reference, p.billing_reference_status)}${row("Invoice reference", p.invoice_reference)}${rowS("Invoices to", p.billing_email, p.billing_email_status)}${row("Billing notes", p.billing_notes)}` : ""}
     ${row(claim ? "Authorized by" : "Signed by", p.signed_name)}
     ${row("Received", when(s.created_at))}
   </dl>
@@ -23875,11 +23876,17 @@ function simpleStatusHtml(s, p){
   const docErr = !!DOCS_ERR[WS_CASE];
   const sheet = docsIn ? caseSheetDoc(WS_CASE) : null;
   const ret = ((WS && WS.authorization) || {}).retainer || null;
+  /* A CARRIER ASSIGNMENT HAS NO RETAINER STEP (2026-09-24). It is invoiced to
+     the carrier under the agreed fee schedule; the retainer ROW below this strip
+     was already withdrawn for a claim, but the strip went on listing Retainer —
+     and, because the next missing item is emphasised, could highlight it as the
+     thing to do next on a file that will never have one. */
+  const claim = !!(s && s.kind === "claims");
   const items = [
     ["Intake", true],
     ["Rate sheet", docErr ? null : docsIn ? !!sheet : null],
     ["Acceptance", !!(p.signature || p.signed_name)],
-    [flatFee(ret) ? "Flat fee" : agreedMoney(ret) ? "Payment" : "Retainer", !!(ret && ret.received)],
+    ...(claim ? [] : [[flatFee(ret) ? "Flat fee" : agreedMoney(ret) ? "Payment" : "Retainer", !!(ret && ret.received)]]),
     ["Case", (WS && WS.lead_status) === "converted"],
   ];
   const mark = v => v === true ? ["&#10003;", "ok"] : v === false ? ["&#8212;", "muted"] : ["&#9679;", "warn"];
