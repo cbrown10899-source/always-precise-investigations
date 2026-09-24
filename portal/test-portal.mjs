@@ -22829,7 +22829,11 @@ section('Simple View: a carrier assignment is accepted in one tap and never show
   await page.evaluate(() => { const x = document.querySelector('.amx[data-act="wizClose"]'); if (x) x.click(); });
   await page.waitForTimeout(500);
 
-  /* One tap accepts it, and nobody is chosen for it. */
+  /* One tap accepts it, and nobody is chosen for it. The whole submitted row
+     is read before and after, every column, because "the original submission
+     is preserved" is a claim about all of it, the payload and the signature
+     included, not about the two columns acceptance is known to leave alone. */
+  const asSent = JSON.stringify(db.prepare("SELECT * FROM submissions WHERE case_no = 'API-AS-3003'").get());
   await page.evaluate(() => {
     const b = document.querySelector('.simp-bar [data-act="acceptIntake"]');
     if (b) b.click();
@@ -22840,6 +22844,10 @@ section('Simple View: a carrier assignment is accepted in one tap and never show
   ok('Create case / Accept accepts the carrier assignment in one tap', !!lead && lead.status === 'converted',
      JSON.stringify(lead));
   ok('and assigns nobody — there is no staff chooser on this path', !row.assigned_to, String(row.assigned_to));
+  const asKept = JSON.stringify(db.prepare("SELECT * FROM submissions WHERE case_no = 'API-AS-3003'").get());
+  ok('the adjuster\'s submission is preserved exactly — every column, payload and signature included',
+     !!asSent && asSent.includes('Physical therapy Thursday') && asKept === asSent,
+     asKept === asSent ? '' : `${asSent.slice(0, 160)} → ${asKept.slice(0, 160)}`);
   await page.evaluate(async () => { await setViewMode('full'); });
   await page.waitForTimeout(400);
   await page.close();
