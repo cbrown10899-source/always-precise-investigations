@@ -14561,6 +14561,293 @@ section('Invoice defaults are on Settings, load, and save');
      await page.locator('#bs_invoice_prefix').inputValue());
 }
 
+/* THE BUSINESS NOTIFICATION EMAIL (owner, 2026-09-24): the owner's label and
+   helper text, and a Save of its own beside the field, because the only Save
+   used to be the distant one at the bottom of the panel. Same setting, same
+   route, and the status beside it says what actually happened. */
+section('The business notification email: its label, its own Save, and whether it saved');
+{
+  const KEY = 'billing_owner_record_email';
+  const cfg = k => (db.prepare('SELECT value FROM app_config WHERE key = ?').get(k) || {}).value;
+  const stored = () => cfg(KEY);
+  const before = stored();
+  const HELP = 'Receives one detailed email for each new insurance assignment and office record '
+    + 'copies. Leave blank for none.';
+
+  const page = await newPage();
+  const posts = [];
+  page.on('request', r => {
+    if (r.method() === 'POST' && /\/billing-settings$/.test(r.url())) posts.push(r.postDataJSON());
+  });
+  await signIn(page, 'trever', 'AdminPassword1x');
+  const goSettings = async () => {
+    await page.locator('.tabs button', { hasText: 'Settings' }).click();
+    await page.waitForTimeout(900);
+  };
+  await goSettings();
+  const panel = page.locator('.card', { hasText: 'Invoice defaults' }).first();
+  const box = page.locator('#bs_owner_record_email');
+  const status = async () => (await page.locator('#bs_email_status').innerText()).trim();
+  const saveEmail = () => panel.locator('button', { hasText: 'Save Email' });
+  const bottomSave = () => page.locator('.btn', { hasText: 'Save invoice defaults' });
+
+  /* The words, and who they belong to. */
+  const txt = await panel.innerText();
+  ok('the field is labelled "Business notification email"',
+     (await page.locator('#bsl_owner_record_email').innerText()).trim() === 'Business notification email');
+  ok('the helper text is the owner\'s sentence, under the field',
+     (await page.locator('#bsh_owner_record_email').innerText()).trim() === HELP,
+     await page.locator('#bsh_owner_record_email').innerText());
+  ok('the old label is gone', !/record copy of every send|leave empty for none/i.test(txt), txt.slice(0, 400));
+  const a11y = await page.evaluate(() => {
+    const i = document.getElementById('bs_owner_record_email');
+    const refs = a => (i.getAttribute(a) || '').split(/\s+/).filter(Boolean)
+      .map(id => (document.getElementById(id) || {}).textContent || '').join(' ').replace(/\s+/g, ' ').trim();
+    return { name: refs('aria-labelledby'), desc: refs('aria-describedby'),
+      helpInLabel: !!document.getElementById('bsh_owner_record_email').closest('label'),
+      btnInLabel: !!document.querySelector('[data-act="billEmailSave"]').closest('label'),
+      role: document.getElementById('bs_email_status').getAttribute('role') };
+  });
+  ok('the box is NAMED by the label alone and DESCRIBED by the helper',
+     a11y.name === 'Business notification email' && a11y.desc.startsWith('Receives one detailed email'),
+     JSON.stringify(a11y));
+  ok('neither the helper nor the button sits inside the <label> — one control per label',
+     !a11y.helpInLabel && !a11y.btnInLabel, JSON.stringify(a11y));
+  ok('a screen reader finds the box by that name',
+     await page.getByRole('textbox', { name: 'Business notification email', exact: true }).count() === 1);
+  ok('and the status is a live region, so a change to it is heard', a11y.role === 'status');
+  ok('the same box as before — the key the Worker stores is unchanged', await box.count() === 1);
+  ok('a Save Email button sits with the field', await saveEmail().count() === 1);
+  ok('and the bottom Save invoice defaults is still there', await bottomSave().count() === 1);
+  ok('nothing is claimed before anything has happened', (await status()) === '', await status());
+
+  /* Save Email saves the email and NOTHING else — a draft typed in another
+     field stays a draft. */
+  const footerBefore = cfg('billing_invoice_footer');
+  await page.locator('#bs_invoice_footer').fill('A FOOTER DRAFT NOBODY SAVED');
+  await box.fill('notify@alwaysprecise.example');
+  ok('typing a new address reads "Unsaved changes"', (await status()) === 'Unsaved changes', await status());
+  ok('typing does not rebuild the box — the caret stays in it',
+     await page.evaluate(() => (document.activeElement || {}).id) === 'bs_owner_record_email');
+  posts.length = 0;
+  await saveEmail().click();
+  await page.waitForTimeout(700);
+  ok('Save Email says "Saved ✓"', (await status()) === 'Saved ✓', await status());
+  ok('the stored value is exactly what was typed', stored() === 'notify@alwaysprecise.example', String(stored()));
+  ok('through the SAME route, carrying the email and nothing else',
+     posts.length === 1 && JSON.stringify(Object.keys(posts[0] || {})) === '["owner_record_email"]'
+       && posts[0].owner_record_email === 'notify@alwaysprecise.example', JSON.stringify(posts));
+  ok('so the footer draft was not saved behind anybody\'s back',
+     cfg('billing_invoice_footer') === footerBefore, String(cfg('billing_invoice_footer')));
+  ok('and it is still in its box, for the person to decide about',
+     (await page.locator('#bs_invoice_footer').inputValue()) === 'A FOOTER DRAFT NOBODY SAVED');
+  ok('no second setting was created',
+     db.prepare("SELECT COUNT(*) AS n FROM app_config WHERE value = 'notify@alwaysprecise.example'").get().n === 1);
+
+  /* Dirty after a save, and derived rather than remembered. */
+  await box.fill('changed@alwaysprecise.example');
+  ok('editing after a save turns "Saved ✓" into "Unsaved changes"',
+     (await status()) === 'Unsaved changes', await status());
+  await box.fill('notify@alwaysprecise.example');
+  ok('typing back to the saved address reads "Saved ✓" again — the status is worked out, not stored',
+     (await status()) === 'Saved ✓', await status());
+
+  /* A repaint from anywhere — Settings has six panels that load and repaint on
+     their own — keeps what is being typed and the caret in the box. */
+  await box.fill('midtype@alwaysprecise.example');
+  await page.evaluate(() => paint());
+  ok('a repaint mid-edit keeps what was typed',
+     (await box.inputValue()) === 'midtype@alwaysprecise.example', await box.inputValue());
+  ok('and keeps the caret in the box',
+     await page.evaluate(() => (document.activeElement || {}).id) === 'bs_owner_record_email');
+  ok('and still says "Unsaved changes"', (await status()) === 'Unsaved changes', await status());
+
+  /* Leaving Settings and coming back is a fresh start, like the drafts beside it. */
+  await box.fill('notify@alwaysprecise.example');
+  await page.locator('.tabs button', { hasText: 'Cases' }).first().click();
+  await page.waitForTimeout(400);
+  await goSettings();
+  ok('coming back to Settings claims nothing', (await status()) === '', await status());
+
+  /* VERIFY PERSISTENCE, the owner's first walk: Save Email, reload, exact. */
+  await page.reload();
+  await page.waitForTimeout(800);
+  await goSettings();
+  ok('after a reload the exact address saved with Save Email is still there',
+     (await box.inputValue()) === 'notify@alwaysprecise.example', await box.inputValue());
+  ok('and a fresh visit claims nothing', (await status()) === '', await status());
+
+  /* The owner's second walk: edit, Save invoice defaults, reload, exact. */
+  await box.fill('bottom@alwaysprecise.example');
+  await bottomSave().click();
+  await page.waitForTimeout(800);
+  ok('Save invoice defaults stores the same setting', stored() === 'bottom@alwaysprecise.example', String(stored()));
+  ok('and the status beside the email says so', (await status()) === 'Saved ✓', await status());
+  ok('while the bottom button reports exactly as it always did',
+     /Saved\. New invoices will start from these\./.test(await panel.innerText()));
+  await page.reload();
+  await page.waitForTimeout(800);
+  await goSettings();
+  ok('after a reload the exact address saved from the bottom button is still there',
+     (await box.inputValue()) === 'bottom@alwaysprecise.example', await box.inputValue());
+
+  /* The Worker trims; the box shows what was stored, and that reads Saved. */
+  await box.fill('  spaced@alwaysprecise.example  ');
+  await saveEmail().click();
+  await page.waitForTimeout(700);
+  ok('surrounding spaces are stored trimmed, and the box shows what was stored',
+     stored() === 'spaced@alwaysprecise.example' && (await box.inputValue()) === 'spaced@alwaysprecise.example',
+     `${stored()} / ${await box.inputValue()}`);
+  ok('and that reads "Saved ✓", not "Unsaved changes"', (await status()) === 'Saved ✓', await status());
+
+  /* An address the senders would skip is refused where it can still be fixed. */
+  posts.length = 0;
+  await box.fill('not-an-email');
+  await saveEmail().click();
+  await page.waitForTimeout(300);
+  ok('an address the senders would skip is refused, in words',
+     /^Not saved/.test(await status()) && /does not look like an email address/i.test(await status()),
+     await status());
+  ok('and nothing was sent or stored', posts.length === 0 && stored() === 'spaced@alwaysprecise.example',
+     JSON.stringify(posts) + ' ' + stored());
+  await box.fill('not-an-email@');
+  ok('editing clears the error back to "Unsaved changes"', (await status()) === 'Unsaved changes', await status());
+
+  /* A save the portal could not make says so, with the reason, and never Saved. */
+  await page.route('**/billing-settings', route => route.request().method() === 'POST'
+    ? route.fulfill({ status: 500, contentType: 'application/json',
+        body: JSON.stringify({ error: 'Simulated outage' }) })
+    : route.continue());
+  await box.fill('outage@alwaysprecise.example');
+  await saveEmail().click();
+  await page.waitForTimeout(600);
+  const failed = await status();
+  ok('a failed save says so, with the reason, and never "Saved"',
+     /^Not saved/.test(failed) && /Simulated outage/.test(failed) && !/Saved ✓/.test(failed), failed);
+  ok('the failure is drawn in the error colour, not the saved one',
+     await page.locator('#bs_email_status.is-error').count() === 1);
+  ok('and nothing was stored by it', stored() === 'spaced@alwaysprecise.example', String(stored()));
+  await page.unroute('**/billing-settings');
+  await saveEmail().click();
+  await page.waitForTimeout(700);
+  ok('pressing Save Email again once the portal answers saves it',
+     (await status()) === 'Saved ✓' && stored() === 'outage@alwaysprecise.example', `${await status()} / ${stored()}`);
+
+  /* One tap, one save. */
+  posts.length = 0;
+  await box.fill('double@alwaysprecise.example');
+  await saveEmail().dblclick();
+  await page.waitForTimeout(800);
+  ok('a double tap saves once', posts.length === 1, JSON.stringify(posts));
+
+  /* Blank is how the email is turned off, as the helper says. */
+  await box.fill('');
+  await saveEmail().click();
+  await page.waitForTimeout(700);
+  ok('blank is allowed — it turns the email off', stored() === '' && (await status()) === 'Saved ✓',
+     `${JSON.stringify(stored())} / ${await status()}`);
+
+  /* 390 and 320: the field fits, Save Email is a real target, the status is
+     readable, and nothing scrolls sideways. A plain viewport, not isMobile —
+     the phone emulation widens its own layout viewport over an overflow. */
+  for (const [w, h] of [[390, 844], [320, 568]]) {
+    const ctx = await browser.newContext({ viewport: { width: w, height: h } });
+    const pg = await ctx.newPage();
+    await pg.goto(SITE + '/portal/');
+    await pg.waitForTimeout(300);
+    await pg.locator('#u').fill('trever');
+    await pg.locator('#p').fill('AdminPassword1x');
+    await pg.locator('#loginBtn').click();
+    await pg.waitForTimeout(900);
+    await pg.locator('.burger').click();
+    await pg.waitForTimeout(400);
+    await pg.locator('.tabs button', { hasText: 'Settings' }).click();
+    await pg.waitForTimeout(1000);
+    const pbox = pg.locator('#bs_owner_record_email');
+    await pbox.scrollIntoViewIfNeeded();
+    await pbox.fill(`phone${w}@alwaysprecise.example`);
+    const dirtyText = (await pg.locator('#bs_email_status').innerText()).trim();
+    const btn = pg.locator('[data-act="billEmailSave"]');
+    await btn.scrollIntoViewIfNeeded();
+    const geo = await pg.evaluate(() => {
+      const r = el => el.getBoundingClientRect();
+      const box = document.getElementById('bs_owner_record_email');
+      const card = box.closest('.card');
+      const btn = document.querySelector('[data-act="billEmailSave"]');
+      const b = r(btn), c = r(card), i = r(box);
+      const hit = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+      return { box: { l: i.left, r: i.right }, card: { l: c.left, r: c.right },
+        btn: { w: b.width, h: b.height }, hit: !!hit && (hit === btn || btn.contains(hit)),
+        over: document.documentElement.scrollWidth - window.innerWidth,
+        boxFont: parseFloat(getComputedStyle(box).fontSize) };
+    });
+    ok(`${w}: the field fits inside its card`,
+       geo.box.l >= geo.card.l - 0.5 && geo.box.r <= geo.card.r + 0.5, JSON.stringify(geo));
+    ok(`${w}: the box is 16px or more, so the phone does not zoom on it`, geo.boxFont >= 16, String(geo.boxFont));
+    ok(`${w}: Save Email is an easy target — at least 44 by 44, and nothing covers it`,
+       geo.btn.h >= 44 && geo.btn.w >= 44 && geo.hit, JSON.stringify(geo));
+    ok(`${w}: nothing scrolls sideways`, geo.over <= 0, String(geo.over));
+    ok(`${w}: typing reads "Unsaved changes"`, dirtyText === 'Unsaved changes', dirtyText);
+    await btn.click();
+    await pg.waitForTimeout(700);
+    const st = await pg.evaluate(() => {
+      const el = document.getElementById('bs_email_status');
+      const card = el.closest('.card');
+      const r = el.getBoundingClientRect(), c = card.getBoundingClientRect();
+      const rgb = s => (s.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
+      const lum = ([R, G, B]) => [R, G, B].map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; })
+        .reduce((a, v, k) => a + v * [0.2126, 0.7152, 0.0722][k], 0);
+      let bgEl = el, bg = 'rgba(0, 0, 0, 0)';
+      while (bgEl && /rgba\(0, 0, 0, 0\)|transparent/.test(bg)) { bg = getComputedStyle(bgEl).backgroundColor; bgEl = bgEl.parentElement; }
+      const L1 = lum(rgb(getComputedStyle(el).color)), L2 = lum(rgb(bg));
+      return { text: el.innerText.trim(), size: parseFloat(getComputedStyle(el).fontSize),
+        inside: r.left >= c.left - 0.5 && r.right <= c.right + 0.5 && r.width > 0,
+        ratio: (Math.max(L1, L2) + 0.05) / (Math.min(L1, L2) + 0.05),
+        over: document.documentElement.scrollWidth - window.innerWidth };
+    });
+    ok(`${w}: after Save Email it reads "Saved ✓", inside the card`, st.text === 'Saved ✓' && st.inside, JSON.stringify(st));
+    ok(`${w}: the status is readable — 14px or more, and 4.5:1 against its card`,
+       st.size >= 14 && st.ratio >= 4.5, JSON.stringify(st));
+    ok(`${w}: and still nothing scrolls sideways`, st.over <= 0, String(st.over));
+    ok(`${w}: the exact address is stored`, stored() === `phone${w}@alwaysprecise.example`, String(stored()));
+
+    /* THE WORST PLACE ON THE SCREEN. The CEO and Assistant pills float over the
+       lower right of every screen, so the status is checked with Save Email
+       scrolled to the lowest spot a thumb can press it — just above the bottom
+       nav — for both words it can say. Beside the button it measured
+       underneath the pills here; above it and at the left it does not. */
+    const covered = async () => pg.evaluate(() => {
+      const btn = document.querySelector('[data-act="billEmailSave"]');
+      const nav = document.querySelector('.mnav');
+      const navTop = nav && getComputedStyle(nav).display !== 'none' ? nav.getBoundingClientRect().top : innerHeight;
+      window.scrollBy(0, btn.getBoundingClientRect().bottom - (navTop - 4));
+      const el = document.getElementById('bs_email_status');
+      const range = document.createRange(); range.selectNodeContents(el);
+      const t = range.getBoundingClientRect();            // the words, not the reserved line
+      const y = t.top + t.height / 2;
+      const hits = [t.left + 2, t.left + t.width / 2, t.right - 2].map(x => {
+        const h = document.elementFromPoint(x, y); return !!h && (h === el || el.contains(h));
+      });
+      return { text: el.innerText.trim(), hits, words: { l: t.left, r: t.right, y },
+        btnBottom: btn.getBoundingClientRect().bottom, navTop };
+    });
+    const low = await covered();
+    ok(`${w}: with Save Email at the bottom of the screen, "Saved ✓" is still in plain sight`,
+       low.text === 'Saved ✓' && low.hits.every(Boolean), JSON.stringify(low));
+    await pbox.fill(`again${w}@alwaysprecise.example`);
+    const lowDirty = await covered();
+    ok(`${w}: and so is "Unsaved changes"`,
+       lowDirty.text === 'Unsaved changes' && lowDirty.hits.every(Boolean), JSON.stringify(lowDirty));
+    await ctx.close();
+  }
+
+  /* Put the setting back the way this section found it: later sections assert
+     the portal's behaviour with no record address configured. */
+  if (before === undefined) db.prepare('DELETE FROM app_config WHERE key = ?').run(KEY);
+  else db.prepare('UPDATE app_config SET value = ? WHERE key = ?').run(before, KEY);
+  ok('the setting is left as this section found it', stored() === before, `${stored()} / ${before}`);
+}
+
 section('Storage health: the Settings panel answers where the bytes are');
 {
   const page = await newPage();
