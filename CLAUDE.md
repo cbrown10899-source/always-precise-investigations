@@ -708,10 +708,13 @@ identifier or a policy number.** Carrier rates are quoted per assignment and
 documents are issued on request, so there is no figure in the HTML that can go
 stale or be quoted to the wrong carrier. Keep it that way.
 
-The page's "Submit an Assignment" buttons point at `/intake/`, which is the
-Secure Assignment Intake its copy describes — the carrier path issues a request
-number immediately, exactly as promised there. `_redirects` also maps the older
-`/insurance-investigations/submit/` URL to `/intake/`.
+The page's **Submit an Insurance Assignment** buttons point at
+`/intake/?assignment=insurance`, the Secure Assignment Intake its copy
+describes — the carrier path issues a request number immediately, exactly as
+promised there, and the vendor page's buttons read the same (2026-09-24; a
+deploy guard holds both pages to that wording and to the carrier door).
+`_redirects` also maps the older `/insurance-investigations/submit/` URL to the
+carrier door.
 
 ## The public site says less than the portal knows
 
@@ -1030,12 +1033,14 @@ asked for yet.
 - **Surveillance** — seven steps. An extra coverage step where the client buys
   a block of hours, then a Venmo or Cash App payment for that block.
 - **Process serving** — six steps, ending in payment of the flat fee.
-- **Carrier** — insurance claim assignment. Eight steps: an extra claim-details
-  step (carrier/TPA, claim number, policy, claim type, date of loss, adjuster,
-  defense counsel, prior surveillance), claimant-specific wording on the
-  subject and scope steps, a scheduling-and-authorization step, carrier terms in
-  place of the consumer agreement, and a billing step instead of payment.
-  Nothing is charged at assignment.
+- **Carrier** — insurance claim assignment. Eight steps: an extra
+  assignment-and-claim step (service requested, requested start, urgency, then
+  the claim itself), claims-desk wording on the subject and objective steps
+  (with the known schedule and special instructions), a scheduling-and-
+  authorization step, carrier terms in place of the consumer agreement, and a
+  billing / reference step instead of payment. Nothing is charged at
+  assignment. The 2026-09-24 structure is recorded under *The carrier door
+  speaks to a claims desk*.
 
   The authorization step offers 8 / 16 / 24 hours or custom — **hours, never a
   rate**, because that page is public. It also collects the not-to-exceed
@@ -1206,6 +1211,15 @@ wording went back rather than the test. And my own *"no screen promises
 acceptance"* pattern matched *"once the assignment is accepted"* and *"cannot
 guarantee"* — a condition and a disclaimer, the opposite of a promise. The
 instrument was narrowed to what a promise actually says; the product was right.
+
+**MUTATE IN A WORKTREE, NOT IN THE WORKING TREE.** A mutation runner that
+rewrites the real file leaves a deliberately broken copy in the tree for as long
+as it runs — twenty minutes of a portal that must not be committed, while the
+session's own stop hook asks, correctly, for the tree to be committed. The
+runner restores byte for byte and was never wrong; the TREE was the wrong place
+for it. `git worktree add --detach <scratch>/wt HEAD` gives it a copy whose
+suites resolve their own root, and the working tree stays committable
+throughout.
 
 **AN ASSERTION THAT CRASHES IS CAUGHT, NOT NAMED.** Removing the company field
 from the carrier door's first step failed the run only as a locator timeout.
