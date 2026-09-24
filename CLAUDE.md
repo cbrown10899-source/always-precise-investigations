@@ -3913,7 +3913,7 @@ Tests:
 
 ```bash
 node case-portal/test-worker.mjs   # 4389 checks (2026-09-24): auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 4093 checks (2026-09-24): the page against the real Worker
+node portal/test-portal.mjs        # 4158 checks (2026-09-24): the page against the real Worker
 ```
 
 **WRITE A SUITE'S OUTPUT TO A FILE, NEVER A PIPE.** Every suite ends in
