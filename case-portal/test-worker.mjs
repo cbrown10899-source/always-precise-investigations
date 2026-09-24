@@ -446,11 +446,20 @@ section('Carrier assignment: the adjuster is emailed a receipt, and only a recei
   await call(env, '/notify-recipients', { method: 'POST', cookie: admin,
     body: { label: 'Desk', email: 'desk@firm.test', enabled: true,
             alerts: { intakes: true, payments: false, reports: false, packages: false, tasks: false } } });
+  /* THE OWNER'S OWN INBOX IS ALSO AN INTAKE-ALERT RECIPIENT — the configuration
+     that sent Corey two emails per insurance assignment (owner, 2026-09-24).
+     Spelled differently on purpose: one inbox is one inbox. */
+  await call(env, '/notify-recipients', { method: 'POST', cookie: admin,
+    body: { label: 'Corey', email: ' Office@AlwaysPrecise.example ', enabled: true,
+            alerts: { intakes: true, payments: false, reports: false, packages: false, tasks: false } } });
+  const OFFICE = 'office@alwaysprecise.example';
+  const toOffice = () => mails.filter(m => String(m.to).trim().toLowerCase() === OFFICE);
 
   /* The owner's own fixture, as the public form's carrier door builds it. */
   const JORDAN = {
     case_no: 'API-JS-1', assignment: 'insurance', service: 'Insurance Claim Assignment',
-    client_name: 'Jordan Smith', client_email: 'jordan.smith@example-carrier.test', client_phone: '',
+    client_name: 'Jordan Smith', client_email: 'jordan.smith@example-carrier.test', client_phone: '(434) 555-0142',
+    contact_title: 'Senior Claims Adjuster', priority: 'Soon',
     carrier: 'Example Carrier', claim_number: 'WC-2026-12345', subject_name: 'Taylor Example',
     service_requested: 'Surveillance', objective: 'Document current physical activity and routine.',
     known_schedule: 'Physical therapy Thursday at 10:00 AM.', start_date: '', start_date_status: 'asap',
@@ -493,16 +502,38 @@ section('Carrier assignment: the adjuster is emailed a receipt, and only a recei
   ok('and no price, retainer or payment method of any kind',
      !/\$|retainer|venmo|cash app|non-refundable/i.test(r.text + r.html));
 
-  const copies = mails.filter(m => m.to === 'office@alwaysprecise.example');
-  ok('the office gets ONE record copy of the receipt',
-     copies.length === 1 && copies[0].subject === 'RECORD COPY — Assignment receipt sent to jordan.smith@example-carrier.test',
-     JSON.stringify(copies.map(c => c.subject)));
-  const c0 = copies[0] || { text: '' };
-  ok('which states what the receipt stated',
-     ['API-JS-1', 'Example Carrier', 'WC-2026-12345', 'Taylor Example', 'Surveillance', 'As soon as available']
-       .every(n => c0.text.includes(n)), c0.text);
+  /* ONE OFFICE EMAIL, NOT TWO (owner, 2026-09-24). The office's inbox is both
+     the business record address and an intake-alert recipient here, which is
+     exactly the configuration that used to send it two. */
+  const office = toOffice();
+  ok('the office inbox gets ONE email about the assignment, not two',
+     office.length === 1, JSON.stringify(office.map(o => o.subject)));
+  const n0 = office[0] || { subject: '', text: '', html: '' };
+  ok('and it is the detailed notice, not the bare alert',
+     n0.subject === 'New insurance assignment — API-JS-1', n0.subject);
+  for (const [what, needle] of [['request number', 'API-JS-1'], ['company', 'Example Carrier'],
+       ['adjuster / contact', 'Jordan Smith'], ['contact\'s title', 'Senior Claims Adjuster'],
+       ['contact\'s email', 'jordan.smith@example-carrier.test'], ['contact\'s phone', '(434) 555-0142'],
+       ['claimant', 'Taylor Example'], ['claim number', 'WC-2026-12345'], ['service requested', 'Surveillance'],
+       ['requested start', 'As soon as available'], ['urgency', 'Soon']]) {
+    ok(`the office notice names the ${what}, in both parts`,
+       n0.text.includes(needle) && n0.html.includes(needle.replace(/'/g, '&#39;')), what);
+  }
+  ok('it carries a direct link into the portal, to this assignment',
+     n0.text.includes(`${ORIGIN}/portal/?case=API-JS-1`) && n0.html.includes(`href="${ORIGIN}/portal/?case=API-JS-1"`),
+     n0.text);
+  ok('it says the adjuster was emailed their receipt, and where',
+     n0.text.includes('Adjuster receipt: Emailed to jordan.smith@example-carrier.test'), n0.text);
+  ok('its subject line names the request and nobody — a subject shows on a lock screen',
+     !/Taylor|Jordan|Example Carrier|WC-2026/.test(n0.subject), n0.subject);
+  /* Address, injury, signature, authorization and billing reference — and the
+     objective, the known schedule and the insured, which the portal holds and
+     an inbox does not need. */
+  ok('and it carries none of what the office did not ask to be emailed',
+     !/Hidden Lane|Lumbar|SIGBYTES|3,600|INV-REF-7|physical activity|Physical therapy|Example Employer/
+       .test(n0.text + n0.html), n0.text);
   const alert = mails.filter(m => m.to === 'desk@firm.test');
-  ok('the office alert still goes, once, and still names no one',
+  ok('a different inbox still gets the intake alert, once, and it still names no one',
      alert.length === 1 && /Insurance/.test(alert[0].subject)
      && !/Taylor|Jordan|Example Carrier|WC-2026/.test(alert[0].subject + alert[0].text),
      JSON.stringify(alert.map(a => a.subject)));
@@ -546,11 +577,17 @@ section('Carrier assignment: the adjuster is emailed a receipt, and only a recei
     client_name: 'Private Person', client_email: 'person@example.test', subject_name: 'S' }));
   ok('a private intake is emailed no receipt', !mails.some(m => m.to === 'person@example.test'));
   ok('and its response carries no receipt key', !('receipt' in pc) && !('receipt_reason' in pc), JSON.stringify(pc));
+  ok('a private intake still alerts the office inbox the way it always did — no notice',
+     toOffice().length === 1 && /^New intake received — Private/.test(toOffice()[0].subject),
+     JSON.stringify(toOffice().map(o => o.subject)));
   mails = [];
   const lc = await jsonOf(await ingest(env, { case_no: 'API-JS-L', assignment: 'legal',
     client_name: 'Para Legal', client_email: 'para@firm.example', firm_name: 'Smith Law', subject_name: 'S' }));
   ok('a legal intake is emailed no receipt either',
      !mails.some(m => m.to === 'para@firm.example') && !('receipt' in lc), JSON.stringify(lc));
+  ok('and a legal intake alerts the office inbox the way it always did — no notice',
+     toOffice().length === 1 && /^New intake received — Legal/.test(toOffice()[0].subject),
+     JSON.stringify(toOffice().map(o => o.subject)));
 
   /* WITHOUT AN ADDRESS, OR WITHOUT A PROVIDER, THE ASSIGNMENT STILL LANDS. */
   mails = [];
@@ -575,15 +612,45 @@ section('Carrier assignment: the adjuster is emailed a receipt, and only a recei
      && refused.receipt_reason === 'rejected', JSON.stringify(refused));
   ok('the assignment is recorded regardless',
      !!(await env.DB.prepare("SELECT 1 AS x FROM submissions WHERE case_no = 'API-JS-5'").first()));
-  ok('and the office is not sent a record of a receipt that never went',
-     !mails.some(m => /Assignment receipt/.test(m.subject || '')), JSON.stringify(mails.map(m => m.subject)));
-  /* ...and a copy that fails costs the receipt nothing. */
+  const n5 = toOffice().find(m => m.subject === 'New insurance assignment — API-JS-5') || { text: '' };
+  ok('the office is still told once, and told plainly that the adjuster was NOT emailed',
+     toOffice().length === 1
+     && n5.text.includes('Adjuster receipt: Not sent — the email provider did not accept it')
+     && !/Emailed to/.test(n5.text), n5.text || JSON.stringify(toOffice().map(o => o.subject)));
+  /* ...and a notice that fails costs the receipt nothing, and costs the office
+     nothing either: the alert, which skips only an inbox that was told, goes
+     to the office in its place. */
   mails = [];
-  reject = m => m.to === 'office@alwaysprecise.example';
+  reject = m => String(m.to).trim().toLowerCase() === OFFICE && /^New insurance assignment/.test(m.subject || '');
   const copyFail = await jsonOf(await ingest(env, { ...JORDAN, case_no: 'API-JS-6', client_email: 'six@example-carrier.test' }));
   reject = null;
-  ok('a failed office copy does not turn a sent receipt into a failure',
+  ok('a refused office notice does not turn a sent receipt into a failure',
      copyFail.receipt === 'sent' && mails.some(m => m.to === 'six@example-carrier.test'), JSON.stringify(copyFail));
+  ok('and the office inbox is sent the intake alert instead — it is never left untold',
+     toOffice().length === 1 && /^New intake received — Insurance, case API-JS-6/.test(toOffice()[0].subject),
+     JSON.stringify(toOffice().map(o => o.subject)));
+
+  /* NO RECORD ADDRESS SET: nothing is skipped, and the privacy-safe alert is
+     the office's notice exactly as it was before. */
+  const plain = freshEnv();
+  plain.RESEND_API_KEY = 'test-resend-key'; plain.INGEST_PER_MINUTE = '200'; plain.RECEIPT_PER_MINUTE = '100';
+  await bootstrapAdmin(plain);
+  const pAdmin = (await login(plain, 'trever', 'FirstAdminPass1')).cookie;
+  await call(plain, '/notify-recipients', { method: 'POST', cookie: pAdmin,
+    body: { label: 'Corey', email: OFFICE, enabled: true,
+            alerts: { intakes: true, payments: false, reports: false, packages: false, tasks: false } } });
+  mails = [];
+  await ingest(plain, { ...JORDAN, case_no: 'API-JS-8', client_email: 'eight@example-carrier.test' });
+  ok('with no record address set, the office inbox gets the intake alert as before — and no notice',
+     toOffice().length === 1 && /^New intake received — Insurance, case API-JS-8/.test(toOffice()[0].subject),
+     JSON.stringify(toOffice().map(o => o.subject)));
+
+  /* A TEST- CASE EMAILS THE OFFICE NOTHING, the alert's own rule. */
+  mails = [];
+  await ingest(env, { ...JORDAN, case_no: 'TEST-JS-9', client_email: 'nine@example-carrier.test' });
+  ok('a TEST- case raises no office notice and no alert',
+     toOffice().length === 0 && !mails.some(m => m.to === 'desk@firm.test'),
+     JSON.stringify(mails.map(m => [m.to, m.subject])));
 
   /* IT ECHOES TEXT A STRANGER TYPED — so a link, a domain, a direction
      override or an essay cannot ride out on it, and the service must be one

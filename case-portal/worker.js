@@ -420,14 +420,27 @@ async function handleIngest(request, env) {
      of the record; after the row, because it needs the submission's id. */
   await linkAcceptance(env, caseNo, p);
   // The case is recorded; telling the office is a courtesy that cannot fail it.
-  await notifyAdmins(env, 'intakes', caseNo);
+  if (kind !== 'claims') {
+    await notifyAdmins(env, 'intakes', caseNo);
+    return json({ ok: true, case_no: caseNo });
+  }
   /* THE ADJUSTER'S RECEIPT (owner, 2026-09-24), on the carrier path only and
      only on a FRESH insert — the identical retry above returned before this,
      so a browser retry cannot email a second receipt. Every other kind answers
      exactly as it always did: no key is added to a response nothing asked to
-     change. */
-  if (kind !== 'claims') return json({ ok: true, case_no: caseNo });
+     change.
+
+     THEN THE OFFICE, ONCE (owner, 2026-09-24: "avoid sending Corey two
+     redundant office emails"). The receipt goes first so the office's notice
+     can say whether the adjuster actually got it; the notice goes to the
+     business record address with the assignment's detail and a link into the
+     portal; and the privacy-safe intake alert then skips that one inbox and
+     still reaches every other recipient. When no notice went — no address set,
+     or the provider refused it — nothing is skipped and the alert is the
+     office's notice exactly as before, so the office always hears. */
   const r = await sendAssignmentReceipt(env, caseNo, p);
+  const notice = await assignmentOfficeNotice(env, caseNo, p, r);
+  await notifyAdmins(env, 'intakes', caseNo, { skip: notice.sent ? [notice.to] : [] });
   return json({ ok: true, case_no: caseNo, receipt: r.receipt, receipt_reason: r.receipt_reason });
 }
 
@@ -439,9 +452,10 @@ async function handleIngest(request, env) {
    unnecessarily."
 
    ONE SENDER, THE EXISTING ONE. `sendMail` — the Resend path every send in
-   this portal uses — and `ownerRecordCopy` for the office's copy, so its
-   configuration, its failure handling and its "never costs the send" rule are
-   inherited rather than rebuilt.
+   this portal uses — so its configuration, its failure handling and its
+   "never costs the send" rule are inherited rather than rebuilt. The office
+   hears about the assignment once, from `assignmentOfficeNotice` below, which
+   also says whether this receipt went.
 
    A RECEIPT, NOT THE FILE. What goes back is what identifies the referral to
    the desk that sent it — the request number, the company, the claim or
@@ -457,10 +471,9 @@ async function handleIngest(request, env) {
    was received; it cannot be made to carry somebody's advertisement. The three
    limits above bound how many can go.
 
-   IT NEVER COSTS THE ASSIGNMENT. The row is already committed and the office
-   already alerted when this runs; it does not throw, and what happened is
-   reported on the response so the page can say "a confirmation has been
-   emailed" only when one was. */
+   IT NEVER COSTS THE ASSIGNMENT. The row is already committed when this runs;
+   it does not throw, and what happened is reported on the response so the page
+   can say "a confirmation has been emailed" only when one was. */
 const RECEIPT_SERVICES = ['Surveillance', 'Claims investigation', "Workers' compensation investigation",
   'Auto claim investigation', 'Other / not sure yet'];
 const RECEIPT_START = { asap: 'As soon as available', flexible: 'Flexible', tbd: 'To be determined' };
@@ -596,16 +609,117 @@ async function sendAssignmentReceipt(env, caseNo, p) {
     const { subject, text, html } = assignmentReceiptEmail(f);
     const mail = await sendMail(env, { to, subject, text, html });
     if (!mail.sent) return { receipt: 'failed', receipt_reason: mail.reason || 'failed' };
-    /* The office's record of what the adjuster was sent — the same sanitized
-       values, so the copy states exactly what the receipt stated. */
-    await ownerRecordCopy(env, 'assignment_receipt', {
-      to, client: f.contact, case_no: caseNo, company: f.company, claim: f.claim,
-      subject: f.subject, service: f.service, start: f.start,
-    });
-    return { receipt: 'sent', receipt_reason: '' };
+    return { receipt: 'sent', receipt_reason: '', to };
   } catch (e) {
     console.error('assignment receipt failed', e && e.message ? e.message : e);
     return { receipt: 'failed', receipt_reason: 'failed' };
+  }
+}
+
+/* ===== THE OFFICE'S ONE EMAIL ABOUT A NEW INSURANCE ASSIGNMENT ==============
+   Owner, 2026-09-24: "avoid sending Corey two redundant office emails. Keep one
+   useful office notification/receipt that contains: request/assignment number,
+   company, adjuster/contact, claimant/claim identifier where available, service
+   requested, requested start/urgency, direct portal link."
+
+   IT GOES TO THE BUSINESS RECORD ADDRESS, and that is what lets it carry the
+   detail. The intake ALERT carries nothing that identifies a person or a matter
+   — the 2026-08-16 rule, kept because an alert goes to whoever an admin typed
+   in. `billing_owner_record_email` is the firm's own record inbox, which
+   already receives the full figures of every send, so the detail travels on
+   the channel built to carry it and the alert rule is untouched.
+
+   IT REPLACES TWO EMAILS WITH ONE. It supersedes the record copy of the
+   adjuster's receipt, whose facts it states along with whether the receipt
+   actually went, and the caller skips this inbox when it sends the intake
+   alert. An inbox that is not this one still gets its alert.
+
+   ECHOED TEXT IS THE RECEIPT'S. The contact, company, claimant and claim came
+   off a public form, so they go through `receiptText` exactly as they did for
+   the adjuster. The submitter's email and phone are included because the
+   owner asked for the contact; each is shape-checked, and anything that is not
+   a well-formed address or a phone number is left out rather than echoed. The
+   raw record is one tap away behind the link.
+
+   THE SUBJECT LINE NAMES THE REQUEST NUMBER AND NOTHING ELSE. A subject shows on
+   a lock screen, so the company and the names stay in the body.
+
+   IT NEVER THROWS AND NEVER COSTS THE ASSIGNMENT, the rule every sender here
+   keeps. It is capped by the same outbound-mail minute as the alert it stands
+   in for, because the public ingest reaches it with no session. */
+const NOTICE_URGENCY = ['Standard', 'Soon', 'Urgent / time sensitive'];
+const NOTICE_RECEIPT = {
+  no_address: 'no valid email address was given',
+  not_configured: 'email is not configured',
+  paused: 'receipts pause after fifty carrier assignments in a day',
+  throttled: 'that inbox already had three receipts this hour',
+  rate_limited: 'too many receipts in the last minute',
+};
+
+function noticePhone(v) {
+  const t = String(v || '').replace(/[^0-9+().\-\sxX]/g, '').replace(/\s+/g, ' ').trim();
+  return t.length <= 32 && t.replace(/\D/g, '').length >= 7 ? t : '';
+}
+
+async function assignmentOfficeNotice(env, caseNo, p, receipt) {
+  try {
+    /* A TEST- case raises no alert (notifyAdmins), so it raises no notice. */
+    if (/^TEST-/i.test(String(caseNo || ''))) return { sent: false, reason: 'test_case' };
+    if (!env.RESEND_API_KEY) return { sent: false, reason: 'not_configured' };
+    const to = String((await billingSettings(env)).owner_record_email || '').trim();
+    if (!to) return { sent: false, reason: 'no_record_address' };
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return { sent: false, reason: 'invalid_address' };
+    if (!(await withinRateLimit(env, 'mail'))) return { sent: false, reason: 'rate_limited' };
+
+    const f = assignmentReceiptFacts(caseNo, p);
+    const email = String(p.client_email || '').trim();
+    const contactEmail = email.length <= 200 && /^[^\s@]+@[^\s@.]+\.[^\s@]+$/.test(email) ? email : '';
+    const title = receiptText(p.contact_title);
+    const handling = receiptText(p.adjuster);
+    const rc = receipt || {};
+    const receiptLine = rc.receipt === 'sent'
+      ? `Emailed to ${rc.to || contactEmail}`
+      : `Not sent — ${NOTICE_RECEIPT[rc.receipt_reason] || 'the email provider did not accept it'}`;
+    const origin = String(env.SITE_ORIGIN || '').replace(/\/+$/, '');
+    const link = origin ? `${origin}/portal/?case=${encodeURIComponent(caseNo)}` : '';
+    /* A value that does not apply is ABSENT, never "N/A" — the intake form's
+       own rule, and the record copy's. */
+    const rows = [
+      ['Request number', caseNo],
+      ['Company', f.company],
+      ['Contact', f.contact ? `${f.contact}${title ? ` — ${title}` : ''}` : ''],
+      ['Contact email', contactEmail],
+      ['Contact phone', noticePhone(p.client_phone)],
+      ['Handling adjuster', handling && handling !== f.contact ? handling : ''],
+      ['Claimant / subject', f.subject],
+      ['Claim / reference', f.claim],
+      ['Service requested', f.service],
+      ['Requested start', f.start],
+      ['Urgency', NOTICE_URGENCY.includes(p.priority) ? p.priority : ''],
+      ['Submitted', f.when],
+      ['Adjuster receipt', receiptLine],
+    ].filter(([, v]) => String(v || '').trim() !== '');
+    const subject = `New insurance assignment — ${caseNo}`;
+    const text = ['NEW INSURANCE ASSIGNMENT', '',
+      'An assignment was submitted through the insurance form. It is recorded in the portal.', '',
+      ...rows.map(([k, v]) => `${k}: ${v}`),
+      ...(link ? ['', `Open it in the portal: ${link}`] : []),
+    ].join('\n');
+    const html = `<div style="font-family:Segoe UI,system-ui,Arial,sans-serif;color:#1c2531;max-width:560px">
+      <h2 style="margin:0 0 4px;font-size:17px;color:#12305a">New insurance assignment</h2>
+      <p style="margin:0 0 14px;color:#5c6775;font-size:13px">Submitted through the insurance form
+        and recorded in the portal.</p>
+      <table style="border-collapse:collapse;font-size:14px">${rows.map(([k, v]) =>
+        `<tr><td style="padding:3px 14px 3px 0;color:#5c6775">${escHtml(k)}</td>
+         <td style="padding:3px 0"><b>${escHtml(String(v))}</b></td></tr>`).join('')}</table>
+      ${link ? `<p style="margin:16px 0 0"><a href="${escHtml(link)}"
+        style="display:inline-block;padding:10px 16px;background:#12305a;color:#fff;border-radius:8px;text-decoration:none">Open it in the portal</a></p>` : ''}
+    </div>`;
+    const r = await sendMail(env, { to, subject, text, html });
+    return { sent: !!r.sent, to, reason: r.sent ? '' : (r.reason || 'failed') };
+  } catch (e) {
+    console.error('assignment notice failed', e && e.message ? e.message : e);
+    return { sent: false, reason: 'failed' };
   }
 }
 
@@ -6379,8 +6493,15 @@ function alertText(event, caseNo, channel, category) {
 
    The body is `alertText(..., 'email')` and nothing else — no claimant, client,
    subject, address, claim number or amount, ever. One writer for the wording,
-   so what is sent is what the Settings page previewed. */
-async function notifyAdmins(env, event, caseNo) {
+   so what is sent is what the Settings page previewed.
+
+   `skip` names inboxes that have ALREADY been told about this event in detail
+   (owner, 2026-09-24: one office email per insurance assignment, not two). It
+   is matched as the same inbox — case, surrounding space and a +tag folded,
+   `receiptInbox`'s one definition — so a miss can only ever mean a duplicate
+   email, the old behaviour, never a lost one. Every other recipient is told as
+   before, and a list emptied by it is not a failure: the office was told. */
+async function notifyAdmins(env, event, caseNo, { skip = [] } = {}) {
   try {
     if (!ALERT_IDS.includes(event)) return { sent: 0, reason: 'unknown_event' };
     /* NEVER FOR A TEST CASE (INTAKE-OPS.md §1, which puts it in terms: "a test
@@ -6409,8 +6530,11 @@ async function notifyAdmins(env, event, caseNo) {
       `SELECT email FROM notify_recipient
         WHERE enabled = 1 AND alert_${event} = 1
           AND email IS NOT NULL AND TRIM(email) != ''`).all();
-    const to = (results || []).map(r => String(r.email).trim()).filter(Boolean);
-    if (!to.length) return { sent: 0, reason: 'no_recipients' };
+    const all = (results || []).map(r => String(r.email).trim()).filter(Boolean);
+    if (!all.length) return { sent: 0, reason: 'no_recipients' };
+    const told = new Set(skip.filter(Boolean).map(receiptInbox));
+    const to = all.filter(a => !told.has(receiptInbox(a)));
+    if (!to.length) return { sent: 0, reason: 'told_in_detail' };
     /* THE PUBLIC INGEST REACHES THIS SENDER WITH NO SESSION AT ALL (closeout
        audit, 2026-09-03): every admin sender goes through the outbound-mail
        cap and this one did not, so an unauthenticated flood of intakes could
@@ -17183,11 +17307,10 @@ const RECORD_DOC = {
   /* The same record on a Full Custom case, where the money is the agreed
      amount the client was sent rather than a retainer (owner, 2026-09-24). */
   agreement_payment: 'Payment recorded',
-  /* ...and on a legal flat-fee case, where it is the flat fee (2026-09-24). */
+  /* ...and on a legal flat-fee case, where it is the flat fee (2026-09-24).
+     A new insurance assignment is not a document the portal sent, so its
+     office email is `assignmentOfficeNotice`, not a record copy (2026-09-24). */
   flat_fee_payment: 'Flat fee payment recorded',
-  /* The receipt an adjuster is emailed when a carrier assignment arrives
-     through the public form (2026-09-24). */
-  assignment_receipt: 'Assignment receipt',
 };
 
 /* THE OFFICE'S OWN RECORD OF A RETAINER PAYMENT (owner brief 2026-09-07 §13).
@@ -17279,13 +17402,6 @@ async function ownerRecordCopy(env, kind, facts) {
       ['Paid on', f.paid_on || ''],
       ['Reference', f.reference || ''],
       ['Case', f.case_no || ''],
-      /* The assignment receipt's own lines (2026-09-24). Absent everywhere
-         else, so every existing copy is unchanged. */
-      ['Company', f.company || ''],
-      ['Claim / reference', f.claim || ''],
-      ['Subject', f.subject || ''],
-      ['Service requested', f.service || ''],
-      ['Requested start', f.start || ''],
       ['Business', f.context || ''],
       ['Version', f.version || ''],
       ['Flat fee', f.flat_fee != null ? usd(f.flat_fee) : ''],

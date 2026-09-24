@@ -1148,6 +1148,13 @@ section('The homepage leads with the two client paths');
   ok('Submit an Insurance Assignment goes through the carrier door',
      doorFor('Submit an Insurance Assignment') === '/intake/?assignment=insurance',
      String(doorFor('Submit an Insurance Assignment')));
+  /* EVERY link carrying that label, not only the first (owner, 2026-09-24):
+     the services grid's claims card says it too now, and `find` above would
+     pass while a second copy pointed anywhere at all. */
+  const insDoors = anchors.filter(a => a.text.includes('Submit an Insurance Assignment'));
+  ok('every homepage link saying Submit an Insurance Assignment goes through the carrier door — the hero card and the services grid',
+     insDoors.length >= 2 && insDoors.every(a => a.href === '/intake/?assignment=insurance'),
+     JSON.stringify(insDoors.map(a => a.href)));
   ok('Submit a Legal Assignment goes through the LEGAL door',
      doorFor('Submit a Legal Assignment') === '/intake/?assignment=legal',
      String(doorFor('Submit a Legal Assignment')));

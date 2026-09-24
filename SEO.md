@@ -557,3 +557,24 @@ diagnosis to run again, not a reason to add a page.
 **URL-inspect and request indexing** after this merge, in this order:
 `/insurance-investigations/`, `/legal-investigations/`,
 `/insurance-investigations/vendor-information/`, then the six city pages.
+
+### Owner decisions on the review items (2026-09-24, same day)
+
+- **Vendor page geography.** The coverage lede's *"an hour's drive of
+  Lynchburg"* became the Insurance page's footprint: *"Insurance assignments are
+  accepted within roughly 100 miles of Lynchburg, Virginia, including Central
+  Virginia and surrounding markets"*, with the published carve-out kept (travel
+  beyond it is quoted before accepting). Process service is not mentioned there.
+  A deploy guard holds both carrier pages to the footprint and no public page to
+  a drive time.
+- **References** came off the vendor packet — nothing on record supports it.
+  A guard fails on any public references offer.
+- **Homepage claims card** reads *Submit an Insurance Assignment* and goes to
+  the carrier door. **Watch item:** that was the homepage's one contextual BODY
+  link to `/insurance-investigations/`; the page is still linked from the
+  homepage navigation and from every city page's body. If the Insurance family
+  in the watch list above softens after this, a body link from the homepage is
+  the first thing to put back — an owner call, since the card's wording is the
+  owner's.
+- **Referral upload** stays unbuilt, and **claimant phone** stays out of the
+  form. Neither is an SEO change; both are recorded in `CLAUDE.md`.

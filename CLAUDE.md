@@ -147,7 +147,7 @@ published. The stager **fails if a listed path is missing**, so a renamed
 directory is caught at build time instead of by someone finding a 404 later.
 
 ```bash
-node .github/test-deploy.mjs   # 121 checks (2026-09-24): what may and may not be published
+node .github/test-deploy.mjs   # 127 checks (2026-09-24): what may and may not be published
 ```
 
 It runs the real stager and asserts both halves — that the site is complete,
@@ -350,6 +350,7 @@ cannot be promoted by someone editing prose.
 
 **NOT EVERY SERVICE HAS THE SAME RADIUS, AND THE SITE MUST NOT FLATTEN THEM.**
 Insurance runs roughly 100 miles from Lynchburg (the Insurance page's own copy,
+and since 2026-09-24 the Vendor page's too,
 which was already correct and was left alone); investigation and legal work
 travel across Central Virginia; **process service is a NAMED LIST of markets**.
 Writing one radius over all of them would be as untrue as the statewide claim it
@@ -699,9 +700,11 @@ the services grid on the homepage with a "how we document it" call to action.
 
 `insurance-investigations/` is the third, aimed at carriers, TPAs, self-insured
 employers and defense firms rather than consumers. It is linked from the
-homepage nav, the services grid, every location page and `_headers`. Its
+homepage nav, every location page and `_headers`; the homepage services grid's
+claims card goes straight to the carrier door instead (owner, 2026-09-24). Its
 `vendor-information/` subpage carries the firm identification a carrier's
-onboarding form asks for.
+onboarding form asks for, and states the same roughly-100-mile insurance
+footprint the page does.
 
 **Nothing on that page or its subpage states a rate, a coverage limit, a tax
 identifier or a policy number.** Carrier rates are quoted per assignment and
@@ -1152,8 +1155,7 @@ caught by name.
 **THE RECEIPT IS A RECEIPT, AND IT GOES TO AN ADDRESS A STRANGER TYPED.**
 `sendAssignmentReceipt` in the Worker: carrier assignments only, fresh inserts
 only (an identical retry returns before it, so a retry emails nobody), through
-the one sender `sendMail`, with the office's copy through the one
-`ownerRecordCopy`. It carries the request number, company, claim or reference
+the one sender `sendMail`. It carries the request number, company, claim or reference
 number, subject, service and requested start and the submission time on the
 firm's clock — **and nothing else the form collected**: no address, injury,
 objective, schedule, authorization or signature. Every echoed value goes through
@@ -1164,8 +1166,8 @@ hour with case, space and `+tags` folded; a `receipt:` bucket in `ingest_rate`
 of its own, so a flood of public submissions cannot use up the minute an admin
 needs to send a rate sheet; and a pause past fifty carrier intakes in a day. The
 intake is recorded in every case — the receipt is a courtesy, never the thing
-the submission depends on — and the office's copy goes only when the receipt
-did. **A prefixed rate key sorts after every bare minute**, so the sweep needed
+the submission depends on. What the OFFICE is told is the next subsection's
+business, and it no longer waits on the receipt. **A prefixed rate key sorts after every bare minute**, so the sweep needed
 its own branch or those rows would never age out; a test plants an old one.
 
 **THE PAGE SAYS AN EMAIL WENT ONLY WHEN THE WORKER SAYS SO.** `INGEST_REPLY`
@@ -1181,11 +1183,95 @@ reference are the paying side and stay admin-only by the allow-list's default;
 the office's intake screen shows every submitted field, the Subject tab and the
 field view's case drawer show the two fieldwork ones.
 
-**UPLOAD REFERRAL — OWNER REVIEW.** The public form has no safe attachment path
+**NO PUBLIC REFERRAL UPLOAD — owner, 2026-09-24: "Do NOT build a public
+referral-document upload system ... Do not invent insecure/public file
+storage."** The public form has no safe attachment path
 (a test asserts it offers no upload it cannot honour), and building one is new
 public storage the brief forbade overnight. The objective step says where
 referral documents go instead: attached to the case by the office once the
 assignment is accepted.
+
+### The office is told once, in detail, with a link to the assignment
+
+Owner, 2026-09-24 (the review of the unit above): *"avoid sending Corey two
+redundant office emails ... Keep one useful office notification/receipt."*
+
+**BEFORE: TWO EMAILS, AND NEITHER WAS THE USEFUL ONE.** Measured through the
+real ingest with the office inbox both an alert recipient and the record address:
+the privacy-safe alert (*"New intake received — Insurance, case API-JS-1. Sign
+in to the portal for the detail."*), then a RECORD COPY of the adjuster's
+receipt — which named what the adjuster was told but carried no contact phone,
+title or urgency, no link, and went only when the receipt did.
+
+**AFTER: ONE NOTICE, `assignmentOfficeNotice`, to the business record
+address** (`billing_owner_record_email`, the address `ownerRecordCopy` already
+sends full record copies to — the same trust level, not a new one). Request
+number, company, contact and title, contact email and phone, the handling
+adjuster when it is someone else, claimant, claim or reference, service,
+requested start, urgency, submitted time, **whether the adjuster's receipt
+actually went** (and why not, in words), and `/portal/?case=<number>`. **Its
+subject names only the request number**, because a subject shows on a lock
+screen, and it carries none of what the receipt also withholds — address,
+injury, objective, known schedule, authorization, signature, the insured and the
+billing references. The portal holds those; an inbox does not need them.
+
+**THE ALERT STILL NAMES NOBODY AND STILL REACHES EVERYONE ELSE.**
+`notifyAdmins` gained one optional argument, `skip`, and the carrier ingest is
+its only caller that passes it: the inbox that got the notice is left out,
+compared through `receiptInbox` so case, spaces and `+tags` cannot make one
+inbox look like two. **A miss only duplicates, it never silences** — and when
+no notice went (no record address, the provider refused it, the mail cap), the
+skip list is empty and the office is alerted exactly as before. The notice is
+sent whether or not the receipt was, which is the other half of the fix: an
+office that is only told when the adjuster was is not told about the one
+submission that needs a call. Private and Legal intakes are untouched and
+asserted so. `RECORD_DOC.assignment_receipt` is gone with the copy it named.
+
+**THE LINK IS THE PAGE'S FOURTH URL PARAMETER, AND IT GRANTS NOTHING.**
+`takeLinkedCase` reads `?case=` once, strips it from the address bar, and
+returns it only inside the case-number alphabet the ingest already enforces;
+`openLinkedCase` then goes through `openCase`, so the Worker's `caseFor` decides
+who may see it, exactly as for a tap. It survives the sign-in, it opens the
+intake screen (`details` — what was submitted and signed), a refused link lands
+back on Home rather than on a case screen that never finishes loading, and a
+hostile value asks the Worker for nothing.
+
+**NEGATIVE-TESTED, EVERY HALF BY NAME:** twelve Worker mutations (no skip, a
+skip applied when nothing was sent, no notice, a raw-string inbox comparison, a
+subject naming the company, no link, a receipt line that always says *emailed*,
+a notice on a private intake, a skip that silences everyone, the `TEST-` guard
+removed, the whole payload leaked, the notice tied back to the receipt) and six
+page mutations (unvalidated, not stripped, the sign-in path and the boot path
+each missing, no fallback, the wrong tab). Each fails at least one assertion
+naming it, in a worktree.
+
+### The vendor page states the same footprint, and claims only what is on record
+
+Same owner review. **The coverage lede said the covered markets were "an
+hour's drive" of Lynchburg** while the Insurance page, two clicks away, says
+insurance assignments are accepted within roughly 100 miles — two radii for one
+service, on the two pages a carrier reads side by side. It now says the
+owner's sentence (*"within roughly 100 miles of Lynchburg, Virginia, including
+Central Virginia and surrounding markets"*) and keeps the carve-out already
+published: travel beyond it is quoted before accepting. **Process service is
+not mentioned there at all** — its coverage is a named list of markets, and
+this is not that.
+
+**"REFERENCES — from carriers, TPAs or defense counsel, provided with
+permission" came off the vendor packet.** It arrived with an agent-built page on
+2026-08-12, and nothing in this repository records a firm that could supply one.
+The owner's rule for exactly this case is to remove rather than invent, and a
+reference offer is a claim about named clients.
+
+**The homepage's claims card submits now.** *"How we work claims"* pointed a
+carrier at a page ABOUT submitting; the card reads *Submit an Insurance
+Assignment* and goes to the existing carrier door. The Insurance page stays
+linked from the homepage navigation. Four deploy guards over the staged bytes
+hold all three — both carrier pages state the footprint, no public page states
+a drive-time radius, no public page offers references, and the card is the
+carrier door while the nav still links the page — negative-tested seven ways,
+including a drive time planted on a city page and a references line planted on
+Legal.
 
 **THE STATEWIDE LINE HAD THREE SHAPES, AND THE GUARD SAW ONE.** *"Serving all
 of Virginia"* was guarded; *"Serving Virginia since 2014"* was on four footers
@@ -1265,7 +1351,7 @@ steps on a claim now, and the walk is a test.
 named for the not-available pattern that did not have it — a PO is often issued
 after the assignment is accepted, and the status tells the office to expect it
 rather than leaving a blank that reads as forgotten. **There is deliberately no
-claimant phone field**: the firm's standard is no contact with the claimant, so
+claimant phone field** (owner confirmed, 2026-09-24): the firm's standard is no contact with the claimant, so
 asking for the number would collect something the work must not use.
 
 ## The private retainer has a non-refundable portion, and one function knows it
@@ -2036,8 +2122,9 @@ exactly the claim that goes wrong. At 320 the control already wrapped to 54px,
 so that header got 11px **shorter**.
 
 **NATIVE BACK CANNOT LOOP**, and that is the absence of code rather than a
-guard: this page pushes no history for tabs (`replaceState` appears twice, both
-to strip a token from the address bar). A walk of four destinations is asserted
+guard: this page pushes no history for tabs (`replaceState` appears three times,
+each to strip something from the address bar — two tokens and the office
+email's `?case=` link). A walk of four destinations is asserted
 to add no history entries.
 
 **ONE STRIP NOW, NOT TWO.** The desktop `.qtool` chip row is gone; the card
@@ -3636,7 +3723,7 @@ know the cap they are working to. The price fields (`package`, `package_price`,
 Tests, which intercept form delivery so a run never reaches the firm's inbox:
 
 ```bash
-node intake/test-intake.mjs      # 933 checks (2026-09-24); needs Playwright, skips cleanly without it
+node intake/test-intake.mjs      # 934 checks (2026-09-24); needs Playwright, skips cleanly without it
 node visitor-alerts/test-worker.mjs   # 49 checks (2026-09-24)
 ```
 
@@ -3769,8 +3856,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 4369 checks (2026-09-24): auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 4082 checks (2026-09-24): the page against the real Worker
+node case-portal/test-worker.mjs   # 4389 checks (2026-09-24): auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 4093 checks (2026-09-24): the page against the real Worker
 ```
 
 **WRITE A SUITE'S OUTPUT TO A FILE, NEVER A PIPE.** Every suite ends in
@@ -4667,7 +4754,10 @@ retainer payment route and `recordInvoicePayment` (`payments`), a report moving
 to `submitted` (`reports`), a build being finalized (`packages`), and a task
 created at **high or urgent** priority (`tasks`). "Important" is the priority the
 office already sets: alerting on every normal task is how an alert stops being
-read.
+read. **One exception, and it is additive:** a carrier intake emails the
+business record address a detailed notice first, and the alert then skips that
+one inbox (`skip`, compared through `receiptInbox`) — see *The office is told
+once* above. Nothing is skipped when no notice went.
 
 It writes only to recipients that are switched on, subscribed to that event and
 **have an email address** — a phone-only recipient is skipped rather than
