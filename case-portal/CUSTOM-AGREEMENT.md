@@ -141,12 +141,67 @@ rewrite the derived total in place, NO repaint — because rebuilding the box
 somebody is typing in is the defect already recorded against the package
 Combined Summary and the invoice search.
 
-**D17 — The minimum opens on no figure.** The select's first option is an
-empty *Choose the minimum…*, so ticking the term chooses nothing and the Worker
-refuses it by name until a figure is picked. The first build opened on four —
-a select with no empty option asserts a value nobody chose, the private lead's
-Service picker defect — and it was found because a refusal test advanced when
-it should have stopped.
+**D17 — The minimum opens on no figure.** *SUPERSEDED by D18, the owner's own
+spec, the same day; the reasoning is kept.* The select's first option was an
+empty *Choose the minimum…*, so ticking the term chose nothing and the Worker
+refused it by name until a figure was picked. The first build had opened on
+four — a select with no empty option asserts a value nobody chose, the private
+lead's Service picker defect — and it was found because a refusal test
+advanced when it should have stopped.
+
+## The checkbox term builder (owner brief 2026-09-23, "INCLUDE ON CLIENT RATE SHEET")
+
+**D18 — The minimum field shows 4 when its box is ticked, and never at any
+other moment.** The owner's spec draws it: *"If checked: show: Minimum Hours
+Per Surveillance Day [ 4 ]"*, a free field taking 4, 6, 8, 12 *"or another
+valid number"*. It replaces D17's empty select. The distinction D17 protected
+survives: 4 is a figure ON SCREEN the moment the owner ticks, which is not the
+same as a figure assumed behind their back. It is written only on the
+minimum's own tick transition and only into an empty field. A value the owner
+typed survives an untick and a re-tick, and **a field they clear stays clear**
+— the Worker refuses the ticked term by name rather than anything filling a
+four back in. Keyed off the box's own transition because the looser rule, "the
+term is on and the field is empty", also fires when a DIFFERENT box is ticked,
+and would refill a field the owner had deliberately emptied. Negative-tested
+both ways. The figure is written in the page as the field's starting value and
+is deliberately not read from the standard product: the custom builder never
+consults `PERSONAL.minHours`, and a source pin holds that.
+
+**D19 — Cash App and Venmo are rows in the same box, and they are the same
+selection the standard send uses.** Bound to `w.payMethods` through the
+`wiz-pm` class `wizCollect` already reads, so the owner's choice is one record
+whichever mode drew the boxes and survives switching between them in both
+directions (§3: *"preserve the owner's explicit Cash App / Venmo selections"*).
+That selection's existing default — every configured method ticked — is the
+owner's own onboarding decision and was not re-decided here. **The standard
+payment block is not drawn in FULL CUSTOM**: two sets of boxes for one choice
+is the duplicate-door shape, and the negative test showed it concretely — both
+sets feed the one collector, so the standard block's still-ticked boxes put
+Cash App back into a send the owner had unticked it from. A method with no
+payment link is drawn disabled and says so. In this mode the rows ARE the
+decision: none ticked means no payment block, with no separate switch that
+could still say yes.
+
+**D20 — A ticked term always appears.** §4: *"If ON: the exact value
+appears."* The first build let the figure decide: a ticked *Scheduled Days*
+with no days typed quietly vanished, so the owner's selection and the document
+disagreed with nothing on screen saying why. The Worker now refuses a ticked
+schedule term with no figure by name (`custom_days_required`,
+`custom_hours_per_day_required`, `custom_total_hours_required`), and the
+selection IS the document's term list.
+
+**D21 — The Preview follows the Worker's resolved term list, never the typed
+figures.** The first build's summary line tested the typed value, so days
+typed and then unticked still read *"2 days"* in a Preview whose document said
+nothing about days. The summary line states the ticked SCHEDULE figures; the
+money terms appear once, in the client-facing block, exactly as the client
+reads them. No term appears twice and an unticked term appears nowhere.
+
+**D22 — "Readable" is measured against the screen's own labels.** A first
+assertion invented a 14px bar and failed term labels that are the portal's
+standard size: every checkbox label and every field label in this wizard is
+0.85rem, 13.6px, weight 600. The defect would be a term label smaller or
+lighter than its neighbours, and that is what is asserted.
 
 ## Deferred, by name
 

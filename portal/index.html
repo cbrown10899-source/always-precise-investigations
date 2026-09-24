@@ -3639,6 +3639,12 @@
    is recorded in CLAUDE.md under "A rule written for one screen broke
    another". */
 .cu-terms .cu-t{display:flex;align-items:center;gap:9px;margin:0;min-height:44px}
+/* A term's own figure sits under its box, indented to the label's text so
+   the pair reads as one item: 22px box + 9px gap. */
+.cu-terms .cu-fig{margin:0 0 8px 31px}
+/* A payment method with no link is drawn, and drawn as unavailable — an
+   option the Worker would refuse must not look choosable. */
+.cu-terms .cu-off{opacity:.55}
 @media (max-width:640px){
   /* ONE COLUMN ON A PHONE, and `minmax(0,1fr)` rather than `1fr`: a grid
      track's default minimum is its content, which is how a long placeholder
@@ -9736,21 +9742,35 @@ function wizCuMoney(n){
     {minimumFractionDigits: 2, maximumFractionDigits: 2});
 }
 
-/* The seven optional terms, in the order they read on the document. The two
-   that are OFF by default are the two the owner's brief names twice. */
+/* INCLUDE ON CLIENT RATE SHEET — the owner's own list, in the owner's own
+   order and words (checkbox brief, 2026-09-23 §1). Seven terms here, and the
+   two payment methods follow them in the same box. The two that are OFF by
+   default are the two the owner has now named three times. */
 const WIZ_CU_TERMS = [
-  ["hourly_rate",    "Hourly rate"],
-  ["days",           "Scheduled number of days"],
-  ["hours_per_day",  "Hours per day"],
-  ["total_hours",    "Total scheduled hours"],
-  ["total_due",      "Total due before work begins"],
-  ["non_refundable", "Non-refundable portion"],
-  ["minimum_hours",  "Minimum hours per surveillance day"],
+  ["hourly_rate",    "Hourly Rate"],
+  ["days",           "Scheduled Days"],
+  ["hours_per_day",  "Hours Per Day"],
+  ["total_hours",    "Total Scheduled Hours"],
+  ["minimum_hours",  "Minimum Hours Per Surveillance Day"],
+  ["non_refundable", "Non-Refundable Portion"],
+  ["total_due",      "Total Due Before Work Begins"],
 ];
 const WIZ_CU_DEFAULT_TERMS = ["hourly_rate", "days", "hours_per_day", "total_hours", "total_due"];
-/* §6's own list, offered as choices rather than typed from memory. Custom
-   keeps any other figure reachable, the retainer selector's shape. */
-const WIZ_CU_MINS = [4, 6, 8, 12];
+/* The payment methods the box offers, by the ids the Worker validates, and
+   the owner's own labels for them. Which of them is TICKED is not stored here
+   — it is `w.payMethods`, the same selection the standard send already uses,
+   so the owner's choice survives switching between the two modes (§3:
+   "preserve the owner's explicit Cash App / Venmo selections"). */
+const WIZ_CU_PAY = [["cash_app", "Cash App"], ["venmo", "Venmo"]];
+/* WHAT THE MINIMUM FIELD SHOWS WHEN THE TERM IS TICKED — the owner's own
+   spec, "Minimum Hours Per Surveillance Day [ 4 ]". It is filled in ONLY at
+   the moment the box is ticked and only into an empty field, so it is a
+   figure the owner can see and change, never one assumed behind their back:
+   a field they CLEAR stays clear and the Worker refuses the send by name.
+   It is deliberately a number written here rather than read from the
+   standard product — the Worker's custom builder never consults the
+   standard minimum, and a source pin holds that. */
+const WIZ_CU_MIN_START = "4";
 
 function wizCuTerms(w){
   return Array.isArray(w.cuTerms) ? w.cuTerms : WIZ_CU_DEFAULT_TERMS.slice();
@@ -9761,11 +9781,6 @@ function wizCuTerms(w){
    built from different inputs. */
 function wizCustomSpec(w){
   const t = wizCuTerms(w);
-  /* An unchosen minimum is sent as BLANK, never as the first option — the
-     Worker then refuses the ticked term by name, which is §18's "do not
-     silently convert blank optional terms into defaults" held at the door
-     that actually decides. */
-  const minPick = w.cuMinPick == null ? "" : String(w.cuMinPick);
   return {
     title: (w.cuTitle || "").trim(),
     hourly_rate: (w.cuRate || "").trim(),
@@ -9774,8 +9789,11 @@ function wizCustomSpec(w){
     total_hours: (w.cuHours || "").trim(),
     total_due: (w.cuDue || "").trim(),
     terms: t,
-    minimum_hours: t.includes("minimum_hours")
-      ? (minPick === "custom" ? (w.cuMinCustom || "").trim() : minPick) : "",
+    /* Sent exactly as the field holds it. A cleared field is sent BLANK and
+       the Worker refuses the ticked term by name — §18's "do not silently
+       convert blank optional terms into defaults", held at the door that
+       decides rather than by this page filling a four back in. */
+    minimum_hours: t.includes("minimum_hours") ? String(w.cuMin == null ? "" : w.cuMin).trim() : "",
     non_refundable: t.includes("non_refundable") ? (w.cuNonRef || "").trim() : "",
     payment_label_kind: w.cuLabelKind || "total_due",
     payment_label_custom: (w.cuLabelCustom || "").trim(),
@@ -9792,7 +9810,7 @@ function wizCustomSpec(w){
 function wizCustomReset(w){
   w.cuTitle = ""; w.cuRate = ""; w.cuDays = ""; w.cuPerDay = "";
   w.cuHours = ""; w.cuDue = ""; w.cuTerms = WIZ_CU_DEFAULT_TERMS.slice();
-  w.cuMinPick = ""; w.cuMinCustom = ""; w.cuNonRef = "";
+  w.cuMin = ""; w.cuNonRef = "";
   w.cuLabelKind = "total_due"; w.cuLabelCustom = "";
   w.cuResolved = null; w.cuEngagement = null; w.cuDocName = "";
 }
@@ -9809,13 +9827,39 @@ function wizCustomHtml(w){
   const terms = wizCuTerms(w);
   const tick = (id, label) => `<label class="cap cu-t"><input type="checkbox" class="cu-term"
       data-act="wizCuTerm" data-t="${id}"${terms.includes(id) ? " checked" : ""}><span>${label}</span></label>`;
-  /* NOTHING IS PRE-CHOSEN. A select whose first real option is selected by
-     default asserts a figure nobody picked, and on this term the brief says
-     twice that four hours must not be forced — so the control opens on an
-     empty choice and the Worker refuses the term by name until one is made.
-     The same correction this file records against the private lead's Service
-     picker, which filed an unasked lead as Surveillance. */
-  const minPick = w.cuMinPick == null ? "" : String(w.cuMinPick);
+  /* A TERM'S OWN FIGURE SITS DIRECTLY UNDER ITS BOX, so on a phone the field
+     that just appeared is the one the thumb is already on. Only the two terms
+     whose figure is not typed above carry one: the minimum and the
+     non-refundable portion. */
+  const figure = id =>
+    id === "minimum_hours" && terms.includes(id) ? `<label class="f cu-fig"><span>Minimum Hours Per
+        Surveillance Day</span>
+        <input id="cu_min" inputmode="decimal" data-act-input="wizCuDirty" value="${esc(w.cuMin == null ? "" : String(w.cuMin))}">
+        <span class="hint">4, 6, 8 or 12 &mdash; or any number of hours up to 24. The sheet states
+          exactly the number here, and a cleared field is refused rather than filled in.</span></label>`
+    : id === "non_refundable" && terms.includes(id) ? `<label class="f cu-fig"><span>Non-Refundable
+        Portion ($)</span>
+        <input id="cu_nonref" inputmode="decimal" data-act-input="wizCuDirty" value="${esc(w.cuNonRef || "")}">
+        <span class="hint">Yours to set. Nothing standard is filled in here, and it can be at most
+          the total above.</span></label>`
+    : "";
+  /* THE PAYMENT ROWS ARE THE STANDARD SEND'S OWN SELECTION, drawn in this box.
+     `wiz-pm` is the class `wizCollect` already reads into `w.payMethods`, so
+     there is ONE record of which methods go, whichever mode drew the boxes —
+     and switching modes preserves it instead of re-deciding it. A method that
+     is not configured with a payment link is drawn disabled and SAYS so,
+     because an option the Worker would refuse must not look choosable. */
+  const sendable = PAYCFG ? wizPaymentSendable().map(m => m.id) : null;
+  const payRow = ([id, label]) => {
+    const cfg = (PAYCFG || []).find(m => m.id === id) || {};
+    const ok = sendable && sendable.includes(id);
+    return ok
+      ? `<label class="cap cu-t"><input type="checkbox" class="wiz-pm" data-pm="${id}"${
+          (w.payMethods || []).includes(id) ? " checked" : ""}><span>${label}${
+          cfg.handle ? ` <span class="opt">${esc(cfg.handle)}</span>` : ""}</span></label>`
+      : `<label class="cap cu-t cu-off"><input type="checkbox" disabled><span>${label}
+          <span class="opt">${sendable ? "not configured &mdash; Settings" : "checking&hellip;"}</span></span></label>`;
+  };
   return `<label class="f" style="margin:10px 0 0"><span>Agreement</span>
       <select id="wiz_mode" data-act="wizModePick">
         <option value="standard"${on ? "" : " selected"}>Standard private rate sheet</option>
@@ -9866,26 +9910,13 @@ function wizCustomHtml(w){
           esc(String(c.useHours))} is what will be sent.` : ""}
         ${c.dueOverridden ? `<br><b>Total due overridden</b> &mdash; the rate works out to ${
           esc(wizCuMoney(c.due))}, and ${esc(wizCuMoney(c.useDue))} is what will be sent.` : ""}</p>
-      <div class="cu-terms"><span class="cu-h">What the document states</span>
-        ${WIZ_CU_TERMS.map(([id, label]) => tick(id, label)).join("")}
-        <p class="hint">A term left unticked is <b>absent</b> from the document &mdash; no blank
-          line, no placeholder, and nothing standard put in its place.</p></div>
-      ${terms.includes("minimum_hours") ? `<div class="cugrid">
-        <label class="f"><span>Minimum hours per surveillance day</span>
-          <select id="cu_minpick" data-act="wizCuDirtySel">
-            <option value=""${minPick === "" ? " selected" : ""}>Choose the minimum&hellip;</option>
-            ${WIZ_CU_MINS.map(v => `<option value="${v}"${minPick === String(v) ? " selected" : ""}
-              >${v} hours</option>`).join("")}
-            <option value="custom"${minPick === "custom" ? " selected" : ""}>Custom&hellip;</option>
-          </select></label>
-        ${minPick === "custom" ? `<label class="f"><span>Custom minimum (hours)</span>
-          <input id="cu_mincustom" inputmode="decimal" data-act-input="wizCuDirty"
-            value="${esc(w.cuMinCustom || "")}"></label>` : ""}</div>` : ""}
-      ${terms.includes("non_refundable") ? `<label class="f"><span>Non-refundable portion ($)</span>
-        <input id="cu_nonref" inputmode="decimal" data-act-input="wizCuDirty"
-          value="${esc(w.cuNonRef || "")}">
-        <span class="hint">Yours to set. Nothing standard is filled in here, and it can be at most
-          the total above.</span></label>` : ""}
+      <div class="cu-terms" role="group" aria-labelledby="cu_terms_h">
+        <span class="cu-h" id="cu_terms_h">Include on client rate sheet</span>
+        ${WIZ_CU_TERMS.map(([id, label]) => tick(id, label) + figure(id)).join("")}
+        ${WIZ_CU_PAY.map(payRow).join("")}
+        <p class="hint">Only what is ticked appears on the Preview and on the sheet the client
+          receives. Anything unticked is <b>left off entirely</b> &mdash; no blank line, no
+          placeholder, and nothing standard put in its place.</p></div>
       <label class="f"><span>How the money is described</span>
         <select id="cu_labelkind" data-act="wizCuDirtySel">
           <option value="total_due"${(w.cuLabelKind || "total_due") === "total_due" ? " selected" : ""}
@@ -10169,7 +10200,11 @@ function sheetWizardHtml(){
            the same reason, so previewing one cannot re-cut a case's retainer
            as a side effect. */""}
       ${wizLegalFixed(w) || wizCustomOn(w) ? "" : wizRetainerHtml(w)}
-      ${wizPaymentHtml(w)}`
+      ${/* ONE DOOR FOR ONE CHOICE. In FULL CUSTOM the payment methods are rows
+           in the INCLUDE ON CLIENT RATE SHEET box, so the standard block —
+           which would draw the same two boxes a second time, under a label
+           calling the money a retainer — is not drawn beside them. */""}
+      ${wizCustomOn(w) ? "" : wizPaymentHtml(w)}`
     : `
       <dl class="detail">
         <dt>Sheet</dt><dd>${esc(wizCustomOn(w)
@@ -10181,13 +10216,20 @@ function sheetWizardHtml(){
           ? (wizFeeSheetName(w) || (wizLegalSvc(w) || {}).label || w.sheet)
           : (sheet.name || w.sheet))}</dd>
         ${wizCustomOn(w) && w.cuResolved ? `<dt>Agreement</dt><dd>${(() => {
-          const r = w.cuResolved, bits = [];
-          if(r.hourly_rate != null) bits.push(esc(wizCuMoney(r.hourly_rate)) + " per hour");
-          if(r.days != null) bits.push(esc(String(r.days)) + (r.days === 1 ? " day" : " days"));
-          if(r.hours_per_day != null) bits.push(esc(String(r.hours_per_day)) + " hours per day");
-          if(r.total_hours != null) bits.push(esc(String(r.total_hours)) + " hours total");
-          bits.push("<b>" + esc(r.payment_label) + ": " + esc(wizCuMoney(r.total_due)) + "</b>");
-          return bits.join(" &middot; ");
+          /* THE WORKER'S RESOLVED TERM LIST DECIDES WHAT THIS LINE SAYS, never
+             the figures that were typed (§4: "If a checkbox is OFF: the term
+             does not exist in Preview"). The first build tested the typed
+             value, so days typed and then unticked still read "2 days" here
+             while the document said nothing — a Preview disagreeing with the
+             sheet it previews. The money terms are not repeated here: they
+             appear once, below, exactly as the client reads them. */
+          const r = w.cuResolved, t = r.terms || [], bits = [];
+          const n = (v, one, many) => esc(String(v)) + (Number(v) === 1 ? one : many);
+          if(t.includes("hourly_rate")) bits.push(esc(wizCuMoney(r.hourly_rate)) + " per hour");
+          if(t.includes("days")) bits.push(n(r.days, " day", " days"));
+          if(t.includes("hours_per_day")) bits.push(n(r.hours_per_day, " hour per day", " hours per day"));
+          if(t.includes("total_hours")) bits.push(n(r.total_hours, " hour total", " hours total"));
+          return bits.join(" &middot; ") || "No schedule figures are stated on this sheet";
         })()}${w.cuResolved.hours_overridden || w.cuResolved.total_overridden
           ? `<br><span class="opt">${[w.cuResolved.hours_overridden ? "total hours" : "",
               w.cuResolved.total_overridden ? "total due" : ""].filter(Boolean).join(" and ")
@@ -10218,7 +10260,7 @@ function sheetWizardHtml(){
         ${w.note ? `<dt>Added line</dt><dd>${esc(w.note)}</dd>` : ""}
         <dt>Intake form</dt><dd>${w.include ? intakeLabel + " link included" : "Not included"}</dd>
         ${w.sheet === "private_retainer" ? `<dt>Payment options</dt><dd>${
-          w.pay && (w.payMethods || []).length
+          (wizCustomOn(w) || w.pay) && (w.payMethods || []).length
             ? wizPaymentSendable().filter(m => w.payMethods.includes(m.id))
                 .map(m => esc(m.display_name || m.label)).join(" + ")
             : "Not included"}</dd>` : ""}
@@ -10238,7 +10280,7 @@ function sheetWizardHtml(){
         ? `The email is the concise flat-fee sheet for this service — the full retainer
            sheet shown on the Rate sheets screen does not go`
         : `The email is the sheet exactly as shown on this page`}${w.include ? ", plus the intake button" : ""}${
-        w.sheet === "private_retainer" && w.pay && (w.payMethods || []).length ? ", plus the payment buttons" : ""}.
+        w.sheet === "private_retainer" && (wizCustomOn(w) || w.pay) && (w.payMethods || []).length ? ", plus the payment buttons" : ""}.
         Sending payment instructions does not mark the ${
           wizCustomOn(w) ? "amount" : wizLegalFixed(w) ? "fee" : "retainer"} paid.</p>`;
   /* ===== THREE REGIONS, WHICH IS WHAT MAKES THE PHONE FIX POSSIBLE =========
@@ -25270,8 +25312,7 @@ function wizCollect(){
   if($("cu_perday")) SHEET_WIZ.cuPerDay = $("cu_perday").value.trim();
   if($("cu_hours")) SHEET_WIZ.cuHours = $("cu_hours").value.trim();
   if($("cu_due")) SHEET_WIZ.cuDue = $("cu_due").value.trim();
-  if($("cu_minpick")) SHEET_WIZ.cuMinPick = $("cu_minpick").value;
-  if($("cu_mincustom")) SHEET_WIZ.cuMinCustom = $("cu_mincustom").value.trim();
+  if($("cu_min")) SHEET_WIZ.cuMin = $("cu_min").value;
   if($("cu_nonref")) SHEET_WIZ.cuNonRef = $("cu_nonref").value.trim();
   if($("cu_labelkind")) SHEET_WIZ.cuLabelKind = $("cu_labelkind").value;
   if($("cu_labelcustom")) SHEET_WIZ.cuLabelCustom = $("cu_labelcustom").value;
@@ -25306,8 +25347,11 @@ async function wizSend(){
   /* AND NEVER ON A LEGAL SEND. Legal takes the private SHEET, so the sheet id
      alone would have said yes — the context is what decides, here and in the
      Worker, which refuses it by name either way (Unit 28). */
+  /* In FULL CUSTOM there is no separate "include payment options" switch —
+     the Cash App and Venmo rows are the decision, so a ticked method is
+     included and none ticked means none is. */
   const paying = wizContext(w) === "private" && w.sheet === "private_retainer"
-    && w.pay && (w.payMethods || []).length;
+    && (wizCustomOn(w) || w.pay) && (w.payMethods || []).length;
   /* The one option a legal or insurance send may carry (MAIL-CHECK.md D5) —
      the same include_payment door, narrowed server-side to mail_check. */
   const npMethods = wizContext(w) !== "private"
@@ -27027,7 +27071,18 @@ document.addEventListener("input", ev => {
     wizCollect(); SHEET_WIZ.cuResolved = null; SHEET_WIZ.err = ""; paint(); return;
   }
   if(ev.target.dataset && ev.target.dataset.act === "wizCuTerm" && SHEET_WIZ){
-    wizCollect(); SHEET_WIZ.cuResolved = null; SHEET_WIZ.err = ""; paint(); return;
+    wizCollect();
+    /* THE MINIMUM FIELD SHOWS 4 AT THE MOMENT ITS OWN BOX IS TICKED, and at no
+       other moment. Keyed off THIS box's own transition rather than off "the
+       term is on and the field is empty", because that second test also runs
+       when a DIFFERENT box is ticked — and would put a four back into a field
+       the owner had deliberately cleared. A value they typed is kept across an
+       untick and a re-tick; only an empty field is filled. */
+    if(ev.target.dataset.t === "minimum_hours" && ev.target.checked
+       && !String(SHEET_WIZ.cuMin == null ? "" : SHEET_WIZ.cuMin).trim()){
+      SHEET_WIZ.cuMin = WIZ_CU_MIN_START;
+    }
+    SHEET_WIZ.cuResolved = null; SHEET_WIZ.err = ""; paint(); return;
   }
   if(ev.target.dataset && ev.target.dataset.act === "asstGuide" && ASST){
     ASST.guide = !!ev.target.checked;

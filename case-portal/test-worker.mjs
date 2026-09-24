@@ -23299,6 +23299,141 @@ section('FULL CUSTOM: the source is one builder, and the standard one is untouch
      src.indexOf("['sent_document_custom',") < src.indexOf("['sent_document',"));
 }
 
+
+/* ============================================================================
+   THE CHECKBOX TERM BUILDER (owner brief 2026-09-23, "INCLUDE ON CLIENT RATE
+   SHEET"). §7's own list, A–G, driven through the real route; G is the
+   byte-identity section above, which pins the sixteen standard documents.
+   ========================================================================= */
+section('Checkbox builder: §7 A–F, and a ticked term always appears');
+{
+  const realFetch = globalThis.fetch;
+  let mailed = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      mailed = JSON.parse(init.body); return new Response('{"id":"re_1"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.MAIL_PER_MINUTE = '200';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const base = { hourly_rate: '75', days: '2', hours_per_day: '12' };
+  const FIVE = ['hourly_rate', 'days', 'hours_per_day', 'total_hours', 'total_due'];
+  const send = async (agreement, extra = {}) => {
+    mailed = null;
+    const r = await jsonOf(await call(env, '/sheets/private_retainer/email',
+      { method: 'POST', cookie: admin,
+        body: { to: 'c@example.com', custom_agreement: agreement, ...extra } }));
+    return { r, text: mailed ? mailed.text : '', html: mailed ? mailed.html : '' };
+  };
+
+  // A — Minimum Hours OFF → no minimum-hours wording, in either part
+  let o = await send({ ...base, terms: FIVE });
+  ok('A: minimum OFF — no minimum wording in the text',
+     !/minimum/i.test(o.text), (o.text.match(/.{0,40}minimum.{0,40}/i) || [''])[0]);
+  ok('A: nor in the HTML', !/minimum/i.test(o.html));
+
+  // B — Minimum ON = 4 → exact wording
+  o = await send({ ...base, terms: [...FIVE, 'minimum_hours'], minimum_hours: '4' });
+  ok('B: minimum ON at 4 reads exactly "4-HOUR MINIMUM PER SURVEILLANCE DAY"',
+     o.text.includes('4-HOUR MINIMUM PER SURVEILLANCE DAY'), o.text);
+  // C — Minimum ON = 8 → exact wording, and never the standard four
+  o = await send({ ...base, terms: [...FIVE, 'minimum_hours'], minimum_hours: '8' });
+  ok('C: minimum ON at 8 reads exactly "8-HOUR MINIMUM PER SURVEILLANCE DAY"',
+     o.text.includes('8-HOUR MINIMUM PER SURVEILLANCE DAY') && !o.text.includes('4-HOUR'), o.text);
+  ok('C: and the HTML states the same number', o.html.includes('8-HOUR MINIMUM PER SURVEILLANCE DAY'));
+  /* "or another valid number" — the brief's own words; the four suggested
+     values are suggestions, not the allowed set. */
+  o = await send({ ...base, terms: [...FIVE, 'minimum_hours'], minimum_hours: '10' });
+  ok('another valid number: 10 reads as a 10-HOUR minimum',
+     o.text.includes('10-HOUR MINIMUM PER SURVEILLANCE DAY'), o.text);
+  o = await send({ ...base, terms: [...FIVE, 'minimum_hours'], minimum_hours: '4.5' });
+  ok('a fractional one reads exactly as typed: 4.5-HOUR',
+     o.text.includes('4.5-HOUR MINIMUM PER SURVEILLANCE DAY'), o.text);
+  const bad = async (m) => (await send({ ...base, terms: [...FIVE, 'minimum_hours'],
+    minimum_hours: m })).r.code;
+  ok('an invalid minimum is refused, never rounded to a standard: 0',
+     await bad('0') === 'bad_custom_minimum_hours');
+  ok('more hours than a day has: 25', await bad('25') === 'bad_custom_minimum_hours');
+  ok('a negative minimum', await bad('-4') === 'bad_custom_minimum_hours');
+  ok('a minimum that is not a number', await bad('four') === 'bad_custom_minimum_hours');
+  ok('and a CLEARED minimum is refused by name, never filled back in with four',
+     await bad('') === 'custom_minimum_required');
+
+  // D — Non-refundable OFF → omitted
+  o = await send({ ...base, terms: FIVE });
+  ok('D: non-refundable OFF is omitted from the text',
+     !/non-refundable/i.test(o.text));
+  ok('D: and from the HTML', !/non-refundable/i.test(o.html));
+  // E — Non-refundable ON → the exact chosen amount
+  o = await send({ ...base, terms: [...FIVE, 'non_refundable'], non_refundable: '250' });
+  ok('E: non-refundable ON states the exact chosen amount',
+     o.text.includes('NON-REFUNDABLE PORTION: $250.00'), o.text);
+  ok('E: in the HTML too', o.html.includes('NON-REFUNDABLE PORTION: $250.00'));
+  ok('E: and not the standard $500', !o.text.includes('$500'));
+
+  // F — Cash App / Venmo independently
+  const pay = async (methods) => send({ ...base, terms: FIVE },
+    methods.length ? { include_payment: true, methods } : {});
+  o = await pay(['cash_app']);
+  ok('F: Cash App alone', /cash app/i.test(o.text) && !/venmo/i.test(o.text)
+     && o.html.includes('https://cash.app/') && !o.html.includes('venmo.com'));
+  o = await pay(['venmo']);
+  ok('F: Venmo alone', /venmo/i.test(o.text) && !/cash app/i.test(o.text)
+     && o.html.includes('venmo.com') && !o.html.includes('https://cash.app/'));
+  o = await pay(['cash_app', 'venmo']);
+  ok('F: both', /venmo/i.test(o.text) && /cash app/i.test(o.text));
+  o = await pay([]);
+  ok('F: neither — no payment block at all',
+     !/PAYMENT OPTIONS/.test(o.text) && !/cash app|venmo/i.test(o.text), o.text.slice(-400));
+
+  /* §4 — "If ON: the exact value appears." A ticked term with no figure used
+     to vanish quietly; now it stops the send and names the gap, so a tick can
+     never mean less than the owner asked for. */
+  const gap = async (a) => (await send(a)).r;
+  let g = await gap({ hourly_rate: '75', total_due: '1800', terms: ['hourly_rate', 'days', 'total_due'] });
+  ok('a ticked Scheduled Days with no days is refused by name',
+     g.code === 'custom_days_required' && /untick/i.test(g.error || ''), JSON.stringify(g));
+  g = await gap({ hourly_rate: '75', total_due: '1800', terms: ['hourly_rate', 'hours_per_day', 'total_due'] });
+  ok('a ticked Hours Per Day with no figure is refused by name',
+     g.code === 'custom_hours_per_day_required', JSON.stringify(g));
+  g = await gap({ hourly_rate: '75', total_due: '1800', terms: ['hourly_rate', 'total_hours', 'total_due'] });
+  ok('a ticked Total Scheduled Hours with nothing to total is refused by name',
+     g.code === 'custom_total_hours_required', JSON.stringify(g));
+  /* And the same figures with those terms UNticked is an ordinary agreement —
+     the refusal is about the tick, not about the missing schedule. */
+  g = await gap({ hourly_rate: '75', total_due: '1800', terms: ['hourly_rate', 'total_due'] });
+  ok('unticking them sends a rate and a total and nothing else',
+     g.ok === true && mailed.text.includes('$75.00 per hour')
+     && mailed.text.includes('$1,800.00') && !/Scheduled days|Hours per day|Total scheduled hours/.test(mailed.text),
+     JSON.stringify(g).slice(0, 160));
+
+  /* §5 — THE SELECTED-TERM STATE IS PRESERVED WITH THE DOCUMENT, and a later
+     reading returns what was stored rather than anything recomposed. */
+  o = await send({ hourly_rate: '60', days: '3', hours_per_day: '8', total_due: '1500',
+                   terms: ['hourly_rate', 'total_hours', 'minimum_hours', 'non_refundable', 'total_due'],
+                   minimum_hours: '8', non_refundable: '250' },
+                 { include_payment: true, methods: ['venmo'] });
+  const back = await jsonOf(await call(env, '/documents/' + o.r.doc_id, { cookie: admin }));
+  const ca = back.custom_agreement || {};
+  ok('§5 — the ticked terms come back exactly, in the fixed order',
+     (ca.terms_included || []).join() === 'hourly_rate,total_hours,total_due,non_refundable,minimum_hours',
+     JSON.stringify(ca.terms_included));
+  ok('§5 — the payment methods that were ticked come back too',
+     (ca.payment_methods || []).join() === 'venmo', JSON.stringify(ca.payment_methods));
+  ok('§5 — with the chosen minimum and portion, not defaults',
+     ca.minimum_hours === 8 && ca.non_refundable === 250 && ca.minimum_hours_included === true
+     && ca.non_refundable_included === true, JSON.stringify(ca));
+  ok('§5 — and the stored document is the one that was sent, unticked terms absent',
+     back.document.body_text === o.text && !o.text.includes('3 days') && !o.text.includes('8 hours per day')
+     && o.text.includes('24 hours') && o.text.includes('8-HOUR MINIMUM PER SURVEILLANCE DAY'),
+     o.text.slice(0, 300));
+  globalThis.fetch = realFetch;
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));
