@@ -5992,7 +5992,7 @@ function pkgCard(p){
             /* LEGAL-SERVICES.md D7 — a flat-fee case names its fee, never a
                retainer, and has no work-drawdown "balance" to show. */
             ? `Flat fee: $${esc(p.retainer.amount.toLocaleString())} &middot; ${p.retainer.received ? "Received" : "Pending"}`
-            : `Retainer: $${esc(p.retainer.amount.toLocaleString())} &middot; Balance: $${esc((p.retainer.remaining == null ? 0 : p.retainer.remaining).toLocaleString())}`)
+            : `${agreedMoney(p.retainer) ? "Agreed amount" : "Retainer"}: $${esc(p.retainer.amount.toLocaleString())} &middot; Balance: $${esc((p.retainer.remaining == null ? 0 : p.retainer.remaining).toLocaleString())}`)
         : "Private client");
   return `<div class="pcard">
     <div class="pc-top">
@@ -7570,7 +7570,7 @@ function simpleState(c){
        done their part and the only thing left is the office's decision. */
     if(c.signed) return ["Ready to Create Case", "ok"];
     if(Number(c.send_count) > 0) return ["Waiting for Client Acceptance", "info"];
-    if(c.lead_status === "intake_received") return ["Retainer Pending", "warn"];
+    if(c.lead_status === "intake_received") return [agreedRow(c) ? "Payment Pending" : "Retainer Pending", "warn"];
     /* NOTHING HAS GONE OUT YET. Which of the two words is true depends on
        whether this is a consumer quote at all — a carrier assignment is
        invoiced per fee schedule and is never waiting on a rate sheet. */
@@ -7578,7 +7578,7 @@ function simpleState(c){
   }
   /* ACCEPTED. The one thing an accepted private case can still be waiting on
      that this row can answer for is the money. */
-  if(!claim && c.retainer_received == null) return ["Retainer Pending", "warn"];
+  if(!claim && c.retainer_received == null) return [agreedRow(c) ? "Payment Pending" : "Retainer Pending", "warn"];
   return null;    // nothing to say is not a state — it is silence
 }
 
@@ -8222,7 +8222,7 @@ function leadsView(){
       </div>
       ${retPending || paySent ? `<div class="retpend">
         ${retPending ? `<div class="rp-ok">&#10003; Private intake received</div>
-          <div class="rp-due">Retainer pending</div>` : ""}
+          <div class="rp-due">${agreedRow(c) ? "Payment pending" : "Retainer pending"}</div>` : ""}
         ${paySent ? `<div class="rp-sent">Payment instructions sent${
           payMethodLabels(c.pay_methods) ? ` &middot; ${esc(payMethodLabels(c.pay_methods))}` : ""
           } &middot; ${when(c.pay_sent_at)}</div>` : ""}
@@ -9376,7 +9376,7 @@ function wizSetType(id){
   w.legalService = ""; w.lsvcTouched = false;
   w.feeChoice = ""; w.feeCustom = ""; w.feeTouched = false;
   w.pay = id === "private";
-  w.payMethods = [];
+  w.payMethods = []; w.payTouched = false;
   w.mailCheck = false; w.billcom = false;
   w.nonRef = "";
   /* THE CUSTOM AGREEMENT BELONGS TO THE PRIVATE PRODUCT, so switching type
@@ -11940,9 +11940,10 @@ async function recordRetainerPayment(received){
   try{
     await api(`/cases/${encodeURIComponent(WS_CASE)}/retainer`, {method: "POST", body});
     RET_FORM = false; RET_DRAFT = {};
+    const agWord = agreedMoney(((WS && WS.authorization) || {}).retainer) ? "agreed amount" : "retainer";
     RET_MSG = received
-      ? "Payment recorded. The retainer now reads as received."
-      : "Cleared — the retainer is pending again.";
+      ? `Payment recorded. The ${agWord} now reads as received.`
+      : `Cleared — the ${agWord} is pending again.`;
     await reloadWorkspace();
   }catch(e){
     /* THE TOKEN IS KEPT ON PURPOSE. An error here means this attempt did not
@@ -16562,17 +16563,68 @@ function authPanel(a, admin){
         : `<span class="tag rs-needs_revision">Fee pending</span>`}</div>
       ${retainerReceiptHtml(a.retainer)}` : `
       <div class="row" style="border-top:1px solid #cfe6ec;margin-top:8px;padding-top:8px">
-        <span>Original retainer</span><b>$${esc(a.retainer.amount.toLocaleString())}</b></div>
+        <span>${agreedMoney(a.retainer) ? "Agreed amount" : "Original retainer"}</span><b>${agreedMoney(a.retainer)
+          ? esc(wizCuMoney(a.retainer.amount)) : `$${esc(a.retainer.amount.toLocaleString())}`}</b></div>
+      ${agreementSourceHtml(a.retainer)}
       <div class="row"><span>Status</span>${a.retainer.received
-        ? `<span class="tag closed">Retainer received</span>`
-        : `<span class="tag rs-needs_revision">Retainer pending</span>`}</div>
+        ? `<span class="tag closed">${agreedMoney(a.retainer) ? "Payment received" : "Retainer received"}</span>`
+        : `<span class="tag rs-needs_revision">${agreedMoney(a.retainer) ? "Payment pending" : "Retainer pending"}</span>`}</div>
       <div class="row"><span>Applied so far</span><b>$${esc(a.retainer.applied.toLocaleString())}</b></div>
-      <div class="row"><span>Remaining retainer</span><b>$${esc(a.retainer.remaining.toLocaleString())}</b></div>
+      <div class="row"><span>${agreedMoney(a.retainer) ? "Remaining" : "Remaining retainer"}</span><b>$${esc(a.retainer.remaining.toLocaleString())}</b></div>
       ${a.retainer.approx_hours_remaining != null ? `<div class="row">
-        <span style="color:var(--muted);font-size:.82rem">&asymp; ${esc(a.retainer.approx_hours_remaining)} hours at this case's rate</span><span></span></div>` : ""}
+        <span style="color:var(--muted);font-size:.82rem">&asymp; ${esc(a.retainer.approx_hours_remaining)} hours at ${
+          a.retainer.model === "agreement" && !a.case_rate_set ? "the agreed rate" : "this case's rate"}</span><span></span></div>` : ""}
       ${retainerReceiptHtml(a.retainer)}`) : ""}
     ${a.miles_total ? `<div class="row"><span>Miles logged</span><span>${esc(a.miles_total)}</span></div>` : ""}
   </div>`;
+}
+
+/* THE AGREED AMOUNT'S WORDS (owner, 2026-09-24): "Do NOT store or display
+   the Full Custom total as 'Retainer' unless the owner explicitly selected
+   Retainer as the payment type."
+
+   THE WORKER DECIDES THE WORD and publishes it as `term` on the case's own
+   money block; these only ask whether that block is a Full Custom agreement
+   the owner did NOT call a retainer. Every retainer screen keeps its exact
+   words because the answer there is false — and an agreement the owner DID
+   label Retainer keeps them too, which is the owner's "existing retainer
+   behavior may still apply". */
+function agreedMoney(r){
+  return !!(r && r.model === "agreement" && r.term && r.term !== "Retainer");
+}
+/* The same question of a case LIST row, whose columns the Worker adds. */
+function agreedRow(c){
+  return !!(c && c.agreement_total != null && c.agreement_kind !== "retainer");
+}
+/* Where an agreed figure came from: the document the client received. */
+function agreementSourceHtml(r){
+  if(!r || r.model !== "agreement" || !r.agreement) return "";
+  const g = r.agreement;
+  return `<div class="row"><span style="color:var(--muted);font-size:.82rem">From the Full Custom
+      agreement sent ${esc(when(g.sent_at))}${g.hourly_rate != null ? ` &middot; ${esc(wizCuMoney(g.hourly_rate))}/hr` : ""}${
+      g.total_hours != null ? ` &middot; ${esc(String(g.total_hours))} hours` : ""}</span><span></span></div>`;
+}
+/* THE AGREED FIGURE IS THE DOCUMENT'S, SO IT IS NOT A FIELD. An input here
+   would edit the retainer column, which the agreement outranks — a control
+   that changes nothing on screen — and would be the one way left to write a
+   Full Custom total into a retainer. A new agreement is how it changes. */
+function agreementReadOnlyHtml(r){
+  const g = r.agreement || {};
+  return `<label class="f"><span>${agreedMoney(r) ? "Agreed amount" : "Agreed retainer"}</span>
+      <output class="agreed-ro"><b>${esc(wizCuMoney(r.amount))}</b></output>
+      <small class="hint" style="display:block">From the Full Custom agreement sent ${esc(when(g.sent_at))}.
+        Send a new agreement to change it.</small></label>`;
+}
+/* The closeout's three words, from the Worker's own ledger — so the printed
+   copy says exactly what the emailed copy says. Absent (an older Worker) reads
+   as the retainer wording it always was. */
+function fcWords(d){
+  const w = (d && d.words) || {};
+  return {
+    received: w.received || "Retainer received",
+    retained: w.retained || "Non-refundable retained",
+    closing: w.closing || "This statement documents the disposition of the retainer held on this case.",
+  };
 }
 
 /* RETAINER PENDING → RECORD PAYMENT (PAYMENTS.md §5/§11).
@@ -16641,7 +16693,7 @@ function retainerReceiptHtml(r){
   }
   return `${RET_FORM ? retainerFormHtml(r)
     : `<div class="actions"><button class="btn sm" data-act="retOpen">Record payment</button></div>
-      <p class="hint">The ${r.model === "fixed" ? "fee" : "retainer"} stays pending until a payment is recorded here. Sending payment
+      <p class="hint">The ${r.model === "fixed" ? "fee" : agreedMoney(r) ? "agreed amount" : "retainer"} stays pending until a payment is recorded here. Sending payment
         instructions does not mark it paid.</p>`}
     ${RET_MSG ? `<div class="${RET_ERR ? "err" : "linkbox"}">${esc(RET_MSG)}</div>` : ""}`;
 }
@@ -18294,7 +18346,7 @@ function sendsPanel(){
       <span>${x.ok ? "" : `<b style="color:var(--bad,#c14133)">Failed &middot; </b>`}${
         x.kind === "rate_sheet"
           ? `Rate sheet${x.sheet_id === "insurance_assignment" ? " — Insurance Assignment Rates"
-             : x.sheet_id === "private_retainer" ? " — Private Client Retainer" : ""}${
+             : x.sheet_id === "private_retainer" ? " — Private Client" : ""}${
              x.door ? ` <span class="opt">with the ${esc(doorName(x.door))}</span>` : ""}`
           : `${esc(doorName(x.door) || "Intake")} link`}
         <div style="font-size:.8rem;color:var(--muted)">to ${esc(x.recipient)}${
@@ -18473,7 +18525,8 @@ function editCasePanel(s, a){
     <div class="two">
       <label class="f"><span>${claim ? "Claim number" : "Reference"}${OPTL}</span>
         <input id="ed_claim" value="${esc(pick("claim", p.claim_number || s.claim_number))}"></label>
-      ${a.retainer ? `<label class="f"><span>${a.retainer.model === "fixed"
+      ${a.retainer && a.retainer.model === "agreement" ? agreementReadOnlyHtml(a.retainer)
+        : a.retainer ? `<label class="f"><span>${a.retainer.model === "fixed"
           /* LEGAL-SERVICES.md D7 — the same stored figure, the model's word.
              On a fixed case this edits the agreed flat fee, defaulting from
              the catalogue; it is never presented as a retainer. */
@@ -18678,8 +18731,8 @@ function fcLedgerHtml(d, opts){
   const balLabel = projected ? "Projected final balance" : "Final balance";
   const refundShown = projected ? d.refunded + d.refund_pending : d.refunded;
   return `<div class="fc-led">
-    <div class="fc-row"><span>Retainer received</span><b>${fcMoney(d.retainer_received)}</b></div>
-    <div class="fc-row"><span>Non-refundable retained</span>
+    <div class="fc-row"><span>${esc(fcWords(d).received)}</span><b>${fcMoney(d.retainer_received)}</b></div>
+    <div class="fc-row"><span>${esc(fcWords(d).retained)}</span>
       <b class="fc-keep">${fcMoney(d.retained)}</b></div>
     <div class="fc-row"><span>Refund${projected && d.refund_pending ? " (to be issued)" : " issued"}</span>
       <b>${fcMoney(refundShown)}</b></div>
@@ -18725,10 +18778,10 @@ function fcStatementHtml(d, s){
       <div><b>Closed:</b> ${esc(closedOn)}</div>
     </div>
     <div class="fc-led">
-      <div class="fc-row"><span>Retainer received${d.received_on
+      <div class="fc-row"><span>${esc(fcWords(d).received)}${d.received_on
         ? ` <span class="optn">&middot; ${esc(d.received_on)}</span>` : ""}</span>
         <b>${fcMoney(d.retainer_received)}</b></div>
-      <div class="fc-row"><span>Non-refundable retained</span>
+      <div class="fc-row"><span>${esc(fcWords(d).retained)}</span>
         <b class="fc-keep">${fcMoney(d.retained)}</b></div>
       ${d.work_performed ? `<div class="fc-row"><span>Work performed</span>
         <b>${esc(FC_WORK_LABEL[d.work_performed] || d.work_performed)}</b></div>` : ""}
@@ -18747,7 +18800,7 @@ function fcStatementHtml(d, s){
     </div>
     <div class="fc-status">CASE STATUS: CLOSED</div>
     ${fcReason(d) ? `<p class="fc-note"><b>Reason:</b> ${esc(fcReason(d))}</p>` : ""}
-    <p class="fc-note">This statement documents the disposition of the retainer held on this case.</p>
+    <p class="fc-note">${esc(fcWords(d).closing)}</p>
     <div class="fc-foot">Questions? (434) 907-0975<br>Always Precise Investigations, LLC</div>
   </div>`;
 }
@@ -18781,8 +18834,8 @@ function fcClosedSummaryHtml(s){
     ${fcReason(d) ? `<div class="fc-cl-r"><span>Reason</span><b>${esc(fcReason(d))}</b></div>` : ""}
     ${d.work_performed ? `<div class="fc-cl-r"><span>Work performed</span>
       <b>${esc(FC_WORK_LABEL[d.work_performed] || d.work_performed)}</b></div>` : ""}
-    <div class="fc-cl-r"><span>Retainer received</span><b>${money(d.retainer_received)}</b></div>
-    <div class="fc-cl-r"><span>Non-refundable retained</span><b>${money(d.retained)}</b></div>
+    <div class="fc-cl-r"><span>${esc(fcWords(d).received)}</span><b>${money(d.retainer_received)}</b></div>
+    <div class="fc-cl-r"><span>${esc(fcWords(d).retained)}</span><b>${money(d.retained)}</b></div>
     ${refundWord ? `<div class="fc-cl-r"><span>Refund</span><b>${esc(refundWord)}${
       refundAmt != null ? " &middot; " + money(refundAmt) : ""}</b></div>` : ""}
     <div class="fc-cl-r fc-cl-t"><span>Final balance</span><b>${money(settle)}</b></div>
@@ -20989,18 +21042,21 @@ function authAdminForm(){
       <label class="f"><span>Authorized hours</span><input id="m_hours" inputmode="decimal" value="${a.authorized_hours ?? ""}"></label>
       <label class="f"><span>Authorized budget</span><input id="m_budget" inputmode="decimal" value="${a.authorized_budget ?? ""}"></label>
     </div>
-    <label class="f"><span>Client rate for this case <span class="opt">blank = the firm's standard rate.
+    <label class="f"><span>Client rate for this case <span class="opt">blank = ${a.retainer && a.retainer.model === "agreement"
+        ? "the rate in this case's custom agreement" : "the firm's standard rate"}.
         Mileage is never billed to a client &mdash; the all-in price covers it.</span></span>
       <input id="m_chourly" inputmode="decimal" value="${a.case_rate_set ? a.billed_at_rate : ""}"></label>
     ${WS && WS.kind === "consumer" ? `
     <div class="two">
-      <label class="f"><span>${a.retainer && a.retainer.model === "fixed"
+      ${a.retainer && a.retainer.model === "agreement" ? agreementReadOnlyHtml(a.retainer)
+        : `<label class="f"><span>${a.retainer && a.retainer.model === "fixed"
           ? `Flat fee amount <span class="opt">this case's fixed-price service &mdash; never a retainer</span>`
           : `Retainer amount <span class="opt">the private model &mdash; a claims case never has one</span>`}</span>
-        <input id="m_ret" inputmode="decimal" value="${a.retainer ? a.retainer.amount : ""}"></label>
+        <input id="m_ret" inputmode="decimal" value="${a.retainer ? a.retainer.amount : ""}"></label>`}
       <label class="cap" style="align-self:center;margin-top:14px">
         <input type="checkbox" id="m_retrec" ${a.retainer && a.retainer.received ? "checked" : ""}>
-        <span>${a.retainer && a.retainer.model === "fixed" ? "Fee received" : "Retainer received"}</span></label>
+        <span>${a.retainer && a.retainer.model === "fixed" ? "Fee received"
+          : agreedMoney(a.retainer) ? "Payment received" : "Retainer received"}</span></label>
     </div>` : ""}
     <label class="cap" style="margin:2px 0 10px">
       <input type="checkbox" id="m_showclient" ${a.show_client_identity ? "checked" : ""}>
@@ -21147,10 +21203,16 @@ function caseActionsHtml(){
     ${admin ? `<button class="uibtn acc" data-act="wsTab" data-tab="details">View intake</button>` : ""}
     ${admin && s0.kind !== "claims" && WS && !closed
       ? `<div class="ui2">
-           <button class="uibtn ok" data-act="retQuick">Retainer paid</button>
+           <button class="uibtn ok" data-act="retQuick">${
+             agreedMoney(((WS && WS.authorization) || {}).retainer) ? "Payment received" : "Retainer paid"}</button>
            <button class="uibtn bad" data-act="fcQuick">Close case</button>
          </div>` : ""}
-    ${admin ? `<button class="uibtn sec" data-act="leadSheet" data-case="${esc(WS_CASE)}"
+    ${/* ONE SEND RATE SHEET PER SCREEN (owner, 2026-09-24). On the Simple View
+         intake screen the bar directly below carries its own — the one that
+         knows whether a sheet already went and says "Send new rate sheet" —
+         so this copy stands down there and nowhere else. Same `leadSheet`,
+         same wizard: nothing was removed, a duplicate door was. */""}
+    ${admin && !simpleBarShown() ? `<button class="uibtn sec" data-act="leadSheet" data-case="${esc(WS_CASE)}"
         data-kind="${esc(s0.kind || "consumer")}">Send rate sheet</button>` : ""}
     ${/* + Add activity stays the block's own control and still withdraws on a
          phone, where the thumb bar carries it — one obvious door at any
@@ -21326,8 +21388,16 @@ function clientRecordHtml(s){
       hasIntake
         ? crRow("Intake", "yes", `Received ${when(s.created_at)}`, "wsTab", {tab: "details"})
         : crRow("Intake", "no", "No submitted intake on this case", null),
+      /* A FULL CUSTOM CASE STATES ITS AGREED AMOUNT HERE (owner, 2026-09-24:
+         "The case/client record should be able to show: Agreed Amount"). The
+         retainer row keeps its figure-free wording, which is the owner's own
+         earlier decision for this strip. */
       !ret
         ? crRow("Retainer", "no", "No retainer on this case", null)
+        : agreedMoney(ret)
+        ? crRow("Agreed amount", received ? "yes" : "pending",
+                `${wizCuMoney(ret.amount)} \u00b7 ${received ? "received" : "not yet received"}`,
+                "wsTab", {tab: "auth"})
         : received
         ? crRow("Retainer", "yes", "Received", "wsTab", {tab: "auth"})
         : crRow("Retainer", "pending", agreed ? "Agreed, not yet received" : "No figure agreed yet",
@@ -21545,7 +21615,7 @@ function crPacketHtml(){
            P.rate_sheet_missing === "snapshot_unavailable" ? "Unavailable" : "Not recorded"),
     preRow("Acceptance", S.acceptance, "Not recorded"),
     preRow("Intake", S.intake, "Not recorded"),
-    preRow("Retainer", S.retainer, "Not recorded"),
+    preRow((P.retainer || {}).term === "Agreed amount" ? "Agreed Amount" : "Retainer", S.retainer, "Not recorded"),
     preRow("Work Activity", S.work, "Not recorded"),
     preRow("Closeout", S.closeout, "Not applicable"),
     preRow("Refund Record", (P.closeout && (P.closeout.refunds || []).length > 0), "Not applicable"),
@@ -21596,6 +21666,7 @@ function crPacketHtml(){
     ${crRow2("Sent by", rs.sent_by_name)}
     ${crRow2("Delivered to the client", rs.ok ? "Yes" : "No — the provider refused it")}
     ${crRow2("Retainer", crMoney(rs.retainer_amount))}
+    ${crRow2(rs.agreement_term || "Agreed amount", crMoney(rs.agreement_total))}
     ${crRow2("Non-refundable portion", crMoney(rs.non_refundable))}
     ${crRow2("Flat fee", crMoney(rs.flat_fee))}
     ${rsLines.length ? crRow2("Stated terms", rsLines.map(l => l.text).join("  |  ")) : ""}
@@ -21640,7 +21711,7 @@ function crPacketHtml(){
     ${crRow2("Intake type", intake.matter_type)}
     ${crRow2("Received", crWhen(intake.received_at))}
     ${crRow2("Associated rate sheet", rs ? rs.doc_id : "None")}
-    ${crRow2("Retainer status", retWord)}
+    ${crRow2(ret.term === "Agreed amount" ? "Payment status" : "Retainer status", retWord)}
     <h3>Provided information</h3>
     ${(intake.provided || []).length
       ? intake.provided.map(f => crRow2(crLabel(f.field), f.value)).join("")
@@ -21660,6 +21731,7 @@ function crPacketHtml(){
     <h3>Associated rate sheet</h3>
     ${rs ? `${crRow2("Document ID", rs.doc_id)}
       ${crRow2("Retainer", crMoney(rs.retainer_amount))}
+      ${crRow2(rs.agreement_term || "Agreed amount", crMoney(rs.agreement_total))}
       ${crRow2("Non-refundable portion", crMoney(rs.non_refundable))}
       ${rsLines.filter(l => /PER SURVEILLANCE DAY/.test(l.text))
         .map(l => crRow2("Surveillance term", l.text)).join("")}
@@ -21679,7 +21751,7 @@ function crPacketHtml(){
       ? " — " + p.void_reason : ""}`) : ""}
     <div style="height:6px"></div>`).join("");
   const retainerSection = (ret.payments || []).length || ret.agreed_amount != null ? `
-    ${crRow2("Agreed retainer", crMoney(ret.agreed_amount))}
+    ${crRow2(ret.term === "Agreed amount" ? "Agreed amount" : "Agreed retainer", crMoney(ret.agreed_amount))}
     ${crRow2("Amount the document stated", crMoney(ret.document_amount))}
     ${crRow2("Non-refundable portion stated", crMoney(ret.non_refundable))}
     ${payRows ? `<h3>Payments recorded</h3>${payRows}`
@@ -21698,8 +21770,8 @@ function crPacketHtml(){
   const hasCloseout = !!(co.closeout || (co.refunds || []).length || co.refund_status
                          || co.retained != null);
   const closeoutSection = hasCloseout ? `
-    ${crRow2("Retainer received", crMoney(co.retainer_received))}
-    ${crRow2("Non-refundable retained", crMoney(co.retained))}
+    ${crRow2(fcWords(co).received, crMoney(co.retainer_received))}
+    ${crRow2(fcWords(co).retained, crMoney(co.retained))}
     ${crRow2("Refunded", crMoney(co.refunded))}
     ${crRow2("Final balance", crMoney(co.final_balance))}
     ${crRow2("Refund status", co.refund_status
@@ -21799,7 +21871,7 @@ function crPacketHtml(){
     <h2>Rate sheet as sent</h2>${sheetSection}
     <h2>Associated acceptance record</h2>${acceptSection}
     <h2>Submitted intake</h2>${intakeSection}
-    <h2>Retainer and payments</h2>${retainerSection}
+    <h2>${ret.term === "Agreed amount" ? "Agreed amount and payments" : "Retainer and payments"}</h2>${retainerSection}
     <h2>Refund and closeout</h2>${closeoutSection}
     <h2>Work record</h2>${workSection}
     <h2>Send record</h2>${sendSection}
@@ -22009,10 +22081,16 @@ function overviewPanel(s, a){
                  A FIXED legal case's first figure is its flat fee and is never
                  called a retainer (LEGAL-SERVICES.md D7) — same three rows,
                  the first word follows the model. */
-              ? row(a.retainer.model === "fixed" ? "Fee (flat)" : "Retainer",
+              ? (agreedMoney(a.retainer)
+                  /* A FULL CUSTOM CASE: the agreement's total, under its own
+                     word, to the cent (owner, 2026-09-24). */
+                  ? row("Agreed amount", wizCuMoney(a.retainer.amount))
+                    + row("Received", wizCuMoney(a.retainer.received_total || 0))
+                    + row("Balance owed", wizCuMoney(a.retainer.outstanding || 0))
+                  : row(a.retainer.model === "fixed" ? "Fee (flat)" : "Retainer",
                     "$" + a.retainer.amount.toLocaleString())
-                + row("Received", "$" + (a.retainer.received_total || 0).toLocaleString())
-                + row("Balance owed", "$" + (a.retainer.outstanding || 0).toLocaleString())
+                    + row("Received", "$" + (a.retainer.received_total || 0).toLocaleString())
+                    + row("Balance owed", "$" + (a.retainer.outstanding || 0).toLocaleString()))
                 + ovRecordPaymentHtml(a.retainer)
               : row("Type", "Private client"))}
         ${/* ASSIGNMENT, REACHABLE BUT SECONDARY (owner, 2026-08-16): a quiet
@@ -23670,7 +23748,9 @@ function intakeSummaryHtml(s, p, claim){
           boundary walk, and both were right: a label naming what the client is
           paying is the paying side, even with no figure beside it. */""}
     ${ME.role === "admin" ? `${cell("Rate sheet", assocSheetLabel())}
-    ${cell("Retainer", !ret ? "&mdash;" : ret.received ? "Received" : "Not yet received")}` : ""}
+    ${agreedMoney(ret)
+      ? cell("Agreed amount", `${esc(wizCuMoney(ret.amount))} &middot; ${ret.received ? "received" : "not yet received"}`)
+      : cell("Retainer", !ret ? "&mdash;" : ret.received ? "Received" : "Not yet received")}` : ""}
   </div>`;
 }
 
@@ -23706,6 +23786,8 @@ function assocSheetHtml(){
   <dl class="detail">
     <dt>Type</dt><dd>${esc(d.send_context || "")}${d.legal_service ? ` &middot; ${esc(d.legal_service)}` : ""}</dd>
     ${d.retainer_amount != null ? `<dt>Retainer / authorization</dt><dd>${usd(d.retainer_amount)}</dd>` : ""}
+    ${d.agreement && d.agreement.total_due != null
+      ? `<dt>${esc(d.agreement.term || "Agreed amount")}</dt><dd>${esc(wizCuMoney(d.agreement.total_due))}</dd>` : ""}
     ${d.non_refundable != null ? `<dt>Non-refundable portion</dt><dd>${usd(d.non_refundable)}</dd>` : ""}
     ${d.flat_fee != null ? `<dt>Flat fee</dt><dd>${usd(d.flat_fee)}</dd>` : ""}
     ${/* THE TERMS AS THEY WERE SENT, read back from the record. This is the
@@ -23748,7 +23830,7 @@ function simpleStatusHtml(s, p){
     ["Intake", true],
     ["Rate sheet", docErr ? null : docsIn ? !!sheet : null],
     ["Acceptance", !!(p.signature || p.signed_name)],
-    ["Retainer", !!(ret && ret.received)],
+    [agreedMoney(ret) ? "Payment" : "Retainer", !!(ret && ret.received)],
     ["Case", (WS && WS.lead_status) === "converted"],
   ];
   const mark = v => v === true ? ["&#10003;", "ok"] : v === false ? ["&#8212;", "muted"] : ["&#9679;", "warn"];
@@ -23764,8 +23846,15 @@ function simpleStatusHtml(s, p){
   }).join("")}</div>`;
 }
 
+/* WHETHER THE SIMPLE VIEW BAR IS ON THIS SCREEN — the one writer of that
+   answer, read by the bar itself and by the case actions block, so the two
+   cannot both draw Send rate sheet or both withdraw it. */
+function simpleBarShown(){
+  return WS_TAB === "details" && simpleOn() && ME.role === "admin" && !!WS;
+}
+
 function simpleIntakeBarHtml(s){
-  if(!simpleOn() || ME.role !== "admin" || !WS) return "";
+  if(!simpleBarShown()) return "";
   const p = (s && s.payload) || {};
   const accepted = (WS.lead_status === "converted");
   const claim = s.kind === "claims";
@@ -23802,11 +23891,12 @@ function simpleIntakeBarHtml(s){
   const lastOn = live.length ? live[live.length - 1].paid_on : "";
   const got = ret && ret.received;
   const retRow = `<div class="simp-line">
-    <span><b>Retainer</b> &mdash; ${got
+    <span><b>${agreedMoney(ret) ? "Agreed amount" : "Retainer"}</b> &mdash; ${
+      agreedMoney(ret) ? `${esc(wizCuMoney(ret.amount))} &middot; ` : ""}${got
       ? `${esc(usd(ret.received_total != null ? ret.received_total : ret.amount))} received${
           lastOn ? ` &middot; ${esc(fmtDay(lastOn) || lastOn)}` : ""}`
       : "not recorded"}</span>
-    ${got ? "" : `<button class="btn sm ghost" data-act="retQuick">Record retainer</button>`}
+    ${got ? "" : `<button class="btn sm ghost" data-act="retQuick">${agreedMoney(ret) ? "Record payment" : "Record retainer"}</button>`}
   </div>`;
   return `<div class="simp-bar">
     <div class="simp-acts">
@@ -24163,13 +24253,14 @@ function invoiceDocHtml(i){
           ? ` &mdash; ${esc(ret.service_label)}` : ""}</b></td><td class="n">${usd(ret.amount)}${
         ret.received ? "" : " <span style='color:var(--muted);font-size:.85rem'>(not yet received)</span>"}</td></tr>
     </tbody></table>` : `<table class="doc-table" style="margin-top:12px"><tbody>
-      <tr><td style="width:60%"><b>Retainer held</b></td><td class="n">${usd(ret.amount)}${
+      <tr><td style="width:60%"><b>${agreedMoney(ret) ? "Agreed amount" : "Retainer held"}</b></td><td class="n">${usd(ret.amount)}${
         ret.received ? "" : " <span style='color:var(--muted);font-size:.85rem'>(not yet received)</span>"}</td></tr>
       <tr><td>Applied to date${
         (i.lines || []).length ? "" : ""}</td><td class="n">${usd(ret.applied)}</td></tr>
       ${ret.additional_authorized ? `<tr><td>Additional authorization</td>
         <td class="n">${usd(ret.additional_authorized)}</td></tr>` : ""}
-      <tr><td><b>${ret.balance < 0 ? "Beyond the retainer" : "Retainer remaining"}</b></td>
+      <tr><td><b>${agreedMoney(ret) ? (ret.balance < 0 ? "Beyond the agreed amount" : "Remaining")
+        : ret.balance < 0 ? "Beyond the retainer" : "Retainer remaining"}</b></td>
         <td class="n"><b>${usd(Math.abs(ret.balance))}</b></td></tr>
     </tbody></table>`) : ""}
     ${special ? `<p style="font-size:.9rem;white-space:pre-line"><b>Special instructions</b><br>${esc(special)}</p>` : ""}
@@ -24236,14 +24327,15 @@ function invoiceDetailView(){
           <span style="color:var(--muted);font-size:.82rem">${i.retainer.received ? "received" : "not yet received"}</span></div>
         <div class="row"><span>Fee</span><b>${usd(i.retainer.amount)}</b></div>
       </div>` : `<div class="feebox">
-        <div class="row"><span><b>Retainer</b></span>
+        <div class="row"><span><b>${agreedMoney(i.retainer) ? "Agreed amount" : "Retainer"}</b></span>
           <span style="color:var(--muted);font-size:.82rem">${i.retainer.received ? "received" : "not yet received"}</span></div>
-        <div class="row"><span>Retainer held</span><b>${usd(i.retainer.amount)}</b></div>
+        <div class="row"><span>${agreedMoney(i.retainer) ? "Agreed amount" : "Retainer held"}</span><b>${usd(i.retainer.amount)}</b></div>
         <div class="row"><span>Applied to date <span class="opt">every live invoice on this case</span></span>
           <b>${usd(i.retainer.applied)}</b></div>
         ${i.retainer.additional_authorized ? `<div class="row"><span>Additional authorization</span>
           <b>${usd(i.retainer.additional_authorized)}</b></div>` : ""}
-        <div class="row"><span>${i.retainer.balance < 0 ? "Beyond the retainer" : "Retainer remaining"}</span>
+        <div class="row"><span>${agreedMoney(i.retainer) ? (i.retainer.balance < 0 ? "Beyond the agreed amount" : "Remaining")
+          : i.retainer.balance < 0 ? "Beyond the retainer" : "Retainer remaining"}</span>
           <b>${usd(Math.abs(i.retainer.balance))}</b></div>
       </div>`) : ""}`}
       <label class="f"><span>Note to the client <span class="opt">prints on the invoice</span></span>
@@ -25150,6 +25242,13 @@ async function saveCaseMeta(){
     if($("m_ret")){
       await api(`/cases/${encodeURIComponent(WS_CASE)}/retainer`, {method:"POST", body:{
         retainer_amount: $("m_ret").value, received: $("m_retrec").checked,
+      }});
+    } else if($("m_retrec")){
+      /* A FULL CUSTOM CASE HAS NO RETAINER FIELD TO POST — its figure is the
+         agreement's, read-only above — so only the received tick is sent, and
+         an absent amount means unchanged, the rule this route already keeps. */
+      await api(`/cases/${encodeURIComponent(WS_CASE)}/retainer`, {method:"POST", body:{
+        received: $("m_retrec").checked,
       }});
     }
   }catch(e){ WS_ERR = e.message; }
@@ -27037,6 +27136,14 @@ document.addEventListener("input", ev => {
      nothing, and only the suite noticed. Exactly the defect this project has
      already recorded against the profiles contact picker, in the same shape:
      a select whose handler was in the wrong listener. */
+  /* A PAYMENT BOX THE OWNER TOUCHED IS A CHOICE, NOT A DEFAULT (owner,
+     2026-09-24). Full Custom opens with every configured method ticked, and
+     this is what tells that default apart from a deliberate untick — so a
+     choice already made survives the switch into Full Custom instead of being
+     ticked back on. No repaint: the box already shows what was clicked. */
+  if(ev.target.classList && ev.target.classList.contains("wiz-pm") && SHEET_WIZ){
+    SHEET_WIZ.payTouched = true;
+  }
   if(ev.target.dataset && ev.target.dataset.act === "wizType" && SHEET_WIZ){
     wizSetType(ev.target.value); return;
   }
@@ -27064,6 +27171,15 @@ document.addEventListener("input", ev => {
        re-minted — reusing it would make a genuinely different send read as a
        retry of the last one. */
     wizCustomReset(SHEET_WIZ);
+    /* FULL CUSTOM OPENS WITH CASH APP AND VENMO TICKED (owner, 2026-09-24:
+       "Default: Cash App = ON, Venmo = ON. Owner can still uncheck either
+       one.") — every configured method, unless the owner already chose in
+       this wizard, in which case the choice stands (the checkbox brief's
+       "preserve the owner's explicit Cash App / Venmo selections"). A method
+       with no payment link is not sendable and is not ticked, as before. */
+    if(SHEET_WIZ.custom && !SHEET_WIZ.payTouched && PAYCFG){
+      SHEET_WIZ.payMethods = wizPaymentSendable().map(m => m.id);
+    }
     SHEET_WIZ.attemptKey = newAttemptKey();
     SHEET_WIZ.err = ""; paint(); return;
   }
