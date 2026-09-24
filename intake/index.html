@@ -126,15 +126,19 @@
   .record .case{color:var(--teal);font-weight:700;font-family:ui-monospace,monospace;}
   .record dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:14px 0;font-size:.9rem;}
   .record dt{color:var(--muted);}
-  .record dd{color:var(--ink);}
+  /* A value is a grid item, and a grid item's default minimum is its content —
+     so one unbroken claim reference or pasted address widened the whole record
+     past a 320 screen. `min-width:0` lets the column shrink and the value then
+     WRAPS rather than clipping (2026-09-24, on every path's record). */
+  .record dd{color:var(--ink);min-width:0;overflow-wrap:anywhere;}
   .record img.sig{max-width:260px;border-bottom:1px solid #c7ccd3;margin-top:4px;}
   /* The carrier path's receipt (2026-09-24): the facts a claims desk files, in
-     the page's own feebox language, above the full record. `min-width:0` and
-     `overflow-wrap` keep a long claim number or company on screen at 320. */
+     the page's own feebox language, above the full record. Its values wrap by
+     the `.record dd` rule above, so a long claim number stays on screen at 320. */
   .receipt{background:#f0f8fa;border:1px solid #cfe6ec;border-radius:10px;padding:14px 16px;margin:0 0 18px;}
   .receipt h2{font-size:1.1rem;margin:0 0 2px;color:#12305a;}
   .receipt dl{margin:10px 0 8px;}
-  .receipt dd{min-width:0;overflow-wrap:anywhere;font-weight:600;}
+  .receipt dd{font-weight:600;}
   .receipt-sent{font-size:.88rem;margin:6px 0;}
   .ok{background:#e9f7ef;border:1px solid #b6e0c6;color:#166534;border-radius:8px;padding:12px 14px;font-size:.9rem;margin-bottom:14px;}
   .warn{background:#fdecea;border:1px solid #f5c6c0;color:#8a2318;border-radius:8px;padding:12px 14px;font-size:.9rem;margin-bottom:14px;}

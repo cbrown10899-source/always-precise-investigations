@@ -1918,7 +1918,9 @@ for (const width of [390, 320]) {
   ok(`${width}px: every field on the claim step has a visible label`, await labelsShown());
   ok(`${width}px: the requested start opens a date picker`,
      await page.locator('[data-k="z_start"]').getAttribute('type') === 'date');
-  await set(page, 'k_claimno', 'WC-2026-12345-SUPPLEMENTAL-REFERENCE-0099887766');
+  /* UNBROKEN on purpose: a reference with hyphens wraps at the hyphens on its
+     own, so it could never show whether the record's columns can shrink. */
+  await set(page, 'k_claimno', 'WC2026123450099887766SUPPLEMENTALREFERENCE0042');
   await advance(page);
   await check('subject');
   await set(page, 's_name', 'Taylor Example');
@@ -1946,6 +1948,9 @@ for (const width of [390, 320]) {
   await page.waitForTimeout(500);
   await check('receipt');
   ok(`${width}px: the receipt is shown`, /Assignment received/i.test(await page.locator('.receipt').innerText()));
+  ok(`${width}px: the unbroken reference wraps inside the record rather than widening it`,
+     await page.evaluate(w => [...document.querySelectorAll('.record dd')]
+       .every(dd => dd.getBoundingClientRect().right <= w + 0.5), width));
   ok(`${width}px: nothing on any step or the receipt hangs past the right edge`,
      steps.every(s => Number(s.split(':')[1]) <= 0), steps.join(' '));
   await ctx.close();
