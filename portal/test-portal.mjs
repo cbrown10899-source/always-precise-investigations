@@ -25459,11 +25459,10 @@ section('FULL CUSTOM: §15 — Simple View, open intake, custom agreement, back 
   ok('§15 — the opened intake carries Send rate sheet', bar.there === true, JSON.stringify(bar));
 
   /* SCOPED TO THE SIMPLE VIEW BAR, which is the door §15 names. The intake
-     screen draws Send rate sheet TWICE in Simple View — once in that bar and
-     once in the intake's own action row — so an unscoped locator matched both
-     and Playwright's strict mode stopped the run. Both are the same control on
-     the same handler; which one is pressed is this probe's choice, and the
-     duplicate itself predates this unit. */
+     screen used to draw Send rate sheet TWICE in Simple View — once in that
+     bar and once in the case actions block above it — and an unscoped locator
+     matched both. Since 2026-09-24 the case actions copy stands down on this
+     screen (`simpleBarShown`), and the section above counts exactly one. */
   const bars = await page.locator('.simp-bar [data-act="leadSheet"][data-case="API-CU-SV"]').count();
   ok('§15 — the Simple View bar carries exactly one Send rate sheet', bars === 1, String(bars));
   await page.locator('.simp-bar [data-act="leadSheet"][data-case="API-CU-SV"]').first().click();
@@ -25555,6 +25554,305 @@ section('FULL CUSTOM: §15 — Simple View, open intake, custom agreement, back 
   ok('§13 — with the agreement\'s own figures beside them',
      readBack.custom && readBack.custom.hourly_rate === 75
      && readBack.custom.total_hours === 24, JSON.stringify(readBack.custom));
+  await page.close();
+}
+
+section('FULL CUSTOM live path: $75 x 2 x 12, Preview, Send, and the case says Agreed amount');
+{
+  /* OWNER, 2026-09-24 §6 — the exact real configuration, driven through the
+     real controls from the Simple View intake screen: Full Custom, $75, 2 days,
+     12 hours a day, minimum OFF, non-refundable OFF, Cash App and Venmo ON.
+     Then every screen that states a private case's money is read for the
+     agreed amount and for the word Retainer. */
+  await post('/ingest', { case_no: 'API-AGR-UI', service: 'Surveillance',
+    client_name: 'Rhea Agreed', client_email: 'rhea@example.test',
+    subject_name: 'Subject Agreed', objective: 'Document two days' },
+    { 'X-Ingest-Key': 'e2e-ingest-key' });
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await simpleOnFor(page);
+  await page.evaluate(() => {
+    const b = document.querySelector('[data-act="simpleOpen"][data-case="API-AGR-UI"]');
+    if (b) b.click(); else openCase('API-AGR-UI', 'details');
+  });
+  await page.waitForFunction(() => WS_CASE === 'API-AGR-UI' && WS, null, { timeout: 6000 });
+  await page.waitForTimeout(500);
+
+  /* §3 — ONE SEND RATE SHEET ON THE SIMPLE VIEW INTAKE SCREEN. Counted over
+     the whole document, visible controls only, because the defect was two
+     different blocks each drawing their own. */
+  const sendCount = () => page.evaluate(() => [...document.querySelectorAll('[data-act="leadSheet"]')]
+    .filter(b => b.dataset.case === 'API-AGR-UI' && b.offsetParent !== null).length);
+  ok('§3 — the Simple View intake screen draws exactly ONE Send rate sheet', await sendCount() === 1,
+     String(await sendCount()));
+  ok('§3 — and it is the Simple View bar\'s own, the one that knows what was sent',
+     await page.locator('.simp-bar [data-act="leadSheet"][data-case="API-AGR-UI"]').count() === 1);
+
+  await page.locator('.simp-bar [data-act="leadSheet"][data-case="API-AGR-UI"]').click();
+  await page.waitForSelector('.amsheet.rsw', { timeout: 6000 });
+  await page.waitForTimeout(400);
+  await page.selectOption('#wiz_mode', 'custom');
+  await page.waitForTimeout(300);
+
+  /* §4 — FULL CUSTOM OPENS WITH CASH APP AND VENMO TICKED. */
+  const pays = await page.evaluate(() =>
+    [...document.querySelectorAll('.cu-terms .wiz-pm')].map(b => b.dataset.pm + ':' + b.checked).join());
+  ok('§4 — Full Custom opens with Cash App and Venmo both ticked', pays === 'cash_app:true,venmo:true', pays);
+  /* §5 — the two optional terms open OFF, the checkbox builder untouched. */
+  const offs = await page.evaluate(() => ['minimum_hours', 'non_refundable']
+    .map(t => (document.querySelector(`.cu-term[data-t="${t}"]`) || {}).checked));
+  ok('§5 — minimum hours and non-refundable open unticked', offs.join() === 'false,false', offs.join());
+
+  await page.locator('#cu_rate').fill('75');
+  await page.locator('#cu_days').fill('2');
+  await page.locator('#cu_perday').fill('12');
+  await page.waitForTimeout(250);
+  ok('§6 — the builder states 24 hours and $1,800.00',
+     await page.evaluate(() => (document.querySelector('.cu-total') || {}).textContent === '$1,800.00'
+       && /2 × 12 = /.test((document.querySelector('.cu-sum') || {}).textContent || '')));
+
+  /* §6 — PREVIEW. */
+  await page.locator('.rsw-acts .btn', { hasText: 'Preview' }).click();
+  await page.waitForFunction(() => SHEET_WIZ && SHEET_WIZ.step === 2, null, { timeout: 8000 });
+  await page.waitForTimeout(300);
+  const pv = await page.evaluate(() => (document.querySelector('.amsheet.rsw') || {}).innerText || '');
+  ok('§6 — Preview succeeds and states $1,800.00', pv.includes('$1,800.00'), pv.slice(0, 200));
+  ok('§6 — Preview carries no minimum-hours wording', !/MINIMUM PER SURVEILLANCE DAY/i.test(pv));
+  ok('§6 — Preview offers Cash App and Venmo', /cash app/i.test(pv) && /venmo/i.test(pv));
+
+  /* §6 — SEND. */
+  MAILED = null;
+  env.RESEND_API_KEY = 'e2e-resend-key';
+  await page.evaluate(() => wizSend());
+  await page.waitForFunction(() => SHEET_WIZ === null, null, { timeout: 8000 });
+  await page.waitForTimeout(600);
+  const mail = REAL_MAIL();
+  delete env.RESEND_API_KEY;
+  ok('§6 — Send succeeds: the agreement really goes', !!mail && mail.text.includes('$1,800.00'),
+     JSON.stringify(mail && mail.subject));
+  ok('§6 — with no minimum wording and no retainer anywhere on it', !!mail
+     && !/minimum/i.test(mail.text) && !/retainer/i.test(mail.text) && !/retainer/i.test(mail.html));
+  ok('§6 — and both payment links', !!mail && mail.html.includes('https://cash.app/')
+     && mail.html.includes('venmo.com'));
+
+  /* §6 — the document, the agreement and the intake link persist, and it
+     reopens exactly as sent. */
+  const persisted = await page.evaluate(async () => {
+    const d = await api('/cases/API-AGR-UI/documents');
+    const doc = (d.documents || [])[0] || {};
+    const r = await api('/documents/' + doc.doc_id);
+    return { agreement: doc.agreement, intake: doc.intake_included,
+             body: (r.document || {}).body_text || '', door: (r.document || {}).intake_door || '',
+             custom: r.custom_agreement, id: doc.doc_id };
+  });
+  ok('§6 — the exact sent document persists and reopens as sent',
+     !!mail && persisted.body === mail.text, persisted.body.slice(0, 80));
+  ok('§6 — the custom agreement persists with its figures',
+     persisted.custom && persisted.custom.total_due === 1800 && persisted.custom.total_hours === 24
+     && persisted.custom.minimum_hours_included === false, JSON.stringify(persisted.custom));
+  ok('§6 — the intake link persists, carrying the document',
+     persisted.intake === true && persisted.door.includes('ref=' + persisted.id), persisted.door);
+
+  /* §2 — THE CASE SHOWS THE AGREED AMOUNT, and nowhere says Retainer. The
+     page re-reads the case itself after the send — nothing here reloads it,
+     because a probe that reloaded would pass on a page that never did. */
+  const relearned = await page.waitForFunction(() => WS && WS.authorization && WS.authorization.retainer
+    && WS.authorization.retainer.model === 'agreement', null, { timeout: 6000 }).then(() => true, () => false);
+  ok('§2 — after the send the open case re-reads itself as an agreement case', relearned);
+  const said = await page.evaluate(() => String(LEAD_MSG || SHEET_MSG || ''));
+  ok('§2 — the send confirmation says the AGREED AMOUNT is pending, not the retainer',
+     /agreed amount is still pending/.test(said) && !/retainer/i.test(said), said);
+  await page.waitForTimeout(400);
+  const scr = async () => page.evaluate(() => document.querySelector('.casepage, #app').innerText);
+  let t = await scr();
+  ok('§2 — the intake screen\'s summary states Agreed amount $1,800.00',
+     await page.evaluate(() => [...document.querySelectorAll('.isum-c')].some(c =>
+       /Agreed amount/.test((c.querySelector('.isum-k') || {}).textContent || '')
+       && /^\$1,800\.00/.test(((c.querySelector('.isum-v') || {}).textContent || '').trim()))),
+     (t.match(/.{0,30}Agreed amount.{0,40}/g) || []).join(' | '));
+  ok('§2 — the associated rate sheet states it too',
+     await page.evaluate(() => [...document.querySelectorAll('dl.detail dt')]
+       .some(dt => dt.textContent === 'Agreed amount' && dt.nextElementSibling
+         && dt.nextElementSibling.textContent === '$1,800.00')));
+  ok('§2 — the Simple View bar says Agreed amount and Record payment',
+     await page.evaluate(() => {
+       const bar = document.querySelector('.simp-bar');
+       return !!bar && /Agreed amount/.test(bar.innerText) && /Record payment/.test(bar.innerText)
+         && /Payment/.test(bar.innerText);
+     }));
+  ok('§2 — the case actions say Payment received, not Retainer paid',
+     await page.evaluate(() => {
+       const a = document.querySelector('.caseacts');
+       return !!a && /Payment received/.test(a.innerText) && !/Retainer paid/.test(a.innerText);
+     }));
+  ok('§2 — no false Retainer label anywhere on the intake screen',
+     !/Retainer/.test(t), (t.match(/.{0,50}Retainer.{0,50}/) || [''])[0]);
+  ok('§3 — still exactly one Send rate sheet after the send', await sendCount() === 1,
+     String(await sendCount()));
+
+  await page.evaluate(() => { WS_TAB = 'overview'; paint(); });
+  await page.waitForTimeout(400);
+  t = await scr();
+  ok('§2 — the Overview states Agreed amount $1,800.00, and the balance against it',
+     /Agreed amount\s*\$1,800\.00/.test(t) && /Balance owed\s*\$1,800\.00/.test(t),
+     (t.match(/.{0,30}Agreed amount.{0,90}/) || [''])[0]);
+  ok('§2 — the client record strip states the agreed amount',
+     /Agreed amount[\s\S]{0,40}\$1,800\.00[\s\S]{0,20}not yet received/.test(t));
+  ok('§2 — no false Retainer label anywhere on the Overview',
+     !/Retainer/.test(t), (t.match(/.{0,50}Retainer.{0,50}/) || [''])[0]);
+
+  await page.evaluate(() => { WS_TAB = 'auth'; paint(); });
+  await page.waitForTimeout(400);
+  t = await scr();
+  ok('§2 — the Authorization panel names the agreement it came from',
+     /Agreed amount\s*\$1,800\.00/.test(t) && /From the Full Custom\s+agreement sent/.test(t)
+     && /\$75\.00\/hr/.test(t), (t.match(/.{0,30}Agreed amount.{0,160}/) || [''])[0]);
+  ok('§2 — its figure is read-only: there is no retainer input to write it into',
+     await page.evaluate(() => !document.getElementById('m_ret') && !!document.querySelector('.agreed-ro')));
+  ok('§2 — no false Retainer label on the Authorization panel',
+     !/Retainer/.test(t), (t.match(/.{0,50}Retainer.{0,50}/) || [''])[0]);
+
+  await page.evaluate(() => { WS_TAB = 'edit'; paint(); });
+  await page.waitForTimeout(300);
+  ok('§2 — Edit case shows the agreed amount read-only, with no retainer field',
+     await page.evaluate(() => !document.getElementById('ed_retainer')
+       && /\$1,800\.00/.test((document.querySelector('.agreed-ro') || {}).textContent || '')));
+
+  /* RECORDING THE PAYMENT, through the case's own button. */
+  await page.evaluate(() => { WS_TAB = 'overview'; paint(); });
+  await page.waitForTimeout(300);
+  await page.locator('[data-act="retQuick"]').first().click();
+  await page.waitForTimeout(500);
+  await page.locator('#ret_amt').fill('1800');
+  await page.evaluate(() => { const m = document.getElementById('ret_method'); if (m) m.value = 'cash_app'; });
+  await page.locator('[data-act="retSave"]').first().click();
+  await page.waitForTimeout(900);
+  t = await scr();
+  ok('§2 — recording it says the AGREED AMOUNT now reads as received',
+     /The agreed amount now reads as received/.test(t), (t.match(/Payment recorded.{0,80}/) || [''])[0]);
+  ok('§2 — and the balance against the agreed amount is settled',
+     await page.evaluate(() => WS.authorization.retainer.outstanding === 0
+       && WS.authorization.retainer.amount === 1800));
+
+  /* §2 — INVOICES AND THE CLOSEOUT REFERENCE THE REAL FIGURE, in the
+     agreement's word, on the screens that print them. */
+  const invScr = await page.evaluate(async () => {
+    const made = await api('/cases/API-AGR-UI/invoices', { method: 'POST', body: { from_authorization: true } });
+    const d = await api('/invoices/' + made.invoice.id);
+    INV_OPEN = d.invoice; INV_SETTINGS = d.settings || INV_SETTINGS;
+    const docHtml = invoiceDocHtml(d.invoice);
+    const box = document.createElement('div'); box.innerHTML = docHtml;
+    const edit = document.createElement('div'); edit.innerHTML = invoiceDetailView();
+    return { doc: box.innerText || box.textContent, edit: edit.innerText || edit.textContent,
+             line: d.invoice.lines[0] };
+  });
+  ok('§2 — the invoice document prints Agreed amount and bills $1,800 under the agreement\'s name',
+     /Agreed amount/.test(invScr.doc) && invScr.line.amount === 1800
+     && invScr.line.description === 'Custom Surveillance Agreement', JSON.stringify(invScr.line));
+  ok('§2 — and the invoice document never says retainer',
+     !/retainer/i.test(invScr.doc), (invScr.doc.match(/.{0,40}retainer.{0,40}/i) || [''])[0]);
+  ok('§2 — nor does the invoice editor', /Agreed amount/.test(invScr.edit)
+     && !/Retainer/.test(invScr.edit), (invScr.edit.match(/.{0,40}Retainer.{0,40}/) || [''])[0]);
+  const led = await page.evaluate(async () => {
+    const d = await api('/cases/API-AGR-UI/closeout-money');
+    const box = document.createElement('div'); box.innerHTML = fcLedgerHtml(d);
+    return box.innerText || box.textContent;
+  });
+  ok('§2 — the closeout ledger says Payment received and Amount retained, no retainer',
+     /Payment received/.test(led) && /Amount retained/.test(led) && !/retainer/i.test(led), led);
+  /* SIMPLE VIEW'S LIST WORDS come off the list row the Worker publishes. */
+  const words = await page.evaluate(() => ({
+    agreed: simpleState({ kind: 'consumer', lead_status: 'converted', retainer_received: null,
+                          agreement_total: 1800, agreement_kind: 'total_due' }),
+    labelled: simpleState({ kind: 'consumer', lead_status: 'converted', retainer_received: null,
+                            agreement_total: 1800, agreement_kind: 'retainer' }),
+    standard: simpleState({ kind: 'consumer', lead_status: 'converted', retainer_received: null }),
+  }));
+  ok('§2 — an accepted, unpaid Full Custom case reads Payment Pending in Simple View',
+     (words.agreed || [])[0] === 'Payment Pending', JSON.stringify(words.agreed));
+  ok('§2 — one the owner LABELLED a retainer, and a standard case, still read Retainer Pending',
+     (words.labelled || [])[0] === 'Retainer Pending' && (words.standard || [])[0] === 'Retainer Pending',
+     JSON.stringify(words));
+  const listed = await page.evaluate(async () => {
+    const d = await api('/submissions');
+    return ((d.rows || d.submissions || []).find(x => x.case_no === 'API-AGR-UI') || {});
+  });
+  ok('§2 — the real list row carries the agreed total Simple View reads',
+     listed.agreement_total === 1800 && listed.agreement_kind === 'total_due', JSON.stringify(listed).slice(0, 160));
+
+  /* §3 AT PHONE WIDTHS — one button, nothing sideways. */
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: width === 320 ? 568 : 844 });
+    await page.evaluate(() => { WS_TAB = 'details'; paint(); });
+    await page.waitForTimeout(400);
+    ok(`§3 ${width} — one Send rate sheet on the Simple View intake screen`, await sendCount() === 1,
+       String(await sendCount()));
+    ok(`§3 ${width} — and nothing scrolls sideways`,
+       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
+       String(await page.evaluate(() => document.documentElement.scrollWidth)));
+  }
+
+  /* FULL VIEW keeps its one — the case actions block's own. */
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.evaluate(async () => { await setViewMode('full'); });
+  await page.waitForTimeout(400);
+  await page.evaluate(() => { WS_TAB = 'details'; paint(); });
+  await page.waitForTimeout(300);
+  ok('Full View intake screen still carries exactly one Send rate sheet', await sendCount() === 1,
+     String(await sendCount()));
+  ok('and it is the case actions block\'s', await page.locator('.caseacts [data-act="leadSheet"]').count() === 1);
+  await page.close();
+}
+
+section('FULL CUSTOM: Cash App and Venmo default ON, and an explicit choice still stands');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await openWiz(page);
+  await page.selectOption('#wiz_mode', 'custom');
+  await page.waitForTimeout(300);
+  const fresh = await page.evaluate(() =>
+    [...document.querySelectorAll('.cu-terms .wiz-pm')].map(b => b.dataset.pm + ':' + b.checked).join());
+  ok('§4 — a fresh Full Custom opens with both ticked', fresh === 'cash_app:true,venmo:true', fresh);
+  /* Owner can still uncheck either one — driven through the real box. */
+  await page.locator('.cu-terms .wiz-pm[data-pm="venmo"]').click();
+  await page.locator('#wiz_to').fill('oneonly@example.com');
+  await page.locator('#cu_rate').fill('75');
+  await page.locator('#cu_days').fill('2');
+  await page.locator('#cu_perday').fill('12');
+  await page.locator('.rsw-acts .btn', { hasText: 'Preview' }).click();
+  await page.waitForFunction(() => SHEET_WIZ && SHEET_WIZ.step === 2, null, { timeout: 8000 });
+  MAILED = null;
+  env.RESEND_API_KEY = 'e2e-resend-key';
+  await page.evaluate(() => wizSend());
+  await page.waitForFunction(() => SHEET_WIZ === null, null, { timeout: 8000 });
+  await page.waitForTimeout(400);
+  const mail = REAL_MAIL();
+  delete env.RESEND_API_KEY;
+  ok('§4 — unticking Venmo sends Cash App alone', !!mail && mail.html.includes('https://cash.app/')
+     && !mail.html.includes('venmo.com'), mail ? mail.text.slice(-200) : 'no mail');
+
+  /* An untouched STANDARD send switched to Full Custom: the default applies. */
+  await openWiz(page);
+  await page.waitForTimeout(200);
+  await page.selectOption('#wiz_mode', 'custom');
+  await page.waitForTimeout(300);
+  const untouched = await page.evaluate(() =>
+    [...document.querySelectorAll('.cu-terms .wiz-pm')].map(b => b.dataset.pm + ':' + b.checked).join());
+  ok('§4 — an untouched standard send switched to Full Custom has both ticked',
+     untouched === 'cash_app:true,venmo:true', untouched);
+  /* Legal and Insurance offer no Cash App or Venmo at all — unchanged. */
+  await page.selectOption('#wiz_type', 'legal');
+  await page.waitForTimeout(400);
+  ok('§4 — a legal send offers no Cash App or Venmo', await page.evaluate(() =>
+    ![...document.querySelectorAll('.wiz-pm')].some(b => ['cash_app', 'venmo'].includes(b.dataset.pm))));
+  await page.selectOption('#wiz_type', 'insurance');
+  await page.waitForTimeout(400);
+  ok('§4 — nor does a carrier send', await page.evaluate(() =>
+    ![...document.querySelectorAll('.wiz-pm')].some(b => ['cash_app', 'venmo'].includes(b.dataset.pm))));
+  ok('§4 — and no credit card is offered anywhere in the wizard',
+     !/credit card/i.test(await page.evaluate(() => (document.querySelector('.amsheet.rsw') || {}).innerText || '')));
+  await page.evaluate(() => { SHEET_WIZ = null; paint(); });
   await page.close();
 }
 

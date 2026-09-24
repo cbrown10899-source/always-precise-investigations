@@ -126,6 +126,8 @@ agreement therefore leaves no agreed figure on the case, so the invoice and
 balance blocks have nothing to draw against. Recording the total as a
 `case_retainer` row would mislabel it as a retainer — the thing §8 forbids the
 document from doing — so it is left for a decision rather than taken.
+*Resolved by D23 (owner, 2026-09-24): the case gains an AGREED AMOUNT read from
+the agreement itself, and `case_retainer` still receives nothing.*
 
 **D15 — Four refusals by name off the private path.** A custom agreement on a
 legal or insurance send; beside a legal service; beside a `retainer_amount`;
@@ -173,7 +175,8 @@ selection the standard send uses.** Bound to `w.payMethods` through the
 whichever mode drew the boxes and survives switching between them in both
 directions (§3: *"preserve the owner's explicit Cash App / Venmo selections"*).
 That selection's existing default — every configured method ticked — is the
-owner's own onboarding decision and was not re-decided here. **The standard
+owner's own onboarding decision and was not re-decided here. *The owner then
+decided it for Full Custom explicitly — see D29.* **The standard
 payment block is not drawn in FULL CUSTOM**: two sets of boxes for one choice
 is the duplicate-door shape, and the negative test showed it concretely — both
 sets feed the one collector, so the standard block's still-ticked boxes put
@@ -203,6 +206,102 @@ standard size: every checkbox label and every field label in this wizard is
 0.85rem, 13.6px, weight 600. The defect would be a term label smaller or
 lighter than its neighbours, and that is what is asserted.
 
+## Live setup, the agreed amount and the final cleanup (owner brief 2026-09-24)
+
+**Live schema.** `portal-setup.yml` run #60 (id 35939502419, master at
+`483eed1`) applied `schema.sql` to the live D1 database; every step green, the
+first-admin step skipped by input because the account exists. The only
+statement added since the previous run (#59, 2026-09-08) was
+`CREATE TABLE IF NOT EXISTS sent_document_custom`. The live health check after
+the apply answered `schema_missing: 0`, and `sent_document_custom` is in the
+list that count is taken over — so D13's refusal no longer fires on the live
+portal.
+
+**D23 — The agreed amount is READ from the agreement, never stored twice.**
+`caseAgreement()` reads the most recent successfully sent private rate sheet on
+the case (`sent_document`, `ok = 1`, context `private`) joined to its custom
+figures; if that sheet was a Full Custom agreement, its total is the case's
+agreed amount. An index seek on `idx_sentdoc_case`. What follows from the
+shape: the figure cannot drift from the document the client received; the
+most recent offer governs (a later custom agreement replaces it, a later
+STANDARD sheet returns the case to the retainer model — the rule the office's
+own retainer pick follows); a pre-case agreement reaches its case when the
+client signs through its door, because acceptance fills `sent_document.case_no`;
+and nothing is written, so no historical row is touched and no schema change
+or setup run is needed. The owner's words were "add/use a distinct case
+financial value": it is its own field (`model: 'agreement'`, `term`,
+`agreement`) on the case's money block, not the retainer column.
+
+**D24 — The word is the owner's label on the agreement.** "Agreed amount",
+unless the owner chose **Retainer** as the payment description, in which case
+the case says Retainer — the brief's "existing retainer behavior may still
+apply". The Worker publishes the word (`term`); the page asks only
+`agreedMoney(r)` / `agreedRow(c)`, which are false for every retainer case, so
+every retainer screen keeps its exact strings.
+
+**D25 — The work arithmetic runs at the agreement's own rate.** A $75/hr
+agreement drawn down at the standard $100/hr would read a third faster than
+the client was told. `billed_at_rate` is the agreement's hourly rate unless the
+case carries an explicit per-case rate, which still outranks it; `applied`,
+`remaining` and "≈ hours remaining" follow (24 hours on the real agreement).
+
+**D26 — Every place a private case's money is named was followed, not just the
+case screen.** Overview; the Authorization panel (with the agreement it came
+from) and its form; Edit case; the case actions button (*Payment received*);
+the Client Record strip (which now states the figure, the owner's own request
+here); Simple View's status row, money row, list words and intake-desk card;
+the intake summary cell and ASSOCIATED RATE SHEET; the invoice document, the
+invoice editor, the opening invoice line and the Assistant's invoice preview;
+the closeout ledger, closed-case card and **the client's closeout statement**
+(*Payment received*, and *Amount retained* rather than "Non-refundable
+retained" unless the agreement stated a non-refundable portion); the record
+packet; the closeout checklist fact; the attention list; the payment event
+labels in recent activity, the audit trail, the case timeline and the office's
+payment record copy; and the list columns, stripped for an investigator like
+every other money column.
+
+**D27 — Nothing writes the total into `case_retainer`.** The Edit case and
+Authorization amount fields become read-only on an agreement case — an input
+there would edit a column the agreement outranks, a control that changes
+nothing on screen, and the one remaining way to file a Full Custom total as a
+retainer. The Authorization form still saves the received tick alone. **One
+thing was left as it was, on purpose:** recording a payment on a case with no
+retainer row creates one, and that column is `NOT NULL DEFAULT 1500`, so it
+holds the standard figure. That is the same as "no agreed retainer" for the
+standard product, nothing reads it while an agreement governs, and writing the
+custom total there instead would make a later standard sheet quote the custom
+total as a retainer.
+
+**D28 — One Send rate sheet on the Simple View intake screen.** The case
+actions block (drawn on every case tab) and the Simple View bar both drew one.
+`simpleBarShown()` is the one writer of "the bar is on this screen", read by
+both; the case actions copy stands down there only. The bar's copy is kept
+because it states whether a sheet already went ("Send new rate sheet"). Full
+View and every other tab keep the case actions copy.
+
+**D29 — Full Custom opens with Cash App and Venmo ticked.** The owner's
+default, every configured method, set on entering the mode unless the owner
+already chose in this wizard (`payTouched`, set by a real change on a payment
+box) — so D19's preserved choice still stands. **Stated honestly:** the
+wizard already ticked every configured method on opening, so today the rule
+changes no outcome; it pins the Full Custom default independently of the
+standard seed. Negative-tested both ways: with the standard seed removed the
+rule alone still opens both ticked; with both removed the default fails.
+
+**D30 — After a send, the case re-reads itself.** Found by the live-path walk,
+not assumed: the case's document list was fetched once per session and never
+again, so the intake screen went on saying *"none sent from the portal"*
+straight after a send; and the open workspace kept drawing the pre-send money
+model. The list is dropped for that case and the workspace reloaded (it
+already refuses a late answer for a case you have left). The confirmation now
+says the *agreed amount* is pending, not the retainer.
+
+**D31 — The case's send history names the product, "Private Client".** It is
+read from `send_log`, which holds the sheet id and nothing that tells a custom
+send from a standard one; matching it to `sent_document` by time or address
+would be inference, which this project refuses. The exact document, custom or
+standard, is one tap away in ASSOCIATED RATE SHEET.
+
 ## Deferred, by name
 
 - A second custom agreement shape (`agreement_type` is ready for one; no CHECK
@@ -210,4 +309,12 @@ lighter than its neighbours, and that is what is asserted.
 - Surfacing the agreement's figures on the Client Record Packet as structured
   rows. The packet already reproduces the DOCUMENT from the stored bytes, which
   is what the brief asks of it.
-- Recording a custom total as the case's agreed figure — D14.
+- ~~Recording a custom total as the case's agreed figure — D14.~~ Done as D23,
+  without a retainer row.
+- **Found and not fixed, outside this brief (the Legal no-regression line):** a
+  FIXED legal case still meets the retainer word in three places — the case
+  actions button *Retainer paid*, the closeout statement's *Retainer received*,
+  and the opening invoice line *Investigation Retainer*, which for that model
+  bills the case's retainer column (the flat fee if one was agreed, else the
+  standard figure). LEGAL-SERVICES.md D7 says a fixed case is never called a
+  retainer; these three predate it and are an owner decision to change.

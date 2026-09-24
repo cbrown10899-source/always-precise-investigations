@@ -23641,6 +23641,27 @@ section('Agreed amount: a Full Custom case carries its own figure, and never cal
   ok('§2 nor "non-refundable" — this agreement stated no such portion',
      !/non-refundable/i.test(st.text) && !/non-refundable/i.test(st.html));
 
+  /* ---- A STALE RETAINER FIGURE DOES NOT SPEAK FOR AN AGREEMENT CASE -------- */
+  /* The standard wizard writes an agreed retainer the moment its selector is
+     touched; a case quoted that way and THEN sent a Full Custom agreement holds
+     both. The attention list must alert on the agreement's figure, once, and
+     never on the retainer row it replaced. */
+  await ingest(env, { case_no: 'API-AGR-STALE', service: 'Surveillance', client_name: 'Stale Row',
+    client_email: 'client@example.com', subject_name: 'T. Subject', objective: 'x' });
+  await call(env, '/cases/API-AGR-STALE/retainer', { method: 'POST', cookie: admin,
+    body: { retainer_amount: 2000 } });
+  await sendTo('API-AGR-STALE', REAL);
+  att = await jsonOf(await call(env, '/attention', { cookie: admin }));
+  al = (att.items || att.alerts || []).filter(x => x.case_no === 'API-AGR-STALE');
+  ok('a stale retainer row does not raise a retainer alert on an agreement case',
+     !al.some(x => /Retainer/.test(x.what || x.title || '')), JSON.stringify(al).slice(0, 300));
+  const pal = al.filter(x => x.kind === 'payments');
+  ok('the agreement raises exactly one MONEY alert, on its own figure',
+     pal.length === 1 && /Agreed amount outstanding/.test(pal[0].what || '')
+     && /\$1,800/.test(pal[0].why || ''), JSON.stringify(pal).slice(0, 300));
+  ok('and the case reads its agreed amount, not the stale retainer',
+     (await ws('API-AGR-STALE')).authorization.retainer.amount === 1800);
+
   /* ---- THE MOST RECENT OFFER GOVERNS --------------------------------------- */
   await ingest(env, { case_no: 'API-AGR-2', service: 'Surveillance', client_name: 'Sam Latest',
     client_email: 'client@example.com', subject_name: 'L. Subject', objective: 'x' });

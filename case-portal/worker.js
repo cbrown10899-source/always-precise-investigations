@@ -8895,7 +8895,10 @@ async function authorizationFor(env, caseNo, forAdmin) {
 
      PUTTING THE DAY BACK RESTORES THE HOURS, with no second write, because
      nothing here is stored. */
-  const dayGate = (await missingTables(env)).includes('case_content_removed') ? '' :
+  /* One schema read for the whole block — the day gate below and the agreed
+     amount further down both need it, and this is the most-opened screen. */
+  const missAuth = await missingTables(env);
+  const dayGate = missAuth.includes('case_content_removed') ? '' :
     `AND NOT EXISTS (SELECT 1 FROM case_content_removed r
        WHERE r.kind = 'day' AND r.ref_id = case_days.id)`;
   const used = await env.DB.prepare(
@@ -8949,7 +8952,7 @@ async function authorizationFor(env, caseNo, forAdmin) {
        standard. A FIXED legal case never has one — the agreement is a private
        document and the send refuses it on any other context. */
     const fixedCase = !!(legalPricing && legalPricing.model === 'fixed');
-    const agreement = kind === 'consumer' && !fixedCase ? await caseAgreement(env, caseNo) : null;
+    const agreement = kind === 'consumer' && !fixedCase ? await caseAgreement(env, caseNo, missAuth) : null;
     const rate = st.client_hourly != null ? Number(st.client_hourly)
       : agreement && agreement.hourly_rate > 0 ? agreement.hourly_rate
       : (kind === 'consumer' ? PERSONAL.hourly : RATES.surveillance.standard);

@@ -25513,8 +25513,21 @@ async function wizSend(){
       bits.push(inc.payment_methods.map(m => m.label).join(" and "));
     }
     const consumerPay = (inc.payment_methods || []).some(m => m.id !== "mail_check");
+    /* A FULL CUSTOM SEND IS NOT A RETAINER unless the owner labelled it one
+       (owner, 2026-09-24), so the confirmation names the money in the
+       agreement's own word. */
+    const pendingWord = wizCustomOn(w) && (w.cuLabelKind || "total_due") !== "retainer"
+      ? "agreed amount" : "retainer";
     SHEET_MSG = `Sent to ${r.sent_to}${bits.length ? ", with " + bits.join(" and ") : ""}.`
-      + (consumerPay ? " The retainer is still pending until you record it." : "");
+      + (consumerPay ? ` The ${pendingWord} is still pending until you record it.` : "");
+    /* THE CASE'S OWN SCREENS LEARN WHAT WENT. The document list was fetched
+       once and never again, so an intake screen went on saying "none sent from
+       the portal" right after a send; and a Full Custom send changes the case's
+       money model, which the open workspace would otherwise go on drawing as a
+       retainer until the case was reopened. Both are re-read now — the list on
+       its next paint, the workspace here. */
+    if(w.caseNo){ delete DOCS[w.caseNo]; delete DOCS_ERR[w.caseNo]; }
+    if(w.caseNo && WS && w.caseNo === WS_CASE) reloadWorkspace();
     /* §8 — the office-copy outcome, kept so the screen can say CLIENT SENT /
        OWNER COPY FAILED rather than reporting only half of what happened. */
     LAST_SEND = {sent_to: r.sent_to, doc_id: r.doc_id || "",
