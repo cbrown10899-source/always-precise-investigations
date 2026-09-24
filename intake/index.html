@@ -95,7 +95,12 @@
   .opt .desc{color:var(--muted);font-size:.86rem;margin-top:2px;}
 
   .feebox{background:#f0f8fa;border:1px solid #cfe6ec;border-radius:10px;padding:14px 16px;margin:4px 0 16px;font-size:.9rem;}
-  .feebox .row{display:flex;justify-content:space-between;padding:3px 0;}
+  .feebox .row{display:flex;justify-content:space-between;gap:12px;padding:3px 0;}
+  /* The same content-minimum trap as `.record dd`, in a flex row: the billing
+     step echoes the claim reference here, and an unbroken one pushed the step
+     past a phone's edge. Both halves may shrink, and the value wraps. */
+  .feebox .row > *{min-width:0;overflow-wrap:anywhere;}
+  .feebox .row > :last-child{text-align:right;}
   .feebox .due{border-top:1px solid #cfe6ec;margin-top:6px;padding-top:8px;font-weight:700;font-size:1.02rem;}
   .agree{font-size:.82rem;color:#3a4653;max-height:190px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:14px;background:#fbfbfc;margin-bottom:14px;}
   .agree h4{margin:10px 0 4px;font-size:.85rem;color:var(--ink);}

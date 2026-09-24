@@ -1895,8 +1895,14 @@ for (const width of [390, 320]) {
   await page.goto(BASE + '?assignment=insurance');
   await page.waitForTimeout(150);
   const steps = [];
-  const check = async tag => steps.push(`${tag}:${await page.evaluate(() =>
-    document.documentElement.scrollWidth - window.innerWidth)}`);
+  /* Asserted AT each step, not only at the end: a step that widens the page
+     can also make the next tap land on the wrong element, and a run that dies
+     there never reaches a summary assertion to name what went wrong. */
+  const check = async tag => {
+    const o = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    steps.push(`${tag}:${o}`);
+    ok(`${width}px: the ${tag} step does not scroll sideways`, o <= 0, String(o));
+  };
   const labelsShown = () => page.evaluate(() => [...document.querySelectorAll('label.f')].every(l => {
     const sp = l.querySelector(':scope > span');
     if (!sp || !sp.textContent.trim()) return false;
