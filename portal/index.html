@@ -11180,7 +11180,9 @@ function notifySettingsHtml(){
           del.email === "configured" ? "sending" : "no provider"}</span></div>
       <div class="row"><span style="color:var(--muted);font-size:.85rem">${del.email === "configured"
         ? `Email alerts go out as they happen, to every switched-on recipient with an address who
-           has ticked that alert. A recipient with only a phone number is not emailed instead.`
+           has ticked that alert. A recipient with only a phone number is not emailed instead.
+           One exception: a new insurance assignment emails the business address set under Invoice
+           defaults once, with its detail and a link, so that inbox is not sent this alert as well.`
         : `No email provider is configured either, so nothing is sent on either channel yet.`
       }</span><span></span></div>
     </div>
@@ -11625,8 +11627,11 @@ const BILL_FIELDS = [
      of payment instructions the portal sends is copied to the office with the
      figures it carried — the amount, the non-refundable portion, the minimum,
      which intake rode along and which document version went. Blank, nothing
-     is sent and nothing else changes. */
-  ["owner_record_email",   "Send the office a record copy of every send — business email (leave empty for none)", "text"],
+     is sent and nothing else changes. Since 2026-09-24 it is also where each
+     new insurance assignment is announced, once, with its detail and a link —
+     the label says so, because a field that quietly gains a job is a setting
+     nobody can reason about. */
+  ["owner_record_email",   "Send the office a record copy of every send, and one email per new insurance assignment — business email (leave empty for none)", "text"],
   /* BILLCOM.md — prepared, not connected. All four start empty; none is a
      secret; Bill.com is offered NOWHERE until the enable word AND a real
      https payment link are both typed here. Credentials, if a full API
@@ -16207,6 +16212,32 @@ async function render(){
 
 /* --------------------------------------------------------------- actions */
 
+/* A LINK STRAIGHT TO ONE CASE (owner, 2026-09-24). The office's email about a
+   new insurance assignment carries `/portal/?case=<number>`, so one tap lands
+   on what the adjuster submitted. The number arrives in a URL and is
+   untrusted: it is held to the ingest's own alphabet before anything reads it,
+   and it only ever OPENS a case, through `openCase` — the same two reads a tap
+   on the case makes, so who may see it is the Worker's answer exactly as for a
+   click. It is taken out of the address bar as it is read, so a reload lands on
+   Home rather than reopening a case the person has since left, and it waits
+   through the sign-in the way `?surveillance=1` does. */
+function takeLinkedCase(){
+  const q = new URLSearchParams(location.search);
+  if(!q.has("case")) return "";
+  const no = q.get("case") || "";
+  q.delete("case");
+  const rest = q.toString();
+  history.replaceState({}, "", "/portal/" + (rest ? "?" + rest : ""));
+  return /^[A-Za-z0-9-]{3,64}$/.test(no) ? no : "";
+}
+async function openLinkedCase(no){
+  await openCase(no, "details");
+  /* A case this person may not open is refused by the Worker, and openCase
+     says so. The link then leaves them on Home, not on a case screen that will
+     never finish loading. */
+  if(!WS && WS_CASE === no){ VIEW = "list"; WS_CASE = null; paint(); }
+}
+
 async function doLogin(){
   const btn = $("loginBtn"), err = $("err");
   btn.disabled = true; btn.textContent = "Signing in…"; err.textContent = "";
@@ -16217,7 +16248,9 @@ async function doLogin(){
        office portal instead of the field. boot() only sees the flag when a
        session already exists, which is the second time onwards. */
     if(new URLSearchParams(location.search).get("surveillance")) return openSurveillanceLauncher();
+    const linked = takeLinkedCase();
     await render();
+    if(linked) await openLinkedCase(linked);
   }catch(e){
     err.textContent = e.message;
     btn.disabled = false; btn.textContent = "Sign in";
@@ -27316,7 +27349,9 @@ document.addEventListener("input", ev => {
       await openSurveillanceLauncher();
       return;
     }
+    const linked = takeLinkedCase();
     await render();
+    if(linked) await openLinkedCase(linked);
   }catch{ paint(); }
 })();
 </script>

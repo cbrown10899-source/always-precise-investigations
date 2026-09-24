@@ -22853,6 +22853,78 @@ section('Simple View: a carrier assignment is accepted in one tap and never show
   await page.close();
 }
 
+/* THE OFFICE'S EMAIL ABOUT A NEW INSURANCE ASSIGNMENT LINKS STRAIGHT TO IT
+   (owner, 2026-09-24: "direct portal link"). The Worker composes
+   `/portal/?case=<number>`; this is the page's half — the link waits through a
+   sign-in, opens the intake screen, leaves the address bar, refuses anything
+   that is not a case number, and lets the Worker decide who may see the case. */
+section('A link from the office email opens the assignment it names');
+{
+  db.prepare(`INSERT INTO submissions (case_no, kind, status, carrier, client_name, subject_name,
+      claim_number, payload, created_at) VALUES (?, 'claims', 'new', ?, ?, ?, ?, ?, ?)`)
+    .run('API-LNK-1', 'Link Carrier', 'Link Adjuster', 'Link Claimant', 'LNK-77', JSON.stringify({
+      assignment: 'insurance', carrier: 'Link Carrier', client_name: 'Link Adjuster',
+      subject_name: 'Link Claimant', claim_number: 'LNK-77', service_requested: 'Surveillance',
+      objective: 'Document current activity.' }), new Date().toISOString());
+  const state = pg => pg.evaluate(() => ({ view: VIEW, no: WS_CASE, tab: WS_TAB, loaded: !!WS,
+    path: location.pathname + location.search }));
+
+  const ctx = await browser.newContext({ viewport: { width: 1200, height: 900 } });
+  const page = await ctx.newPage();
+  page.on('pageerror', e => ok(`no page errors on a linked case (${e.message})`, false));
+  await page.goto(SITE + '/portal/?case=API-LNK-1');
+  await page.waitForTimeout(300);
+  ok('signed out, the link shows the sign-in first', await page.locator('#loginBtn').count() === 1);
+  await page.locator('#u').fill('trever');
+  await page.locator('#p').fill('AdminPassword1x');
+  await page.locator('#loginBtn').click();
+  await page.waitForTimeout(1500);
+  const s1 = await state(page);
+  ok('after signing in, it opens that assignment on what was submitted',
+     s1.view === 'case' && s1.no === 'API-LNK-1' && s1.tab === 'details' && s1.loaded, JSON.stringify(s1));
+  ok('and the link leaves the address bar, so a reload lands on Home', s1.path === '/portal/', s1.path);
+  ok('the screen shows the submitted assignment', has(await text(page, '#app'), 'Link Claimant'));
+
+  await page.goto(SITE + '/portal/?case=API-LNK-1');
+  await page.waitForTimeout(1500);
+  const s2 = await state(page);
+  ok('already signed in, the same link opens the assignment directly',
+     s2.view === 'case' && s2.no === 'API-LNK-1' && s2.tab === 'details' && s2.loaded && s2.path === '/portal/',
+     JSON.stringify(s2));
+
+  /* A value outside the case-number alphabet opens nothing, asks the Worker
+     for nothing and runs nothing. */
+  const asked = [];
+  page.on('request', r => { if (/\/(submissions|cases)\/[^/]*(%3C|<|onerror)/i.test(r.url())) asked.push(r.url()); });
+  await page.goto(SITE + '/portal/?case=' + encodeURIComponent('<img src=x onerror=window.__lnk=1>'));
+  await page.waitForTimeout(1200);
+  const s3 = await state(page);
+  const pwned = await page.evaluate(() => !!window.__lnk);
+  ok('a link that is not a case number opens nothing', s3.view !== 'case' && !s3.no, JSON.stringify(s3));
+  ok('asks the Worker for nothing and runs nothing', asked.length === 0 && pwned === false, JSON.stringify(asked));
+  ok('and is cleared from the address bar all the same', s3.path === '/portal/', s3.path);
+  await ctx.close();
+
+  /* THE WORKER DECIDES WHO MAY SEE IT, exactly as for a tap: an investigator
+     not on the case is refused, told so, and left on Home rather than on a case
+     screen that will never finish loading. */
+  const ictx = await browser.newContext({ viewport: { width: 1200, height: 900 } });
+  const ip = await ictx.newPage();
+  const said = [];
+  ip.on('dialog', d => { said.push(d.message()); d.accept(); });
+  await ip.goto(SITE + '/portal/?case=API-LNK-1');
+  await ip.waitForTimeout(300);
+  await ip.locator('#u').fill('dana');
+  await ip.locator('#p').fill('FieldWork2026x');
+  await ip.locator('#loginBtn').click();
+  await ip.waitForTimeout(1500);
+  const s4 = await state(ip);
+  ok('an investigator not on the case is refused it by the Worker', !s4.loaded && said.length === 1, JSON.stringify([s4, said]));
+  ok('and is left on Home, not on a screen stuck loading', s4.view === 'list' && !s4.no, JSON.stringify(s4));
+  ok('with nothing of the assignment on screen', !has(await text(ip, '#app'), 'Link Claimant'));
+  await ictx.close();
+}
+
 section('Simple View at 390 and 320');
 {
   await post('/ingest', { case_no: 'API-SV-MOB', service: 'Surveillance',
