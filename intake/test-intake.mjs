@@ -116,6 +116,15 @@ const dots = page => page.locator('#progress i').count();
 const heading = page => page.locator('#app h2').first().innerText();
 const set = (page, k, v) => page.locator(`[data-k="${k}"]`).fill(v);
 const err = page => page.locator('#err').innerText();
+/* A FILL THAT FAILS BY NAME. The carrier door's company field has a place it
+   must be — the first step — and a plain fill of a field that is not there
+   crashes the run on a locator timeout, which is caught but says nothing about
+   WHAT was missing. The Full Custom unit's `fillOr` lesson. */
+async function need(page, k, v, where) {
+  const n = await page.locator(`[data-k="${k}"]`).count();
+  ok(`${where}: the ${k} field is there to fill`, n === 1, `${n} found`);
+  if (n === 1) await page.locator(`[data-k="${k}"]`).fill(v);
+}
 async function advance(page) { await page.locator('.btn.primary').click(); await page.waitForTimeout(90); }
 async function sign(page) {
   const c = page.locator('#sig');
@@ -481,8 +490,13 @@ section('A partial assignment submits, and nothing is invented');
 
   ok('the carrier door says what you know now is enough',
      /can be provided later/i.test(await page.locator('.card').innerText()));
+  /* NEAR THE TOP, SAID ONCE: a referral document is not uploaded here, and the
+     adjuster working from one learns that before retyping it. */
+  ok('the first step says where a referral goes, before any field is filled',
+     /Working from a referral\?/.test(await page.locator('.card').innerText())
+     && /attached to the file by the office once the assignment is accepted/i.test(await page.locator('.card').innerText()));
   await set(page, 'c_name', 'Dana Adjuster');
-  await set(page, 'k_carrier', 'Urgent Mutual');
+  await need(page, 'k_carrier', 'Urgent Mutual', 'partial assignment, contact step');
   await set(page, 'c_email', 'dana@carrier.example');
   await advance(page);
 
@@ -553,6 +567,11 @@ section('A partial assignment submits, and nothing is invented');
   await sign(page);
   await advance(page);
   await page.locator('[data-k="b_email_na"]').check();
+  await set(page, 'k_po', 'typed and then withdrawn');
+  await page.locator('[data-k="k_po_na"]').check();
+  await page.waitForTimeout(80);
+  ok('a billing reference can be marked to follow, which disables its field',
+     await page.locator('[data-k="k_po"]').isDisabled());
   await advance(page);
   await page.waitForTimeout(500);
 
@@ -587,6 +606,8 @@ section('A partial assignment submits, and nothing is invented');
     ok('the known schedule is empty — what was typed before ticking is not sent',
        !stored.known_schedule);
     ok('with its own status', stored.known_schedule_status === 'not_available');
+    ok('the billing reference is empty rather than what was typed', !stored.billing_reference);
+    ok('and marked to follow', stored.billing_reference_status === 'not_available');
     ok('what WAS given still arrives whole',
        stored.carrier === 'Urgent Mutual' && stored.subject_name === 'Pat Claimant'
        && stored.objective === 'Activity level versus stated restrictions');
@@ -602,7 +623,7 @@ section('A partial assignment submits, and nothing is invented');
     ok('the statuses are the only place unavailability is spelled out, one per gap',
        JSON.stringify(Object.keys(stored).filter(k => k.endsWith('_status')).sort())
        === JSON.stringify(['authorized_hours_status', 'billing_email_status',
-         'claim_number_status', 'date_of_loss_status', 'known_schedule_status',
+         'billing_reference_status', 'claim_number_status', 'date_of_loss_status', 'known_schedule_status',
          'prior_surveillance_status', 'start_date_status', 'subject_address_status',
          'subject_description_status']),
        JSON.stringify(Object.keys(stored).filter(k => k.endsWith('_status')).sort()));
@@ -816,7 +837,7 @@ section('The carrier door — /intake/?assignment=insurance');
   })) ok(`the carrier never sees ${what}`, !seen.includes(needle), seen.slice(0, 200));
 
   await set(page, 'c_name', 'Karen Whitfield');
-  await set(page, 'k_carrier', 'Blue Ridge Mutual');
+  await need(page, 'k_carrier', 'Blue Ridge Mutual', 'carrier door, contact step');
   await set(page, 'c_email', 'kwhitfield@carrier.example');
   await set(page, 'c_title', 'Claims Adjuster');
   await set(page, 'c_dept', 'WC Claims');
@@ -1233,7 +1254,7 @@ section('Field labels say what validate() actually enforces');
     await page.waitForTimeout(120);
     await auditStep(page, 'ins:info');
     await set(page, 'c_name', 'A Djuster'); await set(page, 'c_email', 'a@carrier.example');
-    await set(page, 'k_carrier', 'Example Mutual');
+    await need(page, 'k_carrier', 'Example Mutual', 'marker audit, contact step');
     await advance(page);
     await auditStep(page, 'ins:claim');
     await advance(page);
@@ -1301,7 +1322,7 @@ section('Every field marked (optional) really can be left blank');
     // info — one contact method is a pair, so one of the two is filled.
     await set(page, 'c_name', 'Only Required');
     await set(page, 'c_email', 'only@required.example');
-    if (door === 'insurance') await set(page, 'k_carrier', 'Required Carrier');   // marked *, on this step
+    if (door === 'insurance') await need(page, 'k_carrier', 'Required Carrier', 'insurance door, contact step');   // marked *, on this step
     await advance(page);
     if (door === 'private') { await page.locator('#opt-surveillance').click(); await page.waitForTimeout(80); await advance(page); }
     if (door === 'legal') {
@@ -1401,7 +1422,7 @@ section('The carrier door refuses what it needs, and only that');
   await advance(page);
   ok('the name blocks the contact step', /full name/i.test(await err(page)), await err(page));
   await set(page, 'c_name', 'A Djuster');
-  await set(page, 'k_carrier', 'Example Mutual');
+  await need(page, 'k_carrier', 'Example Mutual', 'required-fields walk, contact step');
   await set(page, 'c_phone', '4345550111');
   await advance(page);
   ok('a phone alone does NOT pass — the submitter email is required here',
@@ -1512,7 +1533,7 @@ section('Jordan Smith / Example Carrier — the Insurance page to the receipt');
   const snap = async () => shown.push(await page.locator('#app').innerText());
   await snap();
   await set(page, 'c_name', 'Jordan Smith');
-  await set(page, 'k_carrier', 'Example Carrier');
+  await need(page, 'k_carrier', 'Example Carrier', 'Jordan Smith walk, contact step');
   await set(page, 'c_email', 'jordan.smith@example-carrier.test');
   await advance(page);
   await snap();
@@ -1857,6 +1878,98 @@ section('Each intake door announces its own name');
   ok('and document.title is set from it in one place',
      (body.match(/document\.title\s*=/g) || []).length === 1,
      String((body.match(/document\.title\s*=/g) || []).length));
+}
+
+/* THE CARRIER DOOR ON A PHONE (owner brief 2026-09-24, Part E): at 390 and 320
+   every step of an assignment keeps its labels, raises the keyboard its field
+   needs, and nothing hangs past the right edge — the receipt included, with a
+   claim reference long enough to have to wrap. */
+section('The carrier door at 390 and 320');
+for (const width of [390, 320]) {
+  const ctx = await browser.newContext({ viewport: { width, height: 800 }, isMobile: true, hasTouch: true });
+  const page = await ctx.newPage();
+  await page.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  await page.route('**/portal-api/ingest', r => r.fulfill({ status: 200, contentType: 'application/json',
+    body: '{"ok":true,"receipt":"sent"}' }));
+  page.on('pageerror', e => ok(`no page errors at ${width}px (${e.message})`, false));
+  await page.goto(BASE + '?assignment=insurance');
+  await page.waitForTimeout(150);
+  const steps = [];
+  const check = async tag => steps.push(`${tag}:${await page.evaluate(() =>
+    document.documentElement.scrollWidth - window.innerWidth)}`);
+  const labelsShown = () => page.evaluate(() => [...document.querySelectorAll('label.f')].every(l => {
+    const sp = l.querySelector(':scope > span');
+    if (!sp || !sp.textContent.trim()) return false;
+    const r = sp.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  }));
+
+  ok(`${width}px: the email field raises the email keyboard`,
+     await page.locator('[data-k="c_email"]').getAttribute('type') === 'email');
+  ok(`${width}px: the phone field raises the phone keypad`,
+     await page.locator('[data-k="c_phone"]').getAttribute('type') === 'tel');
+  ok(`${width}px: every field on the contact step has a visible label`, await labelsShown());
+  await check('contact');
+  await set(page, 'c_name', 'Jordan Smith');
+  await set(page, 'k_carrier', 'Example Carrier');
+  await set(page, 'c_email', 'jordan.smith@example-carrier.test');
+  await advance(page);
+  await check('claim');
+  ok(`${width}px: every field on the claim step has a visible label`, await labelsShown());
+  ok(`${width}px: the requested start opens a date picker`,
+     await page.locator('[data-k="z_start"]').getAttribute('type') === 'date');
+  await set(page, 'k_claimno', 'WC-2026-12345-SUPPLEMENTAL-REFERENCE-0099887766');
+  await advance(page);
+  await check('subject');
+  await set(page, 's_name', 'Taylor Example');
+  await advance(page);
+  await check('objective');
+  ok(`${width}px: every field on the objective step has a visible label`, await labelsShown());
+  await set(page, 'o_goal', 'Document current physical activity and routine.');
+  await advance(page);
+  await check('authorization');
+  await page.locator('#opt-auth-pending').click();
+  await page.waitForTimeout(80);
+  await advance(page);
+  await check('agreement');
+  await page.locator('[data-k="a_consent"]').check();
+  await set(page, 'a_typed', 'Jordan Smith');
+  await sign(page);
+  await advance(page);
+  await check('billing');
+  const submit = page.locator('.btn.primary');
+  ok(`${width}px: the last button says what it does`, /Submit assignment/i.test(await submit.innerText()));
+  const sb = await submit.boundingBox();
+  ok(`${width}px: and is a whole tap target on screen`,
+     !!sb && sb.height >= 44 && sb.x >= 0 && sb.x + sb.width <= width + 0.5, JSON.stringify(sb));
+  await advance(page);
+  await page.waitForTimeout(500);
+  await check('receipt');
+  ok(`${width}px: the receipt is shown`, /Assignment received/i.test(await page.locator('.receipt').innerText()));
+  ok(`${width}px: nothing on any step or the receipt hangs past the right edge`,
+     steps.every(s => Number(s.split(':')[1]) <= 0), steps.join(' '));
+  await ctx.close();
+}
+
+/* THE INSURANCE PAGE'S DOOR AT EVERY WIDTH (Part D): the primary action is
+   there, whole, and opens the carrier door, on desktop, tablet and phone. */
+section('The Insurance page CTA at 1200, 768, 390 and 320');
+for (const width of [1200, 768, 390, 320]) {
+  const ctx = await browser.newContext({ viewport: { width, height: 900 } });
+  const page = await ctx.newPage();
+  await page.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  page.on('pageerror', e => ok(`no insurance-page errors at ${width}px (${e.message})`, false));
+  await page.goto(HOME_ROOT + 'insurance-investigations/');
+  await page.waitForTimeout(150);
+  const cta = page.locator('a', { hasText: 'Submit an Insurance Assignment' }).first();
+  await cta.scrollIntoViewIfNeeded();
+  const b = await cta.boundingBox();
+  ok(`${width}px: Submit an Insurance Assignment is on screen and whole`,
+     !!b && b.x >= 0 && b.x + b.width <= width + 0.5 && b.height >= 44, JSON.stringify(b));
+  ok(`${width}px: it opens the carrier door`, await cta.getAttribute('href') === '/intake/?assignment=insurance');
+  const o = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  ok(`${width}px: the Insurance page does not scroll sideways`, o <= 0, String(o));
+  await ctx.close();
 }
 
 /* ------------------------------------------------------------------ report */
@@ -2598,7 +2711,7 @@ section('Closeout: an unavailable claim number cannot identify the file');
   await page.goto(BASE + '?assignment=insurance');
   await page.waitForTimeout(120);
   await set(page, 'c_name', 'Dana Adjuster');
-  await set(page, 'k_carrier', 'Urgent Mutual');
+  await need(page, 'k_carrier', 'Urgent Mutual', 'closeout, contact step');
   await set(page, 'c_email', 'dana@carrier.example');
   await advance(page);
 

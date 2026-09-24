@@ -497,6 +497,7 @@ function naSummary(){
     if(val.z_auth === "pending") items.push("Authorization — pending confirmation");
     if(val.z_start_mode && val.z_start_mode !== "Specific date") items.push("Requested start — " + val.z_start_mode.toLowerCase());
     if(val.b_email_na) items.push("Billing contact — to follow");
+    if(val.k_po_na) items.push("Billing reference — to follow");
   }
   return items;
 }
@@ -565,6 +566,8 @@ function view(step){
       <label class="f"><span>Direct phone${OPT}</span><input type="tel" data-k="c_phone" autocomplete="tel"></label>
     </div>
     <p class="hint" style="margin-top:-6px;">Your assignment confirmation goes to this email, and a request number is issued the moment this is submitted.</p>
+    <p class="hint" id="refnote-top"><b>Working from a referral?</b> Fill in what you have &mdash; referral documents are
+      attached to the file by the office once the assignment is accepted, so nothing needs to be attached here.</p>
     <div class="two">
       <label class="f"><span>Title${OPT}</span><input type="text" data-k="c_title" placeholder="e.g. Claims Adjuster, SIU Investigator"></label>
       <label class="f"><span>Department / team${OPT}</span><input type="text" data-k="c_dept" placeholder="e.g. WC Claims, SIU, Casualty"></label>
@@ -1048,6 +1051,7 @@ function view(step){
       <label class="f"><span>PO number${OPT}</span><input type="text" data-k="b_po"></label>
       <label class="f"><span>Billing reference${OPT}</span><input type="text" data-k="k_po" placeholder="If your billing requires one"></label>
     </div>
+    ${naBox("k_po", "Billing reference to follow")}
     <div class="two">
       <label class="f"><span>Invoice reference${OPT}</span><input type="text" data-k="b_invref"></label>
       <label class="f"><span>Send invoices to${OPT}</span><input type="email" data-k="b_email" placeholder="Accounts payable or billing email"></label>
@@ -1273,6 +1277,7 @@ function buildPayload(){
     }
     if(val.b_email_na){ p.billing_email = ""; p.billing_email_status = "not_available"; }
     if(val.o_sched_na){ p.known_schedule = ""; p.known_schedule_status = "not_available"; }
+    if(val.k_po_na){ p.billing_reference = ""; p.billing_reference_status = "not_available"; }
   }
   if(val.s_addr_na){ p.subject_address = ""; p.subject_address_status = "not_available"; }
   if(val.s_desc_na){ p.subject_description = ""; p.subject_description_status = "not_available"; }
@@ -1416,7 +1421,7 @@ function renderRecord(p, sent, threw, stored){
       ${row(claims?"Assignment objective":"Objective",p.objective)}${claims?`${rowS("Known schedule / activity",p.known_schedule,p.known_schedule_status)}${rowS("Authorized hours",p.authorized_hours,p.authorized_hours_status)}${row("Not to exceed",p.not_to_exceed)}${rowS("Requested start",p.start_date,p.start_date_status)}${row("Urgency",p.priority)}${row("Permitted days",p.permitted_days)}${row("Permitted times",p.permitted_times)}${row("Weekend",p.weekend_authorized)}${row("Geographic limits",p.geographic_limits)}`:""}${row(claims?"Deadline or key dates":"Timeline",p.timeline)}${row(claims?"Special instructions / restrictions":"Notes",p.notes)}${row("Attachments",p.attachments)}
       ${row("Service",p.service)}
       ${claims
-        ? `${row("Billing","Invoiced to carrier")}${row("PO number",p.po_number)}${row("Billing reference",p.billing_reference)}${row("Invoice reference",p.invoice_reference)}${rowS("Invoices to",p.billing_email,p.billing_email_status)}${row("Special billing instructions",p.billing_notes)}`
+        ? `${row("Billing","Invoiced to carrier")}${row("PO number",p.po_number)}${rowS("Billing reference",p.billing_reference,p.billing_reference_status)}${row("Invoice reference",p.invoice_reference)}${rowS("Invoices to",p.billing_email,p.billing_email_status)}${row("Special billing instructions",p.billing_notes)}`
         : `${row("Fee","Sent to you in writing — nothing charged yet")}`}
       ${row(claims?"Authorized by":"Signed by",p.signed_name)}
     </dl>
