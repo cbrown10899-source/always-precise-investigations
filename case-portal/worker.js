@@ -51,6 +51,15 @@ const MAX_PAYLOAD_BYTES = 512 * 1024;   // an intake with a signature is ~50KB
 const LIST_LIMIT_MAX = 200;
 const INVITE_DAYS = 7;
 const INGEST_PER_MINUTE = 60;           // far above real traffic, far below a flood
+/* THE ADJUSTER'S RECEIPT GOES TO AN ADDRESS A STRANGER TYPED, so it has three
+   limits of its own (2026-09-24). A public form that emails whoever it is told
+   to is a way to send mail from the firm's verified domain, and each of these
+   bounds a different shape of that: one inbox flooded, a burst, and a slow
+   drip across a day. Beyond any of them the assignment is still RECORDED — the
+   receipt is a courtesy, never the thing the submission depends on. */
+const RECEIPT_PER_MINUTE = 6;           // receipts, all callers, per minute — its own bucket
+const RECEIPT_PER_ADDRESS_HOUR = 3;     // to any one inbox (+tags folded), per hour
+const RECEIPT_CLAIMS_PER_DAY = 50;      // claims intakes in 24h beyond which receipts pause
 const API_PREFIX = '/portal-api';
 // Case numbers come from a public form, so they are treated as untrusted input
 // and pinned to the shape the intake actually generates: API-YYYYMMDD-NNNN.
@@ -285,11 +294,17 @@ const HEALTH_CACHE = new WeakMap();
 
 async function withinRateLimit(env, kind) {
   const mail = kind === 'mail';
+  /* The assignment receipt has its OWN bucket rather than sharing 'mail': a
+     flood of public claims submissions must not be able to use up the minute an
+     admin needs to email a client a rate sheet. */
+  const receipt = kind === 'receipt';
   const cap = mail
     ? (parseInt(env.MAIL_PER_MINUTE || '', 10) || 20)
+    : receipt
+    ? (parseInt(env.RECEIPT_PER_MINUTE || '', 10) || RECEIPT_PER_MINUTE)
     : (parseInt(env.INGEST_PER_MINUTE || '', 10) || INGEST_PER_MINUTE);
   const minute = nowIso().slice(0, 16);   // YYYY-MM-DDTHH:MM
-  const key = mail ? 'mail:' + minute : minute;
+  const key = mail ? 'mail:' + minute : receipt ? 'receipt:' + minute : minute;
   /* READ BEFORE WRITE (closeout audit, 2026-09-03). This upserted, read and
      swept on EVERY call — two writes and a read spent before deciding whether
      the caller was over the cap — so a flood of REJECTED requests was itself
@@ -303,12 +318,15 @@ async function withinRateLimit(env, kind) {
     `INSERT INTO ingest_rate (minute, n) VALUES (?, 1)
        ON CONFLICT(minute) DO UPDATE SET n = n + 1`).bind(key).run();
   const row = await env.DB.prepare('SELECT n FROM ingest_rate WHERE minute = ?').bind(key).first();
-  // Keep the table from growing without bound — both key shapes.
+  // Keep the table from growing without bound — every key shape. A prefixed
+  // key sorts AFTER every bare minute, so each prefix needs its own branch or
+  // its rows are never old enough to go.
   const cutoff = new Date(Date.now() - 3600_000).toISOString().slice(0, 16);
   await env.DB.prepare(
     `DELETE FROM ingest_rate
-      WHERE (minute NOT LIKE 'mail:%' AND minute < ?1)
-         OR (minute LIKE 'mail:%' AND minute < 'mail:' || ?1)`).bind(cutoff).run();
+      WHERE (minute NOT LIKE 'mail:%' AND minute NOT LIKE 'receipt:%' AND minute < ?1)
+         OR (minute LIKE 'mail:%' AND minute < 'mail:' || ?1)
+         OR (minute LIKE 'receipt:%' AND minute < 'receipt:' || ?1)`).bind(cutoff).run();
   return !row || row.n <= cap;
 }
 
@@ -403,7 +421,192 @@ async function handleIngest(request, env) {
   await linkAcceptance(env, caseNo, p);
   // The case is recorded; telling the office is a courtesy that cannot fail it.
   await notifyAdmins(env, 'intakes', caseNo);
-  return json({ ok: true, case_no: caseNo });
+  /* THE ADJUSTER'S RECEIPT (owner, 2026-09-24), on the carrier path only and
+     only on a FRESH insert — the identical retry above returned before this,
+     so a browser retry cannot email a second receipt. Every other kind answers
+     exactly as it always did: no key is added to a response nothing asked to
+     change. */
+  if (kind !== 'claims') return json({ ok: true, case_no: caseNo });
+  const r = await sendAssignmentReceipt(env, caseNo, p);
+  return json({ ok: true, case_no: caseNo, receipt: r.receipt, receipt_reason: r.receipt_reason });
+}
+
+/* ===== THE ASSIGNMENT RECEIPT (owner brief 2026-09-24, Part E) ==============
+
+   "Email confirmation to the adjuster: reuse existing email infrastructure.
+   Include reference number, subject, service, requested start, company,
+   submission timestamp. Do NOT email highly sensitive intake details
+   unnecessarily."
+
+   ONE SENDER, THE EXISTING ONE. `sendMail` — the Resend path every send in
+   this portal uses — and `ownerRecordCopy` for the office's copy, so its
+   configuration, its failure handling and its "never costs the send" rule are
+   inherited rather than rebuilt.
+
+   A RECEIPT, NOT THE FILE. What goes back is what identifies the referral to
+   the desk that sent it — the request number, the company, the claim or
+   reference number, the subject's name, the service and the requested start —
+   and nothing else the form collected: no injury, no address, no vehicle, no
+   objective, no schedule, no authorization and no signature. Those stay in the
+   portal, which is where the Web3Forms boundary already keeps them.
+
+   IT ECHOES TEXT A STRANGER TYPED, TO AN ADDRESS A STRANGER TYPED. So every
+   echoed value goes through `receiptText` — control and direction characters
+   out, anything shaped like a link or a domain replaced, 80 characters at most
+   — and the service must be one of the form's own five. A receipt can say what
+   was received; it cannot be made to carry somebody's advertisement. The three
+   limits above bound how many can go.
+
+   IT NEVER COSTS THE ASSIGNMENT. The row is already committed and the office
+   already alerted when this runs; it does not throw, and what happened is
+   reported on the response so the page can say "a confirmation has been
+   emailed" only when one was. */
+const RECEIPT_SERVICES = ['Surveillance', 'Claims investigation', "Workers' compensation investigation",
+  'Auto claim investigation', 'Other / not sure yet'];
+const RECEIPT_START = { asap: 'As soon as available', flexible: 'Flexible', tbd: 'To be determined' };
+
+function receiptText(v) {
+  let t = String(v == null ? '' : v)
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g, ' ');
+  t = t.replace(/\S*(?:https?:\/\/|www\.)\S*/gi, '[link removed]')
+       .replace(/\S*[a-z0-9]\.[a-z]{2,}\S*/gi, '[link removed]')
+       .replace(/\s+/g, ' ').trim();
+  return t.length > 80 ? t.slice(0, 79).trimEnd() + '\u2026' : t;
+}
+
+/* A date the form sends as YYYY-MM-DD, read as a CALENDAR date — at UTC, so no
+   machine's zone moves it a day — or the availability word the form recorded
+   instead of inventing one. Anything else is left out rather than echoed. */
+function receiptStart(p) {
+  const d = String(p.start_date || '');
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d);
+  if (m) {
+    const [y, mo, day] = [Number(m[1]), Number(m[2]), Number(m[3])];
+    const dt = new Date(Date.UTC(y, mo - 1, day));
+    if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== day) return '';
+    return dt.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric', year: 'numeric' });
+  }
+  return d ? '' : (RECEIPT_START[p.start_date_status] || '');
+}
+
+/* When it was submitted, on the firm's clock — EST or EDT resolved from the
+   instant itself, never a hard-coded offset (the vstLabel rule). */
+function receiptWhen(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-US', { timeZone: TL_TZ, month: 'long', day: 'numeric', year: 'numeric' })
+    + ', ' + d.toLocaleTimeString('en-US', { timeZone: TL_TZ, hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
+}
+
+/* The inbox a message actually lands in: case and surrounding space folded,
+   and a +tag dropped, because a+1@ and a+2@ are one person's inbox. */
+function receiptInbox(e) {
+  const t = String(e || '').trim().toLowerCase();
+  const at = t.lastIndexOf('@');
+  return at < 1 ? t : t.slice(0, at).split('+')[0] + t.slice(at);
+}
+
+function assignmentReceiptFacts(caseNo, p) {
+  const claimNo = receiptText(p.claim_number);
+  return {
+    case_no: caseNo,
+    contact: receiptText(p.client_name),
+    company: receiptText(p.carrier),
+    claim: claimNo || (p.claim_number_status === 'not_available' ? 'Not available at submission' : ''),
+    subject: receiptText(p.subject_name),
+    service: RECEIPT_SERVICES.includes(p.service_requested) ? p.service_requested : '',
+    start: receiptStart(p),
+    when: receiptWhen(nowIso()),
+  };
+}
+
+function assignmentReceiptEmail(f) {
+  const rows = [
+    ['Request number', f.case_no], ['Company', f.company], ['Claim / reference', f.claim],
+    ['Subject', f.subject], ['Service requested', f.service], ['Requested start', f.start],
+    ['Submitted', f.when],
+  ].filter(([, v]) => String(v || '').trim() !== '');
+  const greet = f.contact ? `${f.contact},` : 'Hello,';
+  const text =
+`${greet}
+
+ASSIGNMENT RECEIVED
+
+Always Precise Investigations has received your assignment. We will review the referral and contact you if additional information is needed.
+
+${rows.map(([k, v]) => `${k}: ${v}`).join('\n')}
+
+Submitting an assignment does not by itself constitute acceptance. Acceptance, availability, rates and authorization are confirmed with you before work begins.
+
+Questions about this assignment: (434) 907-0975. Please quote the request number.
+
+You received this because this address was entered on our assignment form. If you did not submit an assignment, no action is needed.
+
+Always Precise Investigations, LLC — Va DCJS #11-9159`;
+  const html =
+`<div style="font-family:'Segoe UI',Arial,sans-serif;color:#1c2531;line-height:1.55;max-width:560px">
+  <p>${escHtml(greet)}</p>
+  <h2 style="margin:0 0 6px;font-size:18px;color:#12305a">Assignment received</h2>
+  <p>Always Precise Investigations has received your assignment. We will review the referral and
+     contact you if additional information is needed.</p>
+  <table style="border-collapse:collapse;font-size:14px;margin:8px 0 14px">${rows.map(([k, v]) =>
+    `<tr><td style="padding:3px 14px 3px 0;color:#5c6775">${escHtml(k)}</td>
+     <td style="padding:3px 0"><b>${escHtml(String(v))}</b></td></tr>`).join('')}</table>
+  <p style="font-size:.9rem">Submitting an assignment does not by itself constitute acceptance.
+     Acceptance, availability, rates and authorization are confirmed with you before work begins.</p>
+  <p style="font-size:.9rem;color:#5c6775">Questions about this assignment: (434) 907-0975.
+     Please quote the request number.</p>
+  <p style="font-size:.8rem;color:#5c6775">You received this because this address was entered on our
+     assignment form. If you did not submit an assignment, no action is needed.</p>
+  <p style="font-size:.85rem;color:#5c6775">Always Precise Investigations, LLC &middot; Va DCJS #11-9159</p>
+</div>`;
+  return { subject: `Assignment received — ${f.case_no}`, text, html };
+}
+
+async function sendAssignmentReceipt(env, caseNo, p) {
+  try {
+    const to = String(p.client_email || '').trim();
+    if (!to || to.length > 200 || !/^[^\s@]+@[^\s@.]+\.[^\s@]+$/.test(to)) {
+      return { receipt: 'skipped', receipt_reason: 'no_address' };
+    }
+    /* Checked before any limit is spent, so an unconfigured Worker does not
+       use up a bucket on sends that could never go. */
+    if (!env.RESEND_API_KEY) return { receipt: 'skipped', receipt_reason: 'not_configured' };
+
+    /* The day, then the inbox, then the minute. Each read is bounded by its
+       own LIMIT and walks the created_at index; none grows with the table. */
+    const dayAgo = new Date(Date.now() - 86_400_000).toISOString();
+    const day = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM (SELECT 1 FROM submissions
+        WHERE created_at > ? AND kind = 'claims' LIMIT ?)`)
+      .bind(dayAgo, RECEIPT_CLAIMS_PER_DAY + 1).first();
+    if (day && day.n > RECEIPT_CLAIMS_PER_DAY) return { receipt: 'skipped', receipt_reason: 'paused' };
+
+    const hourAgo = new Date(Date.now() - 3_600_000).toISOString();
+    const recent = await env.DB.prepare(
+      `SELECT client_email FROM submissions
+        WHERE created_at > ? AND kind = 'claims' ORDER BY created_at DESC LIMIT ?`)
+      .bind(hourAgo, 200).all();
+    const inbox = receiptInbox(to);
+    const same = (recent.results || []).filter(r => receiptInbox(r.client_email) === inbox).length;
+    if (same > RECEIPT_PER_ADDRESS_HOUR) return { receipt: 'skipped', receipt_reason: 'throttled' };
+
+    if (!(await withinRateLimit(env, 'receipt'))) return { receipt: 'skipped', receipt_reason: 'rate_limited' };
+
+    const f = assignmentReceiptFacts(caseNo, p);
+    const { subject, text, html } = assignmentReceiptEmail(f);
+    const mail = await sendMail(env, { to, subject, text, html });
+    if (!mail.sent) return { receipt: 'failed', receipt_reason: mail.reason || 'failed' };
+    /* The office's record of what the adjuster was sent — the same sanitized
+       values, so the copy states exactly what the receipt stated. */
+    await ownerRecordCopy(env, 'assignment_receipt', {
+      to, client: f.contact, case_no: caseNo, company: f.company, claim: f.claim,
+      subject: f.subject, service: f.service, start: f.start,
+    });
+    return { receipt: 'sent', receipt_reason: '' };
+  } catch (e) {
+    console.error('assignment receipt failed', e && e.message ? e.message : e);
+    return { receipt: 'failed', receipt_reason: 'failed' };
+  }
 }
 
 /* ==== READING A PRESERVED DOCUMENT (owner brief 2026-09-07 §11/§18) =======
@@ -5039,11 +5242,16 @@ const FIELD_KEEP = [
   // it is a budget, and a budget is commercial.
   'start_date', 'permitted_days', 'permitted_times', 'weekend_authorized',
   'priority', 'geographic_limits',
+  // the adjuster-assignment fields that are FIELDWORK (2026-09-24): which
+  // service was asked for, and the schedule the investigator plans around.
+  // The department, insured, PO and invoice reference are the paying side and
+  // are deliberately not here.
+  'service_requested', 'known_schedule',
   // INTAKE-NA: the availability of a field the investigator can already see.
   // "Address not available yet" is field context; the statuses of office-side
   // fields (claim number, billing) are deliberately NOT here.
   'subject_address_status', 'subject_description_status', 'date_of_loss_status',
-  'start_date_status', 'authorized_hours_status',
+  'start_date_status', 'authorized_hours_status', 'known_schedule_status',
 ];
 
 /* The denormalised columns carry the same identities as the payload does — a
@@ -16977,6 +17185,9 @@ const RECORD_DOC = {
   agreement_payment: 'Payment recorded',
   /* ...and on a legal flat-fee case, where it is the flat fee (2026-09-24). */
   flat_fee_payment: 'Flat fee payment recorded',
+  /* The receipt an adjuster is emailed when a carrier assignment arrives
+     through the public form (2026-09-24). */
+  assignment_receipt: 'Assignment receipt',
 };
 
 /* THE OFFICE'S OWN RECORD OF A RETAINER PAYMENT (owner brief 2026-09-07 §13).
@@ -17068,6 +17279,13 @@ async function ownerRecordCopy(env, kind, facts) {
       ['Paid on', f.paid_on || ''],
       ['Reference', f.reference || ''],
       ['Case', f.case_no || ''],
+      /* The assignment receipt's own lines (2026-09-24). Absent everywhere
+         else, so every existing copy is unchanged. */
+      ['Company', f.company || ''],
+      ['Claim / reference', f.claim || ''],
+      ['Subject', f.subject || ''],
+      ['Service requested', f.service || ''],
+      ['Requested start', f.start || ''],
       ['Business', f.context || ''],
       ['Version', f.version || ''],
       ['Flat fee', f.flat_fee != null ? usd(f.flat_fee) : ''],

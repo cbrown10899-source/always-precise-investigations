@@ -41,7 +41,7 @@ GBP_URL = "https://maps.google.com/?cid=1285488950812777376"
 # would stop matching the one generated after it, and the deploy guard would
 # fail on the NEXT day rather than this one. Bump this by hand when the location
 # content actually changes.
-CONTENT_REVISED = "2026-09-15"
+CONTENT_REVISED = "2026-09-24"
 FACEBOOK = "https://www.facebook.com/AlwaysPreciseInvestigations/"
 
 # THE GEOGRAPHY HIERARCHY HAS ONE WRITER (owner, 2026-09-13, finalization).
@@ -491,8 +491,8 @@ def page(p):
   defense firms — surveillance, activity documentation and factual investigative reporting, worked
   to a written authorization and invoiced against it. Nothing is charged at assignment, and rates
   are confirmed with you before the work is accepted.
-  <a href="{DOMAIN}/insurance-investigations/">How we work claims</a> &middot;
-  <a href="{DOMAIN}/intake/?assignment=insurance">Submit an assignment</a></p>
+  <a href="{DOMAIN}/insurance-investigations/">How we work insurance claims in {esc(place)}</a> &middot;
+  <a href="{DOMAIN}/intake/?assignment=insurance">Submit an insurance assignment</a></p>
 </div></section>
 
 <section><div class="wrap">
@@ -500,7 +500,7 @@ def page(p):
   <p>Attorneys, paralegals and legal departments open a matter through the legal assignment intake,
   which records the firm, the responsible attorney and the day-to-day contact separately and issues
   a request number immediately. Firms are billed by invoice.
-  <a href="{DOMAIN}/legal-investigations/">How we support counsel</a> &middot;
+  <a href="{DOMAIN}/legal-investigations/">How we support law firms in {esc(place)}</a> &middot;
   <a href="{DOMAIN}/intake/?assignment=legal">Submit a legal assignment</a></p>
 </div></section>
 

@@ -415,6 +415,267 @@ section('Ingest: a retry is not a collision');
        .first()).n === 1);
 }
 
+/* THE ADJUSTER'S RECEIPT (owner brief 2026-09-24, Parts E and Y). A carrier
+   assignment from the public form emails the adjuster a RECEIPT — the request
+   number and the facts that identify their own referral — through the one
+   sender the portal already has, and copies the office through the one record
+   copy it already has. Every half is asserted from the bytes the provider was
+   handed, because a receipt is exactly the kind of message whose contents
+   drift when only the screen is checked. */
+section('Carrier assignment: the adjuster is emailed a receipt, and only a receipt');
+{
+  const realFetch = globalThis.fetch;
+  let mails = [], reject = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) {
+      const m = JSON.parse(init.body);
+      if (reject && reject(m)) return new Response('{"message":"refused"}', { status: 422 });
+      mails.push(m);
+      return new Response('{"id":"re_ok"}', { status: 200 });
+    }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.RESEND_API_KEY = 'test-resend-key';
+  env.INGEST_PER_MINUTE = '200';
+  env.RECEIPT_PER_MINUTE = '100';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await call(env, '/billing-settings', { method: 'POST', cookie: admin,
+    body: { owner_record_email: 'office@alwaysprecise.example' } });
+  await call(env, '/notify-recipients', { method: 'POST', cookie: admin,
+    body: { label: 'Desk', email: 'desk@firm.test', enabled: true,
+            alerts: { intakes: true, payments: false, reports: false, packages: false, tasks: false } } });
+
+  /* The owner's own fixture, as the public form's carrier door builds it. */
+  const JORDAN = {
+    case_no: 'API-JS-1', assignment: 'insurance', service: 'Insurance Claim Assignment',
+    client_name: 'Jordan Smith', client_email: 'jordan.smith@example-carrier.test', client_phone: '',
+    carrier: 'Example Carrier', claim_number: 'WC-2026-12345', subject_name: 'Taylor Example',
+    service_requested: 'Surveillance', objective: 'Document current physical activity and routine.',
+    known_schedule: 'Physical therapy Thursday at 10:00 AM.', start_date: '', start_date_status: 'asap',
+    po_number: '', department: 'WC Claims', insured_name: 'Example Employer Inc',
+    invoice_reference: 'INV-REF-7', subject_address: '12 Hidden Lane',
+    subject_relationship: 'Lumbar strain; no lifting', not_to_exceed: '$3,600 cap',
+    signature: 'data:image/png;base64,SIGBYTES', signed_name: 'Jordan Smith',
+    payment_method: 'Invoiced to carrier', fee_due: 0,
+  };
+  mails = [];
+  const res = await ingest(env, JORDAN);
+  const body = await jsonOf(res);
+  ok('the assignment is accepted', res.status === 200 && body.ok === true && body.case_no === 'API-JS-1');
+  ok('and the response says the receipt went', body.receipt === 'sent' && body.receipt_reason === '',
+     JSON.stringify(body));
+  const toAdj = mails.filter(m => m.to === 'jordan.smith@example-carrier.test');
+  ok('exactly one message went to the adjuster', toAdj.length === 1, JSON.stringify(mails.map(m => m.to)));
+  const r = toAdj[0] || { subject: '', text: '', html: '' };
+  ok('its subject is the receipt, carrying the request number',
+     r.subject === 'Assignment received — API-JS-1', r.subject);
+  for (const [what, needle] of [['request number', 'API-JS-1'], ['company', 'Example Carrier'],
+       ['claim / reference number', 'WC-2026-12345'], ['subject', 'Taylor Example'],
+       ['service requested', 'Surveillance'], ['requested start', 'As soon as available']]) {
+    ok(`the receipt names the ${what}, in both parts`, r.text.includes(needle) && r.html.includes(needle), what);
+  }
+  ok('it carries the submission time on the firm\'s own clock',
+     /Submitted: [A-Z][a-z]+ \d{1,2}, \d{4}, \d{1,2}:\d{2}\s?[AP]M E[SD]T/.test(r.text), r.text);
+  ok('it says the approved sentence',
+     r.text.includes('Always Precise Investigations has received your assignment. We will review the referral and contact you if additional information is needed.'));
+  ok('it promises no acceptance and no start',
+     r.text.includes('does not by itself constitute acceptance')
+     && !/has been accepted|we will begin|guarantee|same day/i.test(r.text), r.text);
+  const whole = JSON.stringify(r);
+  for (const [what, needle] of [['the subject\'s address', 'Hidden Lane'], ['the injury', 'Lumbar'],
+       ['the objective', 'physical activity'], ['the known schedule', 'Physical therapy'],
+       ['the signature', 'SIGBYTES'], ['the not-to-exceed', '3,600'], ['the insured', 'Example Employer'],
+       ['the department', 'WC Claims'], ['the invoice reference', 'INV-REF-7']]) {
+    ok(`the receipt carries nothing more than a receipt — not ${what}`, !whole.includes(needle), needle);
+  }
+  ok('and no price, retainer or payment method of any kind',
+     !/\$|retainer|venmo|cash app|non-refundable/i.test(r.text + r.html));
+
+  const copies = mails.filter(m => m.to === 'office@alwaysprecise.example');
+  ok('the office gets ONE record copy of the receipt',
+     copies.length === 1 && copies[0].subject === 'RECORD COPY — Assignment receipt sent to jordan.smith@example-carrier.test',
+     JSON.stringify(copies.map(c => c.subject)));
+  const c0 = copies[0] || { text: '' };
+  ok('which states what the receipt stated',
+     ['API-JS-1', 'Example Carrier', 'WC-2026-12345', 'Taylor Example', 'Surveillance', 'As soon as available']
+       .every(n => c0.text.includes(n)), c0.text);
+  const alert = mails.filter(m => m.to === 'desk@firm.test');
+  ok('the office alert still goes, once, and still names no one',
+     alert.length === 1 && /Insurance/.test(alert[0].subject)
+     && !/Taylor|Jordan|Example Carrier|WC-2026/.test(alert[0].subject + alert[0].text),
+     JSON.stringify(alert.map(a => a.subject)));
+
+  const row = await env.DB.prepare("SELECT kind, payload, assigned_to FROM submissions WHERE case_no = 'API-JS-1'").first();
+  ok('it files as a claim assignment', row.kind === 'claims');
+  ok('the submission is preserved byte for byte as it arrived', row.payload === JSON.stringify(JORDAN));
+
+  /* A RETRY IS NOT A SECOND ASSIGNMENT, AND NOT A SECOND RECEIPT. */
+  mails = [];
+  const again = await jsonOf(await ingest(env, JORDAN));
+  ok('an identical retry is quiet and emails nobody', again.duplicate === true && mails.length === 0,
+     JSON.stringify([again, mails.length]));
+  ok('and files no second assignment',
+     Number((await env.DB.prepare("SELECT COUNT(*) AS n FROM submissions WHERE case_no = 'API-JS-1'").first()).n) === 1);
+
+  /* THE PORTAL HALF: it is on the desk, accepts in one tap, and nobody is
+     chosen for it. */
+  const listed = await jsonOf(await call(env, '/submissions', { cookie: admin }));
+  const onDesk = listed.submissions.find(x => x.case_no === 'API-JS-1');
+  ok('the intake appears for the admin', !!onDesk && onDesk.kind === 'claims', JSON.stringify(onDesk).slice(0, 200));
+  const detail = await jsonOf(await call(env, '/submissions/API-JS-1', { cookie: admin }));
+  ok('the owner sees every submitted field',
+     ['service_requested', 'known_schedule', 'department', 'insured_name', 'invoice_reference', 'objective']
+       .every(k => detail.submission.payload[k] === JORDAN[k]), JSON.stringify(detail.submission.payload).slice(0, 300));
+  const acc = await call(env, '/leads/API-JS-1/status', { method: 'POST', cookie: admin, body: { status: 'converted' } });
+  ok('the owner accepts it in one tap', acc.status === 200, String(acc.status));
+  const after = await env.DB.prepare("SELECT payload, assigned_to FROM submissions WHERE case_no = 'API-JS-1'").first();
+  ok('accepting assigns nobody — no staff chooser stands in the way', !after.assigned_to, String(after.assigned_to));
+  ok('and the original submission is untouched by acceptance', after.payload === JSON.stringify(JORDAN));
+  mails = [];
+  const priv = await call(env, '/sheets/private_retainer/email', { method: 'POST', cookie: admin,
+    body: { to: 'jordan.smith@example-carrier.test', case_no: 'API-JS-1', include_payment: true } });
+  ok('the private rate sheet is refused on the claim assignment', priv.status === 400 && mails.length === 0,
+     String(priv.status));
+
+  /* ONLY A CARRIER ASSIGNMENT GETS ONE. A private or legal intake answers
+     exactly as it always did — no receipt, no new key. */
+  mails = [];
+  const pc = await jsonOf(await ingest(env, { case_no: 'API-JS-P', service: 'Surveillance',
+    client_name: 'Private Person', client_email: 'person@example.test', subject_name: 'S' }));
+  ok('a private intake is emailed no receipt', !mails.some(m => m.to === 'person@example.test'));
+  ok('and its response carries no receipt key', !('receipt' in pc) && !('receipt_reason' in pc), JSON.stringify(pc));
+  mails = [];
+  const lc = await jsonOf(await ingest(env, { case_no: 'API-JS-L', assignment: 'legal',
+    client_name: 'Para Legal', client_email: 'para@firm.example', firm_name: 'Smith Law', subject_name: 'S' }));
+  ok('a legal intake is emailed no receipt either',
+     !mails.some(m => m.to === 'para@firm.example') && !('receipt' in lc), JSON.stringify(lc));
+
+  /* WITHOUT AN ADDRESS, OR WITHOUT A PROVIDER, THE ASSIGNMENT STILL LANDS. */
+  mails = [];
+  const noAddr = await jsonOf(await ingest(env, { ...JORDAN, case_no: 'API-JS-2', client_email: '' }));
+  ok('no address: recorded, receipt skipped by name',
+     noAddr.ok === true && noAddr.receipt === 'skipped' && noAddr.receipt_reason === 'no_address', JSON.stringify(noAddr));
+  const badAddr = await jsonOf(await ingest(env, { ...JORDAN, case_no: 'API-JS-3', client_email: 'not an address' }));
+  ok('a malformed address is not written to', badAddr.receipt === 'skipped' && badAddr.receipt_reason === 'no_address');
+  const bare = freshEnv();
+  const off = await jsonOf(await ingest(bare, { ...JORDAN, case_no: 'API-JS-4' }));
+  ok('no provider configured: recorded, receipt skipped by name',
+     off.ok === true && off.receipt === 'skipped' && off.receipt_reason === 'not_configured', JSON.stringify(off));
+  ok('and the row is there', !!(await bare.DB.prepare("SELECT 1 AS x FROM submissions WHERE case_no = 'API-JS-4'").first()));
+
+  /* A PROVIDER REFUSAL IS REPORTED, NEVER FATAL, AND COPIES NOBODY — the
+     office's record copy is of a receipt that went. */
+  mails = [];
+  reject = m => m.to === 'refused@example-carrier.test';
+  const refused = await jsonOf(await ingest(env, { ...JORDAN, case_no: 'API-JS-5', client_email: 'refused@example-carrier.test' }));
+  reject = null;
+  ok('a refused receipt is reported as failed', refused.ok === true && refused.receipt === 'failed'
+     && refused.receipt_reason === 'rejected', JSON.stringify(refused));
+  ok('the assignment is recorded regardless',
+     !!(await env.DB.prepare("SELECT 1 AS x FROM submissions WHERE case_no = 'API-JS-5'").first()));
+  ok('and the office is not sent a record of a receipt that never went',
+     !mails.some(m => /Assignment receipt/.test(m.subject || '')), JSON.stringify(mails.map(m => m.subject)));
+  /* ...and a copy that fails costs the receipt nothing. */
+  mails = [];
+  reject = m => m.to === 'office@alwaysprecise.example';
+  const copyFail = await jsonOf(await ingest(env, { ...JORDAN, case_no: 'API-JS-6', client_email: 'six@example-carrier.test' }));
+  reject = null;
+  ok('a failed office copy does not turn a sent receipt into a failure',
+     copyFail.receipt === 'sent' && mails.some(m => m.to === 'six@example-carrier.test'), JSON.stringify(copyFail));
+
+  /* IT ECHOES TEXT A STRANGER TYPED — so a link, a domain, a direction
+     override or an essay cannot ride out on it, and the service must be one
+     of the form's own. */
+  mails = [];
+  const spam = await jsonOf(await ingest(env, { ...JORDAN, case_no: 'API-JS-7', client_email: 'victim@example.org',
+    carrier: 'Visit http://spam.example.net/win now', subject_name: 'Deals at cheap-pills.xyz ‮evil',
+    claim_number: 'C'.repeat(200), service_requested: 'Free money', client_name: 'www.promo.example' }));
+  const sm = mails.find(m => m.to === 'victim@example.org') || { text: '', html: '' };
+  const both = sm.text + sm.html;
+  ok('a spam-shaped submission still gets a receipt, defanged', spam.receipt === 'sent', JSON.stringify(spam));
+  ok('no link survives into it', !/http|spam\.example|cheap-pills|promo\.example|www\./i.test(both), sm.text);
+  ok('it says a link was removed instead', /\[link removed\]/.test(sm.text));
+  ok('no direction-override character survives', !/[‪-‮]/.test(both));
+  ok('an essay is cut to 80 characters', !sm.text.includes('C'.repeat(81)) && sm.text.includes('C'.repeat(79) + '…'));
+  ok('and a service the form does not offer is not echoed', !/Free money/.test(both) && !/Service requested/.test(sm.text));
+
+  /* THREE LIMITS. One inbox, however it is spelled... */
+  const inbox = freshEnv();
+  inbox.RESEND_API_KEY = 'test-resend-key'; inbox.INGEST_PER_MINUTE = '200'; inbox.RECEIPT_PER_MINUTE = '100';
+  const spellings = ['same@example.net', 'SAME@example.net', ' same+a@example.net ', 'same+b@Example.net'];
+  const answers = [];
+  for (let i = 0; i < spellings.length; i++) {
+    answers.push((await jsonOf(await ingest(inbox, { ...JORDAN, case_no: `API-IN-${i}`, client_email: spellings[i] }))).receipt_reason);
+  }
+  ok('one inbox gets three receipts an hour, however the address is spelled',
+     JSON.stringify(answers) === JSON.stringify(['', '', '', 'throttled']), JSON.stringify(answers));
+  ok('and the fourth assignment is still recorded',
+     !!(await inbox.DB.prepare("SELECT 1 AS x FROM submissions WHERE case_no = 'API-IN-3'").first()));
+  /* ...a burst, in a bucket of its own so it cannot use up the office's minute... */
+  const burst = freshEnv();
+  burst.RESEND_API_KEY = 'test-resend-key'; burst.INGEST_PER_MINUTE = '200';
+  burst.RECEIPT_PER_MINUTE = '2'; burst.MAIL_PER_MINUTE = '5';
+  await bootstrapAdmin(burst);
+  const bAdmin = (await login(burst, 'trever', 'FirstAdminPass1')).cookie;
+  const b = [];
+  for (let i = 0; i < 3; i++) {
+    b.push((await jsonOf(await ingest(burst, { ...JORDAN, case_no: `API-BU-${i}`, client_email: `b${i}@example.net` }))).receipt_reason);
+  }
+  ok('a burst past the receipt minute is held back by name',
+     JSON.stringify(b) === JSON.stringify(['', '', 'rate_limited']), JSON.stringify(b));
+  ok('while an admin send in the same minute still goes',
+     (await call(burst, '/intake-link/email', { method: 'POST', cookie: bAdmin,
+        body: { to: 'client@example.com', name: 'A Client', kind: 'private' } })).status === 200);
+  /* ...and a slow drip across a day. */
+  const drip = freshEnv();
+  drip.RESEND_API_KEY = 'test-resend-key';
+  const nowish = new Date(Date.now() - 2 * 3600_000).toISOString();
+  for (let i = 0; i < 50; i++) {
+    await drip.DB.prepare(`INSERT INTO submissions (case_no, kind, client_email, payload, created_at)
+      VALUES (?, 'claims', ?, '{}', ?)`).bind(`API-DR-${i}`, `d${i}@example.net`, nowish).run();
+  }
+  const paused = await jsonOf(await ingest(drip, { ...JORDAN, case_no: 'API-DR-X', client_email: 'fresh@example.net' }));
+  ok('past fifty carrier intakes in a day, receipts pause — and the intake still lands',
+     paused.ok === true && paused.receipt === 'skipped' && paused.receipt_reason === 'paused', JSON.stringify(paused));
+
+  /* THE BUCKET IS SWEPT like the other two, or its rows never age out: a
+     prefixed key sorts after every bare minute. */
+  const sweep = freshEnv();
+  sweep.RESEND_API_KEY = 'test-resend-key';
+  await sweep.DB.prepare("INSERT INTO ingest_rate (minute, n) VALUES ('receipt:2020-01-01T00:00', 3)").run();
+  await ingest(sweep, { ...JORDAN, case_no: 'API-SW-1' });
+  ok('an old receipt-bucket row is swept',
+     !(await sweep.DB.prepare("SELECT 1 AS x FROM ingest_rate WHERE minute = 'receipt:2020-01-01T00:00'").first()));
+
+  /* THE FIELD SEES THE FIELDWORK AND NOTHING OF THE PAYING SIDE. */
+  const link = (await jsonOf(await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' }))).url;
+  await call(env, `/invite/${new URL(link, 'https://x.test').searchParams.get('invite')}/accept`,
+    { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const dana = (await jsonOf(await call(env, '/users', { cookie: admin }))).users.find(u => u.username === 'dana');
+  await ingest(env, { ...JORDAN, case_no: 'API-JS-F', client_email: 'field@example-carrier.test',
+    po_number: 'PO-SECRET-1', known_schedule: '', known_schedule_status: 'not_available' });
+  await call(env, '/submissions/API-JS-F/assign', { method: 'POST', cookie: admin, body: { user_id: dana.id } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  const fd = await jsonOf(await call(env, '/submissions/API-JS-F', { cookie: inv }));
+  const fp = fd.submission.payload;
+  ok('an investigator is sent the service requested', fp.service_requested === 'Surveillance');
+  ok('and that the schedule is not known yet', fp.known_schedule_status === 'not_available');
+  const fseen = JSON.stringify(fd);
+  for (const [what, needle] of [['the department', 'WC Claims'], ['the insured', 'Example Employer'],
+       ['the purchase order', 'PO-SECRET-1'], ['the invoice reference', 'INV-REF-7'], ['the company', 'Example Carrier']]) {
+    ok(`an investigator is not sent ${what}`, !fseen.includes(needle), needle);
+  }
+  await ingest(env, { ...JORDAN, case_no: 'API-JS-G', client_email: 'g@example-carrier.test' });
+  await call(env, '/submissions/API-JS-G/assign', { method: 'POST', cookie: admin, body: { user_id: dana.id } });
+  const gd = await jsonOf(await call(env, '/submissions/API-JS-G', { cookie: inv }));
+  ok('an investigator is sent the known schedule to plan around',
+     gd.submission.payload.known_schedule === 'Physical therapy Thursday at 10:00 AM.');
+
+  globalThis.fetch = realFetch;
+}
+
 /* ------------------------------------------------- roles and case visibility */
 
 async function invite(env, cookie, body) {
@@ -9723,6 +9984,16 @@ section('Email alerts reach the recipients who asked for each event');
                       client_phone: '5550100888', subject_name: 'Pat Claimant',
                       subject_address: '14 Elm Row', subject_relationship: 'Lumbar strain',
                       carrier: 'Confidential Mutual', claim_number: 'CM-90210' });
+  /* A carrier assignment from the public form also emails its SUBMITTER a
+     receipt (2026-09-24) — their own referral echoed back to the address they
+     typed, which is a different message to a different person from the
+     office's alert. It is asserted as exactly that, and then set aside so every
+     assertion below still reads the ALERT alone. */
+  const toSubmitter = mails.filter(m => String(m.to) === 'client@example.com');
+  ok('the submitter is sent their receipt, and only their receipt',
+     toSubmitter.length === 1 && toSubmitter[0].subject === 'Assignment received — API-ALERT-1',
+     JSON.stringify(toSubmitter.map(m => m.subject)));
+  mails = mails.filter(m => String(m.to) !== 'client@example.com');
   ok('an intake alerts the recipient who asked for intakes', only('intakes'), went().join(' | '));
   ok('a phone-only recipient is not emailed instead',
      went().every(t => !t.includes('off@example.com')) && !bodies().includes('555 0100 777'));

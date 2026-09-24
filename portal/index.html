@@ -23325,6 +23325,8 @@ function svCaseDrawer(){
     <div class="sv-card">
       <h3>The assignment</h3>
       ${row(claim ? "Scope" : "Objective", p.objective)}
+      ${row("Service requested", p.service_requested)}
+      ${p.known_schedule ? row("Known schedule", p.known_schedule) : na("Known schedule", p.known_schedule_status)}
       ${row("Permitted days", p.permitted_days)}${row("Permitted times", p.permitted_times)}
       ${row("Weekend", p.weekend_authorized)}${row("Geographic limits", p.geographic_limits)}
       ${row("Priority", p.priority)}
@@ -23669,7 +23671,7 @@ function stillNeeded(p, claim){
     ["subject_address", claim ? "Claimant address" : "Subject address"],
     ["subject_description", "Vehicle / description"],
     ["start_date", "Requested start"], ["authorized_hours", "Authorization"],
-    ["billing_email", "Billing contact"],
+    ["billing_email", "Billing contact"], ["known_schedule", "Known schedule / activity"],
   ];
   const items = [];
   for(const [k, lbl] of map){
@@ -23718,7 +23720,9 @@ function detailList(s, mode){
       ${rowS("Description", p.subject_description, p.subject_description_status)}
       ${row(claim ? "Injury & restrictions" : "Relationship", p.subject_relationship)}
       ${row("Prior surveillance", p.prior_surveillance)}
+      ${row("Service requested", p.service_requested)}
       ${row(claim ? "Scope" : "Objective", p.objective)}
+      ${rowS("Known schedule / activity", p.known_schedule, p.known_schedule_status)}
       ${row("Permitted days", p.permitted_days)}${row("Permitted times", p.permitted_times)}
       ${row("Weekend", p.weekend_authorized)}${row("Geographic limits", p.geographic_limits)}
       ${row("Field notes", p.notes)}
@@ -23729,14 +23733,17 @@ function detailList(s, mode){
   ${intakeSummaryHtml(s, p, claim)}
   <h3 class="sec-h">PROVIDED INFORMATION</h3>
   <dl class="detail">
-    ${claim ? `${row("Carrier / TPA", p.carrier)}${rowS("Claim number", p.claim_number, p.claim_number_status)}${row("Policy number", p.policy_number)}
+    ${claim ? `${row("Carrier / TPA", p.carrier)}${row("Service requested", p.service_requested)}
+               ${rowS("Claim number", p.claim_number, p.claim_number_status)}${row("Policy number", p.policy_number)}
+               ${row("Insured", p.insured_name)}
                ${row("Claim type", p.claim_type)}${rowS("Date of loss", p.date_of_loss, p.date_of_loss_status)}${row("Adjuster", p.adjuster)}
                ${row("Adjuster email", p.adjuster_email)}${row("Adjuster phone", p.adjuster_phone)}
                ${row("Defense counsel", p.defense_counsel)}` : ""}
-    ${row(claim ? "Assigning contact" : "Client", p.client_name)}${row("Phone", p.client_phone)}${row("Email", p.client_email)}
+    ${row(claim ? "Assigning contact" : "Client", p.client_name)}${claim ? `${row("Title", p.contact_title)}${row("Department / team", p.department)}${row("Organization type", p.organization_type)}` : ""}${row("Phone", p.client_phone)}${row("Email", p.client_email)}
     ${claim ? "" : `${row("Address", p.client_address)}${row("Best time", p.best_time)}`}
     ${row(claim ? "Claimant" : "Subject", p.subject_name)}
     ${row(claim ? "Scope" : "Objective", p.objective)}
+    ${claim ? `${rowS("Known schedule / activity", p.known_schedule, p.known_schedule_status)}${row("Special instructions / restrictions", p.notes)}` : ""}
     ${/* MASTER-HANDOFF §7: what the client picked on the intake is REQUESTED.
           Calling it "authorized" would read as though the firm had approved a
           package the client chose for themselves. The confirmed figure is the
@@ -23745,7 +23752,7 @@ function detailList(s, mode){
     ${rowS("Requested authorization", p.authorized_hours, p.authorized_hours_status)}${row("Not to exceed", p.not_to_exceed)}
     ${rowS("Requested start", p.start_date, p.start_date_status)}${row("Priority", p.priority)}
     ${row(claim ? "Deadline" : "Timeline", p.timeline)}${row("Attachments", p.attachments)}
-    ${claim ? `${row("Billing reference", p.billing_reference)}${rowS("Invoices to", p.billing_email, p.billing_email_status)}${row("Billing notes", p.billing_notes)}` : ""}
+    ${claim ? `${row("PO number", p.po_number)}${row("Billing reference", p.billing_reference)}${row("Invoice reference", p.invoice_reference)}${rowS("Invoices to", p.billing_email, p.billing_email_status)}${row("Billing notes", p.billing_notes)}` : ""}
     ${row(claim ? "Authorized by" : "Signed by", p.signed_name)}
     ${row("Received", when(s.created_at))}
   </dl>
