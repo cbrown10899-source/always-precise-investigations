@@ -526,8 +526,12 @@ section('Carrier assignment: the adjuster is emailed a receipt, and only a recei
      n0.text.includes('Adjuster receipt: Emailed to jordan.smith@example-carrier.test'), n0.text);
   ok('its subject line names the request and nobody — a subject shows on a lock screen',
      !/Taylor|Jordan|Example Carrier|WC-2026/.test(n0.subject), n0.subject);
+  /* Address, injury, signature, authorization and billing reference — and the
+     objective, the known schedule and the insured, which the portal holds and
+     an inbox does not need. */
   ok('and it carries none of what the office did not ask to be emailed',
-     !/Hidden Lane|Lumbar|SIGBYTES|3,600|INV-REF-7/.test(n0.text + n0.html), n0.text);
+     !/Hidden Lane|Lumbar|SIGBYTES|3,600|INV-REF-7|physical activity|Physical therapy|Example Employer/
+       .test(n0.text + n0.html), n0.text);
   const alert = mails.filter(m => m.to === 'desk@firm.test');
   ok('a different inbox still gets the intake alert, once, and it still names no one',
      alert.length === 1 && /Insurance/.test(alert[0].subject)
