@@ -83,6 +83,7 @@ const server = http.createServer((req, res) => {
 });
 await new Promise(r => server.listen(0, '127.0.0.1', r));
 const BASE = `http://127.0.0.1:${server.address().port}/intake/`;
+const HOME_ROOT = `http://127.0.0.1:${server.address().port}/`;
 
 /* ------------------------------------------------------------ browser setup */
 
@@ -115,6 +116,15 @@ const dots = page => page.locator('#progress i').count();
 const heading = page => page.locator('#app h2').first().innerText();
 const set = (page, k, v) => page.locator(`[data-k="${k}"]`).fill(v);
 const err = page => page.locator('#err').innerText();
+/* A FILL THAT FAILS BY NAME. The carrier door's company field has a place it
+   must be — the first step — and a plain fill of a field that is not there
+   crashes the run on a locator timeout, which is caught but says nothing about
+   WHAT was missing. The Full Custom unit's `fillOr` lesson. */
+async function need(page, k, v, where) {
+  const n = await page.locator(`[data-k="${k}"]`).count();
+  ok(`${where}: the ${k} field is there to fill`, n === 1, `${n} found`);
+  if (n === 1) await page.locator(`[data-k="${k}"]`).fill(v);
+}
 async function advance(page) { await page.locator('.btn.primary').click(); await page.waitForTimeout(90); }
 async function sign(page) {
   const c = page.locator('#sig');
@@ -253,7 +263,13 @@ section('Carrier path — insurance claim assignment');
   await page.waitForTimeout(80);
   ok('choosing a claim assignment expands the flow to 8 steps', await dots(page) === 8);
   await advance(page);
-  ok('step 3 is the claim-details step', await heading(page) === 'Claim details');
+  ok('step 3 is the assignment-and-claim step', await heading(page) === 'Assignment & claim information');
+  /* The bare door's contact step is shared with every service, so the company
+     is asked HERE — and an email already given there is not asked again. */
+  ok('on the bare door the company is asked on the claim step',
+     await page.locator('[data-k="k_carrier"]').count() === 1);
+  ok('and an email already given on the contact step is not asked for twice',
+     await page.locator('[data-k="c_email"]').count() === 0);
 
   await advance(page);
   ok('an assignment without a carrier is refused', (await err(page)).includes('carrier'));
@@ -265,24 +281,64 @@ section('Carrier path — insurance claim assignment');
   ok('the claim number can be marked unavailable instead of faked',
      claimStep.includes('Claim number not available at this time'));
   ok('and it never holds up an urgent assignment', /never holds up/i.test(claimStep));
+  ok('the assignment is described before the claim — its own two headings, in that order',
+     claimStep.indexOf('Assignment information') > -1
+     && claimStep.indexOf('Assignment information') < claimStep.indexOf('Claim information'));
+  /* SERVICE REQUESTED offers only what the Insurance page already offers, and
+     "not sure yet" is a real answer rather than a forced guess. */
+  const offered = await page.locator('[data-k="k_service"] option').allInnerTexts();
+  ok('service requested offers exactly the carrier services, plus not sure yet',
+     JSON.stringify(offered.slice(1)) === JSON.stringify(['Surveillance', 'Claims investigation',
+       "Workers' compensation investigation", 'Auto claim investigation', 'Other / not sure yet']),
+     JSON.stringify(offered));
+  ok('and nothing the public site withdrew is offered as a service',
+     !/recorded statement|canvass|interview|social media/i.test(offered.join(' ')));
+  ok('the start wording is the approved hedge, never a same-day guarantee',
+     claimStep.includes('In many cases, we can begin as soon as the same day, depending on availability and the type of assignment.')
+     && !/guarantee/i.test(claimStep));
+  const urgency = await page.locator('[data-k="z_priority"] option').allInnerTexts();
+  ok('urgency is Standard / Soon / Urgent, and nothing promises availability',
+     JSON.stringify(urgency.slice(1)) === JSON.stringify(['Standard', 'Soon', 'Urgent / time sensitive']),
+     JSON.stringify(urgency));
 
+  await page.locator('[data-k="k_service"]').selectOption({ label: 'Surveillance' });
+  await set(page, 'z_start', '2026-09-01');
+  await page.locator('[data-k="z_priority"]').selectOption({ label: 'Urgent / time sensitive' });
   await set(page, 'k_claimno', 'WC-2026-88421');
   await set(page, 'k_policy', 'POL-77123');
   await page.locator('[data-k="k_type"]').selectOption({ label: "Workers' compensation" });
   await set(page, 'k_dol', '03/14/2026');
+  await set(page, 'k_insured', 'Acme Staffing LLC');
   await set(page, 'k_adjuster', 'Dana Adjuster');
   await set(page, 'k_adj_email', 'dana@carrier.example');
-  await set(page, 'k_po', 'PO-5590');
   await page.locator('[data-k="k_prior"]').selectOption({ label: 'None' });
   await advance(page);
 
-  ok('the subject step is relabelled for a claimant', await heading(page) === 'The claimant');
+  ok('the subject step is headed for a claims desk', await heading(page) === 'Subject information');
+  ok('and its name field says claimant',
+     (await page.locator('.card').innerText()).includes('Claimant / subject name'));
+  ok('the carrier subject step offers no documents box it cannot honour',
+     await page.locator('#filenote').count() === 0);
   await set(page, 's_name', 'Pat Claimant');
   await set(page, 's_rel', 'Lumbar strain; no lifting over 10 lbs');
   await advance(page);
-  ok('the objective step becomes scope and deadline', (await heading(page)).includes('Scope'));
+  ok('the objective step is the assignment objective', await heading(page) === 'Assignment objective');
+  const objStep = await page.locator('.card').innerText();
+  ok('it asks what to document or investigate — never for a conclusion',
+     objStep.includes('What would you like us to document or investigate?')
+     && !/prove|fraud|conclu/i.test(objStep), objStep.slice(0, 300));
+  ok('it still asks for the deadline', objStep.includes('Deadline or key dates'));
+  ok('the known schedule is asked in the owner\'s own words',
+     await page.locator('[data-k="o_sched"]').getAttribute('placeholder')
+       === 'Known appointments, work schedule, regular activity, upcoming events, or other timing information that may help with the assignment.');
+  ok('special instructions / restrictions has its own section', objStep.includes('Special instructions / restrictions'));
+  ok('referral documents are explained, with nothing uploaded from the form',
+     /attached to the case by the office once the assignment is accepted/i.test(objStep)
+     && await page.locator('input[type=file]').count() === 0);
   await set(page, 'o_goal', 'Activity level versus stated restrictions');
   await set(page, 'o_time', 'Hearing 9/12');
+  await set(page, 'o_sched', 'Physical therapy Thursday at 10:00 AM');
+  await set(page, 'o_notes', 'Do not approach the residence');
   await advance(page);
 
   /* Section 9 of the handoff: surveillance is authorized in hours, with the
@@ -300,6 +356,9 @@ section('Carrier path — insurance claim assignment');
      /confirmed before the assignment is accepted/i.test(auth));
   ok('the authorization step promises no additional fees', /No additional fees/i.test(auth));
   ok('it names what is included', /mileage, travel time/i.test(auth));
+  ok('the requested start and urgency are asked once — on the claim step, not again here',
+     await page.locator('[data-k="z_start_mode"]').count() === 0
+     && await page.locator('[data-k="z_priority"]').count() === 0);
 
   await advance(page);
   ok('authorization is required', await heading(page) === 'Scheduling & authorization');
@@ -308,11 +367,9 @@ section('Carrier path — insurance claim assignment');
   await page.locator('#opt-auth-a24').click();
   await page.waitForTimeout(80);
   await set(page, 'z_nte', '$3,600 not to exceed');
-  await set(page, 'z_start', '2026-09-01');
   await set(page, 'z_days', 'Any day');
   await set(page, 'z_times', '0600-1400');
   await page.locator('[data-k="z_weekend"]').selectOption({ label: 'Yes — weekends authorized' });
-  await page.locator('[data-k="z_priority"]').selectOption({ label: 'Expedited' });
   await set(page, 'z_geo', 'Within 50 miles of Roanoke');
   await advance(page);
 
@@ -335,13 +392,21 @@ section('Carrier path — insurance claim assignment');
   await sign(page);
   await advance(page);
 
-  ok('step 8 is billing', await heading(page) === 'Billing');
+  ok('step 8 is billing', await heading(page) === 'Billing / reference information');
   const billing = await page.locator('.feebox').innerText();
   ok('billing echoes the carrier and claim number',
      billing.includes('Example Mutual') && billing.includes('WC-2026-88421'));
-  ok('billing echoes the purchase-order reference', billing.includes('PO-5590'));
+  /* The references are asked HERE now, beside each other, rather than echoed
+     from an earlier step. */
+  ok('the purchase order, billing reference and invoice reference are asked on the billing step',
+     await page.locator('[data-k="b_po"]').count() === 1 && await page.locator('[data-k="k_po"]').count() === 1
+     && await page.locator('[data-k="b_invref"]').count() === 1);
   ok('no consumer payment button is offered to a carrier', await page.locator('.pay-btn').count() === 0);
+  await set(page, 'b_po', 'PO-5590');
+  await set(page, 'k_po', 'BR-311');
+  await set(page, 'b_invref', 'INV-REF-9');
   await set(page, 'b_email', 'ap@carrier.example');
+  await set(page, 'b_notes', 'Upload invoices to the carrier portal');
   await advance(page);
   await page.waitForTimeout(400);
 
@@ -357,7 +422,19 @@ section('Carrier path — insurance claim assignment');
     ok('the portal record carries the permitted times', stored.permitted_times === '0600-1400');
     ok('the portal record carries the weekend authorization',
        stored.weekend_authorized === 'Yes — weekends authorized');
-    ok('the portal record carries the priority', stored.priority === 'Expedited');
+    ok('the portal record carries the urgency where the field already reads priority',
+       stored.priority === 'Urgent / time sensitive');
+    ok('the portal record carries the service requested', stored.service_requested === 'Surveillance');
+    ok('the portal record carries the insured', stored.insured_name === 'Acme Staffing LLC');
+    ok('the portal record carries the known schedule',
+       stored.known_schedule === 'Physical therapy Thursday at 10:00 AM' && !('known_schedule_status' in stored));
+    ok('special instructions reach the notes field the field already reads',
+       stored.notes === 'Do not approach the residence');
+    ok('the portal record carries the purchase order', stored.po_number === 'PO-5590');
+    ok('the portal record carries the billing reference', stored.billing_reference === 'BR-311');
+    ok('the portal record carries the invoice reference', stored.invoice_reference === 'INV-REF-9');
+    ok('special billing instructions arrive as typed, with nothing merged into them',
+       stored.billing_notes === 'Upload invoices to the carrier portal');
     ok('the portal record carries the geographic limits',
        stored.geographic_limits === 'Within 50 miles of Roanoke');
     ok('the portal record carries the billing email', stored.billing_email === 'ap@carrier.example');
@@ -367,11 +444,27 @@ section('Carrier path — insurance claim assignment');
        typeof stored.signature === 'string' && stored.signature.startsWith('data:image/png'));
   }
   const record = await page.locator('.record').innerText();
-  ok('record is titled Claim Assignment', record.includes('Claim Assignment'));
+  ok('the confirmation is an assignment receipt', record.includes('Assignment received'));
+  const rc = await page.locator('.receipt').innerText();
+  ok('the receipt names the request number, claim, subject, service, start and company',
+     stored && rc.includes(stored.case_no) && rc.includes('WC-2026-88421') && rc.includes('Pat Claimant')
+     && rc.includes('Surveillance') && rc.includes('2026-09-01') && rc.includes('Example Mutual'), rc);
+  ok('the receipt promises no acceptance',
+     /does not by itself constitute acceptance/i.test(rc)
+     && !/has been accepted|have accepted your|your assignment is accepted|will begin on/i.test(record), rc);
+  ok('and with no receipt reported by the portal, it does not claim an email went',
+     !/has been emailed/i.test(record));
+  ok('the full assignment is kept below the receipt', record.includes('Full assignment as submitted'));
   ok('record shows the claim identifiers',
      record.includes('WC-2026-88421') && record.includes('Example Mutual'));
   ok('record uses claimant wording', record.includes('Claimant'));
+  ok('record carries every new assignment field',
+     ['Known schedule / activity', 'Special instructions / restrictions', 'Insured', 'Urgency',
+      'PO number', 'Billing reference', 'Invoice reference', 'Service requested']
+       .every(w => record.includes(w)), record.slice(0, 600));
   ok('record shows no consumer amount due', !record.includes('Due today'));
+  ok('nothing typed reaches the address bar',
+     !/WC-2026|Pat|dana|Acme/i.test(page.url()), page.url());
   await page.close();
 }
 
@@ -397,12 +490,17 @@ section('A partial assignment submits, and nothing is invented');
 
   ok('the carrier door says what you know now is enough',
      /can be provided later/i.test(await page.locator('.card').innerText()));
+  /* NEAR THE TOP, SAID ONCE: a referral document is not uploaded here, and the
+     adjuster working from one learns that before retyping it. */
+  ok('the first step says where a referral goes, before any field is filled',
+     /Working from a referral\?/.test(await page.locator('.card').innerText())
+     && /attached to the file by the office once the assignment is accepted/i.test(await page.locator('.card').innerText()));
   await set(page, 'c_name', 'Dana Adjuster');
+  await need(page, 'k_carrier', 'Urgent Mutual', 'partial assignment, contact step');
   await set(page, 'c_email', 'dana@carrier.example');
   await advance(page);
 
   // Claim details: no claim number yet, and the date of loss genuinely unknown.
-  await set(page, 'k_carrier', 'Urgent Mutual');
   await page.locator('[data-k="k_claimno_na"]').check();
   await page.waitForTimeout(80);
   ok('marking the claim number unavailable disables the field',
@@ -415,11 +513,16 @@ section('A partial assignment submits, and nothing is invented');
      Prior surveillance offers a literal "Unknown" — the exact string the guard
      bans — and nothing here selected it, so it sailed through. Select it. */
   await page.locator('[data-k="k_prior"]').selectOption({ label: 'Unknown' });
+  // A start date nobody can commit to yet — asked on this step now.
+  await page.locator('[data-k="z_start_mode"]').selectOption({ label: 'Flexible' });
+  await page.waitForTimeout(120);
+  ok('a flexible start needs no date at all',
+     await page.locator('[data-k="z_start"]').count() === 0);
   await advance(page);
 
   // Claimant: named, but nobody knows the address or the vehicle yet.
   ok('the assignment reaches the claimant step without a claim number',
-     await heading(page) === 'The claimant');
+     await heading(page) === 'Subject information');
   await set(page, 's_name', 'Pat Claimant');
   await page.locator('[data-k="s_addr_na"]').check();
   await page.locator('[data-k="s_desc_na"]').check();
@@ -429,19 +532,22 @@ section('A partial assignment submits, and nothing is invented');
   await advance(page);
 
   await set(page, 'o_goal', 'Activity level versus stated restrictions');
+  /* "I don't have this" on the known schedule: the box disables the field
+     and records a status, and the value stays empty. */
+  await set(page, 'o_sched', 'typed and then withdrawn');
+  await page.locator('[data-k="o_sched_na"]').check();
+  await page.waitForTimeout(80);
+  ok('marking the schedule unknown disables its field',
+     await page.locator('[data-k="o_sched"]').isDisabled());
   await advance(page);
 
-  // Authorization pending, and a start date nobody can commit to yet.
+  // Authorization pending.
   const authCard = await page.locator('.card').innerText();
   ok('Authorization pending is offered as a preset', authCard.includes('Authorization pending'));
   ok('and it promises the hours are confirmed before billable work',
      /before any billable field work/i.test(authCard));
   await page.locator('#opt-auth-pending').click();
   await page.waitForTimeout(80);
-  await page.locator('[data-k="z_start_mode"]').selectOption({ label: 'Flexible' });
-  await page.waitForTimeout(120);
-  ok('a flexible start needs no date at all',
-     await page.locator('[data-k="z_start"]').count() === 0);
   await advance(page);
 
   /* The review, before signing: the form says out loud that it accepted the
@@ -453,6 +559,7 @@ section('A partial assignment submits, and nothing is invented');
   ok('it names the missing address', /address/i.test(review));
   ok('it names the pending authorization', /Authorization/i.test(review));
   ok('it names the flexible start', /Requested start/i.test(review));
+  ok('it names the unknown schedule', /Known schedule/i.test(review));
   ok('and says the rest can follow later', /can be provided later/i.test(review));
 
   await page.locator('[data-k="a_consent"]').check();
@@ -460,6 +567,11 @@ section('A partial assignment submits, and nothing is invented');
   await sign(page);
   await advance(page);
   await page.locator('[data-k="b_email_na"]').check();
+  await set(page, 'k_po', 'typed and then withdrawn');
+  await page.locator('[data-k="k_po_na"]').check();
+  await page.waitForTimeout(80);
+  ok('a billing reference can be marked to follow, which disables its field',
+     await page.locator('[data-k="k_po"]').isDisabled());
   await advance(page);
   await page.waitForTimeout(500);
 
@@ -491,6 +603,11 @@ section('A partial assignment submits, and nothing is invented');
     ok('and the flexible choice is recorded', stored.start_date_status === 'flexible');
     ok('the billing contact is empty', !stored.billing_email);
     ok('with its status', stored.billing_email_status === 'not_available');
+    ok('the known schedule is empty — what was typed before ticking is not sent',
+       !stored.known_schedule);
+    ok('with its own status', stored.known_schedule_status === 'not_available');
+    ok('the billing reference is empty rather than what was typed', !stored.billing_reference);
+    ok('and marked to follow', stored.billing_reference_status === 'not_available');
     ok('what WAS given still arrives whole',
        stored.carrier === 'Urgent Mutual' && stored.subject_name === 'Pat Claimant'
        && stored.objective === 'Activity level versus stated restrictions');
@@ -506,14 +623,17 @@ section('A partial assignment submits, and nothing is invented');
     ok('the statuses are the only place unavailability is spelled out, one per gap',
        JSON.stringify(Object.keys(stored).filter(k => k.endsWith('_status')).sort())
        === JSON.stringify(['authorized_hours_status', 'billing_email_status',
-         'claim_number_status', 'date_of_loss_status', 'prior_surveillance_status',
-         'start_date_status', 'subject_address_status', 'subject_description_status']),
+         'billing_reference_status', 'claim_number_status', 'date_of_loss_status', 'known_schedule_status',
+         'prior_surveillance_status', 'start_date_status', 'subject_address_status',
+         'subject_description_status']),
        JSON.stringify(Object.keys(stored).filter(k => k.endsWith('_status')).sort()));
   }
 
   const rec = await page.locator('.record').innerText();
   ok('the printed record says the claim number was not available',
-     /Claim number[\s\S]{0,40}Not available at submission/i.test(rec), rec.slice(0, 400));
+     /Claim \/ reference(?: number)?[\s\S]{0,40}Not available at submission/i.test(rec), rec.slice(0, 400));
+  ok('and so does the receipt above it',
+     /Claim \/ reference[\s\S]{0,40}Not available at submission/i.test(await page.locator('.receipt').innerText()));
   ok('and that the authorization is pending', /Authorization pending/i.test(rec));
   await page.close();
 }
@@ -600,6 +720,7 @@ section('The relay never receives what was typed');
   await set(page, 'k_carrier', 'Example Mutual');
   await set(page, 'k_claimno', 'WC-2026-88421');
   await set(page, 'k_policy', 'POL-77123');
+  await set(page, 'k_insured', 'Acme Staffing LLC');
   await set(page, 'k_adjuster', 'Dana Adjuster');
   await advance(page);
   await set(page, 's_name', 'Pat Coleman');
@@ -608,6 +729,8 @@ section('The relay never receives what was typed');
   await set(page, 's_rel', 'Lumbar strain; no lifting over 10 lbs');
   await advance(page);
   await set(page, 'o_goal', 'Activity versus stated restrictions');
+  await set(page, 'o_sched', 'Physical therapy Thursday at 10:00 AM');
+  await set(page, 'o_notes', 'Do not approach the residence');
   await advance(page);
   await page.locator('#opt-auth-a24').click();
   await page.waitForTimeout(80);
@@ -618,6 +741,8 @@ section('The relay never receives what was typed');
   await sign(page);
   await advance(page);
   await set(page, 'b_email', 'ap@carrier.example');
+  await set(page, 'b_po', 'PO-5590');
+  await set(page, 'b_invref', 'INV-REF-9');
   await advance(page);
   await page.waitForTimeout(500);
 
@@ -634,6 +759,11 @@ section('The relay never receives what was typed');
       'the policy number': 'POL-77123',
       'the signature image': 'data:image/png',
       'what the carrier authorized spending': '3,600',
+      'the known schedule': 'Physical therapy',
+      'the special instructions': 'approach the residence',
+      'the insured': 'Acme Staffing',
+      'the purchase order': 'PO-5590',
+      'the invoice reference': 'INV-REF-9',
     };
     for (const [what, needle] of Object.entries(secrets)) {
       ok(`the relay never sees ${what}`, !blob.includes(needle));
@@ -657,16 +787,28 @@ section('The carrier door — /intake/?assignment=insurance');
     route.fulfill({ status: 200, contentType: 'application/json', body: '{"success":true}' });
   });
   await page.route('**formsubmit.co/**', route => route.abort());
+  /* This door's portal answers that the receipt WENT, so the confirmation
+     may say so — the bare-door section above proves the opposite half. */
   await page.route('**/portal-api/ingest', route => {
     stored = JSON.parse(route.request().postData() || '{}');
-    route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
+    route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true,"receipt":"sent"}' });
   });
   page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
   await page.goto(BASE + '?assignment=insurance');
   await page.waitForTimeout(200);
 
   const first = await page.locator('.card').innerText();
-  ok('the carrier door opens on the assigning contact', await heading(page) === 'Assigning contact');
+  ok('the carrier door opens on the adjuster / referring contact',
+     await heading(page) === 'Adjuster / referring contact');
+  ok('a carrier is asked for the company sending the assignment, on the first step',
+     first.includes('Company / carrier / TPA / employer'));
+  ok('a carrier is asked their department or team', first.includes('Department / team'));
+  ok('the submitter email is marked required on the carrier door',
+     /Email\s*\*/.test(first), first.slice(0, 300));
+  ok('and it has no "I don\'t have this" box — the receipt goes there',
+     await page.locator('[data-k="c_email_na"]').count() === 0);
+  ok('the adjuster is never called a private client',
+     !/private client|your spouse|relationship to you/i.test(first));
   ok('it identifies itself as an assignment intake',
      (await page.locator('.name').innerText()).includes('ASSIGNMENT INTAKE'));
   ok('the page title is the assignment intake',
@@ -695,14 +837,17 @@ section('The carrier door — /intake/?assignment=insurance');
   })) ok(`the carrier never sees ${what}`, !seen.includes(needle), seen.slice(0, 200));
 
   await set(page, 'c_name', 'Karen Whitfield');
+  await need(page, 'k_carrier', 'Blue Ridge Mutual', 'carrier door, contact step');
   await set(page, 'c_email', 'kwhitfield@carrier.example');
   await set(page, 'c_title', 'Claims Adjuster');
+  await set(page, 'c_dept', 'WC Claims');
   await page.locator('[data-k="c_orgtype"]').selectOption({ label: 'Insurance carrier' });
   await advance(page);
   ok('step 2 goes straight to the claim, with no service picker',
-     await heading(page) === 'Claim details');
+     await heading(page) === 'Assignment & claim information');
+  ok('and the company is not asked a second time',
+     await page.locator('[data-k="k_carrier"]').count() === 0);
 
-  await set(page, 'k_carrier', 'Blue Ridge Mutual');
   await set(page, 'k_claimno', 'WC-2026-104871');
   await advance(page);
   await set(page, 's_name', 'Marcus Ellery');
@@ -717,11 +862,17 @@ section('The carrier door — /intake/?assignment=insurance');
   await set(page, 'a_typed', 'Karen Whitfield');
   await sign(page);
   await advance(page);
-  ok('and it still ends in billing, not payment', await heading(page) === 'Billing');
+  ok('and it still ends in billing, not payment', await heading(page) === 'Billing / reference information');
   await advance(page);
   await page.waitForTimeout(500);
 
   ok('the assignment records as a claim', stored && stored.claim_number === 'WC-2026-104871');
+  ok('the company asked on the first step is the carrier of record',
+     stored && stored.carrier === 'Blue Ridge Mutual');
+  ok('the department is recorded', stored && stored.department === 'WC Claims');
+  ok('when the portal reports the receipt sent, the confirmation names where it went',
+     /A confirmation has been emailed to\s*kwhitfield@carrier\.example/.test(
+       await page.locator('.receipt').innerText()));
   ok('the contact title is recorded', stored && stored.contact_title === 'Claims Adjuster');
   ok('the organization type is recorded', stored && stored.organization_type === 'Insurance carrier');
   ok('nothing was charged', stored && stored.fee_due === 0);
@@ -1103,9 +1254,9 @@ section('Field labels say what validate() actually enforces');
     await page.waitForTimeout(120);
     await auditStep(page, 'ins:info');
     await set(page, 'c_name', 'A Djuster'); await set(page, 'c_email', 'a@carrier.example');
+    await need(page, 'k_carrier', 'Example Mutual', 'marker audit, contact step');
     await advance(page);
     await auditStep(page, 'ins:claim');
-    await set(page, 'k_carrier', 'Example Mutual');
     await advance(page);
     await auditStep(page, 'ins:subject');
     await set(page, 's_name', 'C Laimant');
@@ -1171,6 +1322,7 @@ section('Every field marked (optional) really can be left blank');
     // info — one contact method is a pair, so one of the two is filled.
     await set(page, 'c_name', 'Only Required');
     await set(page, 'c_email', 'only@required.example');
+    if (door === 'insurance') await need(page, 'k_carrier', 'Required Carrier', 'insurance door, contact step');   // marked *, on this step
     await advance(page);
     if (door === 'private') { await page.locator('#opt-surveillance').click(); await page.waitForTimeout(80); await advance(page); }
     if (door === 'legal') {
@@ -1185,8 +1337,7 @@ section('Every field marked (optional) really can be left blank');
       await advance(page);
     }
     if (door === 'insurance') {
-      await set(page, 'k_carrier', 'Required Carrier');
-      await advance(page);
+      await advance(page);                                   // claim step: nothing on it is required
       await set(page, 's_name', 'Required Claimant');        // one half of the pair
       await advance(page);
     } else {
@@ -1255,6 +1406,220 @@ section('Every field marked * really does block the step');
   ok('the objective blocks the objective step — the * this unit added',
      /documented/i.test(await err(page)), await err(page));
   await page.close();
+}
+
+/* THE CARRIER DOOR'S OWN REQUIRED FIELDS, BLANKED ONE AT A TIME (owner,
+   2026-09-24). The submitter's email is required because the assignment
+   confirmation is sent there — and it is the one contact detail with no
+   "I don't have this" box. The company is required because the file cannot be
+   opened without knowing who sent it. Nothing else on the first two steps
+   blocks. */
+section('The carrier door refuses what it needs, and only that');
+{
+  const page = await newPage();
+  await page.goto(BASE + '?assignment=insurance');
+  await page.waitForTimeout(120);
+  await advance(page);
+  ok('the name blocks the contact step', /full name/i.test(await err(page)), await err(page));
+  await set(page, 'c_name', 'A Djuster');
+  await need(page, 'k_carrier', 'Example Mutual', 'required-fields walk, contact step');
+  await set(page, 'c_phone', '4345550111');
+  await advance(page);
+  ok('a phone alone does NOT pass — the submitter email is required here',
+     await heading(page) === 'Adjuster / referring contact' && /email/i.test(await err(page)), await err(page));
+  await set(page, 'c_email', 'not-an-email');
+  await advance(page);
+  ok('and a malformed email is refused the same way',
+     await heading(page) === 'Adjuster / referring contact' && /email/i.test(await err(page)), await err(page));
+  await set(page, 'c_email', 'a@carrier.example');
+  await set(page, 'k_carrier', '');
+  await advance(page);
+  ok('the company blocks the contact step', /company/i.test(await err(page)), await err(page));
+  await set(page, 'k_carrier', 'Example Mutual');
+  await advance(page);
+  ok('with a name, a company and an email the step passes',
+     await heading(page) === 'Assignment & claim information', await heading(page));
+  await advance(page);
+  ok('nothing on the claim step blocks the carrier door — every field there is optional',
+     await heading(page) === 'Subject information', await heading(page));
+  await advance(page);
+  ok('the subject step wants the claimant or the claim number',
+     /claimant|claim number/i.test(await err(page)), await err(page));
+  await set(page, 's_name', 'C Laimant');
+  await advance(page);
+  await advance(page);
+  ok('the assignment objective blocks its step', /sentence/i.test(await err(page)), await err(page));
+  await page.close();
+}
+
+/* THE BARE DOOR: its contact step is shared with every service, so an email
+   was only one of two ways to be reached there. A carrier assignment asks for
+   it on the claim step — and the field stays put while the adjuster works the
+   rest of that step, rather than vanishing the moment a valid address is typed
+   and some other control repaints. */
+section('The bare door asks a carrier for the email its shared step did not');
+{
+  const page = await newPage();
+  await set(page, 'c_name', 'Phone Only');
+  await set(page, 'c_phone', '4345550111');
+  await advance(page);
+  await page.locator('#opt-claims').click();
+  await page.waitForTimeout(80);
+  await advance(page);
+  ok('the claim step draws the email field', await page.locator('[data-k="c_email"]').count() === 1);
+  await set(page, 'k_carrier', 'Example Mutual');
+  await advance(page);
+  ok('and refuses to go on without it',
+     await heading(page) === 'Assignment & claim information' && /email/i.test(await err(page)), await err(page));
+  await set(page, 'c_email', 'phone.only@carrier.example');
+  await page.locator('[data-k="z_start_mode"]').selectOption({ label: 'As soon as available' });
+  await page.waitForTimeout(120);
+  ok('the email field does not vanish when another control repaints the step',
+     await page.locator('[data-k="c_email"]').count() === 1
+     && await page.locator('[data-k="c_email"]').inputValue() === 'phone.only@carrier.example');
+  await advance(page);
+  ok('with the email given, the assignment moves on', await heading(page) === 'Subject information');
+  await page.close();
+
+  /* And a consumer on the same bare door is unaffected: phone alone still
+     passes the shared step and the private flow never asks for an email. */
+  const p2 = await newPage();
+  await set(p2, 'c_name', 'Private Person');
+  await set(p2, 'c_phone', '4345550112');
+  await advance(p2);
+  await p2.locator('#opt-surveillance').click();
+  await p2.waitForTimeout(80);
+  await advance(p2);
+  ok('a private client with only a phone still reaches the subject step',
+     await heading(p2) === 'Subject of the investigation', await heading(p2));
+  await p2.close();
+}
+
+/* THE OWNER'S REALISTIC ASSIGNMENT (brief 2026-09-24, Part Y), end to end on
+   the public side: the Insurance page's own button, the carrier door, the
+   fixture exactly as given — PO left blank, start "as soon as available" — the
+   submit, and the receipt. The portal half (the intake appears, is preserved,
+   and accepts in one tap) is proven in the Worker and portal suites. */
+section('Jordan Smith / Example Carrier — the Insurance page to the receipt');
+{
+  submitted = null; stored = null;
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  let ingestCalls = 0;
+  const shown = [];
+  await page.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  await page.route('**api.web3forms.com/**', route => {
+    submitted = JSON.parse(route.request().postData() || '{}');
+    route.fulfill({ status: 200, contentType: 'application/json', body: '{"success":true}' });
+  });
+  await page.route('**/portal-api/ingest', route => {
+    ingestCalls++;
+    stored = JSON.parse(route.request().postData() || '{}');
+    route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true,"receipt":"sent"}' });
+  });
+  page.on('pageerror', e => ok(`no page errors (${e.message})`, false));
+  await page.goto(HOME_ROOT + 'insurance-investigations/');
+  await page.waitForTimeout(150);
+  const ctas = await page.locator('a', { hasText: 'Submit an Insurance Assignment' }).evaluateAll(
+    as => as.map(a => a.getAttribute('href')));
+  ok('the Insurance page offers Submit an Insurance Assignment, and every one opens the carrier door',
+     ctas.length >= 2 && ctas.every(h => h === '/intake/?assignment=insurance'), JSON.stringify(ctas));
+  await page.locator('a', { hasText: 'Submit an Insurance Assignment' }).first().click();
+  await page.waitForURL(/\/intake\/\?assignment=insurance$/);
+  await page.waitForTimeout(150);
+  ok('the button lands on the assignment intake, not the private one',
+     (await page.title()).includes('Secure Assignment Intake'));
+
+  const snap = async () => shown.push(await page.locator('#app').innerText());
+  await snap();
+  await set(page, 'c_name', 'Jordan Smith');
+  await need(page, 'k_carrier', 'Example Carrier', 'Jordan Smith walk, contact step');
+  await set(page, 'c_email', 'jordan.smith@example-carrier.test');
+  await advance(page);
+  await snap();
+  await page.locator('[data-k="k_service"]').selectOption({ label: 'Surveillance' });
+  await page.locator('[data-k="z_start_mode"]').selectOption({ label: 'As soon as available' });
+  await page.waitForTimeout(120);
+  await set(page, 'k_claimno', 'WC-2026-12345');
+  await advance(page);
+  await snap();
+  await set(page, 's_name', 'Taylor Example');
+  await advance(page);
+  await snap();
+  await set(page, 'o_goal', 'Document current physical activity and routine.');
+  await set(page, 'o_sched', 'Physical therapy Thursday at 10:00 AM.');
+  await advance(page);
+  await snap();
+  await page.locator('#opt-auth-pending').click();
+  await page.waitForTimeout(80);
+  await advance(page);
+  await snap();
+  await page.locator('[data-k="a_consent"]').check();
+  await set(page, 'a_typed', 'Jordan Smith');
+  await sign(page);
+  await advance(page);
+  await snap();
+  ok('the PO is left blank, as in the fixture', await page.locator('[data-k="b_po"]').inputValue() === '');
+  /* A double tap on Submit is one assignment: the button disables before the
+     first request leaves, so the second tap lands on nothing. */
+  await page.locator('.btn.primary').dblclick();
+  await page.waitForTimeout(600);
+  ok('a double tap on Submit sends ONE assignment', ingestCalls === 1, String(ingestCalls));
+
+  const rc = await page.locator('.receipt').innerText().catch(() => '');
+  ok('ASSIGNMENT RECEIVED is the confirmation', /Assignment received/i.test(rc), rc);
+  ok('it carries the request number', stored && rc.includes(stored.case_no), rc);
+  ok('the claim / reference', rc.includes('WC-2026-12345'));
+  ok('the subject', rc.includes('Taylor Example'));
+  ok('the service', rc.includes('Surveillance'));
+  ok('the requested start, as the adjuster chose it', rc.includes('As soon as available'));
+  ok('and the company', rc.includes('Example Carrier'));
+  ok('it says the email confirmation went to the adjuster',
+     rc.includes('A confirmation has been emailed to') && rc.includes('jordan.smith@example-carrier.test'));
+  const status = await page.locator('.record .ok').innerText();
+  ok('the confirmation sentence is the approved one',
+     status.includes('Always Precise Investigations has received your assignment. We will review the referral and contact you if additional information is needed.'),
+     status);
+  /* A promise, not a condition: "once the assignment is accepted" and "cannot
+     guarantee a particular result" are the opposite of one, so the pattern
+     names what a promise would actually say. */
+  const promise = /has been accepted|have accepted your|your assignment is accepted|we guarantee|guaranteed|will be assigned|work will begin|we will begin/i;
+  ok('and no screen promised acceptance or availability',
+     !promise.test(shown.join(' ') + rc), ((shown.join(' ') + rc).match(promise) || [''])[0]);
+
+  /* NO PRIVATE RATE-SHEET LOGIC reached a carrier on any screen of the walk. */
+  const walked = shown.join('\n') + '\n' + await page.locator('#app').innerText();
+  for (const [what, re] of Object.entries({
+    'a dollar figure': /\$/,
+    'a retainer': /retainer/i,
+    'Cash App or Venmo': /cash app|venmo/i,
+    'a Full Custom agreement': /full custom/i,
+    'a non-refundable portion': /non-refundable/i,
+    'a private-client rate sheet': /rate sheet/i,
+  })) ok(`no screen of the carrier walk shows ${what}`, !re.test(walked), (walked.match(re) || [''])[0]);
+
+  if (stored) {
+    ok('the stored assignment is the fixture',
+       stored.client_name === 'Jordan Smith' && stored.carrier === 'Example Carrier'
+       && stored.claim_number === 'WC-2026-12345' && stored.subject_name === 'Taylor Example'
+       && stored.service_requested === 'Surveillance'
+       && stored.objective === 'Document current physical activity and routine.'
+       && stored.known_schedule === 'Physical therapy Thursday at 10:00 AM.', JSON.stringify(stored).slice(0, 400));
+    ok('"as soon as available" is a status, never a date invented for it',
+       !stored.start_date && stored.start_date_status === 'asap');
+    ok('the blank PO arrives blank', stored.po_number === '');
+    ok('it is invoiced, nothing is charged, and no private package rides along',
+       stored.payment_method === 'Invoiced to carrier' && stored.fee_due === 0
+       && !('package' in stored) && !('package_price' in stored) && !('retainer' in stored));
+  }
+  ok('nothing typed reaches the address bar',
+     !/WC-2026|Taylor|Jordan|example-carrier/i.test(page.url()), page.url());
+  if (submitted) {
+    const relay = JSON.stringify(submitted);
+    ok('the relay never sees the claim, the subject, the objective or the schedule',
+       !/WC-2026-12345|Taylor Example|physical activity|Physical therapy/.test(relay), relay.slice(0, 300));
+  }
+  await ctx.close();
 }
 
 /* ============ LEGAL-SERVICES.md D9 — the door adapts to the service ========
@@ -1391,6 +1756,7 @@ section('Desktop and mobile show the same markers');
       })));
       if (step === 'info') {
         await page.locator('[data-k="c_name"]').fill('A'); await page.locator('[data-k="c_email"]').fill('a@b.co');
+        await page.locator('[data-k="k_carrier"]').fill('C');
         await page.locator('.btn.primary').click(); await page.waitForTimeout(150);
       }
     }
@@ -1398,6 +1764,9 @@ section('Desktop and mobile show the same markers');
     return out;
   };
   const wide = await read(1200), narrow = await read(390);
+  ok('the walk really reached the claim step at both widths',
+     wide.some(x => x.startsWith('k_service=')) && narrow.some(x => x.startsWith('k_service=')),
+     JSON.stringify(wide));
   ok('the same fields carry the same markers at 1200px and 390px',
      JSON.stringify(wide) === JSON.stringify(narrow),
      `${JSON.stringify(wide)}\n${JSON.stringify(narrow)}`);
@@ -1509,6 +1878,113 @@ section('Each intake door announces its own name');
   ok('and document.title is set from it in one place',
      (body.match(/document\.title\s*=/g) || []).length === 1,
      String((body.match(/document\.title\s*=/g) || []).length));
+}
+
+/* THE CARRIER DOOR ON A PHONE (owner brief 2026-09-24, Part E): at 390 and 320
+   every step of an assignment keeps its labels, raises the keyboard its field
+   needs, and nothing hangs past the right edge — the receipt included, with a
+   claim reference long enough to have to wrap. */
+section('The carrier door at 390 and 320');
+for (const width of [390, 320]) {
+  const ctx = await browser.newContext({ viewport: { width, height: 800 }, isMobile: true, hasTouch: true });
+  const page = await ctx.newPage();
+  await page.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  await page.route('**/portal-api/ingest', r => r.fulfill({ status: 200, contentType: 'application/json',
+    body: '{"ok":true,"receipt":"sent"}' }));
+  page.on('pageerror', e => ok(`no page errors at ${width}px (${e.message})`, false));
+  await page.goto(BASE + '?assignment=insurance');
+  await page.waitForTimeout(150);
+  const steps = [];
+  /* Asserted AT each step, not only at the end: a step that widens the page
+     can also make the next tap land on the wrong element, and a run that dies
+     there never reaches a summary assertion to name what went wrong. */
+  const check = async tag => {
+    /* Against the DEVICE width, never `innerWidth`: in a phone-emulated
+       context Chrome widens the layout viewport to fit overflowing content,
+       so `scrollWidth - innerWidth` reads 0 on exactly the page that scrolls.
+       Measured: an overflowing billing step reported innerWidth 569 at 390. */
+    const o = await page.evaluate(w => document.documentElement.scrollWidth - w, width);
+    steps.push(`${tag}:${o}`);
+    ok(`${width}px: the ${tag} step does not scroll sideways`, o <= 0, String(o));
+  };
+  const labelsShown = () => page.evaluate(() => [...document.querySelectorAll('label.f')].every(l => {
+    const sp = l.querySelector(':scope > span');
+    if (!sp || !sp.textContent.trim()) return false;
+    const r = sp.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  }));
+
+  ok(`${width}px: the email field raises the email keyboard`,
+     await page.locator('[data-k="c_email"]').getAttribute('type') === 'email');
+  ok(`${width}px: the phone field raises the phone keypad`,
+     await page.locator('[data-k="c_phone"]').getAttribute('type') === 'tel');
+  ok(`${width}px: every field on the contact step has a visible label`, await labelsShown());
+  await check('contact');
+  await set(page, 'c_name', 'Jordan Smith');
+  await set(page, 'k_carrier', 'Example Carrier');
+  await set(page, 'c_email', 'jordan.smith@example-carrier.test');
+  await advance(page);
+  await check('claim');
+  ok(`${width}px: every field on the claim step has a visible label`, await labelsShown());
+  ok(`${width}px: the requested start opens a date picker`,
+     await page.locator('[data-k="z_start"]').getAttribute('type') === 'date');
+  /* UNBROKEN on purpose: a reference with hyphens wraps at the hyphens on its
+     own, so it could never show whether the record's columns can shrink. */
+  await set(page, 'k_claimno', 'WC2026123450099887766SUPPLEMENTALREFERENCE0042');
+  await advance(page);
+  await check('subject');
+  await set(page, 's_name', 'Taylor Example');
+  await advance(page);
+  await check('objective');
+  ok(`${width}px: every field on the objective step has a visible label`, await labelsShown());
+  await set(page, 'o_goal', 'Document current physical activity and routine.');
+  await advance(page);
+  await check('authorization');
+  await page.locator('#opt-auth-pending').click();
+  await page.waitForTimeout(80);
+  await advance(page);
+  await check('agreement');
+  await page.locator('[data-k="a_consent"]').check();
+  await set(page, 'a_typed', 'Jordan Smith');
+  await sign(page);
+  await advance(page);
+  await check('billing');
+  const submit = page.locator('.btn.primary');
+  ok(`${width}px: the last button says what it does`, /Submit assignment/i.test(await submit.innerText()));
+  const sb = await submit.boundingBox();
+  ok(`${width}px: and is a whole tap target on screen`,
+     !!sb && sb.height >= 44 && sb.x >= 0 && sb.x + sb.width <= width + 0.5, JSON.stringify(sb));
+  await advance(page);
+  await page.waitForTimeout(500);
+  await check('receipt');
+  ok(`${width}px: the receipt is shown`, /Assignment received/i.test(await page.locator('.receipt').innerText()));
+  ok(`${width}px: the unbroken reference wraps inside the record rather than widening it`,
+     await page.evaluate(w => [...document.querySelectorAll('.record dd')]
+       .every(dd => dd.getBoundingClientRect().right <= w + 0.5), width));
+  ok(`${width}px: nothing on any step or the receipt hangs past the right edge`,
+     steps.every(s => Number(s.split(':')[1]) <= 0), steps.join(' '));
+  await ctx.close();
+}
+
+/* THE INSURANCE PAGE'S DOOR AT EVERY WIDTH (Part D): the primary action is
+   there, whole, and opens the carrier door, on desktop, tablet and phone. */
+section('The Insurance page CTA at 1200, 768, 390 and 320');
+for (const width of [1200, 768, 390, 320]) {
+  const ctx = await browser.newContext({ viewport: { width, height: 900 } });
+  const page = await ctx.newPage();
+  await page.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  page.on('pageerror', e => ok(`no insurance-page errors at ${width}px (${e.message})`, false));
+  await page.goto(HOME_ROOT + 'insurance-investigations/');
+  await page.waitForTimeout(150);
+  const cta = page.locator('a', { hasText: 'Submit an Insurance Assignment' }).first();
+  await cta.scrollIntoViewIfNeeded();
+  const b = await cta.boundingBox();
+  ok(`${width}px: Submit an Insurance Assignment is on screen and whole`,
+     !!b && b.x >= 0 && b.x + b.width <= width + 0.5 && b.height >= 44, JSON.stringify(b));
+  ok(`${width}px: it opens the carrier door`, await cta.getAttribute('href') === '/intake/?assignment=insurance');
+  const o = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  ok(`${width}px: the Insurance page does not scroll sideways`, o <= 0, String(o));
+  await ctx.close();
 }
 
 /* ------------------------------------------------------------------ report */
@@ -2250,10 +2726,10 @@ section('Closeout: an unavailable claim number cannot identify the file');
   await page.goto(BASE + '?assignment=insurance');
   await page.waitForTimeout(120);
   await set(page, 'c_name', 'Dana Adjuster');
+  await need(page, 'k_carrier', 'Urgent Mutual', 'closeout, contact step');
   await set(page, 'c_email', 'dana@carrier.example');
   await advance(page);
 
-  await set(page, 'k_carrier', 'Urgent Mutual');
   /* TYPE the number, THEN mark it unavailable. The control keeps what was
      typed so un-ticking restores it — which is right — but buildPayload
      stores it blank, so it must not count as identifying the file either. */
@@ -2262,17 +2738,17 @@ section('Closeout: an unavailable claim number cannot identify the file');
   await page.waitForTimeout(80);
   await advance(page);
   ok('the assignment still reaches the claimant step',
-     await heading(page) === 'The claimant');
+     await heading(page) === 'Subject information');
 
   await advance(page);
   ok('but it will NOT pass the claimant step with no name and no live claim number',
-     await heading(page) === 'The claimant');
+     await heading(page) === 'Subject information');
   const msg = await page.locator('.err, #err').first().innerText().catch(() => '');
   ok('and it says which of the two it needs', /claimant|claim number/i.test(msg), msg);
 
   await set(page, 's_name', 'Pat Claimant');
   await advance(page);
-  ok('naming the claimant moves it on', await heading(page) !== 'The claimant');
+  ok('naming the claimant moves it on', await heading(page) !== 'Subject information');
   await page.close();
 }
 

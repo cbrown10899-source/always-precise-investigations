@@ -95,7 +95,12 @@
   .opt .desc{color:var(--muted);font-size:.86rem;margin-top:2px;}
 
   .feebox{background:#f0f8fa;border:1px solid #cfe6ec;border-radius:10px;padding:14px 16px;margin:4px 0 16px;font-size:.9rem;}
-  .feebox .row{display:flex;justify-content:space-between;padding:3px 0;}
+  .feebox .row{display:flex;justify-content:space-between;gap:12px;padding:3px 0;}
+  /* The same content-minimum trap as `.record dd`, in a flex row: the billing
+     step echoes the claim reference here, and an unbroken one pushed the step
+     past a phone's edge. Both halves may shrink, and the value wraps. */
+  .feebox .row > *{min-width:0;overflow-wrap:anywhere;}
+  .feebox .row > :last-child{text-align:right;}
   .feebox .due{border-top:1px solid #cfe6ec;margin-top:6px;padding-top:8px;font-weight:700;font-size:1.02rem;}
   .agree{font-size:.82rem;color:#3a4653;max-height:190px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:14px;background:#fbfbfc;margin-bottom:14px;}
   .agree h4{margin:10px 0 4px;font-size:.85rem;color:var(--ink);}
@@ -126,8 +131,20 @@
   .record .case{color:var(--teal);font-weight:700;font-family:ui-monospace,monospace;}
   .record dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:14px 0;font-size:.9rem;}
   .record dt{color:var(--muted);}
-  .record dd{color:var(--ink);}
+  /* A value is a grid item, and a grid item's default minimum is its content —
+     so one unbroken claim reference or pasted address widened the whole record
+     past a 320 screen. `min-width:0` lets the column shrink and the value then
+     WRAPS rather than clipping (2026-09-24, on every path's record). */
+  .record dd{color:var(--ink);min-width:0;overflow-wrap:anywhere;}
   .record img.sig{max-width:260px;border-bottom:1px solid #c7ccd3;margin-top:4px;}
+  /* The carrier path's receipt (2026-09-24): the facts a claims desk files, in
+     the page's own feebox language, above the full record. Its values wrap by
+     the `.record dd` rule above, so a long claim number stays on screen at 320. */
+  .receipt{background:#f0f8fa;border:1px solid #cfe6ec;border-radius:10px;padding:14px 16px;margin:0 0 18px;}
+  .receipt h2{font-size:1.1rem;margin:0 0 2px;color:#12305a;}
+  .receipt dl{margin:10px 0 8px;}
+  .receipt dd{font-weight:600;}
+  .receipt-sent{font-size:.88rem;margin:6px 0;}
   .ok{background:#e9f7ef;border:1px solid #b6e0c6;color:#166534;border-radius:8px;padding:12px 14px;font-size:.9rem;margin-bottom:14px;}
   .warn{background:#fdecea;border:1px solid #f5c6c0;color:#8a2318;border-radius:8px;padding:12px 14px;font-size:.9rem;margin-bottom:14px;}
   .foot{max-width:680px;margin:0 auto;padding:0 16px 40px;color:var(--muted);font-size:.78rem;text-align:center;}
@@ -333,7 +350,13 @@ const PRIVATE_SVC_PARAM = (k => PRIVATE_SVCS.includes(k) ? k : null)(
 
 const S = { step:0,
             svc:CARRIER_ONLY ? "claims" : LEGAL_ONLY ? "legal" : PRIVATE_SVC_PARAM,
-            lsvc:LEGAL_ONLY ? LEGAL_SVC_PARAM : null, sig:null, files:[] };
+            lsvc:LEGAL_ONLY ? LEGAL_SVC_PARAM : null, sig:null, files:[],
+            /* Whether the claim step asks for the email the shared contact step
+               did not get (bare door only). Decided when that step is LEFT, never
+               per paint: a field that disappeared the moment a valid address was
+               typed and some other control repainted is a control that vanishes
+               mid-edit. */
+            askEmail:false };
 
 /* ============ Required / optional markers ============
 
@@ -363,6 +386,22 @@ const PAIR = t => ` <span class="optn">(${t})</span>`;
 const ONE_CONTACT = PAIR('phone or email &mdash; give us one');
 const ONE_MATTER  = PAIR('client name or matter number &mdash; give us one');
 const ONE_FILEID  = PAIR('claimant name or claim number &mdash; give us one');
+
+/* THE CARRIER PATH'S OWN VOCABULARY (owner, 2026-09-24). SERVICE REQUESTED
+   offers only what the Insurance page already offers, and "not sure yet" is a
+   real answer rather than a forced guess. */
+const CLAIM_SERVICES = ["Surveillance", "Claims investigation", "Workers' compensation investigation",
+  "Auto claim investigation", "Other / not sure yet"];
+/* The one reader of "is this an email address" on this page — the submitter's
+   email is REQUIRED on the carrier path, because the assignment confirmation
+   is sent there. The same shape the Worker checks before it sends. */
+const validEmail = e => /^[^\s@]+@[^\s@.]+\.[^\s@]+$/.test(String(e || "").trim());
+/* The company sending the assignment, drawn by ONE writer on whichever step
+   asks for it: the contact step on the insurance door, the claim step on the
+   bare door (whose first step is shared with every other service). */
+function companyField(){
+  return `<label class="f"><span>Company / carrier / TPA / employer${REQ}</span><input type="text" data-k="k_carrier" autocomplete="organization" placeholder="The organization sending the assignment"></label>`;
+}
 // A carrier assignment collects claim details and ends in invoicing, so the
 // claims path has its own step list; surveillance adds a step to choose how
 // much coverage to buy. All three share the first two steps, which is what
@@ -463,9 +502,11 @@ function naSummary(){
   if(val.s_addr_na) items.push(who + " address — not available yet");
   if(val.s_desc_na) items.push("Vehicle / description — not available yet");
   if(isClaims()){
+    if(val.o_sched_na) items.push("Known schedule — none known yet");
     if(val.z_auth === "pending") items.push("Authorization — pending confirmation");
     if(val.z_start_mode && val.z_start_mode !== "Specific date") items.push("Requested start — " + val.z_start_mode.toLowerCase());
     if(val.b_email_na) items.push("Billing contact — to follow");
+    if(val.k_po_na) items.push("Billing reference — to follow");
   }
   return items;
 }
@@ -515,14 +556,32 @@ function view(step){
      carrier is an organization with a title and a direct line; a mailing
      address and "best time to reach you" are consumer questions that read as
      amateur on an assignment form. */
+  /* THE ADJUSTER'S OWN SECTION (owner, 2026-09-24): an assignment form speaks
+     the language of a claims desk — the referring contact, the company sending
+     the file, and an email the assignment confirmation can go to. The email is
+     the one contact detail that is REQUIRED here: it is where the receipt is
+     sent, and a claims desk always has one. The company is asked here on the
+     insurance door and on the claim step on the bare door, whose first step is
+     shared with every other service — `companyField` is its one writer. */
   if(step==="info") return isClaims() ? `<div class="card">
     <h1 class="sr-page-title">${pageName()}</h1>
-    <h2>Assigning contact</h2>
-    <p class="lead">Who is assigning this file, and how we reach you about it.
-      Send us what you know now &mdash; anything you don't have yet can be provided later.</p>
-    <label class="f"><span>Full name${REQ}</span><input type="text" data-k="c_name" autocomplete="name"></label>
+    <h2>Adjuster / referring contact</h2>
+    <p class="lead">Who is sending this assignment, and how we reach you about it.
+      Send what you have now &mdash; anything you don't have yet can be provided later.</p>
+    <label class="f"><span>Adjuster / referring contact name${REQ}</span><input type="text" data-k="c_name" autocomplete="name"></label>
+    ${CARRIER_ONLY ? companyField() : ""}
+    <div class="two">
+      <label class="f"><span>Email${REQ}</span><input type="email" data-k="c_email" autocomplete="email"></label>
+      <label class="f"><span>Direct phone${OPT}</span><input type="tel" data-k="c_phone" autocomplete="tel"></label>
+    </div>
+    <p class="hint" style="margin-top:-6px;">Your assignment confirmation goes to this email, and a request number is issued the moment this is submitted.</p>
+    <p class="hint" id="refnote-top"><b>Working from a referral?</b> Fill in what you have &mdash; referral documents are
+      attached to the file by the office once the assignment is accepted, so nothing needs to be attached here.</p>
     <div class="two">
       <label class="f"><span>Title${OPT}</span><input type="text" data-k="c_title" placeholder="e.g. Claims Adjuster, SIU Investigator"></label>
+      <label class="f"><span>Department / team${OPT}</span><input type="text" data-k="c_dept" placeholder="e.g. WC Claims, SIU, Casualty"></label>
+    </div>
+    <div class="two">
       <label class="f"><span>Organization type${OPT}</span>
         <select data-k="c_orgtype">
           <option value="">Select…</option>
@@ -534,11 +593,6 @@ function view(step){
           <option>SIU department</option>
           <option>Other</option></select></label>
     </div>
-    <div class="two">
-      <label class="f"><span>Direct phone${ONE_CONTACT}</span><input type="tel" data-k="c_phone" autocomplete="tel"></label>
-      <label class="f"><span>Email${ONE_CONTACT}</span><input type="email" data-k="c_email" autocomplete="email"></label>
-    </div>
-    <p class="hint" style="margin-top:-6px;">Give us at least one — phone or email. A request number is issued the moment this is submitted.</p>
     ${navButtons()}
   </div>` : `<div class="card">
     <h1 class="sr-page-title">${pageName()}</h1>
@@ -677,17 +731,52 @@ function view(step){
     ${navButtons()}
   </div>`;
 
+  /* ASSIGNMENT INFORMATION, THEN CLAIM INFORMATION (owner, 2026-09-24). What
+     is being asked for and how soon comes first, because that is how a claims
+     desk refers work; the claim identifiers follow. Every option in SERVICE
+     REQUESTED is a service the Insurance page already offers, and nothing
+     here is required except the company on the bare door — a referral that
+     knows only the basics still submits. The requested start and urgency moved
+     here from the authorization step: they describe the assignment, not the
+     hours authorized for it. */
   if(step==="claim") return `<div class="card">
-    <h2>Claim details</h2>
-    <p class="lead">Enough to open the file and match our report to yours.</p>
-    <label class="f"><span>Carrier / TPA / employer${REQ}</span><input type="text" data-k="k_carrier" autocomplete="organization" placeholder="Company assigning the file"></label>
+    <h2>Assignment &amp; claim information</h2>
+    <p class="lead">What you need, and enough to open the file and match our report to yours.</p>
+    ${!CARRIER_ONLY && S.askEmail ? `<label class="f"><span>Your email${REQ}</span><input type="email" data-k="c_email" autocomplete="email"></label>
+    <p class="hint" style="margin-top:-6px;">Your assignment confirmation goes to this email.</p>` : ""}
+    ${CARRIER_ONLY ? "" : companyField()}
+    <h3 class="substep">Assignment information</h3>
+    <label class="f"><span>Service requested${OPT}</span>
+      <select data-k="k_service">
+        <option value="">Select&hellip;</option>
+        ${CLAIM_SERVICES.map(o => `<option>${o}</option>`).join("")}
+      </select></label>
     <div class="two">
-      <label class="f"><span>Claim number${OPT}</span><input type="text" data-k="k_claimno"></label>
+      <label class="f"><span>Requested start${OPT}</span>
+        <select data-k="z_start_mode" onchange="capture();render()" style="margin-bottom:6px">
+          <option>Specific date</option>
+          <option>As soon as available</option>
+          <option>Flexible</option>
+          <option>To be determined</option>
+        </select>
+        ${(!val.z_start_mode || val.z_start_mode === "Specific date") ? `<input type="date" data-k="z_start">` : ""}
+      </label>
+      <label class="f"><span>Urgency${OPT}</span>
+        <select data-k="z_priority">
+          <option value="">Select&hellip;</option>
+          <option>Standard</option>
+          <option>Soon</option>
+          <option>Urgent / time sensitive</option></select></label>
+    </div>
+    <p class="hint" style="margin-top:-6px;">In many cases, we can begin as soon as the same day, depending on availability and the type of assignment.</p>
+    <h3 class="substep">Claim information</h3>
+    <div class="two">
+      <label class="f"><span>Claim / file / reference number${OPT}</span><input type="text" data-k="k_claimno"></label>
       <label class="f"><span>Policy number${OPT}</span><input type="text" data-k="k_policy"></label>
     </div>
     ${naBox("k_claimno", "Claim number not available at this time — it never holds up an urgent assignment")}
     <div class="two">
-      <label class="f"><span>Claim type${OPT}</span>
+      <label class="f"><span>Type of claim${OPT}</span>
         <select data-k="k_type">
           <option value="">Select…</option>
           <option>Workers' compensation</option>
@@ -706,13 +795,13 @@ function view(step){
         ${val.k_dol_mode === "Unknown" ? "" : `<input type="text" data-k="k_dol" placeholder="${val.k_dol_mode === "Approximate date" ? "e.g. spring 2026, or around March" : "MM/DD/YYYY"}">`}
       </label>
     </div>
-    <label class="f"><span>Adjuster / assigning contact${OPT}</span><input type="text" data-k="k_adjuster"></label>
+    <label class="f"><span>Insured name${OPT}</span><input type="text" data-k="k_insured" placeholder="The policyholder or employer, if different from the claimant"></label>
+    <label class="f"><span>Handling adjuster, if not you${OPT}</span><input type="text" data-k="k_adjuster"></label>
     <div class="two">
       <label class="f"><span>Adjuster email${OPT}</span><input type="email" data-k="k_adj_email" autocomplete="email"></label>
       <label class="f"><span>Adjuster phone${OPT}</span><input type="tel" data-k="k_adj_phone" autocomplete="tel"></label>
     </div>
     <label class="f"><span>Defense counsel${OPT}</span><input type="text" data-k="k_counsel" placeholder="Firm and attorney, if the file is in litigation"></label>
-    <label class="f"><span>Billing reference / PO${OPT}</span><input type="text" data-k="k_po" placeholder="If your billing requires one"></label>
     <label class="f"><span>Prior surveillance on this claim?${OPT}</span>
       <select data-k="k_prior">
         <option value="">Select…</option>
@@ -741,12 +830,12 @@ function view(step){
     ? "The recipient of the documents. A reliable address and a description are what make service quick."
     : "Who or what should we look into? Share whatever you know — more detail helps.";
   return `<div class="card">
-    <h2>${isClaims()?"The claimant":isLegal()?legalHead:"Subject of the investigation"}</h2>
+    <h2>${isClaims()?"Subject information":isLegal()?legalHead:"Subject of the investigation"}</h2>
     <p class="lead">${isClaims()
       ? "Who we are going out on. Addresses and vehicles are what make or break a first day in the field."
       : isLegal() ? legalLead
       : "Who or what should we look into? Share whatever you know — more detail helps."}</p>
-    <label class="f"><span>${isClaims()?"Claimant's name":lsvc==="process"?"Recipient's name":"Subject's name"}${isClaims()?ONE_FILEID:OPT}</span><input type="text" data-k="s_name"></label>
+    <label class="f"><span>${isClaims()?"Claimant / subject name":lsvc==="process"?"Recipient's name":"Subject's name"}${isClaims()?ONE_FILEID:OPT}</span><input type="text" data-k="s_name"></label>
     ${lsvc==="process" ? `<label class="f"><span>Documents to be served${OPT}</span>
       <input type="text" data-k="ls_docs" placeholder="e.g. summons and complaint, subpoena, witness summons"></label>` : ""}
     <label class="f"><span>${lsvc==="locate"?"Last known address or location":"Known address or location"}${OPT}</span><input type="text" data-k="s_addr" placeholder="Full or partial — a general area helps, e.g. Forest, Virginia area"></label>
@@ -756,12 +845,37 @@ function view(step){
     ${isClaims()
       ? `<label class="f"><span>Alleged injury &amp; stated restrictions${OPT}</span><textarea data-k="s_rel" placeholder="Reported injury, work status, and any restrictions in the file…"></textarea></label>`
       : `<label class="f"><span>Relationship to you${OPT}</span><input type="text" data-k="s_rel" placeholder="e.g. spouse, tenant, employee, defendant"></label>`}
-    <label class="f"><span>Documents or photos${OPT}</span>
+    ${isClaims() ? "" : `<label class="f"><span>Documents or photos${OPT}</span>
 
-      <span class="hint" id="filenote">Documents are attached to the case by the office once the assignment is accepted &mdash; nothing uploads from this form.</span></label>
+      <span class="hint" id="filenote">Documents are attached to the case by the office once the assignment is accepted &mdash; nothing uploads from this form.</span></label>`}
     ${navButtons()}
   </div>`;
   }
+
+  /* THE ASSIGNMENT OBJECTIVE, AND WHAT HELPS PLAN IT (owner, 2026-09-24). The
+     carrier path asks what to document or investigate — never for a legal
+     conclusion — then the timing a claims desk knows, then its instructions.
+     "Special instructions / restrictions" is the carrier wording of the notes
+     field every path already has, so what an adjuster writes there reaches the
+     field exactly as it did. Referral documents are NOT uploaded here: this
+     public form has no safe attachment path, and inventing one overnight is
+     the thing the owner ruled out — the section says where they go instead. */
+  if(step==="objective" && isClaims()) return `<div class="card">
+    <h2>Assignment objective</h2>
+    <p class="lead">What this assignment needs to answer, and anything that helps us plan it.</p>
+    <label class="f"><span>What would you like us to document or investigate?${REQ}</span><textarea data-k="o_goal" placeholder="e.g. current physical activity and routine versus stated restrictions; employment; scene documentation"></textarea></label>
+    <label class="f"><span>Deadline or key dates${OPT}</span><input type="text" data-k="o_time" placeholder="e.g. IME 10/2, hearing 10/15, report needed by 10/1"></label>
+    <h3 class="substep">Known schedule / activity</h3>
+    <label class="f"><span>Known schedule / activity${OPT}</span><textarea data-k="o_sched" placeholder="Known appointments, work schedule, regular activity, upcoming events, or other timing information that may help with the assignment."></textarea></label>
+    ${naBox("o_sched", "No known schedule at this time")}
+    <h3 class="substep">Special instructions / restrictions</h3>
+    <label class="f"><span>Special instructions / restrictions${OPT}</span><textarea data-k="o_notes" placeholder="e.g. specific surveillance timing, location concerns, contact restrictions, reporting requests"></textarea></label>
+    <h3 class="substep">Documents / referral materials</h3>
+    <p class="hint" id="refnote">Referral documents &mdash; the referral itself, claim notes, restrictions, prior
+      reports, photographs &mdash; are attached to the case by the office once the assignment is accepted.
+      Nothing uploads from this form, and nothing needs to be attached to submit this assignment.</p>
+    ${navButtons()}
+  </div>`;
 
   if(step==="objective") return `<div class="card">
     <h2>${isClaims()?"Scope &amp; deadline":"Your objective"}</h2>
@@ -792,38 +906,18 @@ function view(step){
       </label>`).join("")}
     ${val.z_auth==="custom"?`<label class="f"><span>Custom authorization${REQ}</span><input type="text" data-k="z_custom" placeholder="e.g. 12 hours, or 4 hours per day across 5 days"></label>`:""}
 
-    <div class="two">
-      <label class="f"><span>Not-to-exceed amount${OPT}</span><input type="text" data-k="z_nte" placeholder="A cap we will not pass without approval"></label>
-      <label class="f"><span>Requested start${OPT}</span>
-        <select data-k="z_start_mode" onchange="capture();render()" style="margin-bottom:6px">
-          <option>Specific date</option>
-          <option>As soon as available</option>
-          <option>Flexible</option>
-          <option>To be determined</option>
-        </select>
-        ${(!val.z_start_mode || val.z_start_mode === "Specific date") ? `<input type="date" data-k="z_start">` : ""}
-      </label>
-    </div>
+    <label class="f"><span>Not-to-exceed amount${OPT}</span><input type="text" data-k="z_nte" placeholder="A cap we will not pass without approval"></label>
     <div class="two">
       <label class="f"><span>Permitted days${OPT}</span><input type="text" data-k="z_days" placeholder="e.g. weekdays only, or any day"></label>
       <label class="f"><span>Permitted times${OPT}</span><input type="text" data-k="z_times" placeholder="e.g. 0600–1400, or investigator's discretion"></label>
     </div>
-    <div class="two">
-      <label class="f"><span>Weekend authorization${OPT}</span>
-        <select data-k="z_weekend">
-          <option value="">Select…</option>
-          <option>Yes — weekends authorized</option>
-          <option>No — weekdays only</option>
-          <option>Call first</option></select></label>
-      <label class="f"><span>Priority${OPT}</span>
-        <select data-k="z_priority">
-          <option value="">Select…</option>
-          <option>Routine</option>
-          <option>Expedited</option>
-          <option>Rush — needed immediately</option></select></label>
-    </div>
+    <label class="f"><span>Weekend authorization${OPT}</span>
+      <select data-k="z_weekend">
+        <option value="">Select…</option>
+        <option>Yes — weekends authorized</option>
+        <option>No — weekdays only</option>
+        <option>Call first</option></select></label>
     <label class="f"><span>Geographic limitations${OPT}</span><input type="text" data-k="z_geo" placeholder="e.g. within 50 miles of Roanoke; call before travelling further"></label>
-    <label class="f"><span>Special billing instructions${OPT}</span><textarea data-k="z_billing" placeholder="References your invoicing needs, portal, expense pre-approval…"></textarea></label>
     <p class="hint"><b>No additional fees.</b> The rate we confirm is the rate you are invoiced &mdash;
       mileage, travel time, tolls, parking, database and record fees and report writing are all
       included. An assignment outside our service area has its travel quoted before we accept it,
@@ -950,18 +1044,29 @@ function view(step){
     </div>`;
   }
 
+  /* BILLING / REFERENCE INFORMATION — every field optional, because a claims
+     desk's references often arrive after the referral does. The references are
+     the carrier's own; no rate or figure appears on this public page. */
   if(step==="billing") return `<div class="card">
-    <h2>Billing</h2>
-    <p class="lead">Nothing is due now. This assignment is invoiced to the carrier under the agreed fee schedule.</p>
+    <h2>Billing / reference information</h2>
+    <p class="lead">Nothing is due now. This assignment is invoiced to the carrier, TPA or employer
+      under the agreed fee schedule, and everything on this step is optional.</p>
     <div class="feebox">
-      <div class="row"><span>Carrier / TPA</span><b>${esc(val.k_carrier||"—")}</b></div>
-      <div class="row"><span>Claim number</span><span>${esc(val.k_claimno||"—")}</span></div>
-      ${val.k_po?`<div class="row"><span>Billing reference / PO</span><span>${esc(val.k_po)}</span></div>`:""}
+      <div class="row"><span>Carrier / TPA / employer</span><b>${esc(val.k_carrier||"—")}</b></div>
+      <div class="row"><span>Claim / reference number</span><span>${esc((val.k_claimno_na ? "" : val.k_claimno)||"—")}</span></div>
       <div class="row due"><span>Due at assignment</span><span>Nothing — invoiced</span></div>
     </div>
-    <label class="f"><span>Send invoices to${OPT}</span><input type="email" data-k="b_email" placeholder="Accounts payable or billing email"></label>
+    <div class="two">
+      <label class="f"><span>PO number${OPT}</span><input type="text" data-k="b_po"></label>
+      <label class="f"><span>Billing reference${OPT}</span><input type="text" data-k="k_po" placeholder="If your billing requires one"></label>
+    </div>
+    ${naBox("k_po", "Billing reference to follow")}
+    <div class="two">
+      <label class="f"><span>Invoice reference${OPT}</span><input type="text" data-k="b_invref"></label>
+      <label class="f"><span>Send invoices to${OPT}</span><input type="email" data-k="b_email" placeholder="Accounts payable or billing email"></label>
+    </div>
     ${naBox("b_email", "Billing contact to follow — invoicing details can come later")}
-    <label class="f"><span>Billing notes${OPT}</span><textarea data-k="b_notes" placeholder="Portal, invoicing requirements, required references…"></textarea></label>
+    <label class="f"><span>Special billing instructions${OPT}</span><textarea data-k="b_notes" placeholder="Portal, invoicing requirements, expense pre-approval, required references…"></textarea></label>
     <p class="hint">We confirm the rate and any estimated hours in writing before going out. Questions on rates? Call ${FIRM.phone}.</p>
     ${navButtons("Submit assignment")}
   </div>`;
@@ -1006,7 +1111,11 @@ function validate(step){
   capture();
   if(step==="info"){
     if(!(val.c_name||"").trim()) return "Please enter your full name.";
-    if(!(val.c_phone||"").trim() && !(val.c_email||"").trim()) return "Add a phone number or email so we can reach you.";
+    if(isClaims()){
+      if(!validEmail(val.c_email)) return "Please enter your email — the assignment confirmation is sent there.";
+      if(CARRIER_ONLY && !(val.k_carrier||"").trim()) return "Please enter the company sending the assignment — the carrier, TPA or employer.";
+    }
+    else if(!(val.c_phone||"").trim() && !(val.c_email||"").trim()) return "Add a phone number or email so we can reach you.";
   }
   if(step==="service" && !S.svc) return "Please choose a service.";
   if(step==="lsvc" && !S.lsvc) return "Please choose the service the firm needs.";
@@ -1026,6 +1135,10 @@ function validate(step){
      number may genuinely not exist yet on an urgent assignment — the control
      under the field records that instead of blocking. */
   if(step==="claim"){
+    /* The bare door reaches this step after the SHARED contact step, where an
+       email was only one of two ways to be reached — so it is asked for here,
+       on the step that draws the field, before a carrier assignment goes on. */
+    if(!validEmail(val.c_email)) return "Please enter your email — the assignment confirmation is sent there.";
     if(!(val.k_carrier||"").trim()) return "Please enter the carrier, TPA or employer assigning the file.";
   }
   /* The file has to be identifiable: the claimant's name, or failing that the
@@ -1058,6 +1171,7 @@ function validate(step){
 function next(){
   const step=steps()[S.step], msg=validate(step);
   if(msg){ fail(msg); return; }
+  if(step==="info") S.askEmail = !validEmail(val.c_email);
   // The consumer path now ends on the agreement — there is no payment step,
   // because there is no figure to charge until the fee sheet is agreed.
   if(step==="billing" || (step==="agreement" && !isClaims())){ finish(); return; }
@@ -1125,6 +1239,11 @@ function buildPayload(){
       defense_counsel:val.k_counsel||"", billing_reference:val.k_po||"", prior_surveillance:val.k_prior||"",
       billing_email:val.b_email||"", billing_notes:val.b_notes||"",
       contact_title:val.c_title||"", organization_type:val.c_orgtype||"",
+      /* The adjuster-assignment fields (owner, 2026-09-24). The reference and
+         billing ones are the paying side and stay office-only in the portal;
+         the service and the schedule are fieldwork, and reach the field. */
+      department:val.c_dept||"", service_requested:val.k_service||"", insured_name:val.k_insured||"",
+      known_schedule:val.o_sched||"", po_number:val.b_po||"", invoice_reference:val.b_invref||"",
       payment_method:"Invoiced to carrier"
     });
     // What the carrier authorized. The operational half of this — hours, days,
@@ -1143,7 +1262,6 @@ function buildPayload(){
       weekend_authorized:val.z_weekend||"", priority:val.z_priority||"",
       geographic_limits:val.z_geo||"",
     });
-    if(val.z_billing) p.billing_notes = [p.billing_notes, val.z_billing].filter(Boolean).join(" — ");
   }
 
   /* INTAKE-NA status model: availability rides beside the value, and a status
@@ -1167,6 +1285,8 @@ function buildPayload(){
       p.start_date_status = ({"As soon as available":"asap","Flexible":"flexible","To be determined":"tbd"})[val.z_start_mode] || "flexible";
     }
     if(val.b_email_na){ p.billing_email = ""; p.billing_email_status = "not_available"; }
+    if(val.o_sched_na){ p.known_schedule = ""; p.known_schedule_status = "not_available"; }
+    if(val.k_po_na){ p.billing_reference = ""; p.billing_reference_status = "not_available"; }
   }
   if(val.s_addr_na){ p.subject_address = ""; p.subject_address_status = "not_available"; }
   if(val.s_desc_na){ p.subject_description = ""; p.subject_description_status = "not_available"; }
@@ -1214,6 +1334,9 @@ async function notifyFirm(notice){
   const d=await r.json().catch(()=>({})); return d && (d.success==="true"||d.success===true);
 }
 
+/* What the portal answered — kept so the confirmation can say an emailed
+   receipt went ONLY when the Worker says it did. */
+let INGEST_REPLY = null;
 /* The case portal is the record. This is the write that has to succeed. */
 async function recordInPortal(p, retried){
   if(!PORTAL_INGEST_KEY || PORTAL_INGEST_KEY === "PASTE_INGEST_KEY") return false;
@@ -1231,6 +1354,7 @@ async function recordInPortal(p, retried){
       let code = ""; try{ code = (await r.json()).code || ""; }catch(e){}
       if(code === "case_no_taken"){ CASE_NO = mintCaseNo(); p.case_no = CASE_NO; return recordInPortal(p, true); }
     }
+    if(r.ok){ try{ INGEST_REPLY = await r.json(); }catch(e){ INGEST_REPLY = null; } }
     return r.ok;
   }catch(e){ return false; }
 }
@@ -1266,24 +1390,47 @@ function rowS(label, v, status){
 function renderRecord(p, sent, threw, stored){
   document.querySelectorAll("#progress i").forEach(el=>el.classList.add("done"));
   const claims = isClaims();
+  /* ASSIGNMENT RECEIVED (owner, 2026-09-24): a claims desk gets a receipt it
+     can file — the request number and the four facts that identify its own
+     referral — and never a promise of acceptance, which a person gives after
+     reading it. The emailed-receipt line appears only when the portal says the
+     receipt actually went. */
+  const receiptTo = claims && stored && INGEST_REPLY && INGEST_REPLY.receipt === "sent" ? p.client_email : "";
+  const receipt = claims && stored ? `<div class="receipt">
+      <h2>Assignment received</h2>
+      <dl>
+        ${row("Request number", p.case_no)}
+        ${rowS("Claim / reference", p.claim_number, p.claim_number_status)}
+        ${row("Subject", p.subject_name)}
+        ${row("Service", p.service_requested || p.service)}
+        ${rowS("Requested start", p.start_date, p.start_date_status)}
+        ${row("Company", p.carrier)}
+      </dl>
+      ${receiptTo ? `<p class="receipt-sent">A confirmation has been emailed to <b>${esc(receiptTo)}</b>.</p>` : ""}
+      <p class="hint">Submitting an assignment does not by itself constitute acceptance &mdash;
+        acceptance, availability, rates and authorization are confirmed with you before work begins.</p>
+    </div>` : "";
   const status = stored
-    ? `<div class="ok"><b>${claims?"Assignment submitted.":"Intake submitted."}</b> Always Precise Investigations has received your ${claims?"assignment":"request"}. We'll ${claims?"confirm acceptance and the rate in writing before going out":"contact you shortly"}. Keep your case number for reference.</div>`
+    ? (claims
+      ? `<div class="ok"><b>Assignment received.</b> Always Precise Investigations has received your assignment. We will review the referral and contact you if additional information is needed.</div>`
+      : `<div class="ok"><b>Intake submitted.</b> Always Precise Investigations has received your request. We'll contact you shortly. Keep your case number for reference.</div>`)
     : sent
     ? `<div class="warn"><b>Received, but please keep this page.</b> We have your contact details and your case number, and we will call you — but the details you entered did not save on our side. Printing or screenshotting this page means nothing is lost.</div>`
     : `<div class="warn"><b>We couldn't confirm delivery.</b> Please call <b>${FIRM.phone}</b> or email <b>${FIRM.email}</b> and give your case number so we don't miss you. Your details are shown below — you can print or screenshot this page.</div>`;
   app.innerHTML = `<div class="record">
     ${status}
-    <h2>${claims?"Claim Assignment":"Client Intake"} — ${esc(p.service)}</h2>
-    <div>Case <span class="case">${esc(p.case_no)}</span></div>
+    ${receipt}
+    <h2>${claims?"Full assignment as submitted":"Client Intake"}${claims ? "" : ` — ${esc(p.service)}`}</h2>
+    <div>${claims ? "Request number" : "Case"} <span class="case">${esc(p.case_no)}</span></div>
     <dl>
-      ${claims?`${row("Carrier / TPA",p.carrier)}${rowS("Claim number",p.claim_number,p.claim_number_status)}${row("Policy number",p.policy_number)}${row("Claim type",p.claim_type)}${rowS("Date of loss",p.date_of_loss,p.date_of_loss_status)}${row("Adjuster",p.adjuster)}${row("Adjuster email",p.adjuster_email)}${row("Adjuster phone",p.adjuster_phone)}${row("Defense counsel",p.defense_counsel)}${row("Prior surveillance",p.prior_surveillance)}`:""}
-      ${row(claims?"Assigning contact":"Name",p.client_name)}${row("Phone",p.client_phone)}${row("Email",p.client_email)}
+      ${claims?`${row("Company",p.carrier)}${row("Service requested",p.service_requested)}${rowS("Claim / reference number",p.claim_number,p.claim_number_status)}${row("Policy number",p.policy_number)}${row("Insured",p.insured_name)}${row("Type of claim",p.claim_type)}${rowS("Date of loss",p.date_of_loss,p.date_of_loss_status)}${row("Handling adjuster",p.adjuster)}${row("Adjuster email",p.adjuster_email)}${row("Adjuster phone",p.adjuster_phone)}${row("Defense counsel",p.defense_counsel)}${row("Prior surveillance",p.prior_surveillance)}`:""}
+      ${row(claims?"Referring contact":"Name",p.client_name)}${claims?row("Department / team",p.department):""}${row("Phone",p.client_phone)}${row("Email",p.client_email)}
       ${claims?"":`${row("Address",p.client_address)}${row("Best time",p.best_time)}`}
       ${row(claims?"Claimant":"Subject",p.subject_name)}${rowS(claims?"Claimant address":"Subject address",p.subject_address,p.subject_address_status)}${rowS("Description",p.subject_description,p.subject_description_status)}${row(claims?"Injury & restrictions":"Relationship",p.subject_relationship)}
-      ${row(claims?"Scope":"Objective",p.objective)}${claims?`${rowS("Authorized hours",p.authorized_hours,p.authorized_hours_status)}${row("Not to exceed",p.not_to_exceed)}${rowS("Requested start",p.start_date,p.start_date_status)}${row("Permitted days",p.permitted_days)}${row("Permitted times",p.permitted_times)}${row("Weekend",p.weekend_authorized)}${row("Priority",p.priority)}${row("Geographic limits",p.geographic_limits)}`:""}${row(claims?"Deadline":"Timeline",p.timeline)}${row("Notes",p.notes)}${row("Attachments",p.attachments)}
+      ${row(claims?"Assignment objective":"Objective",p.objective)}${claims?`${rowS("Known schedule / activity",p.known_schedule,p.known_schedule_status)}${rowS("Authorized hours",p.authorized_hours,p.authorized_hours_status)}${row("Not to exceed",p.not_to_exceed)}${rowS("Requested start",p.start_date,p.start_date_status)}${row("Urgency",p.priority)}${row("Permitted days",p.permitted_days)}${row("Permitted times",p.permitted_times)}${row("Weekend",p.weekend_authorized)}${row("Geographic limits",p.geographic_limits)}`:""}${row(claims?"Deadline or key dates":"Timeline",p.timeline)}${row(claims?"Special instructions / restrictions":"Notes",p.notes)}${row("Attachments",p.attachments)}
       ${row("Service",p.service)}
       ${claims
-        ? `${row("Billing","Invoiced to carrier")}${row("Billing reference / PO",p.billing_reference)}${row("Invoices to",p.billing_email)}${row("Billing notes",p.billing_notes)}`
+        ? `${row("Billing","Invoiced to carrier")}${row("PO number",p.po_number)}${rowS("Billing reference",p.billing_reference,p.billing_reference_status)}${row("Invoice reference",p.invoice_reference)}${rowS("Invoices to",p.billing_email,p.billing_email_status)}${row("Special billing instructions",p.billing_notes)}`
         : `${row("Fee","Sent to you in writing — nothing charged yet")}`}
       ${row(claims?"Authorized by":"Signed by",p.signed_name)}
     </dl>

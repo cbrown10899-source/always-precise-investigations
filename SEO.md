@@ -454,3 +454,106 @@ this page's own conversion behaves differently from Infidelity's, the phone-only
 CTA on the other service pages is the variable, and **that comparison needs
 Search Console and the office's own record of where enquiries came from** — it
 cannot be read off this repository.
+
+## 14. Insurance becomes a local authority page, and the statewide lines go (2026-09-24)
+
+Owner brief 2026-09-24, *"Overnight local SEO + insurance adjuster assignment
+UX — Greater Lynchburg / Central Virginia only."* **No ranking, traffic or click
+claim is made here, because none can be.** What follows is what changed in the
+markup and why; §11's distinction between known, inferred and unknown still
+governs every line.
+
+### The baseline, captured before anything moved
+
+Every priority page was measured first — title, H1, description, canonical,
+robots, structured-data types, `areaServed`, internal and intake links, and
+main-content words — and the same instrument was run afterwards. **The
+homepage and the PI hub did not move at all**, Infidelity and Custody kept their
+title, H1, description and FAQ, and no canonical or robots value changed
+anywhere on the site.
+
+| Page | What changed | What did not |
+| --- | --- | --- |
+| `/insurance-investigations/` | title *Insurance Investigations & Surveillance in Virginia* → *…\| Lynchburg VA*; H1 *Insurance Investigation Services That Deliver Results* → *Insurance Investigations & Surveillance in Central Virginia*; description names Greater Lynchburg and Central Virginia and ends in the phone number; `areaServed` added (it had none); FAQ 11 questions, visible and schema from one list | URL, canonical, the 100-mile coverage statement the owner approved on 2026-09-13 |
+| `/insurance-investigations/vendor-information/` | *Serving Virginia since* row and footer → Greater Lynchburg and Central Virginia; `areaServed: State Virginia` → the regions and markets the page names; a body link to the Insurance page; both buttons read *Submit an Insurance Assignment* | title, H1, description, the travel terms (see Owner review) |
+| `/legal-investigations/` | title → *Legal Investigator for Law Firms & Attorneys \| Lynchburg VA*; H1 → *…in Lynchburg and Central Virginia*; description and social tags de-statewided; `areaServed: State Virginia` → the regions it names; the process offer carries the eleven process markets instead of inheriting the state; the billing FAQ says *retainer or flat fee* | URL, every CTA, no figure anywhere, the flat-fee unit's own wording |
+| six city pages | the insurance and legal links name the city (*How we work insurance claims in Bedford*, *How we support law firms in Bedford*), and the carrier button reads *Submit an insurance assignment* | titles, H1s, descriptions, schema, every other sentence — Bedford included |
+| Infidelity, Custody | the footer's *Serving Virginia since 2014*; Infidelity's og/twitter titles, which still said *…in Virginia* under a page title that said Lynchburg | title, H1, description, FAQ, links |
+
+### Why the Insurance page, and why its H1 was allowed to move
+
+The owner's own intent map gives `/insurance-investigations/` the insurance
+authority role, and its H1 was the one on the site carrying **no service noun,
+no geography and no search term at all** — a slogan. The homepage H1 is pinned
+by the owner; this one was not, and no Search Console data exists for the
+insurance query family, so there was no measured asset to protect. The title,
+H1, description and schema now say *insurance investigations*, *Lynchburg* and
+*Central Virginia* once each, in sentences, with no city list stuffed into a
+title.
+
+### The statewide lines were a CLASS, and it was hiding in three shapes
+
+The 2026-09-13 guard caught *"serving all of Virginia"* and missed its shorter
+sibling, *"Serving Virginia since 2014"*, which was still the footer of four
+pages and a row of the vendor table. The same claim was in **structured data**
+on two pages as `areaServed: {State: Virginia}` — on the Legal page beside a
+process-service offer with no geography of its own, so the schema offered
+process service statewide while the visible copy carried the approved coverage
+sentence. And it was in **social titles**, where a shared link said *in
+Virginia* under a page title that said Lynchburg. Three deploy guards now hold
+each shape as a class over the staged bytes.
+
+**Licensing stays statewide on purpose.** *Va DCJS #11-9159*, *Licensed
+Virginia investigators* and Virginia law are facts about the licence and the
+law, not claims about where the firm travels, and none of them was touched.
+
+### Links — the infidelity lesson applied to the two B2B pages
+
+The city pages already linked the Insurance and Legal pages from their bodies;
+the anchors said *How we work claims* and *How we support counsel* on all six,
+one sentence repeated. They now name the city, the way the infidelity and
+custody links do, so the six differ. The body-link class guard now covers
+`/insurance-investigations/` and `/legal-investigations/` as well, so the next
+rewrite of the city template cannot move them into the footer unnoticed.
+
+### What was deliberately not created
+
+No insurance-city or legal-city page, no *near me* page, no rebuilt retired city
+page (§9 still holds, and `_redirects` is untouched), no new URL of any kind.
+The sitemap is the same thirteen URLs; `CONTENT_REVISED` moved to 2026-09-24
+because city-page content changed, with the one-constant imprecision recorded
+in CLAUDE.md.
+
+### Google Business Profile — alignment to recommend (nothing here changed GBP)
+
+The §10 checklist stands. What this unit adds:
+
+- **Primary category stays Private Investigator.**
+- **Service area: Greater Lynchburg plus the nearby Central Virginia markets the
+  site names** — Lynchburg, Forest, Rustburg, Madison Heights, Amherst, Bedford,
+  Appomattox, Altavista, Moneta / Smith Mountain Lake, Roanoke, Farmville. No
+  statewide area.
+- **Services: list Insurance Investigations** — it is a real, published service
+  with its own page, accepted from carriers, TPAs, self-insured employers and
+  defense counsel — alongside the ones §10 already names. Nothing the site does
+  not offer publicly, and **no recorded statements, canvassing, interviewing or
+  social-media investigation**, which the site withdrew on 2026-08-21.
+- **No residential street address**, as §10 says.
+
+### Search Console — the watch list for this unit
+
+Watch 28-day Performance, Virginia filtered, for these families. Each maps to the
+page that owns the intent; a query landing on a different page is the §12
+diagnosis to run again, not a reason to add a page.
+
+| Family | Queries | Owner page |
+| --- | --- | --- |
+| Private | private investigator Lynchburg VA · private investigator Bedford VA · private investigator Forest VA · private investigator Rustburg VA · private investigator Amherst VA · private investigator Madison Heights VA · private investigator Appomattox VA · private investigator near me | homepage, `/private-investigator/lynchburg-va/`, `/private-investigator/bedford-va/`; the Tier-1 towns resolve to Lynchburg by design (§9) |
+| Insurance | insurance investigator Lynchburg VA · insurance investigations Lynchburg VA · insurance claim investigator Lynchburg · workers comp investigator Lynchburg VA · insurance surveillance Lynchburg VA · insurance investigator Bedford VA · insurance investigator Roanoke VA · insurance investigator Central Virginia | `/insurance-investigations/` |
+| Legal | legal investigator Lynchburg VA · investigator for law firms Lynchburg VA · legal investigations Central Virginia | `/legal-investigations/` |
+| Child custody | child custody investigator Lynchburg VA · private investigator child custody Lynchburg | `/child-custody-investigations/` |
+| Infidelity | infidelity investigator Lynchburg VA · cheating spouse investigator Lynchburg VA | `/infidelity-investigations/` (Bedford keeps its measured *cheating spouse investigations virginia* traffic, §12) |
+
+**URL-inspect and request indexing** after this merge, in this order:
+`/insurance-investigations/`, `/legal-investigations/`,
+`/insurance-investigations/vendor-information/`, then the six city pages.

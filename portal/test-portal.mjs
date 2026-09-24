@@ -4512,6 +4512,104 @@ section('A partial intake reads as intentional, not broken');
   await inv.close();
 }
 
+/* THE ADJUSTER'S ASSIGNMENT FIELDS (owner brief 2026-09-24, Part E): the office
+   reads every field the carrier door now collects, and the field reads the two
+   that are fieldwork — the service asked for and the schedule to plan around —
+   and none of the paying side's references. Planted the way the public form's
+   carrier door writes them. */
+section('An adjuster assignment: the office reads every field, the field reads the fieldwork');
+{
+  const PAY = {
+    assignment: 'insurance', service: 'Insurance Claim Assignment',
+    carrier: 'Example Carrier', client_name: 'Jordan Smith', client_email: 'jordan.smith@example-carrier.test',
+    contact_title: 'Claims Adjuster', department: 'WC Claims', organization_type: 'Insurance carrier',
+    service_requested: 'Surveillance', claim_number: 'WC-2026-12345', insured_name: 'Example Employer Inc',
+    subject_name: 'Taylor Example', objective: 'Document current physical activity and routine.',
+    known_schedule: 'Physical therapy Thursday at 10:00 AM.', notes: 'Do not approach the residence.',
+    start_date: '', start_date_status: 'asap', priority: 'Urgent / time sensitive',
+    po_number: 'PO-7781', billing_reference: 'BR-311', invoice_reference: 'INV-REF-9',
+    payment_method: 'Invoiced to carrier', fee_due: 0,
+  };
+  const plant = (no, payload) => db.prepare(`INSERT INTO submissions (case_no, kind, status, carrier, client_name,
+      client_email, subject_name, claim_number, payload, created_at) VALUES (?, 'claims', 'new', ?, ?, ?, ?, ?, ?, ?)`)
+    .run(no, payload.carrier, payload.client_name, payload.client_email, payload.subject_name,
+         payload.claim_number, JSON.stringify(payload), new Date().toISOString());
+  plant('API-AS-3001', PAY);
+  plant('API-AS-3002', { ...PAY, known_schedule: '', known_schedule_status: 'not_available',
+    billing_reference: '', billing_reference_status: 'not_available' });
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await rowFor(page, 'API-AS-3001').click();
+  await page.waitForTimeout(500);
+  await wsTab(page, 'Intake details');
+  const office = await text(page, '#dlgBody');
+  for (const [label, value] of [['Service requested', 'Surveillance'], ['Insured', 'Example Employer Inc'],
+       ['Title', 'Claims Adjuster'], ['Department / team', 'WC Claims'], ['Organization type', 'Insurance carrier'],
+       ['Known schedule / activity', 'Physical therapy Thursday at 10:00 AM.'],
+       ['Special instructions / restrictions', 'Do not approach the residence.'],
+       ['PO number', 'PO-7781'], ['Billing reference', 'BR-311'], ['Invoice reference', 'INV-REF-9'],
+       ['Requested start', 'As soon as available'], ['Priority', 'Urgent / time sensitive']]) {
+    ok(`the office reads ${label}`, has(office, label) && has(office, value), `${label}: ${value}`);
+  }
+  await page.close();
+
+  const p2 = await newPage();
+  await signIn(p2, 'trever', 'AdminPassword1x');
+  await rowFor(p2, 'API-AS-3002').click();
+  await p2.waitForTimeout(500);
+  await wsTab(p2, 'Intake details');
+  const gap = await text(p2, '#dlgBody');
+  ok('a schedule marked unknown is listed as still needed, in words',
+     has(gap, 'Information still needed') && /Known schedule \/ activity — not available at submission/i.test(gap),
+     gap.slice(0, 400));
+  ok('and so is a billing reference marked to follow',
+     /Billing reference — not available at submission/i.test(gap), gap.slice(0, 400));
+  ok('whose row says so rather than drawing a blank',
+     /Billing reference\s*Not available at submission/i.test(gap), gap.slice(0, 600));
+  await p2.close();
+
+  const danaId = db.prepare("SELECT id FROM users WHERE username = 'dana'").get().id;
+  db.prepare("UPDATE submissions SET assigned_to = ?, status = 'assigned' WHERE case_no IN ('API-AS-3001', 'API-AS-3002')")
+    .run(danaId);
+  const inv = await newPage();
+  await signIn(inv, 'dana', 'FieldWork2026x');
+  await rowFor(inv, 'API-AS-3001').click();
+  await inv.waitForTimeout(500);
+  await wsTab(inv, 'Subject');
+  const field = await text(inv, '#dlgBody');
+  ok('the field reads the service requested', has(field, 'Service requested') && has(field, 'Surveillance'));
+  ok('and the schedule to plan around', has(field, 'Physical therapy Thursday at 10:00 AM.'));
+  for (const [what, needle] of [['the department', 'WC Claims'], ['the insured', 'Example Employer'],
+       ['the purchase order', 'PO-7781'], ['the invoice reference', 'INV-REF-9'], ['the company', 'Example Carrier'],
+       ['the adjuster', 'Jordan Smith']]) {
+    ok(`the field is never shown ${what}`, !has(field, needle), needle);
+  }
+  /* The field view's own case drawer is where an investigator reads this out
+     there, one-handed — so it carries the two fieldwork facts too. */
+  await inv.locator('[data-act="svEnter"]:visible').first().click();
+  await inv.waitForTimeout(700);
+  await inv.locator('.sv-nav button', { hasText: 'Case' }).click();
+  await inv.waitForTimeout(400);
+  const drawer = await text(inv, '.sv-body');
+  ok('the field drawer carries the service requested', has(drawer, 'Service requested') && has(drawer, 'Surveillance'));
+  ok('and the known schedule', has(drawer, 'Physical therapy Thursday at 10:00 AM.'));
+  ok('and still no paying-side reference', !/PO-7781|INV-REF-9|WC Claims|Example Employer/.test(drawer), drawer.slice(0, 300));
+  await inv.close();
+
+  const inv2 = await newPage();
+  await signIn(inv2, 'dana', 'FieldWork2026x');
+  await rowFor(inv2, 'API-AS-3002').click();
+  await inv2.waitForTimeout(500);
+  await inv2.locator('[data-act="svEnter"]:visible').first().click();
+  await inv2.waitForTimeout(700);
+  await inv2.locator('.sv-nav button', { hasText: 'Case' }).click();
+  await inv2.waitForTimeout(400);
+  ok('an unknown schedule reads as not known yet in the field, never blank',
+     /Known schedule\s*Not known yet/.test(await text(inv2, '.sv-body')), (await text(inv2, '.sv-body')).slice(0, 300));
+  await inv2.close();
+}
+
 /* UIBUILD phase 6: the leads desk, the manual intake, and both landing as
    ordinary submissions — no parallel store. */
 section('Leads and intakes: cards, decisions, and the phone-call lead');
@@ -22643,6 +22741,116 @@ section('Simple View: the two bots stop floating over the work');
     await page.setViewportSize({ width: 1200, height: 900 });
     await page.close();
   }
+}
+
+/* A CARRIER ASSIGNMENT IN SIMPLE VIEW CARRIES NO PRIVATE MONEY LOGIC (owner
+   brief 2026-09-24, Part E: "Do NOT apply Private Rate Sheet logic to
+   Insurance"). The row under the status strip was already withdrawn for a
+   claim; the STRIP went on listing Retainer as a step still to do — and could
+   highlight it as the NEXT one — on a file invoiced to a carrier that will
+   never have one. Walked on a fresh, signed carrier intake exactly as the
+   public carrier door delivers one. */
+section('Simple View: a carrier assignment is accepted in one tap and never shown a retainer');
+{
+  db.prepare(`INSERT INTO submissions (case_no, kind, status, carrier, client_name, client_email,
+      subject_name, claim_number, payload, created_at) VALUES (?, 'claims', 'new', ?, ?, ?, ?, ?, ?, ?)`)
+    .run('API-AS-3003', 'Example Carrier', 'Jordan Smith', 'jordan.smith@example-carrier.test',
+      'Taylor Example', 'WC-2026-12345', JSON.stringify({
+        assignment: 'insurance', service: 'Insurance Claim Assignment', carrier: 'Example Carrier',
+        client_name: 'Jordan Smith', client_email: 'jordan.smith@example-carrier.test',
+        service_requested: 'Surveillance', claim_number: 'WC-2026-12345', subject_name: 'Taylor Example',
+        objective: 'Document current physical activity and routine.',
+        known_schedule: 'Physical therapy Thursday at 10:00 AM.', start_date: '', start_date_status: 'asap',
+        payment_method: 'Invoiced to carrier', fee_due: 0, signed_name: 'Jordan Smith',
+        signature: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+      }), new Date().toISOString());
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await simpleOnFor(page);
+  const card = await page.evaluate(() => {
+    const el = [...document.querySelectorAll('.simp-need')].find(x => /Example Carrier/.test(x.textContent)
+      && x.querySelector('[data-case="API-AS-3003"]'));
+    return el ? { text: el.innerText.replace(/\s+/g, ' '),
+      acts: [...el.querySelectorAll('.uibtn')].map(b => b.textContent.trim()) } : null;
+  });
+  ok('the carrier assignment is on Needs action, named for the company', !!card, JSON.stringify(card));
+  const ct = (card && card.text) || '';
+  /* The chips are CSS-uppercased, and innerText reports what is RENDERED —
+     "INSURANCE", "SIGNED" — so every one of these reads case-insensitively. */
+  ok('it is chipped Insurance and says it is ready to accept',
+     /Insurance/i.test(ct) && /Ready to Create Case/i.test(ct) && /Signed/i.test(ct), ct);
+  ok('the card offers no retainer, flat fee or payment to record',
+     !!card && !card.acts.some(a => /retainer|flat fee|payment/i.test(a)), JSON.stringify(card && card.acts));
+
+  await page.evaluate(() => {
+    const b = document.querySelector('[data-act="simpleOpen"][data-case="API-AS-3003"]');
+    if (b) b.click(); else openCase('API-AS-3003', 'details');
+  });
+  await page.waitForTimeout(1100);
+  const bar = await page.evaluate(() => {
+    const b = document.querySelector('.simp-bar');
+    if (!b) return null;
+    return {
+      labels: [...b.querySelectorAll('.simp-acts .uibtn')].map(x => x.textContent.trim()),
+      status: [...b.querySelectorAll('.simp-st')].map(x => x.textContent.replace(/\s+/g, ' ').trim()),
+      money: /retainer|flat fee|agreed amount|record payment/i.test(b.textContent),
+      assign: /assign|offer this|investigator|Corey|Trever/i.test(b.textContent),
+    };
+  });
+  ok('the Simple View bar is drawn for the carrier assignment', !!bar, JSON.stringify(bar));
+  ok('it offers Create case / Accept and nothing that assigns a person',
+     !!bar && bar.labels.some(l => /Create case \/ Accept/i.test(l)) && bar.assign === false,
+     JSON.stringify(bar && bar.labels));
+  ok('its status strip is Intake, Rate sheet, Acceptance and Case — no Retainer step',
+     !!bar && JSON.stringify(bar.status.map(sx => sx.replace(/:.*$/, '').replace(/^\W+/, '').trim()))
+       === JSON.stringify(['Intake', 'Rate sheet', 'Acceptance', 'Case']), JSON.stringify(bar && bar.status));
+  ok('and nothing on the bar speaks of retainer or payment money', !!bar && bar.money === false);
+
+  /* The rate sheet a carrier can be sent is the carrier's own — never the
+     private sheet, its retainer presets, Full Custom or Cash App / Venmo. */
+  await page.evaluate(() => {
+    const b = document.querySelector('.simp-bar [data-act="leadSheet"]');
+    if (b) b.click();
+  });
+  await page.waitForTimeout(900);
+  const wiz = await page.evaluate(() => ({
+    open: !!SHEET_WIZ, sheet: SHEET_WIZ && SHEET_WIZ.sheet,
+    context: SHEET_WIZ ? wizContext(SHEET_WIZ) : null,
+    ret: !!document.querySelector('#wiz_ret'), custom: !!document.querySelector('.cu-term'),
+    pm: [...document.querySelectorAll('.wiz-pm')].map(x => x.dataset.pm),
+    text: (document.querySelector('.amsheet') || {}).innerText || '',
+  }));
+  ok('Send rate sheet opens the insurance sheet in the insurance context',
+     wiz.open && wiz.sheet === 'insurance_assignment' && wiz.context === 'insurance', JSON.stringify(wiz).slice(0, 200));
+  ok('with no retainer selector and no Full Custom builder', wiz.ret === false && wiz.custom === false);
+  ok('and no Cash App or Venmo anywhere on it',
+     !wiz.pm.some(m => /cash|venmo/i.test(m)) && !/cash app|venmo/i.test(wiz.text), JSON.stringify(wiz.pm));
+  await page.evaluate(() => { const x = document.querySelector('.amx[data-act="wizClose"]'); if (x) x.click(); });
+  await page.waitForTimeout(500);
+
+  /* One tap accepts it, and nobody is chosen for it. The whole submitted row
+     is read before and after, every column, because "the original submission
+     is preserved" is a claim about all of it, the payload and the signature
+     included, not about the two columns acceptance is known to leave alone. */
+  const asSent = JSON.stringify(db.prepare("SELECT * FROM submissions WHERE case_no = 'API-AS-3003'").get());
+  await page.evaluate(() => {
+    const b = document.querySelector('.simp-bar [data-act="acceptIntake"]');
+    if (b) b.click();
+  });
+  await page.waitForTimeout(1200);
+  const lead = db.prepare("SELECT status FROM lead_status WHERE case_no = 'API-AS-3003'").get();
+  const row = db.prepare("SELECT assigned_to FROM submissions WHERE case_no = 'API-AS-3003'").get();
+  ok('Create case / Accept accepts the carrier assignment in one tap', !!lead && lead.status === 'converted',
+     JSON.stringify(lead));
+  ok('and assigns nobody — there is no staff chooser on this path', !row.assigned_to, String(row.assigned_to));
+  const asKept = JSON.stringify(db.prepare("SELECT * FROM submissions WHERE case_no = 'API-AS-3003'").get());
+  ok('the adjuster\'s submission is preserved exactly — every column, payload and signature included',
+     !!asSent && asSent.includes('Physical therapy Thursday') && asKept === asSent,
+     asKept === asSent ? '' : `${asSent.slice(0, 160)} → ${asKept.slice(0, 160)}`);
+  await page.evaluate(async () => { await setViewMode('full'); });
+  await page.waitForTimeout(400);
+  await page.close();
 }
 
 section('Simple View at 390 and 320');
