@@ -11406,11 +11406,19 @@ section('Timestamp Photo V2: one at a time — #7 first, then Process next');
     await pMade(it(8));
     out.eight = {made: !!it(8).out, sevenReleased: !!(it(7).out && it(7).out.released), sevenStatus: pqStatus(it(7))};
     it(8).savedHere = true;
-    /* Next after #8 is #9; after #9 it wraps to #1 — and #4, Needs review, is skipped. */
+    /* Next after #8 is #9; after #9 it wraps to the top, #1. */
     pClick('pqProcessNext'); await pMade(it(9));
     it(9).savedHere = true;
     out.nextName = (pqNextReady(it(9)) || {}).name;
     pClick('pqProcessNext'); await pMade(it(1));
+    it(1).savedHere = true;
+    /* AND IT SKIPS a photo that needs review: #3 made on its own, then the
+       Process next on screen names #5 — never #4 — and makes #5. */
+    pClick('pqGo', it(3).qid); await pMade(it(3));
+    it(3).savedHere = true;
+    const nx = [...document.querySelectorAll('#pstamp [data-act="pqProcessNext"]')].find(pVisible);
+    out.afterThree = nx ? (nx.getAttribute('aria-label') || nx.textContent) : '(no Process next on screen)';
+    pClick('pqProcessNext'); await pMade(it(5));
     out.made = PQ.items.filter(x => x.out).map(x => x.name);
     out.four = pqStatus(it(4));
     return out;
@@ -11428,8 +11436,11 @@ section('Timestamp Photo V2: one at a time — #7 first, then Process next');
   ok('J: Process next asks before letting go of an unsaved copy', R.asked === true);
   ok('J: and then makes the next READY photo, #8', R.eight.made && R.eight.sevenReleased && R.eight.sevenStatus === 'complete',
      JSON.stringify(R.eight));
-  ok('J: after #9 it wraps to #1, skipping #4, which needs review', R.nextName === 'SEQ_01.jpg'
-     && R.made.join() === 'SEQ_01.jpg,SEQ_07.jpg,SEQ_08.jpg,SEQ_09.jpg' && R.four === 'needs', JSON.stringify(R));
+  ok('J: after #9 it wraps to the top of the queue, #1', R.nextName === 'SEQ_01.jpg', JSON.stringify(R));
+  ok('J: after #3, Process next names #5 — it skips #4, which needs review', /SEQ_05\.jpg/.test(R.afterThree)
+     && !/SEQ_04/.test(R.afterThree), R.afterThree);
+  ok('J: and makes #5, while #4 still waits for its date and time', R.made.join() === 'SEQ_01.jpg,SEQ_03.jpg,SEQ_05.jpg,SEQ_07.jpg,SEQ_08.jpg,SEQ_09.jpg'
+     && R.four === 'needs', JSON.stringify(R));
   await page.close();
 }
 
@@ -11846,26 +11857,26 @@ section('Timestamp Photo V2: accessible by name and by keyboard, and Escape step
     out.live = !!root.querySelector('#pq_dirty[aria-live]') && !!root.querySelector('.vqd-msg[aria-live]');
     out.pos = {legend: (root.querySelector('.pqd-pos legend') || {}).textContent, radios: root.querySelectorAll('.pqd-pos input[type=radio][name="pst_pos"]').length};
     out.tz = named(document.getElementById('pst_tz'));
-    /* Escape, one layer at a time. */
+    /* The checks are words, and a screen reader hears which were done. */
+    pClick('pqGo', PQ.items[0].qid);
+    await pMade(PQ.items[0]);
+    out.checks = [...root.querySelectorAll('.vqd-checks li')].map(li => li.innerText.trim());
+    PQ.items[0].savedHere = true;          // kept, so nothing below is a question about losing it
+    await pSave(PQ.items[1], T0);          // a setting saved on a photo not yet made — what Clear queue asks about
+    /* Escape, one layer at a time — LAST, and every step survives the queue
+       having gone, so a queue that Escape closes fails by name rather than
+       crashing the lines after it. */
     const menu = root.querySelector('.vqd-row .vqd-menu');
     menu.open = true;
     const esc = () => document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
     esc();
     out.menuClosed = !menu.open && document.activeElement && document.activeElement.tagName === 'SUMMARY';
-    pClick('pqClearAll');
-    out.asked = !!(PQ.confirm && PQ.confirm.kind === 'clearall');
-    esc();
-    out.confirmClosed = !PQ.confirm && PQ.items.length === 5;
-    pClick('pqDetails', PQ.items[1].qid);
-    out.drawer = !!document.querySelector('#pstamp .vst');
-    esc();
-    out.drawerClosed = !document.querySelector('#pstamp .vst') && !PST;
+    if(PQ){ pClick('pqClearAll'); out.asked = !!(PQ.confirm && PQ.confirm.kind === 'clearall'); esc(); }
+    out.confirmClosed = !!PQ && !PQ.confirm && PQ.items.length === 5;
+    if(PQ){ pClick('pqDetails', PQ.items[1].qid); out.drawer = !!document.querySelector('#pstamp .vst'); esc(); }
+    out.drawerClosed = !!PQ && !document.querySelector('#pstamp .vst') && !PST;
     esc(); esc();
     out.stillOpen = !!PQ && !!document.querySelector('#pstamp .pqd') && PQ.items.length === 5;
-    /* The steps are words, and a screen reader hears which are done. */
-    pClick('pqGo', PQ.items[0].qid);
-    await pMade(PQ.items[0]);
-    out.checks = [...root.querySelectorAll('.vqd-checks li')].map(li => li.innerText.trim());
     return out;
   `);
   ok('every control and picture on the dashboard has a name', A.unnamed.length === 0, JSON.stringify(A.unnamed));
