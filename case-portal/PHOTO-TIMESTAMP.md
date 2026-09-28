@@ -560,7 +560,24 @@ than the mutations retired:**
   survives the queue having gone; mutated, it fails *"and never closes the
   queue"* by name.
 
-TBD-FULL
+**The trimmed run** of the twenty photo sections and the two re-aimed Home
+sections: **584 passed**, beside the two "long case number" failures that a
+trimmed run always carries (`CLAUDE.md`). **The final regression, each suite
+alone and written to a file, was green on its first run:**
+
+| suite | result |
+| --- | --- |
+| `portal/test-portal.mjs` | **4794 passed, 0 failed** (4486 at Video V2) |
+| `case-portal/test-worker.mjs` | **4393 passed, 0 failed** — no Worker change |
+| `.github/test-deploy.mjs` | **127 passed, 0 failed** |
+| `portal/test-ceo-gate.mjs` | **43 PASS, 0 WARN, 0 FAIL** — the CEO Bot's recorded summary still agrees |
+
+Unlike Video V2's first full run, nothing outside the photo sections failed:
+the two sections that describe the photo door from elsewhere — the Home
+art-card walk and the direct-launch way back — were found and re-aimed before
+the targeted runs, by searching the suite for every assertion that names the
+photo tool rather than only the sections named after it. `intake/` and
+`visitor-alerts/` are untouched and were not re-run.
 
 **Proven here:** everything above, in Chromium, on bytes built by the test
 itself — the metadata-rich fixtures carry EXIF (GPS, make, model, serial, lens,
