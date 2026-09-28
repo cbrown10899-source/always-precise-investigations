@@ -13183,8 +13183,13 @@ section('Timestamp queue on a phone: compact, 44px, nothing sideways, nothing co
     ok(`${width}: the editor fits, and every field is 44px`, ed.over <= 0 && ed.small.length === 0,
        JSON.stringify(ed.small) + ' ' + ed.over);
     ok(`${width}: the editor's Save and its way back are reachable`, ed.covered.length === 0, JSON.stringify(ed.covered));
+    /* THE WHOLE SCREEN, EXACTLY: its top at the top and its bottom at the
+       bottom. "At least as tall as the screen" was also true of an editor
+       left inline in the scrolled list, taller than the screen and starting
+       above it — which is the list scrolling away underneath it. */
     const edShot = await page.evaluate(() => { const e = document.getElementById('vq_edit'); const r = e.getBoundingClientRect();
-      return { full: Math.round(r.top) <= 0 && Math.round(r.height) >= innerHeight - 1, gen: !!e.querySelector('[data-act="vqGo"]') }; });
+      return { full: Math.abs(Math.round(r.top)) <= 1 && Math.abs(Math.round(r.bottom) - innerHeight) <= 1,
+               top: Math.round(r.top), bottom: Math.round(r.bottom), gen: !!e.querySelector('[data-act="vqGo"]') }; });
     ok(`${width}: the editor is the whole screen and carries Generate`, edShot.full && edShot.gen, JSON.stringify(edShot));
     await vstRun(page, `qClick('vqListBack');`);
     const back = await page.evaluate(() => document.getElementById('vq_body').scrollTop);
@@ -13342,7 +13347,17 @@ section('Timestamp dashboard: five videos, the fourth made first, and a copy tha
       await vstConfirmSaved(v4);
       qClick('vqProcessNext');
       await qWait(() => v5.out || v5.fault);
-      const fifth = { out: !!v5.out, released4: !!(v4.out && v4.out.released) };
+      /* AND ONLY THAT ONE: given a moment in which an automatic "and the
+         next" would already have started, or stopped to ask about the copy
+         still held, nothing else has. */
+      await new Promise(r => setTimeout(r, 400));
+      const fifth = { out: !!v5.out, released4: !!(v4.out && v4.out.released), made: order.join(),
+                      running: vqRunning(), asking: !!VQ.confirm };
+      /* A defect that went on anyway must still let the rest of this section
+         run, so it fails by name above rather than hanging the page below. */
+      if (VQ.confirm) qClick('vqConfirmNo');
+      for (const x of VQ.items) if (x.run || VQ.busy === x) vqStop(x);
+      await qWait(() => !vqRunning(), 10000);
       qClick('vqRunBack');
       /* A FAILED METADATA CHECK, inside the queue. */
       window.vstScrubMp4 = () => ({ times: 0, names: 0 });
@@ -13379,7 +13394,8 @@ section('Timestamp dashboard: five videos, the fourth made first, and a copy tha
      R.fourth.out && /-004\.mp4$/.test(R.fourth.name || '') && R.fourth.others.every(x => !x) && R.order[0] === 'FIVE4.mov',
      JSON.stringify(R.fourth));
   ok('Process next names the next ready video after it', /^Process next: FIVE5\.mov$/.test(R.nextName || ''), String(R.nextName));
-  ok('and makes only that one', R.fifth.out && R.order.join() === 'FIVE4.mov,FIVE5.mov,FIVE3.mov', R.order.join());
+  ok('and makes only that one', R.fifth.out && R.fifth.made === 'FIVE4.mov,FIVE5.mov' && !R.fifth.running
+     && !R.fifth.asking && R.order.join() === 'FIVE4.mov,FIVE5.mov,FIVE3.mov', JSON.stringify(R.fifth) + ' ' + R.order.join());
   ok('a copy that fails its metadata check is failed, with no copy', R.failed.kind === 'clean' && !R.failed.out
      && R.failed.status === 'failed', JSON.stringify(R.failed).slice(0, 300));
   ok('no video URL was ever made for it, and no Generate is offered to repeat it',
@@ -13471,6 +13487,8 @@ section('Timestamp dashboard on a desk: the table, the editor and the processing
       const box = el => { const r = el.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height }; };
       const vis = el => el && el.getBoundingClientRect().width > 0 && getComputedStyle(el).display !== 'none';
       const head = [...document.querySelectorAll('.vqd-thead > span')].filter(vis).map(e => e.textContent.trim());
+      /* No selected row is an answer, not a crash: every read below survives
+         it, so its absence fails the selection assertion by name. */
       const row = document.querySelector('.vqd-row.is-sel');
       const plain = document.querySelector('.vqd-row:not(.is-sel)');
       const ed = document.getElementById('vq_edit');
@@ -13478,14 +13496,18 @@ section('Timestamp dashboard on a desk: the table, the editor and the processing
       const drop = document.querySelector('.vqd-drop');
       const dr = box(drop);
       const hit = document.elementFromPoint(dr.l + dr.w / 2, dr.t + dr.h / 2);
-      const cells = [...row.querySelectorAll('.vqd-c')].filter(vis);
+      const cells = [...(row || document.querySelector('.vqd-row')).querySelectorAll('.vqd-c')].filter(vis);
       const over = cells.some((c, i) => i && box(c).l < box(cells[i - 1]).r - 0.5);
-      return { head, sel: row && row.dataset.qid, selBg: getComputedStyle(row).backgroundColor, plainBg: getComputedStyle(plain).backgroundColor,
-               selBorder: getComputedStyle(row).borderTopColor, edVisible: vis(ed), edSel: ed.dataset.qid,
+      /* BESIDE, AND AT ITS OWN WIDTH: a sliver of an editor is still "visible",
+         and overlaps nothing, so both are measured rather than assumed. */
+      const eb = box(ed), lb = box(document.querySelector('.vqd-left'));
+      return { head, sel: row && row.dataset.qid, selBg: row && getComputedStyle(row).backgroundColor,
+               plainBg: getComputedStyle(plain).backgroundColor, edVisible: vis(ed), edSel: ed.dataset.qid,
+               edW: Math.round(eb.w), edBeside: eb.l >= lb.r - 0.5 && eb.r <= innerWidth + 0.5,
                small: inputs.filter(h => h < 44).length, pageOver: document.documentElement.scrollWidth - innerWidth,
                bodyOver: (b => b.scrollWidth - b.clientWidth)(document.getElementById('vq_body')),
                dropUsable: dr.w > 300 && dr.h >= 120 && !!hit && (hit === drop || drop.contains(hit)), cellsOverlap: over,
-               ed: box(ed) };
+               ed: eb };
     });
     ok(`${width}: the queue is the table, with the approved columns`,
        M.head.join('|') === (width >= 1440 ? '#|Thumbnail|Filename|Size|Format|Detected start time|Edit time|Status|Actions'
@@ -13494,6 +13516,8 @@ section('Timestamp dashboard on a desk: the table, the editor and the processing
        JSON.stringify([M.pageOver, M.bodyOver, M.cellsOverlap]));
     ok(`${width}: the selected row is obvious and the editor beside it is that video’s`,
        M.sel && M.edSel === M.sel && M.edVisible && M.selBg !== M.plainBg, JSON.stringify([M.sel, M.edSel, M.selBg, M.plainBg]));
+    ok(`${width}: the editor stands beside the table at its full width, inside the screen`,
+       M.edW >= 300 && M.edBeside, JSON.stringify({ w: M.edW, beside: M.edBeside, ed: M.ed }));
     ok(`${width}: every field and button in the editor is at least 44px`, M.small === 0, String(M.small));
     ok(`${width}: the drop target is on screen, large, and uncovered`, M.dropUsable, JSON.stringify(M));
     await vstRun(page, `qClick('vqGo', VQ.items[0].qid); await qWait(() => VQ.items[0].stage === 'decoding' || VQ.items[0].out, 20000);`);
@@ -13503,10 +13527,13 @@ section('Timestamp dashboard on a desk: the table, the editor and the processing
       const a = r(run), b = r(ed);
       const overlap = !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top);
       const stop = run.querySelector('[data-act="vstAbort"]');
-      return { overlap, onScreen: a.top < innerHeight && a.bottom > 0, stop: !!stop || !!(VQ.items[0].out) };
+      /* Not overlapping is only worth saying about an editor that is there:
+         a zero-width one overlaps nothing. */
+      return { overlap, edW: Math.round(b.width), onScreen: a.top < innerHeight && a.bottom > 0,
+               stop: !!stop || !!(VQ.items[0].out) };
     });
     ok(`${width}: the processing panel never overlaps the editor, and is brought into view`,
-       !P.overlap && P.onScreen && P.stop, JSON.stringify(P));
+       !P.overlap && P.edW >= 300 && P.onScreen && P.stop, JSON.stringify(P));
     await vstRun(page, `await qWait(() => VQ.items[0].out || VQ.items[0].fault, 30000); if (window.__restoreVp9) window.__restoreVp9(); vstClose();`);
     await page.close();
   }
