@@ -1181,3 +1181,194 @@ configuration, the recorded fallback design is to convert AU payloads to
 length-prefixed form and synthesise the `avcC` from the in-band SPS/PPS —
 both already in hand from the demux — as a follow-up keyed to a real device
 answer, not built speculatively against a guess.
+
+---
+
+# MID-DECODE FAILURE — 2026-09-27, the owner's 00029.MTS
+
+Owner, live: `00029.MTS` — M2TS / AVCHD, H.264 / AVC. The tool opened it,
+read its metadata, took its start time (09/26/2026 06:11:02 AM EDT) and its
+fingerprint, recognised the container, began the decode — and stopped with
+*"The device's video codec stopped part-way: Decoding error. Nothing was
+saved and your original is unchanged."* The screen then still offered
+**Generate timestamped copy**, under a Compatibility line reading *"Ready —
+decoded and re-encoded on this device"*.
+
+## 1. The pipeline, traced — no guessing
+
+```
+file picker (File object, read-only)
+  -> vstParse -> vstTsSniff (0x47 grid, 64 KB) -> vstTsParse
+       head scan (48 MB cap): PAT -> PMT -> H.264 SPS; DTS spacing -> fps
+       tail scan (8 MB): last PTS -> duration
+  -> vstDecoderAccepts: VideoDecoder.isConfigSupported({codec, codedWidth, codedHeight})
+  -> Generate -> vstTranscode -> vstTranscodeTs
+       vstTsScan: ~1.2 MB packet-aligned file.slice reads -> vstTsReader
+         (PES reassembly per access unit) -> vstTsAu
+       -> WebCodecs VideoDecoder, Annex B, NO description, NO hardwareAcceleration
+          key (the browser's default choice: on most computers the GPU decoder)
+       -> output VideoFrame -> canvas drawImage -> vstDraw(vstLabel(...)) burn
+       -> WebCodecs VideoEncoder (H.264, avc) -> vendored mp4-muxer
+          (ArrayBufferTarget, fastStart in-memory)
+       -> Blob -> object URL -> Save / Share -> portal record (metadata only)
+```
+
+What decodes: **WebCodecs `VideoDecoder`** — nothing else. No `<video>`
+element (not consulted for a TS), no MediaSource, no WASM, no server. The
+demux is this repository's own MPEG-TS/M2TS reader.
+
+Where it failed: the decoder's error callback, during `decode()`. The words
+*"Decoding error."* are the codec's own — Chromium's generic text for a
+decode failure — with our prefix and suffix around them (the old wording
+printed *"Decoding error.. Nothing was saved"*, a doubled full stop, now
+gone). There was **exactly one decoder**, so the run ended; the catch put the
+screen back on `preview` with Generate still drawn, so a second press re-ran
+the identical configuration against the identical file.
+
+## 2. The failure shape, reproduced on master before anything changed
+
+A scratch harness ran master's page code against an AVCHD-shaped fixture
+(192-byte packets, 1440x1080 interlaced field pairs, AC-3 audio, 90 frames)
+with a stub decoder that fails after 40 units:
+
+| Codec behaviour | master did |
+| --- | --- |
+| close + error callback in one task (Chromium's order) | the owner's exact screen: the sentence, **Generate still offered**, Compatibility **"Ready — decoded and re-encoded on this device"**; no output kept |
+| codec seen closed a moment BEFORE its callback ran | **a 15-frame copy of a 90-frame clip, offered as "Timestamped copy is ready"** |
+
+The second row is the finding that matters most: master treated a closed
+decoder as the end of the stream and checked nothing about the copy, so
+"the encoder ended without throwing" was all it took to offer a partial
+file as evidence.
+
+## 3. Why the device decoder stopped — what is known and what is not
+
+Not determinable from here: this container's Chromium has no H.264 decoder
+or encoder at all (measured again 2026-09-27: `isConfigSupported` false for
+every `avc1` profile, hardware or software), and the owner's device was not
+available. **The strongest candidate is interlacing**: 1080i, coded as field
+pictures, is the default recording mode of most AVCHD camcorders, and it is
+a known limit of hardware H.264 decoders that a software decoder handles.
+That is a hypothesis, labelled as one. The new failure screen makes the next
+report decisive either way: it says how many frames the device decoder
+returned before it stopped, and where in the clip — "before it produced a
+single frame" is a format the decoder refuses; "after 4,812 frames (about
+2:40 into the clip)" is something at that point.
+
+## 4. What was built — two local decoders, and a copy proven whole or not made
+
+**The fallback is the browser's own software decoder**, through the same API:
+`VideoDecoder` configured with `hardwareAcceleration: "prefer-software"`.
+Local, no download, no new dependency, no CSP change. The primary pass is
+configured exactly as before (no `hardwareAcceleration` key — asserted), so a
+device where it worked behaves identically. When the primary fails:
+
+- its incomplete output is discarded (codecs closed, muxer dropped);
+- the software decoder decodes the stream again **from the first keyframe**,
+  from the same `File` — the operator does not re-select anything;
+- the screen says so while it happens.
+
+**A copy is offered only when it is PROVEN whole** (`vstTsAttempt`'s ledger):
+every frame the stream holds (counted from the slice headers — two fields are
+one frame, whether they travel in one PES or two) came back from the decoder
+exactly once and no stray frame appeared; every decoded frame was stamped,
+encoded and muxed; the stream was read to its end; the source's own clock span
+matches the head/tail measurement; the copy covers the span from the first
+keyframe to the end; and the finished MP4, **read back with this page's own
+parser**, has that many frames, that picture size and that running time.
+
+**Damage is found as the file is read, and stops the read.** The demuxer now
+keeps a ledger on the picture's own stream: a broken packet grid, a packet the
+writer flagged (`transport_error_indicator`), a continuity-counter gap (a lost
+packet), a PES shorter than it declared, a PES header that never completed, a
+reserved adaptation-field value, a scrambled picture stream, a file that ends
+part-way through a packet, and a NAL whose `forbidden_zero_bit` is set. The
+standard's permitted duplicate packet is recognised and its payload is not
+appended twice (before, it was — corrupting that frame). Damage is a FILE /
+STREAM ERROR and **no second decoder is run for it**: a software decoder
+conceals damage rather than refusing it, and a concealed hole in evidence is
+worse than no copy.
+
+**When no decoder finishes, the file is read through once more for damage
+alone** (no decoding, same bounded slices), so the verdict can say which it is:
+
+| Found | Verdict |
+| --- | --- |
+| damage anywhere in the file | FILE / STREAM ERROR, with the kind and where |
+| packets clean; device decoder failed; no software decoder here | DEVICE DECODER COMPATIBILITY ERROR |
+| packets clean; both refused the very first frame | DEVICE DECODER COMPATIBILITY ERROR (probable) |
+| packets clean; both stopped at the same moment part-way | FILE / STREAM ERROR (probable) |
+| packets clean; they stopped at different moments | CAUSE NOT DETERMINED |
+
+Encoder, memory and read failures are their own classes and never trigger a
+decoder retry.
+
+## 5. The screen
+
+States, in the owner's order: **Ready** ("will be decoded and re-encoded" —
+never the past tense before anything ran) -> **Processing** -> **Primary
+decoder failed — trying compatibility mode** -> **Checking the copy is
+complete** -> **Complete**, or **Could not completely decode**. The finished
+screen names the decoder used, what was checked ("All 1,800 frames decoded,
+stamped and re-encoded; the finished MP4 reads back with 1,800 frames,
+60.06 s"), the original's fingerprint as the original's, and — when the
+software decoder was used — the owner's sentence: *"Compatibility mode was used
+for this AVCHD/MTS file. Processing remained on this device."*
+
+The failure headline is the owner's sentence verbatim: *"Video could not be
+completely decoded. No timestamped copy was created and your original is
+unchanged."* — then one line per decoder (what it did, how far it got), then
+the verdict.
+
+**No loop.** After a failure there is no Generate button, and `vstGenerate`
+refuses a direct call. The one exception is an original that stopped being
+READABLE (a card pulled mid-run): that offers *Choose the video again*, which is
+a different run. A file this tab's primary decoder failed on goes straight to
+compatibility mode the next time — a corrected time on a finished copy, or the
+same file chosen again — and the ready screen says so before anything runs
+(`VST_PRIMARY_FAILED`, in memory only; `vstLaneFor` is the one writer of which
+decoder a run starts with).
+
+**Stop stops the work.** Before, Stop closed the screen and the decode ran on
+to the end of the file behind it. Every loop now reads the run between frames,
+closes the codecs and keeps nothing — on the MOV path too.
+
+## 6. FFmpeg / WASM — evaluated again, with today's numbers
+
+| | measured 2026-09-27 |
+| --- | --- |
+| `@ffmpeg/core` 0.12.10 `ffmpeg-core.wasm` | **32,232,419 bytes (30.7 MiB)** — over Cloudflare Pages' 25 MiB per-file cap |
+| libav.js prebuilt variants | **none decodes H.264** — its `h264-aac` variant is source-only and uses OpenH264, which does not decode interlaced (field) pictures |
+| portal CSP | `script-src 'self'` — WebAssembly compilation needs `'wasm-unsafe-eval'` added on the origin that holds case data |
+| threads | no `SharedArrayBuffer` (no COOP/COEP) — single-threaded software H.264, slower than real time on a phone |
+
+So the software decoder built into the browser — reached through the same
+WebCodecs API — is the local software decoder that fits without shipping one.
+A vendored WASM decoder (a custom FFmpeg build with only the H.264 decoder and
+the frame API, a few MB) is the remaining option for a browser that has no
+software H.264 decoder of its own; it needs the CSP relaxation and a new
+dependency, which are **the owner's decision**, and it was not built.
+
+## 7. What is proven here, and what is not
+
+Proven in this container, in real Chromium, with stub codecs and everything
+else real (canvas, burn, `VideoFrame`, `EncodedVideoChunk`, the vendored
+muxer, the read-back): the fallback, the ledger, every damage kind, the
+permitted duplicate, the verdict table, the screen states, the no-loop rules,
+Stop, and zero network during all of it. **Not proven here:** that a given
+device's browser offers the software decoder, and that it decodes the owner's
+real `00029.MTS`. Both are the owner's device check. Whether a device has it is
+now stated on the ready screen ("Compatibility mode: available if this device's
+decoder fails" / "not available in this browser") and in *What can this device
+do?* before anything runs.
+
+**Unchanged on purpose:** the original is fingerprinted when chosen (up to
+128 MB, as before) and Generate now waits for that fingerprint; the copy stays
+picture only (owner, 2026-08-18), so there is no audio track whose alignment
+could drift, and the screen says the original's audio is still on the
+original — which it now actually shows, since the pipeline never passed the
+source's audio name to that row before; frames before a stream's first
+keyframe (a later part of a split recording) cannot be decoded by any decoder
+and are **reported** on the finished screen, never dropped silently; the MOV /
+MP4 path keeps its single decoder, and gains the completeness count, the
+read-back and a Stop that stops.

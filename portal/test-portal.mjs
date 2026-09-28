@@ -10604,7 +10604,11 @@ const TS_LIB = String.raw`
   const makeSps = ({profile = 66, level = 30, wMbs, hUnits, frameMbsOnly = 1, cropB = 0}) => {
     const w = bitWriter();
     w.u(profile, 8); w.u(0, 8); w.u(level, 8);
-    w.ue(0); w.ue(0); w.ue(0); w.ue(0); w.ue(1); w.u(0, 1);
+    w.ue(0);                                     // seq_parameter_set_id
+    /* HIGH PROFILE carries its chroma and bit-depth fields here — the AVCHD
+       case: 4:2:0, 8-bit, no scaling matrix. */
+    if(profile === 100){ w.ue(1); w.ue(0); w.ue(0); w.u(0, 1); w.u(0, 1); }
+    w.ue(0); w.ue(0); w.ue(0); w.ue(1); w.u(0, 1);
     w.ue(wMbs - 1); w.ue(hUnits - 1); w.u(frameMbsOnly, 1);
     if(!frameMbsOnly) w.u(0, 1);
     w.u(1, 1);
@@ -10625,6 +10629,21 @@ const TS_LIB = String.raw`
   const tsSlice = (idr, len = 24) => {
     const b = new Uint8Array(len).fill(0xaa);
     b[0] = idr ? 0x65 : 0x41; b[1] = 0x88;      // first_mb_in_slice = 0
+    return b;
+  };
+  /* A REAL SLICE HEADER, written field by field, for the interlaced fixtures:
+     first_mb_in_slice, slice_type, pic_parameter_set_id, frame_num (4 bits —
+     makeSps writes log2_max_frame_num_minus4 = 0), then field_pic_flag and
+     bottom_field_flag when the SPS says the stream is not frame-only. */
+  const fieldSlice = ({idr, frameNum, bottom, len = 120, badNal = false}) => {
+    const w = bitWriter();
+    w.ue(0); w.ue(idr ? 7 : 5); w.ue(0);
+    w.u(frameNum & 15, 4);
+    w.u(1, 1); w.u(bottom ? 1 : 0, 1);
+    const head = escapeRbsp(w.bytes());
+    const b = new Uint8Array(1 + head.length + len).fill(0xaa);
+    b[0] = (idr ? 0x65 : 0x41) | (badNal ? 0x80 : 0);
+    b.set(head, 1);
     return b;
   };
   const pesOf = (payload, ptsVal, dtsVal) => {
@@ -10697,7 +10716,13 @@ const TS_LIB = String.raw`
   };
   const makeTs = ({stride = 188, frames = 30, fps = 30, width = 1920, height = 1080,
       interlaced = false, videoType = 0x1b, audio = true, basePts = 900000,
-      picturesPerPes = 1, bframes = false, sliceLen = 0} = {}) => {
+      picturesPerPes = 1, bframes = false, sliceLen = 0, fields = null,
+      audioType = 0x0f, leadIn = 0, badNalAt = -1} = {}) => {
+    /* FIELD-CODED 1080i, the AVCHD default: every frame is two field pictures
+       with real slice headers, carried as a PAIR in one PES under one PTS, or
+       SPLIT one field per PES half a frame apart. */
+    if(fields) return makeFieldTs({stride, frames, fps, width, height, audio, audioType,
+                                   basePts, fields, sliceLen, badNalAt});
     const wMbs = Math.ceil(width / 16);
     const hUnits = interlaced ? Math.ceil(height / 32) : Math.ceil(height / 16);
     const coded = interlaced ? hUnits * 32 : hUnits * 16;
@@ -10706,21 +10731,344 @@ const TS_LIB = String.raw`
     const pps = new Uint8Array([0x68, 0xce, 0x38, 0x80]);
     const dur = Math.round(90000 / fps);
     const streams = [{type: videoType, pid: 0x1011}];
-    if(audio) streams.push({type: 0x0f, pid: 0x1100});
+    if(audio) streams.push({type: audioType, pid: 0x1100});
     const units = [{pid: 0, data: patSection(0x100), pusi: true, psi: true},
                    {pid: 0x100, data: pmtSection(streams), pusi: true, psi: true}];
     for(let i = 0; i < frames; i++){
-      const key = i % 15 === 0;
+      /* leadIn frames come first with no keyframe among them — the start of a
+         later part of a recording split across files. */
+      const key = i >= leadIn && (i - leadIn) % 15 === 0;
       const pics = [];
       const bodyLen = (typeof sliceLen === 'number' && sliceLen > 0) ? sliceLen : (key ? 900 : 120);
       for(let k = 0; k < picturesPerPes; k++) pics.push(tsSlice(key, bodyLen));
-      const au = key ? annexb(sps, pps, ...pics) : annexb(...pics);
+      if(i === badNalAt) pics[0][0] |= 0x80;      // forbidden_zero_bit: damage in the picture data
+      /* A later part of a split recording still carries its parameter sets
+         ahead of its first (non-IDR) picture — that is what makes it readable
+         at all, and what makes its missing keyframe the thing to report. */
+      const au = (key || (leadIn && i === 0)) ? annexb(sps, pps, ...pics) : annexb(...pics);
       const dts = basePts + i * dur;
       units.push({pid: 0x1011, data: pesOf(au, bframes ? dts + dur : dts, bframes ? dts : null),
                   pusi: true});
+      if(audio) units.push({pid: 0x1100, data: pesOf(new Uint8Array(64).fill(0x0b), dts, null)
+        .map((b, k) => k === 3 ? 0xc0 : b), pusi: true});
     }
     return tsPackets(units, stride);
   };
+  const makeFieldTs = ({stride, frames, fps, width, height, audio, audioType, basePts, fields,
+                        sliceLen, badNalAt}) => {
+    const wMbs = Math.ceil(width / 16);
+    const hUnits = Math.ceil(height / 32);
+    const cropB = (hUnits * 32 - height) / 4;
+    const sps = makeSps({profile: 100, level: 40, wMbs, hUnits, frameMbsOnly: 0, cropB});
+    const pps = new Uint8Array([0x68, 0xce, 0x38, 0x80]);
+    const dur = Math.round(90000 / fps);
+    const streams = [{type: 0x1b, pid: 0x1011}];
+    if(audio) streams.push({type: audioType, pid: 0x1100});
+    const units = [{pid: 0, data: patSection(0x100), pusi: true, psi: true},
+                   {pid: 0x100, data: pmtSection(streams), pusi: true, psi: true}];
+    const len = sliceLen || 120;
+    for(let i = 0; i < frames; i++){
+      const key = i % 15 === 0;
+      const frameNum = key ? 0 : i % 15;
+      const top = fieldSlice({idr: key, frameNum, bottom: false, len, badNal: i === badNalAt});
+      const bot = fieldSlice({idr: false, frameNum, bottom: true, len});
+      const pts = basePts + i * dur;
+      if(fields === 'pair'){
+        units.push({pid: 0x1011, data: pesOf(key ? annexb(sps, pps, top, bot) : annexb(top, bot), pts, null), pusi: true});
+      } else {
+        units.push({pid: 0x1011, data: pesOf(key ? annexb(sps, pps, top) : annexb(top), pts, null), pusi: true});
+        units.push({pid: 0x1011, data: pesOf(annexb(bot), pts + dur / 2, null), pusi: true});
+      }
+      if(audio) units.push({pid: 0x1100, data: pesOf(new Uint8Array(64).fill(0x0b), pts, null)
+        .map((b, k) => k === 3 ? 0xc0 : b), pusi: true});
+    }
+    return tsPackets(units, stride);
+  };
+  /* DAMAGE, INJECTED INTO FINISHED BYTES — each the shape a real card or an
+     interrupted copy produces. k counts packets on the video PID. */
+  const videoPackets = (bytes, stride) => {
+    const at = [];
+    for(let o = stride - 188; o + 188 <= bytes.length; o += stride)
+      if(bytes[o] === 0x47 && (((bytes[o + 1] & 0x1f) << 8) | bytes[o + 2]) === 0x1011) at.push(o);
+    /* An injector aimed past the last packet would damage NOTHING and a
+       "damage" test would then pass on a clean file — so it refuses. */
+    return new Proxy(at, {get: (t, k) => {
+      if(typeof k === 'string' && /^\d+$/.test(k) && +k >= t.length)
+        throw new Error('fixture has ' + t.length + ' video packets; cannot damage #' + k);
+      return t[k];
+    }});
+  };
+  const tsDamage = {
+    tei: (bytes, stride, k) => { const b = bytes.slice(); b[videoPackets(b, stride)[k] + 1] |= 0x80; return b; },
+    drop: (bytes, stride, k) => {
+      const o = videoPackets(bytes, stride)[k] - (stride - 188);
+      const b = new Uint8Array(bytes.length - stride);
+      b.set(bytes.subarray(0, o), 0); b.set(bytes.subarray(o + stride), o);
+      return b;
+    },
+    desync: (bytes, stride, k) => { const b = bytes.slice(); b[videoPackets(b, stride)[k]] = 0x00; return b; },
+    duplicate: (bytes, stride, k) => {
+      const o = videoPackets(bytes, stride)[k] - (stride - 188);
+      const b = new Uint8Array(bytes.length + stride);
+      b.set(bytes.subarray(0, o + stride), 0);
+      b.set(bytes.subarray(o, o + stride), o + stride);
+      b.set(bytes.subarray(o + stride), o + 2 * stride);
+      return b;
+    },
+    truncate: (bytes, cut) => bytes.slice(0, bytes.length - cut),
+  };
+`;
+
+/* STUB CODECS FOR THE PIPELINE, and a runner that drives one Generate the way
+   the screen does. Only VideoDecoder and VideoEncoder are replaced — this
+   Chromium has no H.264 decoder or encoder at all, measured — while
+   VideoFrame, EncodedVideoChunk, the canvas, the burn and the vendored muxer
+   stay REAL, so a frame is decoded (stub), drawn and stamped (real), encoded
+   (stub) and muxed (real), and the finished MP4 is read back by the page's
+   own parser. The decoder can fail after N units (in Chromium's order — the
+   close and the callback in one task — or seen closed first), throw
+   synchronously, drop frames without a word, invent one, pair fields the way
+   FFmpeg-class decoders do, or be unavailable as a software decoder; the
+   encoder can fail after N frames. `watchDoors` counts every way anything
+   could leave the page. */
+const VST_STUBS = String.raw`
+const stubCodecs = (plan = {}) => {
+  const log = {cfgs: [], decoded: {hw: 0, soft: 0}, enc: 0, encTs: [], outTs: [], closes: 0, probes: [], stampLit: 0, stampChecked: 0};
+  const tile = document.createElement('canvas'); tile.width = 64; tile.height = 36;
+  const tctx = tile.getContext('2d'); tctx.fillStyle = '#202830'; tctx.fillRect(0, 0, 64, 36);
+  class StubDecoder {
+    static async isConfigSupported(cfg){
+      log.probes.push(Object.assign({}, cfg));
+      const soft = cfg.hardwareAcceleration === 'prefer-software';
+      return {supported: soft ? plan.softSupported !== false : plan.hwSupported !== false, config: cfg};
+    }
+    constructor(init){ this.out = init.output; this.err = init.error; this.state = 'unconfigured';
+      this.decodeQueueSize = 0; this.n = 0; this.q = Promise.resolve(); }
+    configure(cfg){
+      if(this.state === 'closed') throw new DOMException('Cannot call configure on a closed codec', 'InvalidStateError');
+      this.cfg = cfg; this.soft = cfg.hardwareAcceleration === 'prefer-software';
+      log.cfgs.push(Object.assign({}, cfg));
+      if(this.soft ? plan.softConfigureThrows : plan.hwConfigureThrows)
+        throw new DOMException('Unsupported configuration.', 'NotSupportedError');
+      this.state = 'configured';
+    }
+    decode(chunk){
+      if(this.state !== 'configured') throw new DOMException("Cannot call 'decode' on a closed codec", 'InvalidStateError');
+      this.n++;
+      log.decoded[this.soft ? 'soft' : 'hw']++;
+      const failAt = this.soft ? plan.softFailAt : plan.hwFailAt;
+      if(failAt && this.n === failAt){
+        if(this.soft ? plan.softFailSync : plan.hwFailSync)
+          throw new DOMException('A key frame is required after configure() or flush().', 'DataError');
+        const e = new DOMException(plan.message || 'Decoding error.', 'EncodingError');
+        /* Chromium closes the codec and invokes the error callback in ONE
+           later task; 'state-first' models a codec seen closed before its
+           callback has run. */
+        if(plan.closeOrder === 'state-first'){ this.state = 'closed'; setTimeout(() => this.err(e), 0); }
+        else setTimeout(() => { this.state = 'closed'; this.err(e); }, 0);
+        return;
+      }
+      const drop = this.soft ? plan.softDropEvery : plan.hwDropEvery;
+      if(drop && this.n % drop === 0) return;          // eaten without a word
+      /* FIELDS FED ONE PER CHUNK come out as ONE frame per pair, stamped with
+         the first field's time — what FFmpeg-class decoders do. */
+      if(plan.pairFields){
+        if(this.n % 2 === 1){ this.firstField = {ts: chunk.timestamp, dur: chunk.duration}; return; }
+        const ff = this.firstField; this.firstField = null;
+        if(!ff) return;
+        chunk = {timestamp: ff.ts, duration: (ff.dur || 0) * 2};
+      }
+      const ts = chunk.timestamp, dur = chunk.duration, n = this.n;
+      this.decodeQueueSize++;
+      this.q = this.q.then(() => new Promise(r => setTimeout(r, 0))).then(() => {
+        this.decodeQueueSize--;
+        if(this.state !== 'configured') return;
+        log.outTs.push(ts);
+        this.out(new VideoFrame(tile, {timestamp: ts, duration: dur || undefined}));
+        const extra = this.soft ? plan.softInventAt : plan.hwInventAt;
+        if(extra && n === extra) this.out(new VideoFrame(tile, {timestamp: ts + 7, duration: dur || undefined}));
+      });
+    }
+    async flush(){
+      if(this.state !== 'configured') throw new DOMException("Cannot call 'flush' on a closed codec", 'InvalidStateError');
+      await this.q;
+    }
+    close(){ if(this.state !== 'closed'){ this.state = 'closed'; log.closes++; } }
+    reset(){}
+  }
+  const AVCC = new Uint8Array([1, 0x64, 0, 0x28, 0xff, 0xe1, 0, 4, 0x67, 0x64, 0, 0x28, 1, 0, 4, 0x68, 0xee, 0x3c, 0x80]);
+  const probe = document.createElement('canvas');
+  class StubEncoder {
+    static async isConfigSupported(cfg){ return {supported: plan.encSupported !== false, config: cfg}; }
+    constructor(init){ this.out = init.output; this.err = init.error; this.state = 'unconfigured';
+      this.n = 0; this.encodeQueueSize = 0; this.q = Promise.resolve(); }
+    configure(cfg){ this.cfg = cfg; this.state = 'configured'; }
+    encode(frame, opts){
+      if(this.state !== 'configured') throw new DOMException("Cannot call 'encode' on a closed codec", 'InvalidStateError');
+      const k = this.n++;
+      if(plan.encFailAt && this.n === plan.encFailAt){
+        this.state = 'closed';
+        setTimeout(() => this.err(new DOMException('Encoding error.', 'EncodingError')), 0);
+        return;
+      }
+      /* THE BURN, MEASURED ON WHAT THE ENCODER IS HANDED: the bottom-right
+         corner of the frame, where vstDraw paints the clock. */
+      if(plan.sampleStamp && k % plan.sampleStamp === 0){
+        const W = frame.displayWidth, H = frame.displayHeight;
+        probe.width = Math.round(W * 0.45); probe.height = Math.round(H * 0.16);
+        const pc = probe.getContext('2d', {willReadFrequently: true});
+        pc.drawImage(frame, W - probe.width, H - probe.height, probe.width, probe.height, 0, 0, probe.width, probe.height);
+        const px = pc.getImageData(0, 0, probe.width, probe.height).data;
+        let lit = 0;
+        for(let i = 0; i < px.length; i += 4) if(px[i] > 200 && px[i + 1] > 200 && px[i + 2] > 200) lit++;
+        log.stampChecked++;
+        if(lit > 20) log.stampLit++;
+      }
+      const ts = frame.timestamp, dur = frame.duration;
+      log.encTs.push(ts);
+      const chunk = new EncodedVideoChunk({type: (k === 0 || (opts && opts.keyFrame)) ? 'key' : 'delta',
+        timestamp: ts, duration: dur || 33367, data: new Uint8Array([0, 0, 0, 2, 0x65, k & 0xff])});
+      const meta = k === 0 ? {decoderConfig: {codec: this.cfg.codec, codedWidth: this.cfg.width,
+        codedHeight: this.cfg.height, description: AVCC}} : undefined;
+      this.q = this.q.then(() => { if(this.state === 'configured'){ log.enc++; this.out(chunk, meta); } });
+    }
+    async flush(){
+      if(this.state !== 'configured') throw new DOMException("Cannot call 'flush' on a closed codec", 'InvalidStateError');
+      await this.q;
+    }
+    close(){ this.state = 'closed'; }
+  }
+  const saved = {VD: window.VideoDecoder, VE: window.VideoEncoder};
+  window.VideoDecoder = StubDecoder; window.VideoEncoder = StubEncoder;
+  return {log, restore(){ window.VideoDecoder = saved.VD; window.VideoEncoder = saved.VE; }};
+};
+const watchDoors = () => {
+  const w = {fetches: 0, xhr: 0, beacons: 0, urls: [], downloads: 0, shares: 0, pickers: 0};
+  const rf = window.fetch; window.fetch = (...a) => { w.fetches++; return rf(...a); };
+  const ro = XMLHttpRequest.prototype.open; XMLHttpRequest.prototype.open = function(...a){ w.xhr++; return ro.apply(this, a); };
+  const rb = navigator.sendBeacon && navigator.sendBeacon.bind(navigator);
+  if(rb) navigator.sendBeacon = (...a) => { w.beacons++; return rb(...a); };
+  const ru = URL.createObjectURL; URL.createObjectURL = b => { w.urls.push(b && b.type); return ru(b); };
+  const rc = HTMLAnchorElement.prototype.click; HTMLAnchorElement.prototype.click = function(){ if(this.download) w.downloads++; else return rc.call(this); };
+  if(navigator.share){ const rs = navigator.share.bind(navigator); navigator.share = (...a) => { w.shares++; return rs(...a); }; }
+  if(window.showSaveFilePicker){ window.showSaveFilePicker = async () => { w.pickers++; throw new DOMException('no', 'AbortError'); }; }
+  w.restore = () => { window.fetch = rf; XMLHttpRequest.prototype.open = ro; if(rb) navigator.sendBeacon = rb; URL.createObjectURL = ru; HTMLAnchorElement.prototype.click = rc; };
+  return w;
+};
+const tsVst = (f, parsed, extra) => Object.assign({step: 'preview', caseNo: '', file: f, name: f.name, size: f.size,
+  url: '', tz: 'America/New_York', q: '', mo: '09', da: '26', yr: '2026', hr: '06', mi: '11', se: '02', ap: 'AM',
+  guessed: false, startFrom: 'none', hash: null, pct: 0, err: '', saveMsg: '', out: null, recId: null,
+  savedHere: false, started: false, readable: false, codec: {cc: 'avc1', name: 'H.264 / AVC'},
+  caps: vstCaps(), diag: '', decodeOk: true, parsed}, extra || {});
+/* ONE GENERATE, DRIVEN THE WAY THE SCREEN DRIVES IT, AND EVERYTHING IT DID.
+   The file is a fixture from TS_LIB; the codecs are the stubs above; the
+   canvas, the burn, VideoFrame, EncodedVideoChunk and the vendored muxer are
+   all real. Returns what the screen said, what came out, which decoders were
+   configured and every door that could have let anything leave. */
+const vstScenario = async (o) => {
+  const mk = o.mk || {};
+  let bytes = makeTs(mk);
+  if(o.damage) bytes = o.damage(bytes);
+  /* A FIXED lastModified, so the same bytes under the same name are the same
+     file to the tab's memory of which files a decoder already failed on. */
+  const f = new File([bytes], o.name || '00029.MTS', {type: '', lastModified: 1790000000000});
+  const readAll = async () => new Uint8Array(await Blob.prototype.slice.call(f, 0, f.size).arrayBuffer());
+  const digest = async u8 => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', u8)))
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+  const before = await digest(await readAll());
+  const parsed = await vstParse(f);
+  if(o.sliceThrowAt){
+    const real = f.slice.bind(f); let reads = 0;
+    f.slice = (a, b) => { const blob = real(a, b);
+      if(++reads >= o.sliceThrowAt) return {arrayBuffer: () => Promise.reject(new DOMException(
+        'The requested file could not be read, typically due to permission problems that have occurred after a reference to a file was acquired.',
+        'NotReadableError'))};
+      return blob; };
+  }
+  const plan = o.plan || {};
+  const S = stubCodecs(plan);
+  const W = watchDoors();
+  if(!o.keepMemory) VST_PRIMARY_FAILED.clear();
+  VST = tsVst(f, parsed, Object.assign({compatOk: plan.softSupported === false ? false : true,
+    lane: VST_PRIMARY_FAILED.has(vstFileKey(f)) ? 'compat' : 'auto'}, o.vst || {}));
+  paintVStamp();
+  const el0 = document.querySelector('.vst');
+  const preview = el0 ? el0.innerText : '';
+  const phases = []; let compatScreen = '', checkingScreen = '';
+  const realPaint = window.paintVStamp;
+  window.paintVStamp = function(){
+    realPaint.apply(this, arguments);
+    if(VST && VST.phase && phases[phases.length - 1] !== VST.phase) phases.push(VST.phase);
+    const el = document.querySelector('.vst');
+    if(el && VST && VST.step === 'working' && VST.phase === 'compat' && !compatScreen) compatScreen = el.innerText;
+    if(el && VST && VST.step === 'working' && VST.phase === 'checking' && !checkingScreen) checkingScreen = el.innerText;
+  };
+  /* THE BURN, AS IT IS DRAWN: every call of the one stamp writer, with the
+     text it was given and which pass was running. */
+  const draws = [];
+  const realDraw = window.vstDraw;
+  window.vstDraw = function(cx, w, h, text){ draws.push({text, phase: VST ? VST.phase : ''}); return realDraw.apply(this, arguments); };
+  let restoreMux = null;
+  /* A WRITER THAT LOSES A FRAME WITHOUT A WORD — it takes the chunk, says
+     nothing, and keeps nothing. Only reading the finished file back finds it. */
+  if(o.muxDropAt){
+    const M = await vstMuxer(); const real = M.Muxer.prototype.addVideoChunk; let n = 0;
+    M.Muxer.prototype.addVideoChunk = function(){ if(++n === o.muxDropAt) return; return real.apply(this, arguments); };
+    restoreMux = () => { M.Muxer.prototype.addVideoChunk = real; };
+  }
+  if(o.muxThrow){
+    const M = await vstMuxer(); const real = M.Muxer.prototype.addVideoChunk; let n = 0;
+    M.Muxer.prototype.addVideoChunk = function(){ if(++n === o.muxThrow) throw new RangeError('Array buffer allocation failed');
+      return real.apply(this, arguments); };
+    restoreMux = () => { M.Muxer.prototype.addVideoChunk = real; };
+  }
+  if(o.cancelAfter) setTimeout(() => { const b = document.querySelector('[data-act="vstAbort"]'); if(b) b.click(); }, o.cancelAfter);
+  const startMs = vstStart().ms;
+  await vstGenerate();
+  await new Promise(r => setTimeout(r, 150));
+  window.paintVStamp = realPaint; window.vstDraw = realDraw;
+  if(restoreMux) restoreMux();
+  const v = VST;
+  if(v) paintVStamp();
+  const el = document.querySelector('.vst');
+  const body = el ? el.innerText : '';
+  const out = v && v.out;
+  let back = null;
+  if(out && out.blob){
+    const p = await vstParse(new File([out.blob], 'copy.mp4', {type: 'video/mp4'}));
+    back = p && p.video ? {frames: p.video.samples ? p.video.samples.length : null,
+                           w: p.video.width, h: p.video.height, seconds: p.video.seconds} : null;
+  }
+  const mine = draws.filter(d => d.phase === (out && out.lane === 'compat' ? 'compat' : 'processing'));
+  const r = {
+    brand: parsed.brand, interlaced: parsed.video && parsed.video.interlaced, fps: parsed.video && parsed.video.fps,
+    container: vstContainer(),
+    step: v ? v.step : '(closed)', err: v ? v.err : '',
+    fault: v && v.fault ? {kind: v.fault.kind, head: v.fault.head, lines: v.fault.lines, label: v.fault.label,
+                           classText: v.fault.classText, retry: v.fault.retry, state: v.fault.state} : null,
+    out: out ? {lane: out.lane, frames: out.frames, check: out.check, size: out.size} : null, back,
+    lanes: S.log.cfgs.map(c => c.hardwareAcceleration || 'default'),
+    primaryHasKey: S.log.cfgs.length ? ('hardwareAcceleration' in S.log.cfgs[0]) : null,
+    primaryDescription: S.log.cfgs.length ? ('description' in S.log.cfgs[0]) : null,
+    decoded: S.log.decoded, enc: S.log.enc, closes: S.log.closes, stamp: [S.log.stampLit, S.log.stampChecked],
+    doors: {urls: W.urls.slice(), fetches: W.fetches, xhr: W.xhr, beacons: W.beacons,
+            downloads: W.downloads, shares: W.shares, pickers: W.pickers},
+    go: document.querySelectorAll('[data-act="vstGo"]').length,
+    goText: (document.querySelector('[data-act="vstGo"]') || {}).innerText || '',
+    again: document.querySelectorAll('.vst-stop [data-act="vstOpen"]').length,
+    compatLine: ((body.match(/Compatibility\n([^\n]*)/) || [])[1]) || '',
+    preview: o.keepPreview ? preview : '', body: o.keepBody ? body : '',
+    phases, compatScreen, checkingScreen,
+    labels: {count: mine.length, first: mine.length ? mine[0].text : null,
+             unique: Array.from(new Set(mine.map(d => d.text))),
+             expect: [0, 1, 2].map(k => vstLabel(startMs + k * 1000, 'America/New_York'))},
+    startMs, remembered: VST_PRIMARY_FAILED.has(vstFileKey(f)),
+    unchanged: before === await digest(await readAll()),
+  };
+  W.restore(); S.restore();
+  if(o.close !== false) vstClose();
+  return r;
+};
 `;
 
 section('MTS/M2TS: the stream is named from its own packets, never from playback');
@@ -11083,6 +11431,365 @@ section('MTS/M2TS: a codec error is reported as itself, never as the flush that 
   ok('a synchronous decode() throw is reported the same way, not propagated raw',
      /key frame is required/.test(life.sync) && /original is unchanged/.test(life.sync),
      String(life.sync));
+  await page.close();
+}
+
+/* OWNER, 2026-09-27 — a real 00029.MTS (M2TS / AVCHD, H.264 / AVC) opened,
+   read its metadata, took its start time and its fingerprint, recognised the
+   container, began the decode — and stopped part-way with "The device's
+   video codec stopped part-way: Decoding error." The pipeline had ONE
+   decoder, so that was the end of it, and the screen then offered the
+   identical Generate again over "Ready — decoded and re-encoded on this
+   device".
+
+   REPRODUCED ON master (a51fb06-era code, scratch harness): with the codec
+   closing and reporting in one task, as Chromium does, exactly that screen;
+   with the codec seen closed a moment before its error callback ran, a
+   15-frame copy of a 90-frame clip offered as "Timestamped copy is ready".
+   Neither may happen again, and the sections below are why they cannot.
+
+   THE FIXTURE is the owner's shape: 192-byte M2TS packets, H.264 High
+   profile, 1440x1080 interlaced with each frame coded as TWO FIELD PICTURES
+   under one PTS, AC-3 audio beside it. The codecs are stubs (this Chromium
+   has no H.264 at all — recorded, not assumed, in the section above);
+   the canvas, the burn, VideoFrame, EncodedVideoChunk and the vendored
+   muxer are real, and the finished MP4 is read back by this page's own
+   parser. The decode of the owner's real file on the owner's own device
+   remains the owner's check, as it has been for every format here. */
+const AVCHD = "{stride: 192, frames: 90, fields: 'pair', width: 1440, height: 1080, audio: true, audioType: 0x81}";
+const vstRun = async (page, js) => page.evaluate(`(async () => { ${TS_LIB} ${VST_STUBS} ${js} })()`);
+const noDoors = d => d.fetches === 0 && d.xhr === 0 && d.beacons === 0 && d.downloads === 0
+  && d.shares === 0 && d.pickers === 0;
+
+section('MTS/AVCHD: the device decoder stops part-way, and compatibility mode finishes the whole clip');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  const R = await vstRun(page, `return await vstScenario({mk: ${AVCHD},
+    plan: {hwFailAt: 40, sampleStamp: 10}, keepBody: true});`);
+  ok('the fixture is the owner\'s shape — M2TS / AVCHD, interlaced H.264',
+     R.brand === 'M2TS / AVCHD' && R.interlaced === true, JSON.stringify([R.brand, R.interlaced]));
+  ok('two local decoders, in order: the device\'s own, then this browser\'s software decoder',
+     JSON.stringify(R.lanes) === '["default","prefer-software"]', JSON.stringify(R.lanes));
+  ok('the first attempt is configured exactly as before — no hardware preference, no description',
+     R.primaryHasKey === false && R.primaryDescription === false, JSON.stringify([R.primaryHasKey, R.primaryDescription]));
+  ok('the copy is made, in compatibility mode', R.step === 'done' && R.out && R.out.lane === 'compat',
+     JSON.stringify([R.step, R.out && R.out.lane, R.fault]));
+  ok('every frame the stream holds came through: 90 expected, 90 encoded, 90 in the MP4',
+     R.out && R.out.check.expected === 90 && R.out.check.frames === 90 && R.out.check.mp4Frames === 90,
+     JSON.stringify(R.out && R.out.check));
+  ok('the finished MP4, read back by this page\'s parser: 90 frames, 1440x1080, 3.00 s',
+     R.back && R.back.frames === 90 && R.back.w === 1440 && R.back.h === 1080 && Math.abs(R.back.seconds - 3) < 0.05,
+     JSON.stringify(R.back));
+  ok('the burn is in the pixels of every sampled frame the encoder was handed',
+     R.stamp[1] >= 9 && R.stamp[0] === R.stamp[1], JSON.stringify(R.stamp));
+  ok('the burned clock starts at the chosen moment and advances with the footage, second by second',
+     R.labels.count === 90 && R.labels.first === R.labels.expect[0]
+       && JSON.stringify(R.labels.unique) === JSON.stringify(R.labels.expect), JSON.stringify(R.labels));
+  ok('the states run READY → PROCESSING → primary failed / COMPATIBILITY MODE → COMPLETE',
+     R.phases.join('>') === 'processing>compat>verifying>complete', R.phases.join('>'));
+  ok('while it runs, the screen says the primary decoder failed and compatibility mode is trying',
+     has(R.compatScreen, 'Primary decoder failed') && has(R.compatScreen, 'trying compatibility mode')
+       && has(R.compatScreen, "This device's decoder stopped after") && has(R.compatScreen, 'Decoding error')
+       && has(R.compatScreen, 'Nothing from that attempt is kept'), R.compatScreen.slice(0, 700));
+  ok('the finished screen says compatibility mode was used, in the owner\'s words',
+     has(R.body, 'Compatibility mode was used for this AVCHD/MTS file. Processing remained on this device.'),
+     R.body.slice(0, 900));
+  ok('and says what was checked, not merely that encoding ended',
+     has(R.body, 'Complete') && has(R.body, 'All 90 frames decoded, stamped and re-encoded')
+       && has(R.body, 'reads back with 90 frames, 3.00 s'), R.body.slice(0, 900));
+  ok('the one object URL made is the finished copy, and nothing left the device',
+     JSON.stringify(R.doors.urls) === '["video/mp4"]' && noDoors(R.doors), JSON.stringify(R.doors));
+  ok('the original\'s bytes are exactly what they were', R.unchanged === true);
+  ok('the primary decoder\'s failure on this file is remembered for this tab', R.remembered === true);
+  await page.close();
+}
+
+section('MTS/AVCHD: a copy that cannot be proven whole is never made');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  const R = await vstRun(page, `
+    const out = {};
+    const A = ${AVCHD};
+    out.stateFirst = await vstScenario({mk: A, plan: {hwFailAt: 40, softFailAt: 40, closeOrder: 'state-first'}, keepBody: true});
+    out.drops = await vstScenario({mk: A, plan: {hwDropEvery: 10, softDropEvery: 10}});
+    out.invents = await vstScenario({mk: A, plan: {hwInventAt: 20, softInventAt: 20}});
+    out.syncCrash = await vstScenario({mk: A, plan: {hwFailAt: 30, hwFailSync: true, softFailAt: 30, softFailSync: true}});
+    out.encoder = await vstScenario({mk: A, plan: {encFailAt: 30}});
+    out.memory = await vstScenario({mk: A, muxThrow: 20});
+    out.writerLoses = await vstScenario({mk: A, muxDropAt: 20});
+    out.read = await vstScenario({mk: Object.assign({}, A, {sliceLen: 30000}), sliceThrowAt: 2});
+    out.cancel = await vstScenario({mk: Object.assign({}, A, {frames: 900, width: 640, height: 480}), cancelAfter: 300});
+    return out;`);
+  const S = R.stateFirst;
+  /* THE ORDERING THAT PRODUCED THE 15-FRAME COPY ON master. */
+  ok('a codec seen closed before its error lands produces no copy at all',
+     S.step === 'preview' && !S.out && S.fault && S.fault.kind === 'decoder', JSON.stringify([S.step, S.out, S.fault && S.fault.kind]));
+  ok('the failure is stated in the owner\'s exact sentence',
+     S.fault && S.fault.head === 'Video could not be completely decoded. No timestamped copy was created and your original is unchanged.',
+     S.fault && S.fault.head);
+  ok('Compatibility no longer reads Ready over a failed decode',
+     S.compatLine === 'Could not completely decode on this device' && !has(S.body, 'decoded and re-encoded on this device'),
+     S.compatLine);
+  ok('and no Generate button sits under it — the same doomed run is not offered again', S.go === 0, String(S.go));
+  for (const [k, r] of Object.entries(R)) {
+    ok(`${k}: no copy was made or offered`, !r.out && r.step !== 'done'
+       && !r.doors.urls.includes('video/mp4') && noDoors(r.doors), JSON.stringify([r.step, r.out, r.doors]));
+    ok(`${k}: the original is unchanged`, r.unchanged === true);
+  }
+  ok('silently dropped frames are caught by the count, in both decoders',
+     R.drops.fault && R.drops.fault.lines.join(' ').includes('the decoder returned 81 frames for the 90 the stream holds'),
+     JSON.stringify(R.drops.fault));
+  ok('a frame nobody fed the decoder is caught too',
+     R.invents.fault && R.invents.fault.lines.join(' ').includes('were never fed to it'), JSON.stringify(R.invents.fault));
+  ok('a decoder that throws synchronously is reported as itself',
+     R.syncCrash.fault && R.syncCrash.fault.lines.join(' ').includes('key frame is required'), JSON.stringify(R.syncCrash.fault));
+  ok('an encoder failure is the encoder\'s: no second DECODER is tried for it',
+     R.encoder.fault && R.encoder.fault.kind === 'encoder' && JSON.stringify(R.encoder.lanes) === '["default"]',
+     JSON.stringify([R.encoder.fault, R.encoder.lanes]));
+  ok('a writer that silently loses a frame is caught by reading the finished MP4 back',
+     R.writerLoses.fault && R.writerLoses.fault.kind === 'encoder'
+       && R.writerLoses.fault.lines.join(' ').includes('reads back with 89 frames, not 90'),
+     JSON.stringify(R.writerLoses.fault));
+  ok('running out of memory says so and keeps nothing',
+     R.memory.fault && R.memory.fault.kind === 'memory' && has(R.memory.fault.head, 'ran out of memory'),
+     JSON.stringify(R.memory.fault));
+  ok('an original that stops being readable says so, and offers choosing it again — a different run',
+     R.read.fault && R.read.fault.kind === 'read' && R.read.again === 1 && R.read.go === 0
+       && R.read.fault.lines.join(' ').includes('NotReadableError') === false
+       && R.read.fault.lines.join(' ').includes('could not be read'), JSON.stringify([R.read.fault, R.read.again, R.read.go]));
+  ok('Stop stops the WORK — the decode ends far short of the file, and the codecs are closed',
+     R.cancel.step === '(closed)' && R.cancel.decoded.hw < 400 && R.cancel.closes >= 1,
+     JSON.stringify([R.cancel.step, R.cancel.decoded, R.cancel.closes]));
+  await page.close();
+}
+
+section('MTS/AVCHD: damage in the file is found, named, and never concealed');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  const R = await vstRun(page, `
+    const out = {};
+    const A = ${AVCHD};
+    out.tei = await vstScenario({mk: A, damage: b => tsDamage.tei(b, 192, 100)});
+    out.lost = await vstScenario({mk: A, damage: b => tsDamage.drop(b, 192, 100)});
+    out.desync = await vstScenario({mk: A, damage: b => tsDamage.desync(b, 192, 100)});
+    out.cut = await vstScenario({mk: A, damage: b => tsDamage.truncate(b, 60)});
+    out.nal = await vstScenario({mk: Object.assign({}, A, {badNalAt: 50})});
+    out.nokey = await vstScenario({mk: {stride: 192, frames: 30, leadIn: 30}});
+    out.duplicate = await vstScenario({mk: A, damage: b => tsDamage.duplicate(b, 192, 100)});
+    /* The duplicate's payload must not be appended twice: the demuxed access
+       units are byte-for-byte the clean file's. */
+    const au = async bytes => { const f = new File([bytes], 'x.mts', {type: ''}); const list = [];
+      await vstTsScan(f, await vstTsSniff(f), null, a => { list.push(Array.from(a.data).join(',')); return true; }, {});
+      return list; };
+    const clean = makeTs(A);
+    const a1 = await au(clean), a2 = await au(tsDamage.duplicate(clean, 192, 100));
+    out.duplicateSame = a1.length === a2.length && a1.every((x, i) => x === a2[i]);
+    out.sameSpot = await vstScenario({mk: A, plan: {hwFailAt: 60, softFailAt: 60}});
+    out.twoSpots = await vstScenario({mk: A, plan: {hwFailAt: 30, softFailAt: 80}});
+    out.firstFrame = await vstScenario({mk: A, plan: {hwFailAt: 1, softFailAt: 1}});
+    out.noCompat = await vstScenario({mk: A, plan: {hwFailAt: 40, softSupported: false}});
+    /* The first decoder stops EARLY, before the read reaches a lost packet
+       further on; there is no second decoder; the integrity read finds it. */
+    out.lateDamage = await vstScenario({mk: Object.assign({}, A, {sliceLen: 30000}),
+      plan: {hwFailAt: 5, softSupported: false}, damage: b => tsDamage.drop(b, 192, 25000)});
+    return out;`);
+  const kinds = {tei: 'flagged as damaged', lost: 'packets are missing from the picture stream',
+                 desync: 'the packet grid breaks', cut: 'ends part-way through a packet',
+                 nal: 'invalid header', nokey: 'never reaches a keyframe'};
+  for (const [k, words] of Object.entries(kinds)) {
+    const r = R[k];
+    ok(`${k}: a FILE / STREAM ERROR, named in words`, r.fault && r.fault.kind === 'stream'
+       && r.fault.label === 'FILE / STREAM ERROR' && has(r.fault.classText, words), JSON.stringify(r.fault));
+    ok(`${k}: no second decoder is run over a damaged file`, JSON.stringify(r.lanes) === (k === 'nokey' ? '["default"]' : '["default"]'),
+       JSON.stringify(r.lanes));
+    ok(`${k}: nothing was made`, !r.out && !r.doors.urls.includes('video/mp4') && r.go === 0,
+       JSON.stringify([r.out, r.doors.urls, r.go]));
+  }
+  ok('damage is placed in the clip for the operator', /first about \d+(\.\d)? s into the clip/.test(R.lost.fault.classText),
+     R.lost.fault.classText);
+  ok('one damaged packet is one place, not two', !/places\)/.test(R.tei.fault.classText), R.tei.fault.classText);
+  ok('the standard\'s permitted duplicate packet is NOT damage — the copy is made, whole',
+     R.duplicate.step === 'done' && R.duplicate.out.check.frames === 90 && R.duplicate.out.check.duplicatePackets === 1,
+     JSON.stringify([R.duplicate.step, R.duplicate.out && R.duplicate.out.check]));
+  ok('and its payload is not appended twice — the access units match the clean file byte for byte',
+     R.duplicateSame === true);
+  ok('both decoders stopping at the same moment, packets clean: FILE / STREAM ERROR (probable)',
+     R.sameSpot.fault && R.sameSpot.fault.label === 'FILE / STREAM ERROR (probable)'
+       && R.sameSpot.phases.includes('checking'), JSON.stringify([R.sameSpot.fault, R.sameSpot.phases]));
+  ok('while the file is read for damage, the screen says why',
+     has(R.sameSpot.checkingScreen, 'checking the file for damage'), R.sameSpot.checkingScreen.slice(0, 500));
+  ok('stopping at different moments: CAUSE NOT DETERMINED, said plainly',
+     R.twoSpots.fault && R.twoSpots.fault.label === 'CAUSE NOT DETERMINED', JSON.stringify(R.twoSpots.fault));
+  ok('both refusing the very first frame: DEVICE DECODER COMPATIBILITY ERROR (probable)',
+     R.firstFrame.fault && R.firstFrame.fault.label === 'DEVICE DECODER COMPATIBILITY ERROR (probable)',
+     JSON.stringify(R.firstFrame.fault));
+  ok('no software decoder here: DEVICE DECODER COMPATIBILITY ERROR, and only one decoder was run',
+     R.noCompat.fault && R.noCompat.fault.label === 'DEVICE DECODER COMPATIBILITY ERROR'
+       && JSON.stringify(R.noCompat.lanes) === '["default"]'
+       && R.noCompat.fault.lines.join(' ').includes('Compatibility mode is not available here'),
+     JSON.stringify([R.noCompat.fault, R.noCompat.lanes]));
+  ok('each decoder\'s stop is reported with where it stopped',
+     /stopped after \d+ frames \(about [\d.]+ s into the clip\): Decoding error\./.test(R.noCompat.fault.lines[0]),
+     R.noCompat.fault.lines[0]);
+  ok('damage past where the decoder stopped is still found — by the integrity read',
+     R.lateDamage.fault && R.lateDamage.fault.kind === 'stream' && R.lateDamage.fault.label === 'FILE / STREAM ERROR'
+       && R.lateDamage.fault.lines.join(' ').includes("This device's decoder stopped"),
+     JSON.stringify(R.lateDamage.fault));
+  await page.close();
+}
+
+section('MTS/AVCHD: .MTS, .M2TS and .ts; field pairs and split fields; audio and none; a long clip');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  const R = await vstRun(page, `
+    const out = {};
+    out.mts = await vstScenario({mk: ${AVCHD}, keepBody: true});
+    out.m2ts = await vstScenario({mk: {stride: 192, frames: 30, audio: false}, name: 'CLIP0001.M2TS', keepBody: true});
+    out.ts = await vstScenario({mk: {stride: 188, frames: 30}, name: 'clip.ts'});
+    out.split = await vstScenario({mk: {stride: 192, frames: 90, fields: 'split', width: 1440, height: 1080, audio: true, audioType: 0x81},
+                                   plan: {hwFailAt: 40, pairFields: true}});
+    out.long = await vstScenario({mk: {stride: 192, frames: 900, width: 320, height: 240}, plan: {hwFailAt: 400}});
+    out.leadIn = await vstScenario({mk: {stride: 192, frames: 60, leadIn: 5}, keepBody: true});
+    return out;`);
+  ok('.MTS, field pairs with AC-3: made by the device\'s own decoder, whole',
+     R.mts.step === 'done' && R.mts.out.lane === 'primary' && R.mts.out.check.frames === 90 && R.mts.back.frames === 90,
+     JSON.stringify([R.mts.step, R.mts.out && R.mts.out.check]));
+  ok('the copy is picture only and the original\'s AC-3 is named as still on it',
+     has(R.mts.body, 'Not included — the copy is picture only') && has(R.mts.body, 'AC-3')
+       && has(R.mts.body, 'still on your original'), R.mts.body.slice(0, 900));
+  ok('.M2TS with no audio: made, and no original audio is claimed',
+     R.m2ts.step === 'done' && R.m2ts.back.frames === 30 && !has(R.m2ts.body, 'still on your original'),
+     JSON.stringify([R.m2ts.step, R.m2ts.back]));
+  ok('a 188-byte .ts: made, labelled MPEG-TS', R.ts.step === 'done' && R.ts.container === 'MPEG-TS'
+     && R.ts.back.frames === 30, JSON.stringify([R.ts.step, R.ts.container, R.ts.back]));
+  ok('fields carried one per packet: 180 packets, 90 frames, counted as pairs',
+     R.split.step === 'done' && R.split.out.check.expected === 90 && R.split.back.frames === 90 && R.split.fps === 60,
+     JSON.stringify([R.split.step, R.split.out && R.split.out.check, R.split.fps]));
+  ok('a 900-frame clip whose device decoder stops at 400: compatibility mode makes all 900',
+     R.long.step === 'done' && R.long.out.lane === 'compat' && R.long.back.frames === 900
+       && Math.abs(R.long.back.seconds - 30) < 0.05, JSON.stringify([R.long.step, R.long.back]));
+  ok('frames before the first keyframe are reported, never dropped without a word',
+     R.leadIn.step === 'done' && R.leadIn.out.check.skipped === 5 && has(R.leadIn.body, 'The first 5 frames')
+       && has(R.leadIn.body, 'after the original does'), R.leadIn.body.slice(0, 1200));
+  for (const [k, r] of Object.entries(R)) ok(`${k}: nothing left the device`, noDoors(r.doors), JSON.stringify(r.doors));
+  await page.close();
+}
+
+section('MTS/AVCHD: the screen says what will happen, and a failed file is never re-run on the decoder that failed it');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  const R = await vstRun(page, `
+    const out = {};
+    const A = ${AVCHD};
+    out.readyWith = await vstScenario({mk: A, keepPreview: true});
+    out.readyWithout = await vstScenario({mk: A, plan: {softSupported: false}, keepPreview: true});
+    /* A failure, then every way back to Generate. */
+    const failed = await vstScenario({mk: A, plan: {hwFailAt: 40, softFailAt: 40}, close: false});
+    const cfgsBefore = failed.lanes.length;
+    const S = stubCodecs({});
+    await vstGenerate();
+    out.directCall = {decoders: S.log.cfgs.length, fault: !!VST.fault};
+    document.querySelector('[data-act="vstEditTime"]').click();
+    await new Promise(r => setTimeout(r, 50));
+    document.querySelector('[data-act="vstUseTime"]').click();
+    await new Promise(r => setTimeout(r, 50));
+    out.afterEdit = {go: document.querySelectorAll('[data-act="vstGo"]').length, step: VST.step};
+    S.restore(); vstClose();
+    out.failed = failed; out.cfgsBefore = cfgsBefore;
+    /* The same file again, in the same tab: straight to compatibility mode. */
+    out.again = await vstScenario({mk: A, plan: {hwFailAt: 40}, keepMemory: true, keepPreview: true});
+    out.declined = await vstScenario({mk: A, vst: {decodeOk: false, compatOk: true}, keepPreview: true});
+    /* A finished copy made again with a corrected time: the primary that
+       failed is not tried a second time. */
+    VST_PRIMARY_FAILED.clear();
+    const first = await vstScenario({mk: A, plan: {hwFailAt: 40}, close: false});
+    const S2 = stubCodecs({});
+    document.querySelector('[data-act="vstEditTime"]').click();
+    await new Promise(r => setTimeout(r, 50));
+    document.querySelector('[data-act="vstUseTime"]').click();
+    await new Promise(r => setTimeout(r, 50));
+    await vstGenerate();
+    out.remake = {first: first.lanes, second: S2.log.cfgs.map(c => c.hardwareAcceleration || 'default'),
+                  step: VST.step, lane: VST.out && VST.out.lane};
+    S2.restore(); vstClose();
+    /* The read-out names the second decoder. */
+    const f = new File([makeTs(A)], '00029.MTS', {type: ''});
+    const S3 = stubCodecs({});
+    VST = tsVst(f, await vstParse(f), {});
+    await vstDiagnose();
+    out.diag = VST.diag;
+    S3.restore(); vstClose();
+    return out;`);
+  ok('before anything runs, Ready says what WILL happen — not that it has',
+     has(R.readyWith.preview, 'Ready — will be decoded and re-encoded on this device')
+       && !has(R.readyWith.preview, 'Ready — decoded and re-encoded'), R.readyWith.preview.slice(0, 800));
+  ok('and says the second decoder is there if the first fails',
+     has(R.readyWith.preview, "available if this device's decoder fails"), R.readyWith.preview.slice(0, 800));
+  ok('or that it is not, in this browser',
+     has(R.readyWithout.preview, 'not available in this browser'), R.readyWithout.preview.slice(0, 800));
+  ok('after a failure, Generate is gone', R.failed.go === 0, String(R.failed.go));
+  ok('and calling the generator directly configures no decoder at all',
+     R.directCall.decoders === 0 && R.directCall.fault === true, JSON.stringify(R.directCall));
+  ok('correcting the time does not bring the same run back',
+     R.afterEdit.go === 0 && R.afterEdit.step === 'preview', JSON.stringify(R.afterEdit));
+  ok('the same file chosen again says compatibility mode will be used, and why',
+     has(R.again.preview, 'Ready — compatibility mode will be used')
+       && has(R.again.preview, 'has already stopped on this file'), R.again.preview.slice(0, 900));
+  ok('its Generate names the mode', /compatibility mode/i.test(R.again.goText || '') || R.again.step === 'done',
+     R.again.goText);
+  ok('and the run goes straight to the software decoder — the failed one is not re-run',
+     JSON.stringify(R.again.lanes) === '["prefer-software"]' && R.again.step === 'done', JSON.stringify([R.again.lanes, R.again.step]));
+  ok('a decoder that declined the stream up front, with the software one accepting: compatibility mode from the start',
+     JSON.stringify(R.declined.lanes) === '["prefer-software"]' && R.declined.step === 'done'
+       && has(R.declined.preview, 'declined this stream'), JSON.stringify([R.declined.lanes, R.declined.step]));
+  ok('a corrected time on a finished copy remakes it without re-running the decoder that failed',
+     JSON.stringify(R.remake.first) === '["default","prefer-software"]'
+       && JSON.stringify(R.remake.second) === '["prefer-software"]' && R.remake.step === 'done',
+     JSON.stringify(R.remake));
+  ok('the device read-out names the compatibility decoder', /Compatibility decode\s+yes/.test(R.diag || ''),
+     String(R.diag).slice(0, 600));
+  await page.close();
+}
+
+section('MOV/MP4: Stop stops, and a partial copy is never offered there either');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  const R = await vstRun(page, `
+    const N = 60;
+    const samples = [];
+    for(let i = 0; i < N; i++) samples.push({offset: 0, size: 4, dts: i * 20, cts: i * 20, sync: i % 15 === 0, duration: 20});
+    const parsed = {rotation: 0, audio: null,
+      video: {width: 320, height: 240, timescale: 600, seconds: N / 30, codecString: 'avc1.640028',
+              description: new Uint8Array([1, 2, 3]), samples}};
+    const f = new File([new Uint8Array(64)], 'IMG_0440.mov', {type: 'video/quicktime'});
+    const one = async (plan, run, cancelAfter) => {
+      const S = stubCodecs(plan);
+      if(cancelAfter) setTimeout(() => { run.cancelled = true; }, cancelAfter);
+      let r = null, e = null;
+      try{ r = await vstTranscode(f, parsed, 1700000000000, 'America/New_York', () => {}, run); }
+      catch(x){ e = x; }
+      const out = {made: !!(r && r.blob), frames: r && r.frames, kind: e && e.vstKind, msg: e ? String(e.message) : '',
+                   decoded: S.log.decoded.hw};
+      S.restore();
+      return out;
+    };
+    return {ok: await one({}), drops: await one({hwDropEvery: 7}),
+            stateFirst: await one({hwFailAt: 20, closeOrder: 'state-first'}),
+            cancel: await one({}, {cancelled: false}, 1)};`);
+  ok('a whole MOV still makes its copy', R.ok.made === true && R.ok.frames === 60, JSON.stringify(R.ok));
+  ok('a MOV decoder that drops frames makes nothing, and says so',
+     !R.drops.made && R.drops.kind === 'verify' && /returned \d+ of 60 frames/.test(R.drops.msg), JSON.stringify(R.drops));
+  ok('a MOV decoder seen closed before its error lands makes nothing',
+     !R.stateFirst.made && /Decoding error\. Nothing was saved/.test(R.stateFirst.msg), JSON.stringify(R.stateFirst));
+  ok('the old doubled full stop ("error..") is gone', !/\.\./.test(R.stateFirst.msg), R.stateFirst.msg);
+  ok('Stop ends a MOV run early and makes nothing', !R.cancel.made && R.cancel.kind === 'cancel'
+     && R.cancel.decoded < 60, JSON.stringify(R.cancel));
   await page.close();
 }
 
