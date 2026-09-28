@@ -2069,10 +2069,10 @@ Rate Sheet's own form is a modal and always sat at the top (117 / 84,
 unchanged); its defect was the way back.
 
 The other three were already direct and are untouched: Active Surveillance
-takes its own full screen, and both timestamp tools open their own tool — the
-photo tool's chooser fires on the first tap, measured, and since Timestamp
-Video V2 (2026-09-28) the video card opens the queue dashboard, whose drop zone
-and *Add videos* are the chooser, rather than a bare picker. **A probe once
+takes its own full screen, and both timestamp tools open their own tool — since
+Timestamp Video V2 and Timestamp Photo V2 (both 2026-09-28) each card opens its
+queue dashboard, empty, whose drop zone and *Add* button are the chooser,
+rather than a bare picker. **A probe once
 reported those two as doing nothing**, which was the probe swallowing the
 chooser with `setFiles([])` rather than the product; do not repeat that
 reading.
@@ -3918,7 +3918,7 @@ Tests:
 
 ```bash
 node case-portal/test-worker.mjs   # 4393 checks (2026-09-28): auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 4486 checks (2026-09-28): the page against the real Worker
+node portal/test-portal.mjs        # 4794 checks (2026-09-28): the page against the real Worker
 ```
 
 **WRITE A SUITE'S OUTPUT TO A FILE, NEVER A PIPE.** Every suite ends in
@@ -5677,7 +5677,9 @@ taken — on a Photos export it is when the export was written — and today's d
 is the one value guaranteed to be wrong. Neither is used, and a test asserts the
 current year never appears as a seed. What was burned records **which** it was:
 `photo_stamp.source` is `exif` or `operator`, and touching any field is what
-turns one into the other.
+turns one into the other. **Since Photo V2 a zone-less camera time is NEEDS
+REVIEW until it is saved** — still shown, in Eastern by default, but no longer
+burned without a look (see the next section).
 
 **A correction supersedes rather than overwrites**, matched on the original's
 id so no caller can supersede another photograph's stamp by naming it. The
@@ -5724,9 +5726,9 @@ on screen and the nav door does not reach it.
 
 The top-level copies carry an **empty `data-case`** for the same reason
 Timestamp Video's does: the utility asks which case rather than adopting
-whichever one is open behind it. Unlike video it always needs a case, so "no
-case" is a question here and never a skip, and a case with no photographs says
-so and says where one comes from.
+whichever one is open behind it. Like the video tool's, a case is asked for
+only when a finished copy is filed (owner, 2026-08-19 — this paragraph used to
+say a photo always needed one, which was the build that ruling overturned).
 
 The action stays on the card too — `caseFor` is the boundary that matters and
 the investigator who took the picture is the one standing in the field with it.
@@ -5734,6 +5736,81 @@ the investigator who took the picture is the one standing in the field with it.
 that exists for one and not the other fails rather than ships.
 
 **Adding this table means a manual `portal-setup.yml` dispatch after merge.**
+
+## Timestamp Photo V2: many photos through one queue, and every copy a clean derivative
+
+Owner brief 2026-09-28 (51 sections), built only after Video V2 shipped, as its
+own PR. Record in `case-portal/PHOTO-TIMESTAMP.md` (*V2*). No Worker change, no
+table, no portal-setup dispatch.
+
+**THE PRESENTATION IS SHARED; THE PROCESSING IS THE PHOTO'S OWN.** The
+dashboard wears the video's classes (`.vqd`, plus a `.pqd` modifier) and uses
+its generic helpers; everything that touches a picture's bytes — `pqMeta`, the
+orientation plan, the render, `pqScrubJpeg`, `pqCleanCheck`, the fingerprints —
+and the queue state `PQ` are the photo's alone. Two shared functions gained an
+argument that the video never passes: `vstDraw`'s corner (bottom right is pinned
+**pixel for pixel against a frozen copy of the function Video V2 shipped**) and
+`vstCopyName`'s extension.
+
+**READY IS A TIME YOU CAN STAND BEHIND** — the camera's own record WITH its
+zone, or one the operator saved. A zone-less camera time is NEEDS REVIEW until
+saved: *Process next* must not be the way round the look the single screen
+always made the operator take.
+
+**ORIENTATION IS MEASURED, NOT ASSUMED, AND NEVER GUESSED.** Per format a probe
+decode establishes whether this device's decoder applies the EXIF tag, and each
+photo gets a plan — `decoder`, `manual`, `heif` (the format's own rotation,
+never applied twice) or `fail`, which is a FAILED photo rather than a copy on
+its side. **Chromium ignores the tag on WebP** — measured — so a WebP stored on
+its side is turned by the page. The copy carries no tag.
+
+**THE COPY IS A FRESH JPEG, SCRUBBED, THEN PROVEN — AND THE SCRUB IS
+LOAD-BEARING.** This browser's own canvas JPEG carries an ICC APP2 naming its
+maker (measured), so the scrub keeps only SOI, a fresh JFIF APP0, DQT, DHT, SOF,
+DRI, the scan and EOI, and refuses on a marker it does not know. `pqCleanCheck`
+then trusts neither step: exact structure, nothing after EOI, and every word the
+original's metadata carried — plus its name and folder path — searched for in
+three encodings. A failure is a `clean` fault: no copy, no Generate under it.
+The original is re-read after and held to its fingerprint; two fingerprints,
+two fields.
+
+**THERE IS NO STOP, BECAUSE THE BRIEF SAYS NOT TO FAKE ONE (§21).** A photo is a
+decode and an encode the browser does not let a page interrupt part-way.
+Closing or removing is read between the six phases and abandons the copy.
+
+**ONE AT A TIME, ONE COPY IN MEMORY, ONE DECODE AT A TIME.** Generate makes one
+photo; *Process next* runs only when pressed, to the next READY after it,
+wrapping and skipping NEEDS REVIEW; an unsaved finished copy is let go only after
+asking. Analysis is sequential — one decode each, a thumbnail drawn, the pixels
+released — and the editor's preview is the only other full decode while photos
+are being checked. Measured at 1, 10,
+50 and 100: never more than two decodes at once, no entry holding pixels. The
+queue holds 500 and says so past it.
+
+**A FINISHED CHECK REPAINTS UP TO 120ms LATER** (`pqPaintSoon`, so a hundred
+photos finishing are not a hundred rebuilds), and a test that reads the controls
+the moment the state says "done" reads a stale row — the helpers wait for
+`PQ_PAINT_T` to clear. **And the suite's default 1200px page is NARROW here**
+(under the dashboard's 1240px line), so after a run the list is behind the run
+screen: sections whose subject is not layout run at a desk width. Both were the
+instrument, not the product.
+
+**THE EMPTY VIDEO DASHBOARD SHOWS "SELECT FOLDER" TWICE** — `.vqd-b
+{display:inline-flex}` outranks `.vqd-hfold{display:none}` by source order, the
+source-order casualty again. Fixed for the photo dashboard with one scoped rule;
+the video dashboard is left exactly as it shipped (§42 forbids touching it) and
+the fix is offered as its own task.
+
+**TWENTY-EIGHT MUTATIONS, AND THE TWO THAT WALKED PAST WERE THE TEST.** Each
+was applied in a worktree and run against the sections that hold its property;
+26 were named on the first run. *Process next taking a NEEDS REVIEW photo*
+passed because the walk never put one between the photo just made and the next
+READY one — an ORDER that could not reach the defect, the `[].every()` vacuous
+truth wearing a queue; the walk now requires Process next to NAME and then make
+the photo beyond the skipped one. *Escape closing the queue* crashed the
+section on the probe's next line instead of failing it; the Escape walk now
+runs last and every step survives the queue having gone. Both then failed by
+name. Numbers in `PHOTO-TIMESTAMP.md` V2 §12.
 
 ## Active Surveillance Mode
 

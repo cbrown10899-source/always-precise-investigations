@@ -17,6 +17,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import os from 'node:os';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import worker from '../case-portal/worker.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -9600,6 +9603,360 @@ function exifJpeg(jpegBytes, when) {
   return Buffer.concat([jpegBytes.subarray(0, 2), head, payload, jpegBytes.subarray(2)]);
 }
 
+/* ---- TIMESTAMP PHOTO V2: FIXTURES, AND AN AUDITOR THAT IS NOT THE PAGE ----
+
+   A photograph carrying every kind of source metadata the owner's brief lists
+   (§44), built here byte by byte so the test knows exactly what went in —
+   EXIF with GPS, camera, lens, serial numbers, owner, software, dates and
+   their zone, text tags, a maker note and a thumbnail; XMP with people
+   regions and editing history; IPTC; a comment; data after the picture. Every
+   value is a distinctive SECRET- string, so "none of it survived" can be
+   searched for rather than inferred.
+
+   The finished copy is then read by THIS FILE's own JPEG walker — written
+   separately from the page's check, so a mistake in one is not repeated in
+   the other — and by exiftool when the machine has it. */
+const PH_SECRETS = ['SECRET-DESCRIPTION', 'SECRETMAKER', 'SECRET-MODEL-X9', 'SECRET-SOFTWARE', 'SECRET-ARTIST',
+  'SECRET-COPYRIGHT', 'SECRET-XPTITLE', 'SECRET-XPCOMMENT', 'SECRET-XPAUTHOR', 'SECRET-XPKEYWORDS',
+  'SECRET-USERCOMMENT', 'SECRET-LENSMAKER', 'SECRET-LENS-70-200', 'SECRET-SERIAL-00417', 'SECRET-OWNER',
+  'SECRET-MAKERNOTE', 'SECRET-THUMBNAIL', 'SECRET-XMP-TITLE', 'SECRET-XMP-CREATOR', 'SECRET-XMP-CITY',
+  'SECRET-PERSON-FACE', 'SECRET-XMP-HISTORY', 'SECRET-IPTC-BYLINE', 'SECRET-IPTC-CAPTION', 'SECRET-IPTC-KEYWORD',
+  'SECRET-COMMENT', 'SECRET-TRAILER', 'SECRET-PNG-TITLE', 'SECRET-PNG-AUTHOR', 'SECRET-PNG-ZCOMMENT',
+  'SECRET-PNG-XMP', 'SECRET-PNG-MAKE', 'SECRET-WEBP-MAKE', 'SECRET-WEBP-XMP'];
+function phTiffValue(type, value, le) {
+  const put = (b, fn, v, o) => b[(le ? fn + 'LE' : fn + 'BE')](v, o);
+  if (type === 2) { const b = Buffer.from(value + '\0', 'latin1'); return { count: b.length, data: b }; }
+  if (type === 1 || type === 7) { const b = Buffer.isBuffer(value) ? value : Buffer.from(value, 'latin1'); return { count: b.length, data: b }; }
+  if (type === 3) { const a = [].concat(value); const b = Buffer.alloc(a.length * 2); a.forEach((x, i) => put(b, 'writeUInt16', x, i * 2)); return { count: a.length, data: b }; }
+  if (type === 4) { const a = [].concat(value); const b = Buffer.alloc(a.length * 4); a.forEach((x, i) => put(b, 'writeUInt32', x, i * 4)); return { count: a.length, data: b }; }
+  if (type === 5) { const b = Buffer.alloc(value.length * 8); value.forEach(([n, d], i) => { put(b, 'writeUInt32', n, i * 8); put(b, 'writeUInt32', d, i * 8 + 4); }); return { count: value.length, data: b }; }
+  throw new Error('type ' + type);
+}
+/* A TIFF block: IFD0, the Exif and GPS directories it points to, and IFD1
+   with a thumbnail — the layout a camera writes. */
+function phTiff({ le = false, ifd0 = [], exif = [], gps = [], ifd1 = [], thumb = null }) {
+  const blocks = [['ifd0', ifd0.slice()]];
+  if (exif.length) { blocks.push(['exif', exif]); blocks[0][1].push([0x8769, 4, 'PTR:exif']); }
+  if (gps.length) { blocks.push(['gps', gps]); blocks[0][1].push([0x8825, 4, 'PTR:gps']); }
+  if (ifd1.length || thumb) {
+    const e1 = ifd1.slice();
+    if (thumb) { e1.push([0x0201, 4, 'PTR:thumb']); e1.push([0x0202, 4, thumb.length]); }
+    blocks.push(['ifd1', e1]);
+  }
+  const enc = (t, v) => typeof v === 'string' && v.startsWith('PTR:') ? { count: 1, data: Buffer.alloc(4), ptr: v.slice(4) } : phTiffValue(t, v, le);
+  const layout = [];
+  let off = 8;
+  for (const [name, entries] of blocks) {
+    const encd = entries.slice().sort((a, b) => a[0] - b[0]).map(([tag, type, v]) => ({ tag, type, ...enc(type, v) }));
+    const extra = encd.reduce((n, e) => n + (e.data.length > 4 ? e.data.length + (e.data.length & 1) : 0), 0);
+    layout.push({ name, off, encd });
+    off += 2 + 12 * encd.length + 4 + extra;
+  }
+  const where = Object.fromEntries(layout.map(l => [l.name, l.off]));
+  where.thumb = off;
+  const b = Buffer.alloc(off + (thumb ? thumb.length : 0));
+  const u16 = (o, v) => le ? b.writeUInt16LE(v, o) : b.writeUInt16BE(v, o);
+  const u32 = (o, v) => le ? b.writeUInt32LE(v, o) : b.writeUInt32BE(v, o);
+  b.write(le ? 'II' : 'MM', 0, 'latin1'); u16(2, 42); u32(4, 8);
+  for (const l of layout) {
+    u16(l.off, l.encd.length);
+    let data = l.off + 2 + 12 * l.encd.length + 4;
+    l.encd.forEach((e, i) => {
+      const p = l.off + 2 + i * 12;
+      u16(p, e.tag); u16(p + 2, e.type); u32(p + 4, e.count);
+      if (e.ptr) u32(p + 8, where[e.ptr]);
+      else if (e.data.length <= 4) e.data.copy(b, p + 8);
+      else { u32(p + 8, data); e.data.copy(b, data); data += e.data.length + (e.data.length & 1); }
+    });
+    u32(l.off + 2 + 12 * l.encd.length, l.name === 'ifd0' && where.ifd1 ? where.ifd1 : 0);
+  }
+  if (thumb) thumb.copy(b, where.thumb);
+  return b;
+}
+const phUcs2 = s => { const b = Buffer.alloc(s.length * 2 + 2); for (let i = 0; i < s.length; i++) b.writeUInt16LE(s.charCodeAt(i), i * 2); return b; };
+/* The EXIF a careful camera writes, with every category the brief names. */
+function phRichTiff({ o = 1, when = '2026:09:26 06:11:02', zone = '-04:00', le = false, thumb = null, make = 'SECRETMAKER Optics' } = {}) {
+  return phTiff({ le, thumb,
+    ifd0: [[0x010E, 2, 'SECRET-DESCRIPTION harbour stakeout'], [0x010F, 2, make], [0x0110, 2, 'SECRET-MODEL-X9'],
+           [0x0112, 3, o], [0x011A, 5, [[72, 1]]], [0x011B, 5, [[72, 1]]], [0x0128, 3, 2],
+           [0x0131, 2, 'SECRET-SOFTWARE 4.2'], [0x0132, 2, '2026:09:27 10:00:00'], [0x013B, 2, 'SECRET-ARTIST Jane Operative'],
+           [0x8298, 2, 'SECRET-COPYRIGHT Acme Surveillance'], [0x9C9B, 1, phUcs2('SECRET-XPTITLE')],
+           [0x9C9C, 1, phUcs2('SECRET-XPCOMMENT')], [0x9C9D, 1, phUcs2('SECRET-XPAUTHOR')], [0x9C9E, 1, phUcs2('SECRET-XPKEYWORDS')]],
+    exif: [[0x829A, 5, [[1, 250]]], [0x829D, 5, [[28, 10]]], [0x8827, 3, 400],
+           [0x9003, 2, when], [0x9004, 2, when], ...(zone ? [[0x9010, 2, zone], [0x9011, 2, zone], [0x9012, 2, zone]] : []),
+           [0x920A, 5, [[200, 1]]], [0x927C, 7, Buffer.from('SECRET-MAKERNOTE private maker data', 'latin1')],
+           [0x9286, 7, Buffer.concat([Buffer.from('ASCII\0\0\0', 'latin1'), Buffer.from('SECRET-USERCOMMENT on the approach', 'latin1')])],
+           [0xA430, 2, 'SECRET-OWNER'], [0xA431, 2, 'SECRET-SERIAL-00417'], [0xA433, 2, 'SECRET-LENSMAKER'],
+           [0xA434, 2, 'SECRET-LENS-70-200mm']],
+    gps: [[0x0000, 1, Buffer.from([2, 3, 0, 0])], [0x0001, 2, 'N'], [0x0002, 5, [[37, 1], [24, 1], [3000, 100]]],
+          [0x0003, 2, 'W'], [0x0004, 5, [[79, 1], [8, 1], [4200, 100]]], [0x0006, 5, [[250, 1]]]],
+    ifd1: thumb ? [[0x0103, 3, 6]] : [] });
+}
+const phSeg = (marker, payload) => { const h = Buffer.alloc(4); h.writeUInt16BE(0xFF00 | marker, 0); h.writeUInt16BE(payload.length + 2, 2); return Buffer.concat([h, payload]); };
+const phXmp = (tag) => `<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?><x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:xmp="http://ns.adobe.com/xap/1.0/"
+    xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/" xmlns:xmpMM="http://ns.adobe.com/xap/1.0/mm/"
+    xmlns:mwg-rs="http://www.metadataworkinggroup.com/schemas/regions/" xmp:CreatorTool="SECRET-XMP-TOOL ${tag}"
+    photoshop:City="SECRET-XMP-CITY Lynchburg" xmp:Rating="5">
+   <dc:title><rdf:Alt><rdf:li xml:lang="x-default">SECRET-XMP-TITLE ${tag}</rdf:li></rdf:Alt></dc:title>
+   <dc:creator><rdf:Seq><rdf:li>SECRET-XMP-CREATOR</rdf:li></rdf:Seq></dc:creator>
+   <mwg-rs:Regions><rdf:Description><mwg-rs:RegionList><rdf:Bag><rdf:li><rdf:Description mwg-rs:Name="SECRET-PERSON-FACE" mwg-rs:Type="Face"/></rdf:li></rdf:Bag></mwg-rs:RegionList></rdf:Description></mwg-rs:Regions>
+   <xmpMM:History><rdf:Seq><rdf:li><rdf:Description stEvt:action="SECRET-XMP-HISTORY saved" xmlns:stEvt="http://ns.adobe.com/xap/1.0/sType/ResourceEvent#"/></rdf:li></rdf:Seq></xmpMM:History>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta><?xpacket end="w"?>`;
+function phIptc() {
+  const ds = (n, v) => { const b = Buffer.from(v, 'utf8'); const h = Buffer.from([0x1C, 2, n, b.length >> 8, b.length & 255]); return Buffer.concat([h, b]); };
+  const iim = Buffer.concat([ds(80, 'SECRET-IPTC-BYLINE'), ds(120, 'SECRET-IPTC-CAPTION of the scene'), ds(25, 'SECRET-IPTC-KEYWORD'), ds(90, 'SECRET-IPTC-CITY')]);
+  const size = Buffer.alloc(4); size.writeUInt32BE(iim.length, 0);
+  const res = Buffer.concat([Buffer.from('8BIM', 'latin1'), Buffer.from([0x04, 0x04, 0, 0]), size, iim, iim.length % 2 ? Buffer.from([0]) : Buffer.alloc(0)]);
+  return Buffer.concat([Buffer.from('Photoshop 3.0\0', 'latin1'), res]);
+}
+/* A browser-written JPEG, given everything a camera and an editor add. */
+function phRichJpeg(base, { o = 1, thumb = null, when, zone } = {}) {
+  const t = phRichTiff({ o, thumb, when, zone });
+  return Buffer.concat([base.subarray(0, 2),
+    phSeg(0xE1, Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), t])),
+    phSeg(0xE1, Buffer.concat([Buffer.from('http://ns.adobe.com/xap/1.0/\0', 'latin1'), Buffer.from(phXmp('JPEG'), 'utf8')])),
+    phSeg(0xED, phIptc()),
+    phSeg(0xFE, Buffer.from('SECRET-COMMENT written by the camera', 'latin1')),
+    base.subarray(2),
+    Buffer.from('SECRET-TRAILER embedded motion clip follows', 'latin1')]);
+}
+const PH_CRC = (() => { const t = []; for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t.push(c >>> 0); } return t; })();
+const phCrc = buf => { let c = 0xFFFFFFFF; for (const x of buf) c = PH_CRC[(c ^ x) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
+function phPngChunk(type, data) {
+  const len = Buffer.alloc(4); len.writeUInt32BE(data.length, 0);
+  const td = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+  const crc = Buffer.alloc(4); crc.writeUInt32BE(phCrc(td), 0);
+  return Buffer.concat([len, td, crc]);
+}
+function phRichPng(base) {
+  const zlib = createRequire(import.meta.url)('node:zlib');
+  const chunks = Buffer.concat([
+    phPngChunk('tEXt', Buffer.from('Title\0SECRET-PNG-TITLE', 'latin1')),
+    phPngChunk('tEXt', Buffer.from('Author\0SECRET-PNG-AUTHOR', 'latin1')),
+    phPngChunk('zTXt', Buffer.concat([Buffer.from('Comment\0\0', 'latin1'), zlib.deflateSync(Buffer.from('SECRET-PNG-ZCOMMENT compressed', 'latin1'))])),
+    phPngChunk('iTXt', Buffer.concat([Buffer.from('XML:com.adobe.xmp\0\0\0\0\0', 'latin1'), Buffer.from(phXmp('PNG').replace('SECRET-XMP-TITLE', 'SECRET-PNG-XMP'), 'utf8')])),
+    phPngChunk('eXIf', phRichTiff({ make: 'SECRET-PNG-MAKE Co' })),
+    phPngChunk('tIME', Buffer.from([0x07, 0xEA, 9, 26, 10, 0, 0]))]);
+  return Buffer.concat([base.subarray(0, 33), chunks, base.subarray(33)]);
+}
+function phRichWebp(base) {
+  const parts = [];
+  for (let p = 12; p + 8 <= base.length;) {
+    const sz = base.readUInt32LE(p + 4);
+    const c = Buffer.from(base.subarray(p, p + 8 + sz + (sz & 1)));
+    if (c.toString('latin1', 0, 4) === 'VP8X') c[8] |= 0x08 | 0x04;          // EXIF and XMP present
+    parts.push(c);
+    p += 8 + sz + (sz & 1);
+  }
+  const chunk = (id, data) => { const h = Buffer.alloc(8); h.write(id, 0, 'latin1'); h.writeUInt32LE(data.length, 4); return Buffer.concat([h, data, data.length & 1 ? Buffer.from([0]) : Buffer.alloc(0)]); };
+  parts.push(chunk('EXIF', phRichTiff({ make: 'SECRET-WEBP-MAKE Co', le: true })));
+  parts.push(chunk('XMP ', Buffer.from(phXmp('WEBP').replace('SECRET-XMP-TITLE', 'SECRET-WEBP-XMP'), 'utf8')));
+  const body = Buffer.concat(parts);
+  const head = Buffer.alloc(12); head.write('RIFF', 0, 'latin1'); head.writeUInt32LE(4 + body.length, 4); head.write('WEBP', 8, 'latin1');
+  return Buffer.concat([head, body]);
+}
+/* THE AUDITOR. Walks the copy's JPEG structure itself and lists anything that
+   is not what a plain JFIF picture needs; then searches every byte for every
+   secret, in the three encodings a tag can use. */
+function phAudit(buf) {
+  const segs = [], problems = [];
+  if (!(buf[0] === 0xFF && buf[1] === 0xD8)) return { problems: ['not a JPEG'], segs, found: [] };
+  let o = 2, end = -1;
+  while (o + 2 <= buf.length) {
+    if (buf[o] !== 0xFF) { problems.push('bytes outside a segment at ' + o); break; }
+    const mk = buf[o + 1];
+    if (mk === 0xD9) { end = o + 2; break; }
+    if (o + 4 > buf.length) { problems.push('a segment cut off at ' + o); break; }
+    const len = buf.readUInt16BE(o + 2);
+    segs.push(mk.toString(16).toUpperCase());
+    if (mk >= 0xE0 && mk <= 0xEF && !(mk === 0xE0 && len === 16 && buf.toString('latin1', o + 4, o + 9) === 'JFIF\0')) problems.push('APP' + (mk - 0xE0));
+    if (mk === 0xFE) problems.push('comment');
+    let n = o + 2 + len;
+    if (mk === 0xDA) { while (n + 1 < buf.length && !(buf[n] === 0xFF && buf[n + 1] !== 0 && !(buf[n + 1] >= 0xD0 && buf[n + 1] <= 0xD7))) n++; }
+    o = n;
+  }
+  if (end < 0) problems.push('no end of image');
+  else if (end < buf.length) problems.push((buf.length - end) + ' bytes after the end');
+  const found = [];
+  for (const s of PH_SECRETS) {
+    const forms = [Buffer.from(s, 'latin1'), Buffer.from(s, 'utf16le'), Buffer.from(s, 'utf16le').swap16()];
+    if (forms.some(f => buf.indexOf(f) >= 0)) found.push(s);
+  }
+  return { problems, segs, found };
+}
+/* exiftool, when this machine has it: every tag it can find, by group. */
+const PH_EXIFTOOL = (() => { try { execFileSync('exiftool', ['-ver'], { stdio: 'pipe' }); return true; } catch { return false; } })();
+function phExiftool(buf, name) {
+  if (!PH_EXIFTOOL) return null;
+  const f = path.join(os.tmpdir(), `ph-${process.pid}-${name}`);
+  fs.writeFileSync(f, buf);
+  try { return JSON.parse(execFileSync('exiftool', ['-j', '-a', '-G1', '-s', f], { stdio: 'pipe' }).toString())[0]; }
+  finally { try { fs.unlinkSync(f); } catch {} }
+}
+/* What exiftool may report about a clean copy: the file system, the JFIF
+   header, and values it computes itself. Any other group is metadata. */
+const phExiftoolExtra = tags => Object.keys(tags || {}).filter(k => k !== 'SourceFile'
+  && !/^(ExifTool|System|File|JFIF|Composite):/.test(k));
+
+/* In-page helpers for the photo queue — its own, not the video queue's. */
+const PH_LIB = String.raw`
+  const qWait = async (fn, ms = 20000) => { const t0 = Date.now();
+    while(!fn() && Date.now() - t0 < ms) await new Promise(r => setTimeout(r, 25)); return fn(); };
+  const pVisible = el => !!el && el.getClientRects().length > 0 && !el.closest('[inert]');
+  const pClick = (act, id) => { const el = [...document.querySelectorAll('#pstamp [data-act="' + act + '"]'
+      + (id != null ? '[data-id="' + id + '"]' : ''))].find(e => pVisible(e) && !e.disabled);
+    if(el) el.click(); return !!el; };
+  const pScreen = () => { const el = document.querySelector('#pstamp .vst') || document.querySelector('#pstamp .vqd');
+    return el ? el.innerText : ''; };
+  /* Checked AND drawn: background work repaints up to 120ms after it
+     finishes (pqPaintSoon), and a control read before that is a stale one. */
+  const pIdle = n => qWait(() => PQ && PQ.items.length === n && PQ.items.every(x => x.analysis === 'done') && !PQ.busy && !PQ_PAINT_T);
+  const pMade = v => qWait(() => PQ && !PQ.busy && !!(v.out || v.fault) && !PQ_PAINT_T);
+  const pFire = (el, value) => { if(el.type === 'radio') el.checked = true; else el.value = value;
+    el.dispatchEvent(new Event('input', {bubbles: true})); };
+  /* The editor's own boxes, filled the way typing fills them. */
+  const pType = async (v, t) => {
+    if(String(PQ.sel) !== String(v.qid)){ pqNavigate({sel: v.qid}); await new Promise(r => setTimeout(r, 20)); }
+    for(const k of ['mo', 'da', 'yr', 'hr', 'mi', 'se', 'ap', 'tz']) if(t[k] != null) pFire(document.getElementById('pst_' + k), t[k]);
+    if(t.pos) pFire(document.getElementById('pst_pos_' + t.pos));
+  };
+  const pSave = async (v, t) => { await pType(v, t); pClick('pqSaveTime'); await new Promise(r => setTimeout(r, 20)); };
+  const T0 = {mo: '09', da: '26', yr: '2026', hr: '06', mi: '11', se: '02', ap: 'AM'};
+  const canvasFile = async (name, w, h, type, paint, lastModified) => {
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const cx = c.getContext('2d'); cx.fillStyle = '#3f6ea8'; cx.fillRect(0, 0, w, h);
+    if(paint) paint(cx, w, h);
+    const b = await new Promise(r => c.toBlob(r, type || 'image/jpeg', 0.9));
+    return new File([b], name, {type: type || 'image/jpeg', lastModified: lastModified || 1790000000000});
+  };
+  /* The four quadrants of a decoded picture — red, green / blue, yellow when
+     it is upright — sampled away from the corner the stamp is burned into. */
+  const quadrants = async blob => {
+    const bmp = await createImageBitmap(blob);
+    const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
+    const cx = c.getContext('2d'); cx.drawImage(bmp, 0, 0);
+    const cls = (x, y) => { const d = cx.getImageData(Math.round(x), Math.round(y), 1, 1).data;
+      return d[0] > 180 && d[1] > 180 && d[2] < 90 ? 'Y' : d[0] > 180 && d[1] < 90 ? 'R'
+        : d[1] > 180 && d[0] < 90 ? 'G' : d[2] > 180 && d[0] < 90 ? 'B' : '?'; };
+    const W = bmp.width, H = bmp.height;
+    const r = {w: W, h: H, q: cls(W * .25, H * .25) + cls(W * .75, H * .25) + cls(W * .25, H * .7) + cls(W * .75, H * .7)};
+    bmp.close();
+    return r;
+  };
+  /* White pixels in a region of a decoded picture — the stamp is white. */
+  const whiteIn = async (blob, fx, fy, fw, fh) => {
+    const bmp = await createImageBitmap(blob);
+    const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
+    const cx = c.getContext('2d'); cx.drawImage(bmp, 0, 0);
+    const d = cx.getImageData(Math.round(bmp.width * fx), Math.round(bmp.height * fy),
+      Math.max(1, Math.round(bmp.width * fw)), Math.max(1, Math.round(bmp.height * fh))).data;
+    let n = 0;
+    for(let i = 0; i < d.length; i += 4) if(d[i] > 225 && d[i + 1] > 225 && d[i + 2] > 225) n++;
+    bmp.close();
+    return n;
+  };
+  /* A picture whose correct display DEPENDS on its orientation tag: upright it
+     is quartered red / green / blue / yellow; the stored pixels are that
+     picture turned the opposite way; the tag says how to turn them back. */
+  const orientedBytes = async (o, W, H) => {
+    const U = document.createElement('canvas'); U.width = W; U.height = H;
+    const u = U.getContext('2d');
+    u.fillStyle = '#ff0000'; u.fillRect(0, 0, W / 2, H / 2);
+    u.fillStyle = '#00ff00'; u.fillRect(W / 2, 0, W / 2, H / 2);
+    u.fillStyle = '#0000ff'; u.fillRect(0, H / 2, W / 2, H / 2);
+    u.fillStyle = '#ffff00'; u.fillRect(W / 2, H / 2, W / 2, H / 2);
+    const inv = {1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 8, 7: 7, 8: 6}[o];
+    const S = document.createElement('canvas');
+    S.width = inv >= 5 ? H : W; S.height = inv >= 5 ? W : H;
+    pqOrientDraw(S.getContext('2d'), U, W, H, inv, 1);
+    const b = await new Promise(r => S.toBlob(r, 'image/jpeg', 0.95));
+    const jpg = new Uint8Array(await b.arrayBuffer());
+    const tiff = new Uint8Array(26); const dv = new DataView(tiff.buffer);
+    tiff.set([0x4D, 0x4D, 0, 0x2A], 0); dv.setUint32(4, 8); dv.setUint16(8, 1); dv.setUint16(10, 0x0112);
+    dv.setUint16(12, 3); dv.setUint32(14, 1); dv.setUint16(18, o); dv.setUint32(22, 0);
+    const app1 = new Uint8Array(10 + tiff.length);
+    app1.set([0xFF, 0xE1, 0, 8 + tiff.length, 0x45, 0x78, 0x69, 0x66, 0, 0], 0); app1.set(tiff, 10);
+    const out = new Uint8Array(jpg.length + app1.length);
+    out.set(jpg.subarray(0, 2), 0); out.set(app1, 2); out.set(jpg.subarray(2), 2 + app1.length);
+    return out;
+  };
+  /* Every door a byte could leave by: requests, beacons, downloads, the share
+     sheet, the save picker. Counted, and the originals re-readable after. */
+  const pDoors = () => {
+    const w = {fetches: 0, xhr: 0, beacons: 0, downloads: 0, shares: 0, pickers: 0, urls: []};
+    const rf = window.fetch; window.fetch = (...a) => { w.fetches++; w.urls.push(String(a[0])); return rf(...a); };
+    const ro = XMLHttpRequest.prototype.open; XMLHttpRequest.prototype.open = function(...a){ w.xhr++; return ro.apply(this, a); };
+    const rb = navigator.sendBeacon && navigator.sendBeacon.bind(navigator);
+    if(rb) navigator.sendBeacon = (...a) => { w.beacons++; return rb(...a); };
+    const rc = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function(){ if(this.download) w.downloads++; else return rc.call(this); };
+    w.restore = () => { window.fetch = rf; XMLHttpRequest.prototype.open = ro; if(rb) navigator.sendBeacon = rb;
+      HTMLAnchorElement.prototype.click = rc; };
+    return w;
+  };
+  const sha = async u8 => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', u8)))
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+`;
+const phRun = (page, js) => page.evaluate(`(async () => { ${PH_LIB} ${js} })()`);
+
+/* The queue's own helpers, driven from Node through the real controls. */
+async function phOpenFromHome(page) {
+  await goHome(page);
+  await page.evaluate(() => document.querySelector('.qtapp[data-qt="photo"]').click());
+  await page.waitForFunction(() => !!document.querySelector('#pstamp .pqd'), null, { timeout: 10000 });
+}
+async function phChoose(page, files) {
+  const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.locator('#pstamp .vqd-drop').click()]);
+  await chooser.setFiles(files);
+}
+const phIdle = (page, n, timeout = 20000) => page.waitForFunction((n) => PQ && PQ.items.length === n
+  && PQ.items.every(x => x.analysis === 'done') && !PQ.busy && !PQ_PAINT_T, n, { timeout });
+/* A desk, where the table, the editor and the run are all on screen at once —
+   for the sections whose subject is not the layout. */
+const phDesk = page => page.setViewportSize({ width: 1440, height: 900 });
+async function phFill(page, t) {
+  for (const k of ['mo', 'da', 'yr', 'hr', 'mi', 'se']) if (t[k] != null) await page.locator('#pst_' + k).fill(t[k]);
+  if (t.ap) await page.locator('#pst_ap').selectOption(t.ap);
+}
+/* Save, Generate, and wait for the copy — the three presses a person makes. */
+async function phSaveMake(page, qid) {
+  await page.locator('#pstamp [data-act="pqSaveTime"]').click();
+  await page.locator('#pq_go').click();
+  await page.waitForFunction((id) => { const v = pqById(id); return !!v && !PQ.busy && !!(v.out || v.fault); }, qid, { timeout: 20000 });
+}
+const phView = async (page, qid) => {
+  await page.evaluate((id) => { const el = [...document.querySelectorAll(`#pstamp [data-act="pqDetails"][data-id="${id}"]`)]
+    .find(e => e.getClientRects().length && !e.closest('[inert]')); if (el) el.click(); }, qid);
+  await page.waitForFunction(() => !!document.querySelector('#pstamp .vst'), null, { timeout: 5000 });
+};
+/* Out of the photo's own screen and out of the tool, the way a person leaves. */
+async function phLeave(page) {
+  if (await page.locator('#pstamp .vst-x').count()) await page.locator('#pstamp .vst-x').click();
+  /* On a narrow screen the editor or the run has the whole screen, with its
+     own way back to the list, where Close is. */
+  for (const act of ['pqRunBack', 'pqListBack']) {
+    const b = page.locator(`#pstamp [data-act="${act}"]:visible`);
+    if (await b.count()) { await b.first().click(); break; }
+  }
+  await page.locator('#pstamp [data-act="pqClose"]').click();
+  if (await page.locator('#pstamp [data-act="pqConfirmYes"]').count()) await page.locator('#pstamp [data-act="pqConfirmYes"]').click();
+  await page.waitForFunction(() => !PQ && !document.querySelector('#pstamp .pqd'), null, { timeout: 5000 });
+}
+/* Files the finished copy to the queue's case through the drawer, and waits. */
+async function phFile(page, { include } = {}) {
+  await page.locator('#pstamp [data-act="pstToCase"]').click();
+  const box = page.locator('#pst_inc');
+  const state = { present: await box.count() === 1, checked: await box.count() ? await box.isChecked() : null };
+  if (include === false) { await box.uncheck(); await page.waitForTimeout(150); }
+  await page.locator('#pstamp [data-act="pstFile"]').click();
+  await page.waitForFunction(() => /Saved to Dropbox/.test((document.querySelector('#pstamp .vst') || {}).innerText || ''), null, { timeout: 15000 });
+  return state;
+}
+
 section('Timestamp Photo: the stamp is in the pixels, and the original is not touched');
 {
   const page = await newPage();
@@ -9608,14 +9965,14 @@ section('Timestamp Photo: the stamp is in the pixels, and the original is not to
   await page.waitForTimeout(450);
   await wsTab(page, 'Evidence');
 
-  /* A REAL PICTURE, written by this browser. 800x600 so the burned face is a
-     legible 30px, which is what `vstDraw` scales it to. */
   // Counted rather than assumed: earlier sections share these cases.
   const before1 = await page.evaluate(() => ({
     stamps: ((WS && WS.photo_stamps) || []).length,
     photos: ((WS && WS.evidence) || []).filter(e => !e.deleted_at
       && String(e.content_type || '').startsWith('image/')).length,
   }));
+  /* A REAL PICTURE, written by this browser. 800x600 so the burned face is a
+     legible size. */
   const b64 = await page.evaluate(() => {
     const c = document.createElement('canvas');
     c.width = 800; c.height = 600;
@@ -9632,16 +9989,17 @@ section('Timestamp Photo: the stamp is in the pixels, and the original is not to
   await page.waitForTimeout(900);
   ok('the photograph is in the case', has(await text(page, '#dlgBody'), 'IMG_4407.jpg'));
 
-  /* THE DOOR IS THE PHOTOGRAPH (PHOTO-TIMESTAMP.md D1), not a top-level
-     screen: there is already something in the case to hang it on. */
+  /* THE DOOR ON THE PHOTOGRAPH, which now opens the photo queue with that
+     photograph in the editor and its case already known. */
   const opener = page.locator('[data-act="pstOpen"]').first();
   ok('the photograph offers to be timestamped', await opener.count() === 1);
   await opener.click();
-  await page.waitForTimeout(900);
+  await phIdle(page, 1);
+  await page.waitForTimeout(300);
 
-  /* SEEDED FROM THE CAMERA, and the screen says that is where it came from. */
   const when = await text(page, '#pstamp');
-  ok('the screen opens on the question', has(when, 'When was it taken'), when.slice(0, 160));
+  ok('it opens in the photo queue, in its editor', has(when, 'Edit date & time') && has(when, 'IMG_4407.jpg'),
+     when.slice(0, 240));
   ok('the fields are filled from the camera, not from the clock',
      await page.locator('#pst_mo').inputValue() === '08'
      && await page.locator('#pst_da').inputValue() === '17'
@@ -9651,34 +10009,35 @@ section('Timestamp Photo: the stamp is in the pixels, and the original is not to
      && await page.locator('#pst_se').inputValue() === '32'
      && await page.locator('#pst_ap').inputValue() === 'PM',
      await page.locator('#pst_yr').inputValue());
-  ok('and it says the camera is where they came from', has(when, 'From the camera'), when.slice(0, 300));
+  ok('and it says the camera is where they came from', has(when, 'From the camera'), when.slice(0, 600));
   /* THE ZONE IS RESOLVED FROM THE DATE — August in Virginia is EDT, and a
      hard-coded EST would make this an hour wrong. */
-  ok('the preview reads the date, the time and the zone that date is in',
-     has(when, '08/17/2026 05:14:32 PM EDT'), when);
+  ok('the burn reads the date, the time and the zone that date is in',
+     has(await text(page, '#pst_res'), '08/17/2026 05:14:32 PM EDT'), await text(page, '#pst_res'));
+  /* A CAMERA TIME WITH NO ZONE IS A READING, NOT A MOMENT (V2 §12): the photo
+     stands at Needs review, and Generate waits for a Save. */
+  ok('a camera time with no zone is Needs review until it is saved',
+     await page.evaluate(() => pqStatus(PQ.items[0]) === 'needs' && document.getElementById('pq_go').disabled));
 
   const evidenceBefore = await page.evaluate(() => (WS.evidence || []).length);
-  await page.locator('[data-act="pstBurn"]').click();
-  await page.waitForTimeout(1200);
+  const qid = await page.evaluate(() => PQ.items[0].qid);
+  await phSaveMake(page, qid);
+  await phView(page, qid);
   ok('the copy is offered for checking before it is filed',
-     has(await text(page, '#pstamp'), 'The timestamped copy'));
+     has(await text(page, '#pstamp .vst'), 'The timestamped copy'));
   ok('and the copy is shown', await page.locator('.pst-prev').count() === 1);
-
-  /* NOTHING HAS BEEN UPLOADED YET, and that is the owner's rule after the
-     device test: the copy is made here and filing is a separate, optional act. */
+  /* NOTHING HAS BEEN UPLOADED YET: the copy is made here, and filing is a
+     separate, optional act. */
   ok('the copy exists without anything having been uploaded',
      await page.evaluate((n) => (WS.evidence || []).length === n, evidenceBefore));
   ok('and filing is offered rather than assumed',
      await page.locator('[data-act="pstToCase"]').count() === 1);
   ok('with keeping it on the device offered first',
      await page.locator('[data-act="pstSaveDevice"]').count() === 1);
-  await page.locator('[data-act="pstToCase"]').click();
-  await page.waitForTimeout(400);
-  await page.locator('[data-act="pstFile"]').click();
-  await page.waitForTimeout(2000);
-  ok('it is saved to Dropbox', has(await text(page, '#pstamp'), 'Saved to Dropbox'),
-     await text(page, '#pstamp'));
-  await page.locator('#pstamp [data-act="pstClose"]').first().click();
+  await phFile(page);
+  ok('it is saved to Dropbox', has(await text(page, '#pstamp .vst'), 'Saved to Dropbox'),
+     await text(page, '#pstamp .vst'));
+  await phLeave(page);
   await page.waitForTimeout(700);
 
   /* THE PAIR, in the case. Both rows, both badged. */
@@ -9797,18 +10156,23 @@ section('Timestamp Photo: nothing is guessed, and a correction is the operator�
   await page.locator('.btn', { hasText: 'Upload picture or document' }).click();
   await page.waitForTimeout(900);
   await page.locator('[data-act="pstOpen"]').first().click();
-  await page.waitForTimeout(900);
+  await phIdle(page, 1);
+  await page.waitForTimeout(300);
 
   const blank = await text(page, '#pstamp');
   ok('a file with no camera timestamp fills in NOTHING',
      await page.locator('#pst_mo').inputValue() === ''
      && await page.locator('#pst_yr').inputValue() === '',
      await page.locator('#pst_yr').inputValue());
-  ok('and says so rather than inventing one', has(blank, 'nothing has been filled in'), blank.slice(0, 400));
-  /* The refusal `pstWhen` actually produces — matched on its own words rather
-     than on the defensive default beneath it, which nothing reaches. */
-  ok('the burn is not offered a time it does not have',
-     has(blank, 'Fill in every part of the date and time'), blank.slice(0, 500));
+  ok('and says so rather than inventing one',
+     has(blank, 'The file carries no date') && has(blank, 'nothing is guessed'), blank.slice(0, 700));
+  ok('the detected time says it was not found', has(blank, 'Not found on the file'), blank.slice(0, 700));
+  /* The burn is not offered a time it does not have: Generate waits, and a
+     Save names what is missing in `vstStart`'s own words. */
+  ok('Generate waits for a time', await page.evaluate(() => document.getElementById('pq_go').disabled));
+  await page.locator('#pstamp [data-act="pqSaveTime"]').click();
+  ok('and Save refuses a time that is not there, by name',
+     has(await text(page, '#pstamp'), 'Fill in every part of the date and time'), (await text(page, '#pstamp')).slice(0, 900));
 
   /* THE FILE'S MODIFIED DATE IS NOT A SECOND OPINION about when the picture
      was taken, and neither is today. Neither may appear as a seed. */
@@ -9816,25 +10180,16 @@ section('Timestamp Photo: nothing is guessed, and a correction is the operator�
   ok('the current date is not quietly used as the anchor',
      await page.locator('#pst_yr').inputValue() !== thisYear);
 
-  await page.locator('#pst_mo').fill('08');
-  await page.locator('#pst_da').fill('17');
-  await page.locator('#pst_yr').fill('2026');
-  await page.locator('#pst_hr').fill('11');
-  await page.locator('#pst_mi').fill('05');
-  await page.locator('#pst_se').fill('00');
-  await page.locator('#pst_ap').selectOption('AM');
-  await page.locator('[data-act="pstBurn"]').click();
-  await page.waitForTimeout(1200);
+  const qid = await page.evaluate(() => PQ.items[0].qid);
+  await phFill(page, { mo: '08', da: '17', yr: '2026', hr: '11', mi: '05', se: '00', ap: 'AM' });
+  await phSaveMake(page, qid);
+  await phView(page, qid);
   ok('what the operator typed is what is drawn',
-     has(await text(page, '#pstamp'), '08/17/2026 11:05:00 AM EDT'), await text(page, '#pstamp'));
+     has(await text(page, '#pstamp .vst'), '08/17/2026 11:05:00 AM EDT'), await text(page, '#pstamp .vst'));
   ok('and the screen says the operator is where it came from',
-     has(await text(page, '#pstamp'), 'entered by the operator'));
-
-  await page.locator('[data-act="pstToCase"]').click();
-  await page.waitForTimeout(400);
-  await page.locator('[data-act="pstFile"]').click();
-  await page.waitForTimeout(2000);
-  await page.locator('#pstamp [data-act="pstClose"]').first().click();
+     has(await text(page, '#pstamp .vst'), 'entered by the operator'));
+  await phFile(page);
+  await phLeave(page);
   await page.waitForTimeout(700);
   ok('and that is the provenance recorded',
      await page.evaluate(() => (WS.photo_stamps || [])[0].source) === 'operator');
@@ -9843,24 +10198,18 @@ section('Timestamp Photo: nothing is guessed, and a correction is the operator�
      portal purges — and exactly one copy is live. */
   const originalId = await page.evaluate(() => (WS.photo_stamps || [])[0].original_id);
   await page.locator(`[data-act="pstOpen"][data-id="${originalId}"]`).click();
-  await page.waitForTimeout(900);
+  await phIdle(page, 1);
+  await page.waitForTimeout(300);
   /* Every part again: this file carries no EXIF, so the form opens empty on
-     purpose and a correction is typed in full, exactly as it was the first
-     time. */
-  await page.locator('#pst_mo').fill('08');
-  await page.locator('#pst_da').fill('17');
-  await page.locator('#pst_yr').fill('2026');
-  await page.locator('#pst_hr').fill('12');
-  await page.locator('#pst_mi').fill('05');
-  await page.locator('#pst_se').fill('00');
-  await page.locator('#pst_ap').selectOption('PM');
-  await page.locator('[data-act="pstBurn"]').click();
-  await page.waitForTimeout(1200);
-  await page.locator('[data-act="pstToCase"]').click();
-  await page.waitForTimeout(400);
-  await page.locator('[data-act="pstFile"]').click();
-  await page.waitForTimeout(2000);
-  await page.locator('#pstamp [data-act="pstClose"]').first().click();
+     purpose and a correction is typed in full. */
+  const qid2 = await page.evaluate(() => PQ.items[0].qid);
+  await phFill(page, { mo: '08', da: '17', yr: '2026', hr: '12', mi: '05', se: '00', ap: 'PM' });
+  await phSaveMake(page, qid2);
+  await phView(page, qid2);
+  ok('the original is already on the case, so it is not filed again',
+     await page.evaluate(() => PQ.items[0].evId != null && PQ.items[0].evCase === PQ.items[0].caseNo));
+  await phFile(page);
+  await phLeave(page);
   await page.waitForTimeout(700);
 
   const after = await page.evaluate((oid) => ({
@@ -9925,26 +10274,15 @@ section('Timestamp Photo: the copy is what the client gets, and the original is 
   };
   const stamp = async (evId, include) => {
     await page.locator(`[data-act="pstOpen"][data-id="${evId}"]`).click();
-    await page.waitForTimeout(900);
-    await page.locator('#pst_mo').fill('08');
-    await page.locator('#pst_da').fill('17');
-    await page.locator('#pst_yr').fill('2026');
-    await page.locator('#pst_hr').fill('02');
-    await page.locator('#pst_mi').fill('30');
-    await page.locator('#pst_se').fill('00');
-    await page.locator('#pst_ap').selectOption('PM');
-    await page.locator('[data-act="pstBurn"]').click();
-    await page.waitForTimeout(1200);
+    await phIdle(page, 1);
+    const qid = await page.evaluate(() => PQ.items[0].qid);
+    await phFill(page, { mo: '08', da: '17', yr: '2026', hr: '02', mi: '30', se: '00', ap: 'PM' });
+    await phSaveMake(page, qid);
+    await phView(page, qid);
     /* The package question belongs to FILING, so it is on the step that files
        — not on the copy, which is made whether or not it is ever filed. */
-    await page.locator('[data-act="pstToCase"]').click();
-    await page.waitForTimeout(400);
-    const box = page.locator('#pst_inc');
-    const state = { present: await box.count() === 1, checked: await box.isChecked() };
-    if (include === false) { await box.uncheck(); await page.waitForTimeout(250); }
-    await page.locator('[data-act="pstFile"]').click();
-    await page.waitForTimeout(2000);
-    await page.locator('#pstamp [data-act="pstClose"]').first().click();
+    const state = await phFile(page, { include });
+    await phLeave(page);
     await page.waitForTimeout(700);
     return state;
   };
@@ -9956,7 +10294,7 @@ section('Timestamp Photo: the copy is what the client gets, and the original is 
   /* DEFAULT ON — and it is the checkbox that says so, not a comment. */
   const shipped = await upload('ship.jpg', await jpeg(600, 400, '#2f6f3f'));
   const first = await stamp(shipped);
-  ok('the generate screen offers the package choice', first.present);
+  ok('the filing step offers the package choice', first.present);
   ok('and it is ON by default', first.checked === true, String(first.checked));
   const shippedCopy = await copyOf(shipped);
   ok('so the copy is what the client can be sent',
@@ -10005,8 +10343,7 @@ section('Timestamp Photo: the copy is what the client gets, and the original is 
      (picker.copy || {}).button === 'Add' && !(picker.copy || {}).note,
      JSON.stringify(picker.copy));
   /* AND WHEN THE COPY IS HELD BACK the original is the one on offer again —
-     read off the copy's live classification, never off a stored flag, so this
-     follows an admin who changes their mind. */
+     read off the copy's live classification, never off a stored flag. */
   ok('an original whose copy was held back is offered the ordinary way',
      (picker.heldOriginal || {}).button === 'Add' && !(picker.heldOriginal || {}).note,
      JSON.stringify(picker.heldOriginal));
@@ -10171,6 +10508,95 @@ section('The burned stamp fits inside the picture, portrait included');
   await page.close();
 }
 
+/* THE CORNER IS THE OPERATOR'S (V2 §10), and bottom right — the default, and
+   the only corner a video's stamp is ever drawn in — is drawn byte for byte
+   as it always was. */
+section('Timestamp Photo V2: the stamp goes in the corner the operator chose, and bottom right is unchanged');
+{
+  const page = await newPage();
+  const r = await page.evaluate(() => {
+    const label = '09/26/2026 06:11:02 AM EDT';
+    const draw = (W, H, pos) => {
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const cx = c.getContext('2d'); cx.fillStyle = '#3f6ea8'; cx.fillRect(0, 0, W, H);
+      if (pos === undefined) vstDraw(cx, W, H, label); else vstDraw(cx, W, H, label, pos);
+      return cx.getImageData(0, 0, W, H).data;
+    };
+    const box = (W, H, pos) => {
+      const d = draw(W, H, pos);
+      let minX = W, maxX = -1, minY = H, maxY = -1;
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        const i = (y * W + x) * 4;
+        if (d[i] > 200 && d[i + 1] > 200 && d[i + 2] > 200) {
+          if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y;
+        }
+      }
+      return { W, H, pad: Math.round(Math.min(W, H) * 0.035), left: minX, right: W - 1 - maxX,
+               top: minY, bottom: H - 1 - maxY, width: maxX - minX + 1, found: maxX >= 0 };
+    };
+    const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+    /* THE FUNCTION AS IT SHIPPED WITH TIMESTAMP VIDEO V2 (master 845a50c),
+       frozen here byte for byte in its body, so "the video's stamp is
+       unchanged" is a comparison of pixels rather than a reading of a diff. */
+    const shipped = (cx, W, H, text) => {
+      const pad = Math.round(Math.min(W, H) * 0.035);
+      const face = px => `600 ${px}px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`;
+      const room = Math.max(1, W - pad * 2);
+      const PROBE = 100;
+      cx.font = face(PROBE);
+      const per = Math.max(0.0001, cx.measureText(text).width / PROBE);
+      let size = Math.round(W * 0.52 / per);
+      size = Math.min(size, Math.round(H * 0.08));
+      size = Math.max(8, size);
+      cx.font = face(size);
+      for (let i = 0; i < 64 && size > 8 && cx.measureText(text).width > room; i++) { size -= 1; cx.font = face(size); }
+      cx.textAlign = 'right';
+      cx.textBaseline = 'alphabetic';
+      cx.save();
+      cx.shadowColor = 'rgba(0,0,0,.85)';
+      cx.shadowBlur = Math.max(2, Math.round(size * 0.3));
+      cx.lineWidth = Math.max(2, Math.round(size * 0.16));
+      cx.lineJoin = 'round';
+      cx.strokeStyle = 'rgba(0,0,0,.92)';
+      cx.strokeText(text, W - pad, H - pad);
+      cx.shadowBlur = 0;
+      cx.fillStyle = '#ffffff';
+      cx.fillText(text, W - pad, H - pad);
+      cx.restore();
+    };
+    const drawShipped = (W, H) => {
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const cx = c.getContext('2d'); cx.fillStyle = '#3f6ea8'; cx.fillRect(0, 0, W, H);
+      shipped(cx, W, H, label);
+      return cx.getImageData(0, 0, W, H).data;
+    };
+    const out = {};
+    for (const [W, H] of [[1200, 800], [800, 1200]]) for (const pos of ['tl', 'tr', 'bl', 'br']) out[`${W}x${H} ${pos}`] = box(W, H, pos);
+    out.defaultIsBr = same(draw(1200, 800), draw(1200, 800, 'br')) && same(draw(800, 1200), draw(800, 1200, 'br'));
+    out.asShipped = [[1920, 1080], [1280, 720], [1080, 1920], [640, 480], [1200, 800]].map(([W, H]) =>
+      ({ size: `${W}x${H}`, none: same(draw(W, H), drawShipped(W, H)), br: same(draw(W, H, 'br'), drawShipped(W, H)) }));
+    return out;
+  });
+  ok('bottom right is exactly the stamp this tool always drew — the video renderer, which names no corner, is untouched',
+     r.defaultIsBr === true);
+  ok('and it is pixel for pixel the stamp the shipped video tool drew, at video and photo sizes, with and without the corner named',
+     r.asShipped.every(x => x.none && x.br), JSON.stringify(r.asShipped));
+  for (const [k, b] of Object.entries(r)) {
+    if (k === 'defaultIsBr' || k === 'asShipped') continue;
+    const pos = k.split(' ')[1];
+    const nearLeft = b.left >= b.pad * 0.7 && b.left < b.W * 0.08;
+    const nearRight = b.right >= b.pad * 0.7 && b.right < b.W * 0.08;
+    const nearTop = b.top >= b.pad * 0.7 && b.top < b.H * 0.08;
+    const nearBottom = b.bottom >= b.pad * 0.4 && b.bottom < b.H * 0.08;
+    const want = { tl: nearLeft && nearTop, tr: nearRight && nearTop, bl: nearLeft && nearBottom, br: nearRight && nearBottom }[pos];
+    ok(`${k}: the stamp sits in that corner, inside its safe margin`, b.found && want, JSON.stringify(b));
+  }
+  const widths = Object.entries(r).filter(([k]) => k.startsWith('1200x800')).map(([, b]) => b.width);
+  ok('and it is the same stamp in every corner — the corner moves it, never resizes it',
+     Math.max(...widths) - Math.min(...widths) <= 2, JSON.stringify(widths));
+  await page.close();
+}
+
 section('Timestamp Photo under the policy the site actually serves');
 {
   ok('the harness serves a policy at all', PORTAL_CSP.length > 0, PORTAL_CSP.slice(0, 60));
@@ -10188,7 +10614,7 @@ section('Timestamp Photo under the policy the site actually serves');
   })));
 
   await signIn(page, 'trever', 'AdminPassword1x');
-  await goHome(page);
+  await phOpenFromHome(page);
   const b64 = await page.evaluate(() => {
     const c = document.createElement('canvas');
     c.width = 400; c.height = 300;
@@ -10197,29 +10623,27 @@ section('Timestamp Photo under the policy the site actually serves');
     cx.fillRect(0, 0, 400, 300);
     return c.toDataURL('image/jpeg', 0.9).split(',')[1];
   });
-  const [chooser] = await Promise.all([
-    page.waitForEvent('filechooser'),
-    page.locator('.qtapp[data-act="pstLaunch"]').click(),
-  ]);
-  await chooser.setFiles({ name: 'IMG_3533.jpeg', mimeType: 'image/jpeg',
-    buffer: Buffer.from(b64, 'base64') });
-  await page.waitForTimeout(1600);
+  await phChoose(page, { name: 'IMG_3533.jpeg', mimeType: 'image/jpeg', buffer: Buffer.from(b64, 'base64') });
+  await phIdle(page, 1);
+  await page.waitForTimeout(300);
+  const qid = await page.evaluate(() => PQ.items[0].qid);
   ok('an ordinary phone JPEG decodes under the real policy',
-     has(await text(page, '#pstamp'), 'When was it taken'),
-     (await text(page, '#pstamp')).slice(0, 200));
+     await page.evaluate(() => PQ.items[0].w === 400 && PQ.items[0].h === 300 && !PQ.items[0].fault));
+  /* The thumbnail is a blob: URL in an <img> too, and a blocked one is
+     `complete` with no pixels — which looks like an empty tile, not an error. */
+  const thumb = await page.evaluate(() => {
+    const i = document.querySelector('#pstamp .vqd-img');
+    return i ? { complete: i.complete, w: i.naturalWidth } : null;
+  });
+  ok('its thumbnail is really drawn, not a blocked blob', thumb && thumb.complete && thumb.w > 0, JSON.stringify(thumb));
 
-  await page.locator('#pst_mo').fill('08');
-  await page.locator('#pst_da').fill('19');
-  await page.locator('#pst_yr').fill('2026');
-  await page.locator('#pst_hr').fill('10');
-  await page.locator('#pst_mi').fill('15');
-  await page.locator('#pst_se').fill('00');
-  await page.locator('[data-act="pstBurn"]').click();
-  await page.waitForTimeout(1600);
+  await page.evaluate((id) => pqNavigate({ sel: id, focus: 'edit' }), qid);
+  await phFill(page, { mo: '08', da: '19', yr: '2026', hr: '10', mi: '15', se: '00' });
+  await phSaveMake(page, qid);
+  await phView(page, qid);
 
-  /* THE ASSERTION THAT WOULD HAVE CAUGHT IT. The preview is a blob: URL in an
-     <img>; a blocked one is `complete` with a natural size of ZERO, which looks
-     like nothing at all on screen and reads as a working page. */
+  /* THE ASSERTION THAT WOULD HAVE CAUGHT IT. The copy is a blob: URL in an
+     <img>; a blocked one is `complete` with a natural size of ZERO. */
   const prev = await page.evaluate(() => {
     const i = document.querySelector('.pst-prev');
     return i ? { complete: i.complete, w: i.naturalWidth, h: i.naturalHeight } : null;
@@ -10234,27 +10658,28 @@ section('Timestamp Photo under the policy the site actually serves');
 section('Timestamp Photo decodes the operator’s own file, not a relabelled copy');
 {
   const src = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
-  const begin = src.slice(src.indexOf('async function pstBegin'),
-                          src.indexOf('async function pstOpen'));
-  ok('the local path exists to be checked', begin.length > 0);
-  ok('it hands the File itself to the decoder',
-     /pstFromBytes\(file, buf, token\)/.test(begin), begin.slice(-200));
-  ok('and never rebuilds the picture as a new Blob',
-     !/new Blob\(/.test(begin), begin.slice(-200));
+  /* THE LOCAL PATH HANDS OVER THE FILE, never a rebuild — for the check when
+     it is added, and for the copy when it is made. */
+  const analyze = src.slice(src.indexOf('async function pqAnalyze'), src.indexOf('async function pqThumb'));
+  ok('the photo check exists to be read', analyze.length > 0);
+  ok('it hands the File itself to the decoder', /pstDecode\(v\.file\)/.test(analyze), analyze.slice(0, 120));
+  ok('and never rebuilds the picture as a new Blob', !/new Blob\(/.test(analyze));
+  const make = src.slice(src.indexOf('async function pqMake'), src.indexOf('function pqNextReady'));
+  ok('making the copy decodes the operator\'s own file too',
+     /got = await pstDecode\(v\.file\)/.test(make), make.slice(0, 120));
 
   /* The in-case path has no File — only bytes off the evidence route — so it
      MUST build a Blob, and from the content type the case recorded rather than
      from a default. That is a fact about the stored file, not a guess. */
-  const open = src.slice(src.indexOf('async function pstOpen'),
-                         src.indexOf('function pstClose'));
+  const open = src.slice(src.indexOf('async function pstOpen'), src.indexOf('function pstClose'));
   ok('the in-case path builds its blob from the recorded content type',
      /new Blob\(\[buf\], \{type: \(row && row\.content_type\)/.test(open), open.slice(-260));
 
-  /* The outcome, at any rate: a file whose declared type disagrees with its
-     bytes still reaches the question this tool exists to ask. */
+  /* The outcome: a file whose declared type disagrees with its bytes still
+     reaches the queue, decoded at its own size. */
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
-  await goHome(page);
+  await phOpenFromHome(page);
   const b64 = await page.evaluate(() => {
     const c = document.createElement('canvas');
     c.width = 320; c.height = 240;
@@ -10263,19 +10688,14 @@ section('Timestamp Photo decodes the operator’s own file, not a relabelled cop
     cx.fillRect(0, 0, 320, 240);
     return c.toDataURL('image/jpeg', 0.9).split(',')[1];
   });
-  const [chooser] = await Promise.all([
-    page.waitForEvent('filechooser'),
-    page.locator('.qtapp[data-act="pstLaunch"]').click(),
-  ]);
-  await chooser.setFiles({ name: 'IMG_3576.jpeg', mimeType: 'image/heic',
-    buffer: Buffer.from(b64, 'base64') });
-  await page.waitForTimeout(1500);
+  await phChoose(page, { name: 'IMG_3576.jpeg', mimeType: 'image/heic', buffer: Buffer.from(b64, 'base64') });
+  await phIdle(page, 1);
+  const got = await page.evaluate(() => ({ w: PQ.items[0].w, h: PQ.items[0].h, fault: !!PQ.items[0].fault,
+    format: pqFormatWord(PQ.items[0]) }));
   ok('a picture whose declared type disagrees with its bytes still opens',
-     has(await text(page, '#pstamp'), 'When was it taken'),
-     (await text(page, '#pstamp')).slice(0, 200));
-  ok('at its own size, so the decode was real',
-     JSON.stringify(await page.evaluate(() => ({ w: PST.w, h: PST.h }))) === '{"w":320,"h":240}',
-     JSON.stringify(await page.evaluate(() => ({ w: PST.w, h: PST.h }))));
+     got.fault === false, JSON.stringify(got));
+  ok('at its own size, so the decode was real', got.w === 320 && got.h === 240, JSON.stringify(got));
+  ok('and it is named by its bytes, not its label', got.format === 'JPEG', JSON.stringify(got));
   await page.close();
 }
 
@@ -10291,9 +10711,9 @@ section('Timestamp Photo asks for a picture first, and for a case only to file i
   await signIn(page, 'trever', 'AdminPassword1x');
   await goHome(page);
 
-  /* BOTH UTILITIES, IN BOTH PLACES. Asserted as a pair rather than by name
-     alone: the rule is that these two are siblings, and a door that exists for
-     one and not the other is exactly what went wrong the first time. */
+  /* BOTH UTILITIES, IN BOTH PLACES — asserted as a pair, because a door that
+     exists for one and not the other is exactly what went wrong the first
+     time. */
   const doors = await page.evaluate(() => ({
     tools: [...document.querySelectorAll('.qtools .qtapp')].map(b => b.dataset.act),
     nav: [...document.querySelectorAll('.navfoot button')].map(b => b.dataset.act),
@@ -10305,9 +10725,6 @@ section('Timestamp Photo asks for a picture first, and for a case only to file i
   ok('the navigation foot carries both as well',
      doors.nav.includes('vstOpen') && doors.nav.includes('pstLaunch'), JSON.stringify(doors.nav));
 
-  /* THE DEFECT THE OWNER FOUND ON A DEVICE: the door led with a required case
-     picker, so a utility asked about filing before it would do its one job.
-     It now opens the PICTURE PICKER, exactly as Timestamp Video does. */
   const b64 = await page.evaluate(() => {
     const c = document.createElement('canvas');
     c.width = 640; c.height = 480;
@@ -10322,38 +10739,34 @@ section('Timestamp Photo asks for a picture first, and for a case only to file i
   const evAtStart = db.prepare('SELECT COUNT(*) AS n FROM case_evidence').get().n;
   const stampsAtStart = db.prepare('SELECT COUNT(*) AS n FROM photo_stamp').get().n;
 
-  const [chooser] = await Promise.all([
-    page.waitForEvent('filechooser'),
-    page.locator('.qtapp[data-act="pstLaunch"]').click(),
-  ]);
-  /* Reaching this line at all IS the assertion: `waitForEvent('filechooser')`
-     resolved, so the door opened a picture picker. Before the owner's device
-     test it opened a required case picker and no chooser would ever have
-     fired. */
-  ok('the door opens a picture picker rather than asking about filing',
-     chooser !== null && !chooser.isMultiple());
+  /* THE DOOR OPENS THE PHOTO QUEUE (V2): the queue is where photographs are
+     dropped, so it is on screen before any are chosen — and it asks about no
+     case. Its drop zone is the picker, and the picker takes MANY at once. */
+  let fired = 0;
+  const onChooser = () => { fired++; };
+  page.on('filechooser', onChooser);
+  await page.evaluate(() => document.querySelector('.qtapp[data-qt="photo"]').click());
+  await page.waitForTimeout(600);
+  page.off('filechooser', onChooser);
+  const opened = await text(page, '#pstamp');
+  ok('the door opens the photo queue, empty, with nothing asked first',
+     fired === 0 && has(opened, 'Timestamp Photo') && has(opened, 'No photos yet'), opened.slice(0, 200));
+  ok('and no case has been asked for at all', !has(opened, 'which case'), opened.slice(0, 300));
+  const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.locator('#pstamp .vqd-drop').click()]);
+  ok('the drop zone opens a picture picker that takes several at once', chooser.isMultiple());
   await chooser.setFiles({ name: 'from-phone.jpg', mimeType: 'image/jpeg', buffer: local });
-  await page.waitForTimeout(1200);
-
-  const first = await text(page, '#pstamp');
-  ok('it goes straight to the question it exists to ask',
-     has(first, 'When was it taken'), first.slice(0, 200));
-  ok('and no case has been asked for at all', !has(first, 'which case'),
-     first.slice(0, 300));
+  await phIdle(page, 1);
+  await page.waitForTimeout(300);
+  const qid = await page.evaluate(() => PQ.items[0].qid);
 
   /* A photograph off a device carries no EXIF from a canvas, so the form is
      empty and says so — the same honesty as the in-case path. */
-  await page.locator('#pst_mo').fill('08');
-  await page.locator('#pst_da').fill('19');
-  await page.locator('#pst_yr').fill('2026');
-  await page.locator('#pst_hr').fill('09');
-  await page.locator('#pst_mi').fill('45');
-  await page.locator('#pst_se').fill('10');
-  await page.locator('#pst_ap').selectOption('AM');
-  await page.locator('[data-act="pstBurn"]').click();
-  await page.waitForTimeout(1400);
+  await page.evaluate((id) => pqNavigate({ sel: id, focus: 'edit' }), qid);
+  await phFill(page, { mo: '08', da: '19', yr: '2026', hr: '09', mi: '45', se: '10', ap: 'AM' });
+  await phSaveMake(page, qid);
+  await phView(page, qid);
 
-  const prev = await text(page, '#pstamp');
+  const prev = await text(page, '#pstamp .vst');
   ok('the copy is made here on this machine',
      has(prev, 'The timestamped copy') && await page.locator('.pst-prev').count() === 1);
   ok('and it is stamped with what was typed',
@@ -10361,19 +10774,16 @@ section('Timestamp Photo asks for a picture first, and for a case only to file i
   ok('keeping it on this device is the first thing offered',
      await page.locator('[data-act="pstSaveDevice"]').count() === 1);
   ok('and the screen says the rest is optional', has(prev, 'Everything below is'),
-     prev.slice(0, 600));
-  /* THE DEVICE SAVE IS UNTOUCHED and stays the first thing offered — the owner's
-     words, 2026-08-19: "Keep Save to this device exactly as the local iOS/share
-     option." Saving to Dropbox is a SECOND control beside it, never instead. */
-  ok('keeping it on the device is still its own control',
-     await page.locator('[data-act="pstSaveDevice"]').count() === 1);
+     prev.slice(0, 900));
+  /* THE DEVICE SAVE IS UNTOUCHED and stays the first thing offered — the
+     owner's words, 2026-08-19: "Keep Save to this device exactly as the local
+     iOS/share option." Saving to Dropbox is a SECOND control beside it. */
   ok('and Dropbox is a separate one beside it',
      await page.locator('[data-act="pstChooseCase"]').count()
      + await page.locator('[data-act="pstToCase"]').count() >= 1);
-  ok('which says where it is going', has(prev, 'Save to Dropbox'), prev.slice(0, 600));
+  ok('which says where it is going', has(prev, 'Save to Dropbox'), prev.slice(0, 900));
 
-  /* NOTHING HAS LEFT THE MACHINE. This is the whole bargain, and it is the
-     same one Timestamp Video makes — measured against the counts taken before
+  /* NOTHING HAS LEFT THE MACHINE — measured against the counts taken before
      the picture was even chosen. */
   ok('the picture was read and burned with nothing uploaded',
      DBX.files.size === filesAtStart
@@ -10384,18 +10794,13 @@ section('Timestamp Photo asks for a picture first, and for a case only to file i
 
   await page.locator('[data-act="pstChooseCase"]').click();
   await page.waitForTimeout(900);
+  const asking = await text(page, '#pstamp .vst');
   ok('choosing to file is what asks for a case',
-     has(await text(page, '#pstamp'), 'Save to Dropbox')
-     && has(await text(page, '#pstamp'), 'which case'));
-  /* AND IT SAYS WHY IT IS ASKING. The firm's Dropbox keeps a folder per case,
-     so the case is the one thing a save needs — not a formality in the way. */
-  ok('and says why a case is needed at all',
-     has(await text(page, '#pstamp'), 'folder per case'), (await text(page, '#pstamp')).slice(0, 400));
-  ok('and it says the copy is yours either way',
-     has(await text(page, '#pstamp'), 'You do not have to save it to Dropbox at all'));
+     has(asking, 'Save to Dropbox') && has(asking, 'which case'));
+  ok('and says why a case is needed at all', has(asking, 'folder per case'), asking.slice(0, 400));
+  ok('and it says the copy is yours either way', has(asking, 'You do not have to save it to Dropbox at all'));
   ok('with a way back that keeps it here',
      await page.locator('[data-act="pstBackToPreview"]').count() === 1);
-
   ok('still nothing uploaded while the case is being chosen',
      db.prepare('SELECT COUNT(*) AS n FROM case_evidence').get().n === evAtStart
      && DBX.files.size === filesAtStart);
@@ -10406,15 +10811,13 @@ section('Timestamp Photo asks for a picture first, and for a case only to file i
      await page.locator('#pst_inc').count() === 1);
   ok('and it is on by default', await page.locator('#pst_inc').isChecked());
   await page.locator('[data-act="pstFile"]').click();
-  await page.waitForTimeout(2500);
+  await page.waitForFunction(() => /Saved to Dropbox/.test((document.querySelector('#pstamp .vst') || {}).innerText || ''), null, { timeout: 15000 });
   ok('and then it is saved to Dropbox',
-     has(await text(page, '#pstamp'), 'Saved to Dropbox')
-     && has(await text(page, '#pstamp'), 'API-20260812-4021'),
-     (await text(page, '#pstamp')).slice(0, 200));
+     has(await text(page, '#pstamp .vst'), 'Saved to Dropbox')
+     && has(await text(page, '#pstamp .vst'), 'API-20260812-4021'),
+     (await text(page, '#pstamp .vst')).slice(0, 200));
 
-  /* BOTH HALVES REACHED THE CASE. The owner's rule is that the original is
-     preserved untouched as case evidence, so a picture that was never in the
-     case has to be filed as well as stamped. */
+  /* BOTH HALVES REACHED THE CASE. */
   const rows = db.prepare(
     `SELECT filename FROM case_evidence WHERE case_no = 'API-20260812-4021'
       ORDER BY id`).all().map(r => r.filename);
@@ -10430,6 +10833,16 @@ section('Timestamp Photo asks for a picture first, and for a case only to file i
      pair === 1
      && db.prepare('SELECT COUNT(*) AS n FROM photo_stamp').get().n === stampsAtStart + 1,
      String(pair));
+  /* A FILED COPY IS KEPT: closing the queue asks nothing about it. */
+  await page.locator('#pstamp .vst-x').click();
+  for (const act of ['pqRunBack', 'pqListBack']) {
+    const b = page.locator(`#pstamp [data-act="${act}"]:visible`);
+    if (await b.count()) { await b.first().click(); break; }
+  }
+  await page.locator('#pstamp [data-act="pqClose"]').click();
+  await page.waitForTimeout(200);
+  ok('closing the queue after filing asks nothing — a filed copy is kept',
+     await page.evaluate(() => !PQ && !document.querySelector('#pstamp .vqd')));
   await page.close();
 }
 
@@ -10461,6 +10874,1025 @@ section('Timestamp Photo is reachable in the field, beside Timestamp video');
      field view is a view OF that case rather than a utility that floats free. */
   ok('and in the field it knows which case it is on', await page.evaluate(() =>
      document.querySelector('.sv-quad [data-act="pstLaunch"]').getAttribute('data-case')) === 'API-20260812-4001');
+  await page.close();
+}
+
+/* THE CLEAN DERIVATIVE (owner, V2 §22–§29 and the §44 fixtures). A JPEG, a PNG
+   and a WebP, each carrying every kind of source metadata, made into copies
+   through the real queue — and then the copies are read by this file's own
+   walker and by exiftool, never by the page's check alone. */
+section('Timestamp Photo V2: a copy is a clean derivative — every kind of source metadata, and none of it in the copy');
+{
+  const page = await newPage();
+  await phDesk(page);
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await phOpenFromHome(page);
+  const bases = await page.evaluate(async () => {
+    const quartered = (W, H) => {
+      const U = document.createElement('canvas'); U.width = W; U.height = H;
+      const u = U.getContext('2d');
+      u.fillStyle = '#ff0000'; u.fillRect(0, 0, W / 2, H / 2);
+      u.fillStyle = '#00ff00'; u.fillRect(W / 2, 0, W / 2, H / 2);
+      u.fillStyle = '#0000ff'; u.fillRect(0, H / 2, W / 2, H / 2);
+      u.fillStyle = '#ffff00'; u.fillRect(W / 2, H / 2, W / 2, H / 2);
+      return U;
+    };
+    const b64 = async (cv, type) => { const b = await new Promise(r => cv.toBlob(r, type, 0.95));
+      const u8 = new Uint8Array(await b.arrayBuffer()); let s = ''; for (const x of u8) s += String.fromCharCode(x); return btoa(s); };
+    /* The JPEG is stored on its side (orientation 6), so the copy has to be
+       turned as well as cleaned. */
+    const U = quartered(400, 200);
+    const S = document.createElement('canvas'); S.width = 200; S.height = 400;
+    pqOrientDraw(S.getContext('2d'), U, 400, 200, 8, 1);
+    const th = document.createElement('canvas'); th.width = 32; th.height = 16;
+    th.getContext('2d').drawImage(U, 0, 0, 32, 16);
+    return { jpeg: await b64(S, 'image/jpeg'), png: await b64(quartered(400, 200), 'image/png'),
+             webp: await b64(quartered(400, 200), 'image/webp'), thumb: await b64(th, 'image/jpeg') };
+  });
+  const thumb = (() => { const t = Buffer.from(bases.thumb, 'base64');
+    return Buffer.concat([t.subarray(0, 2), phSeg(0xFE, Buffer.from('SECRET-THUMBNAIL preview', 'latin1')), t.subarray(2)]); })();
+  const files = {
+    'rich.jpg': phRichJpeg(Buffer.from(bases.jpeg, 'base64'), { o: 6, thumb }),
+    'rich.png': phRichPng(Buffer.from(bases.png, 'base64')),
+    'rich.webp': phRichWebp(Buffer.from(bases.webp, 'base64')),
+  };
+  /* The fixtures really are rich: exiftool, reading the ORIGINALS, finds what
+     the copies must not carry — so a clean copy is a finding, not a test that
+     could not have failed. */
+  if (PH_EXIFTOOL) {
+    const orig = phExiftool(files['rich.jpg'], 'orig.jpg');
+    const keys = Object.keys(orig || {});
+    for (const want of ['GPS:GPSLatitude', 'IFD0:Make', 'IFD0:Model', 'ExifIFD:DateTimeOriginal', 'ExifIFD:LensModel',
+                        'ExifIFD:SerialNumber', 'IFD0:Orientation', 'XMP-dc:Title', 'IPTC:By-line', 'File:Comment', 'IFD1:ThumbnailImage'])
+      ok(`exiftool reads ${want} in the original JPEG`, keys.includes(want), keys.filter(k => k.split(':')[0] === want.split(':')[0]).join(', '));
+  }
+  const mime = { 'rich.jpg': 'image/jpeg', 'rich.png': 'image/png', 'rich.webp': 'image/webp' };
+  await phChoose(page, Object.entries(files).map(([name, buffer]) => ({ name, mimeType: mime[name], buffer })));
+  await phIdle(page, 3);
+  const inv = await page.evaluate(() => PQ.items.map(v => ({ name: v.name, cats: v.meta.cats, kind: v.meta.kind,
+    orient: v.meta.orient, status: pqStatus(v), plan: v.oplan && v.oplan.plan, detected: v.detected,
+    hash: v.hash, strings: v.meta.strings.filter(s => /SECRET/.test(s)).length })));
+  const byName = n => inv.find(x => x.name === n) || {};
+  const jpg = byName('rich.jpg'), png = byName('rich.png'), webp = byName('rich.webp');
+  for (const c of ['date', 'place', 'camera', 'capture', 'device', 'text', 'people', 'rating', 'history', 'orient', 'thumb',
+                   'maker', 'xmp', 'iptc', 'icc', 'trailer'])
+    ok(`the JPEG's inventory names its ${c}`, jpg.cats && jpg.cats.includes(c), JSON.stringify(jpg.cats));
+  for (const c of ['text', 'xmp', 'date', 'camera', 'place'])
+    ok(`the PNG's inventory names its ${c}`, png.cats && png.cats.includes(c), JSON.stringify(png.cats));
+  for (const c of ['xmp', 'camera', 'icc', 'place'])
+    ok(`the WebP's inventory names its ${c}`, webp.cats && webp.cats.includes(c), JSON.stringify(webp.cats));
+  ok('each is read as what its bytes are', jpg.kind === 'JPEG' && png.kind === 'PNG' && webp.kind === 'WEBP',
+     JSON.stringify([jpg.kind, png.kind, webp.kind]));
+  /* THE TIME: the camera's own record WITH its zone is exact, so all three
+     are Ready — the PNG's and the WebP's EXIF through the same reader. */
+  ok('the camera time with its zone is read from all three', [jpg, png, webp].every(x => x.detected && x.detected.zoned
+     && x.detected.ms === Date.UTC(2026, 8, 26, 10, 11, 2) && x.status === 'ready'), JSON.stringify([jpg.detected, png.detected, webp.detected]));
+  ok('the JPEG is tagged to be turned, and is planned to be', jpg.orient === 6 && (jpg.plan === 'decoder' || jpg.plan === 'manual'),
+     JSON.stringify([jpg.orient, jpg.plan]));
+
+  const made = [];
+  for (const name of ['rich.jpg', 'rich.png', 'rich.webp']) {
+    const r = await phRun(page, `
+      const v = PQ.items.find(x => x.name === ${JSON.stringify(name)});
+      const doors = pDoors();
+      pClick('pqGo', v.qid);
+      await pMade(v);
+      doors.restore();
+      if(!v.out) return {name: v.name, fault: v.fault};
+      const bytes = new Uint8Array(await v.out.blob.arrayBuffer());
+      const orig = new Uint8Array(await v.file.arrayBuffer());
+      let b = ''; for(const x of bytes) b += String.fromCharCode(x);
+      const q = await quadrants(v.out.blob);
+      const stamp = await whiteIn(v.out.blob, 0.4, 0.82, 0.6, 0.18);
+      const elsewhere = await whiteIn(v.out.blob, 0, 0, 0.6, 0.6);
+      const r = {name: v.name, out: {name: v.out.name, sha: v.out.sha256, w: v.out.w, h: v.out.h, clean: v.out.clean.ok,
+        origSame: v.out.origSame}, copy: btoa(b), q, stamp, elsewhere, origSha: await sha(orig), hash: v.hash,
+        doors: {fetches: doors.fetches, xhr: doors.xhr, beacons: doors.beacons, downloads: doors.downloads}};
+      v.savedHere = true;        // kept, so the next copy does not ask about this one
+      return r;
+    `);
+    made.push(r);
+  }
+  for (const r of made) {
+    const nm = r.name;
+    ok(`${nm}: the copy is made`, !!r.out, JSON.stringify(r.fault || ''));
+    if (!r.out) continue;
+    const copy = Buffer.from(r.copy, 'base64');
+    const audit = phAudit(copy);
+    ok(`${nm}: the copy is a plain JPEG — JFIF, tables, frame, scan, end — and nothing else`,
+       audit.problems.length === 0, JSON.stringify(audit));
+    ok(`${nm}: not one word of the original's metadata is in the copy, in any encoding`,
+       audit.found.length === 0, JSON.stringify(audit.found));
+    if (PH_EXIFTOOL) {
+      const tags = phExiftool(copy, 'copy-' + nm + '.jpg');
+      ok(`${nm}: exiftool finds no EXIF, GPS, XMP, IPTC, ICC, maker or other metadata group in the copy`,
+         phExiftoolExtra(tags).length === 0, JSON.stringify(phExiftoolExtra(tags)));
+      ok(`${nm}: and no orientation tag`, !Object.keys(tags || {}).some(k => /Orientation/.test(k)), JSON.stringify(tags));
+    }
+    ok(`${nm}: the page's own check passed it`, r.out.clean === true);
+    const fixture = files[nm];
+    const shaFixture = createHash('sha256').update(fixture).digest('hex');
+    ok(`${nm}: the original's bytes are exactly what was chosen, before and after`,
+       r.origSha === shaFixture && r.hash === shaFixture && r.out.origSame === true, JSON.stringify([r.origSha, r.hash, shaFixture]));
+    ok(`${nm}: the copy's fingerprint is its own — computed here, it matches, and it is not the original's`,
+       r.out.sha === createHash('sha256').update(copy).digest('hex') && r.out.sha !== shaFixture);
+    ok(`${nm}: the copy is upright, at the upright size`, r.q.q === 'RGBY' && r.q.w === 400 && r.q.h === 200, JSON.stringify(r.q));
+    ok(`${nm}: the stamp is burned into the pixels, where the stamp goes`, r.stamp > 60 && r.elsewhere === 0,
+       JSON.stringify([r.stamp, r.elsewhere]));
+    ok(`${nm}: the copy is named for its moment, not for the original`,
+       /^API-Timestamped-20260926-061102-00[123]\.jpg$/.test(r.out.name), r.out.name);
+    ok(`${nm}: nothing left the device to make it`, r.doors.fetches === 0 && r.doors.xhr === 0 && r.doors.beacons === 0
+       && r.doors.downloads === 0, JSON.stringify(r.doors));
+  }
+  /* THE DETAILS SAY IT (V2 §30): both fingerprints, both formats, both
+     times, the corner, the verification and when it was made. */
+  const qid = await page.evaluate(() => PQ.items.find(x => x.name === 'rich.jpg').qid);
+  await phView(page, qid);
+  const det = await text(page, '#pstamp .vst');
+  for (const w of ['Original’s fingerprint', 'Copy’s fingerprint', 'Original format', 'Output format',
+                   'Detected source time', 'Selected timestamp', 'Stamp position', 'Metadata clean verification',
+                   'Generated', 'PASS', 'location (GPS)', 'none of it goes into the copy'])
+    ok(`the details show: ${w}`, has(det, w), det.slice(0, 1600));
+  await page.close();
+}
+
+/* HEIC AND AVIF are read through their items; Chromium decodes neither, so
+   the reader is checked on bytes built here — and the HEIF rule, that the
+   format's own rotation is the decoder's and an EXIF tag is not applied on
+   top of it, is checked where it is decided. */
+section('Timestamp Photo V2: a HEIC is read through its items, and its rotation is the decoder\'s');
+{
+  const u16 = n => { const b = Buffer.alloc(2); b.writeUInt16BE(n, 0); return b; };
+  const u32 = n => { const b = Buffer.alloc(4); b.writeUInt32BE(n, 0); return b; };
+  const box = (type, ...parts) => { const body = Buffer.concat(parts); return Buffer.concat([u32(8 + body.length), Buffer.from(type, 'latin1'), body]); };
+  const full = (type, v, ...parts) => box(type, Buffer.from([v, 0, 0, 0]), ...parts);
+  const exif = Buffer.concat([u32(0), phRichTiff({ o: 6, make: 'SECRET-HEIF-MAKE' })]);
+  const xmp = Buffer.from(phXmp('HEIF'), 'utf8');
+  const infe = (id, type, extra) => full('infe', 2, u16(id), u16(0), Buffer.from(type, 'latin1'), Buffer.from([0]), extra || Buffer.alloc(0));
+  const build = (exifAt, xmpAt) => full('meta', 0,
+    full('hdlr', 0, u32(0), Buffer.from('pict', 'latin1'), Buffer.alloc(12), Buffer.from([0])),
+    full('iinf', 0, u16(3), infe(1, 'hvc1'), infe(2, 'Exif'), infe(3, 'mime', Buffer.from('application/rdf+xml\0', 'latin1'))),
+    full('iloc', 0, Buffer.from([0x44, 0x00]), u16(2), u16(2), u16(0), u16(1), u32(exifAt), u32(exif.length),
+         u16(3), u16(0), u16(1), u32(xmpAt), u32(xmp.length)),
+    box('iprp', box('ipco', full('ispe', 0, u32(400), u32(200)), box('irot', Buffer.from([1])))));
+  const ftyp = box('ftyp', Buffer.from('heic', 'latin1'), u32(0), Buffer.from('mif1heic', 'latin1'));
+  const meta0 = build(0, 0);
+  const at = ftyp.length + meta0.length + 8;
+  const heif = Buffer.concat([ftyp, build(at, at + exif.length), box('mdat', exif, xmp)]);
+  const page = await newPage();
+  const r = await page.evaluate(async (b64) => {
+    const bin = atob(b64); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    const m = await pqMeta(u8);
+    const when = pqExifWhen(u8, m);
+    const plan = await pqOrientPlan(m, { w: 200, h: 400, url: '' });
+    return { kind: m.kind, raw: m.raw, cats: m.cats, orient: m.orient, secret: m.strings.filter(s => /SECRET/.test(s)),
+             when, plan: plan.plan };
+  }, heif.toString('base64'));
+  ok('a HEIC is recognised by its brands', r.kind === 'HEIF', r.kind);
+  ok('its stored size is read from the image spatial extent', r.raw && r.raw.w === 400 && r.raw.h === 200, JSON.stringify(r.raw));
+  ok('its Exif item is found and read', r.cats.includes('camera') && r.cats.includes('place') && r.cats.includes('date'), JSON.stringify(r.cats));
+  ok('and its XMP item', r.cats.includes('xmp') && r.secret.some(s => /SECRET-XMP-TITLE/.test(s)), JSON.stringify(r.secret));
+  ok('the camera\'s time and zone come from the Exif item', r.when && r.when.zoned && r.when.ms === Date.UTC(2026, 8, 26, 10, 11, 2),
+     JSON.stringify(r.when));
+  ok('and the rotation is the decoder\'s: an EXIF tag inside a HEIC is never applied a second time', r.plan === 'heif',
+     JSON.stringify([r.orient, r.plan]));
+  await page.close();
+}
+
+/* ORIENTATION (owner, V2 §13 and §45 — "CRITICAL"). Every one of the eight
+   tags, made into a copy twice: once with this browser's decoder (which turns
+   a JPEG by its tag) and once through a decoder that ignores the tag, the way
+   some do — where the page has to turn the pixels itself. Either way the copy
+   must come out upright, and carry no tag. */
+section('Timestamp Photo V2: orientation goes into the pixels, whether or not the decoder turns it');
+{
+  const page = await newPage();
+  await phDesk(page);
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await phOpenFromHome(page);
+  for (const mode of ['decoder', 'manual']) {
+    const R = await phRun(page, `
+      if(PQ) pqClose(true);
+      pstLaunch('');
+      ${mode === 'manual' ? `
+      /* A DECODER THAT IGNORES THE TAG: every JPEG loses its APP1 before it
+         is decoded. The probe is asked again, so it measures this decoder. */
+      const real = window.pstDecode;
+      window.__phRealDecode = real;
+      window.pstDecode = async (src) => {
+        const u8 = new Uint8Array(await src.arrayBuffer());
+        if(u8[0] !== 0xFF || u8[1] !== 0xD8) return real(src);
+        const out = [u8.subarray(0, 2)];
+        let o = 2;
+        while(o + 4 <= u8.length){
+          const mk = u8[o + 1], len = (u8[o + 2] << 8) | u8[o + 3];
+          if(mk === 0xDA){ out.push(u8.subarray(o)); break; }
+          if(mk !== 0xE1) out.push(u8.subarray(o, o + 2 + len));
+          o += 2 + len;
+        }
+        const n = out.reduce((a, b) => a + b.length, 0), all = new Uint8Array(n);
+        let at = 0; for(const p of out){ all.set(p, at); at += p.length; }
+        return real(new Blob([all], {type: 'image/jpeg'}));
+      };
+      PQ_ORIENT.clear();` : ''}
+      const files = [];
+      for(let o = 1; o <= 8; o++) files.push(new File([await orientedBytes(o, 400, 200)], 'orient-' + o + '.jpg', {type: 'image/jpeg', lastModified: 1790000000000 + o}));
+      pqAdd(files, {caseNo: ''});
+      await pIdle(8);
+      const res = [];
+      for(const v of PQ.items){
+        await pSave(v, T0);
+        pClick('pqGo', v.qid);
+        await pMade(v);
+        const q = v.out ? await quadrants(v.out.blob) : null;
+        const bytes = v.out ? new Uint8Array(await v.out.blob.arrayBuffer()) : null;
+        let b = ''; if(bytes) for(const x of bytes) b += String.fromCharCode(x);
+        /* THE FIXTURE REALLY DEPENDS ON ITS TAG: the stored pixels, decoded
+           with the tag taken away, are not the upright picture — except for
+           tag 1, where stored IS upright. */
+        const raw = new Uint8Array(await v.file.arrayBuffer());
+        const noTag = [raw.subarray(0, 2)];
+        let o = 2;
+        while(o + 4 <= raw.length){ const mk = raw[o + 1], len = (raw[o + 2] << 8) | raw[o + 3];
+          if(mk === 0xDA){ noTag.push(raw.subarray(o)); break; } if(mk !== 0xE1) noTag.push(raw.subarray(o, o + 2 + len)); o += 2 + len; }
+        const stored = await quadrants(new Blob(noTag, {type: 'image/jpeg'}));
+        res.push({tag: v.meta.orient, plan: v.oplan && v.oplan.plan, q, stored, fault: v.fault && v.fault.kind, copy: btoa(b)});
+        if(v.out) v.savedHere = true;
+      }
+      ${mode === 'manual' ? `window.pstDecode = window.__phRealDecode; PQ_ORIENT.clear();` : ''}
+      return res;
+    `);
+    for (const x of R) {
+      ok(`${mode}: orientation ${x.tag} comes out upright — red, green over blue, yellow — at 400 × 200`,
+         x.q && x.q.q === 'RGBY' && x.q.w === 400 && x.q.h === 200, JSON.stringify({ q: x.q, plan: x.plan, fault: x.fault }));
+      if (x.tag !== 1) ok(`${mode}: orientation ${x.tag}: and the stored pixels alone are NOT upright, so the turn was needed`,
+         x.stored.q !== 'RGBY', JSON.stringify(x.stored));
+      const copy = Buffer.from(x.copy, 'base64');
+      ok(`${mode}: orientation ${x.tag}: the copy carries no tag to be turned by again`, phAudit(copy).problems.length === 0,
+         JSON.stringify(phAudit(copy)));
+    }
+    ok(`${mode}: the plan says who turned it`, R.filter(x => x.tag !== 1).every(x => x.plan === mode),
+       JSON.stringify(R.map(x => [x.tag, x.plan])));
+  }
+  /* THE PREVIEW IS THE COPY'S SHAPE: a photo stored on its side previews
+     upright, at the upright size, before anything is made. */
+  const pv = await phRun(page, `
+    pqClose(true); pstLaunch('');
+    pqAdd([new File([await orientedBytes(6, 400, 200)], 'side.jpg', {type: 'image/jpeg'})], {caseNo: ''});
+    await pIdle(1);
+    pqNavigate({sel: PQ.items[0].qid});
+    await qWait(() => document.getElementById('pq_pv'));
+    await new Promise(r => setTimeout(r, 100));
+    const c = document.getElementById('pq_pv');
+    const cx = c.getContext('2d');
+    const at = (x, y) => { const d = cx.getImageData(Math.round(x), Math.round(y), 1, 1).data; return [d[0], d[1], d[2]]; };
+    return {w: c.width, h: c.height, tl: at(c.width * .25, c.height * .25), tr: at(c.width * .75, c.height * .25)};
+  `);
+  ok('the editor previews a photo stored on its side upright, at the upright size',
+     pv.w === 400 && pv.h === 200 && pv.tl[0] > 180 && pv.tl[1] < 90 && pv.tr[1] > 180 && pv.tr[0] < 90, JSON.stringify(pv));
+  await page.close();
+}
+
+/* FAIL CLOSED (owner, V2 §27 and test O): a copy that cannot be proven clean,
+   whole and made from an unchanged original is not offered — no file, no
+   link, and no Generate button inviting the same run again. */
+section('Timestamp Photo V2: a copy that cannot be proven clean is not made, and one bad photo stops nothing else');
+{
+  const page = await newPage();
+  await phDesk(page);
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await phOpenFromHome(page);
+  const R = await phRun(page, `
+    const out = {};
+    const mk = async (name) => canvasFile(name, 300, 200, 'image/jpeg', (cx, w, h) => { cx.fillStyle = '#e33'; cx.fillRect(0, 0, w / 3, h / 3); });
+    /* A GOOD PHOTO BESIDE A BROKEN ONE (test N). */
+    const bad = new File([new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 1, 2, 3, 4, 5, 6, 7, 8, 9])], 'broken.jpg', {type: 'image/jpeg'});
+    pqAdd([await mk('good-1.jpg'), bad, await mk('good-2.jpg'), await mk('good-3.jpg'), await mk('good-4.jpg')], {caseNo: ''});
+    await pIdle(5);
+    const B = PQ.items.find(x => x.name === 'broken.jpg');
+    out.broken = {status: pqStatus(B), state: B.fault && B.fault.state, diag: !!B.diag, go: pqCanGo(B)};
+    const G1 = PQ.items.find(x => x.name === 'good-1.jpg');
+    await pSave(G1, T0);
+    pClick('pqGo', G1.qid); await pMade(G1);
+    out.goodAfter = {made: !!G1.out, others: PQ.items.filter(x => x !== B && x !== G1).map(pqStatus)};
+    G1.savedHere = true;
+
+    /* THE SCRUB IS LOAD-BEARING: with it switched off, this browser's own
+       colour profile (it names its maker) stays in the file, and the check
+       refuses the copy. */
+    const G2 = PQ.items.find(x => x.name === 'good-2.jpg');
+    const realScrub = window.pqScrubJpeg;
+    window.pqScrubJpeg = u8 => u8;
+    await pSave(G2, T0);
+    pClick('pqGo', G2.qid); await pMade(G2);
+    window.pqScrubJpeg = realScrub;
+    out.noScrub = {status: pqStatus(G2), out: !!G2.out, state: G2.fault && G2.fault.state, lines: G2.fault && G2.fault.lines,
+      offered: [...document.querySelectorAll('#pstamp [data-act="pqGo"][data-id="' + G2.qid + '"]')].length};
+
+    /* AN ENCODER THAT SMUGGLES IN THE ORIGINAL'S WORDS (test O): the check
+       names what survived, whether the scrub is there or not — with the scrub
+       the segment is removed first and the copy passes; without it the copy
+       is refused, naming the words. */
+    const G3 = PQ.items.find(x => x.name === 'good-3.jpg');
+    G3.meta.strings.push('SECRET-INJECTED-MAKE');
+    const realToBlob = HTMLCanvasElement.prototype.toBlob;
+    HTMLCanvasElement.prototype.toBlob = function(cb, type, q){
+      return realToBlob.call(this, async b => {
+        if(!b || type !== 'image/jpeg' || this.width < 100){ cb(b); return; }
+        const u8 = new Uint8Array(await b.arrayBuffer());
+        const text = new TextEncoder().encode('Exif\\0\\0SECRET-INJECTED-MAKE');
+        const seg = new Uint8Array(4 + text.length); seg.set([0xFF, 0xE1, (text.length + 2) >> 8, (text.length + 2) & 255], 0); seg.set(text, 4);
+        cb(new Blob([u8.subarray(0, 2), seg, u8.subarray(2)], {type: 'image/jpeg'}));
+      }, type, q);
+    };
+    await pSave(G3, T0);
+    pClick('pqGo', G3.qid); await pMade(G3);
+    out.injectedScrubbed = {status: pqStatus(G3), out: !!G3.out};
+    if(G3.out) G3.savedHere = true;
+    const G4 = PQ.items.find(x => x.name === 'good-4.jpg');
+    G4.meta.strings.push('SECRET-INJECTED-MAKE');
+    window.pqScrubJpeg = u8 => u8;
+    await pSave(G4, T0);
+    pClick('pqGo', G4.qid); await pMade(G4);
+    window.pqScrubJpeg = realScrub;
+    HTMLCanvasElement.prototype.toBlob = realToBlob;
+    out.injected = {status: pqStatus(G4), out: !!G4.out, lines: G4.fault && G4.fault.lines};
+
+    /* THE ORIGINAL CHANGED between being added and being made. */
+    pqAdd([await mk('changes.jpg'), await mk('changes-after.jpg')], {caseNo: ''});
+    await pIdle(7);
+    const C = PQ.items.find(x => x.name === 'changes.jpg');
+    const other = await mk('something-else.jpg');
+    C.file = new File([new Uint8Array(await other.arrayBuffer()), new Uint8Array([1, 2, 3])], 'changes.jpg', {type: 'image/jpeg'});
+    await pSave(C, T0);
+    pClick('pqGo', C.qid); await pMade(C);
+    out.changed = {status: pqStatus(C), state: C.fault && C.fault.state, repick: C.fault && C.fault.retry};
+    /* …and the original read back DIFFERENTLY after the copy was made. */
+    const A = PQ.items.find(x => x.name === 'changes-after.jpg');
+    const realBuf = A.file.arrayBuffer.bind(A.file);
+    let reads = 0;
+    A.file.arrayBuffer = async () => { reads++; const b = new Uint8Array(await realBuf()); if(reads >= 2){ b[b.length - 3] ^= 0xFF; } return b.buffer; };
+    await pSave(A, T0);
+    pClick('pqGo', A.qid); await pMade(A);
+    out.after = {status: pqStatus(A), state: A.fault && A.fault.state, out: !!A.out};
+
+    /* AN ORIENTATION THAT CANNOT BE CONFIRMED is refused, never guessed. */
+    PQ_ORIENT.set('JPEG', {verdict: 'unknown', path: 'bitmap'});
+    pqAdd([new File([await orientedBytes(3, 200, 100)], 'upside-down.jpg', {type: 'image/jpeg'})], {caseNo: ''});
+    await pIdle(8);
+    const U = PQ.items.find(x => x.name === 'upside-down.jpg');
+    out.orient = {status: pqStatus(U), state: U.fault && U.fault.state};
+    PQ_ORIENT.clear();
+    out.screen = pScreen();
+    return out;
+  `);
+  ok('N: a photo this device cannot decode is Failed, and says so', R.broken.status === 'failed'
+     && R.broken.state === 'Cannot be decoded on this device' && R.broken.diag && !R.broken.go, JSON.stringify(R.broken));
+  ok('N: and the rest of the queue still works — the next photo is made, the others wait as they were',
+     R.goodAfter.made && R.goodAfter.others.every(s => s === 'needs'), JSON.stringify(R.goodAfter));
+  ok('O: without the scrub, this browser\'s own colour profile stays in, and the copy is refused', R.noScrub.status === 'failed'
+     && !R.noScrub.out && R.noScrub.state === 'Failed its metadata check'
+     && (R.noScrub.lines || []).some(l => /colour profile/.test(l)), JSON.stringify(R.noScrub));
+  ok('O: a refused copy offers no Generate to run it again', R.noScrub.offered === 0, JSON.stringify(R.noScrub));
+  ok('O: with the scrub, an encoder\'s extra segment is taken out and the copy passes', R.injectedScrubbed.status === 'complete'
+     && R.injectedScrubbed.out, JSON.stringify(R.injectedScrubbed));
+  ok('O: without it, the copy is refused and the check names the original\'s words', R.injected.status === 'failed' && !R.injected.out
+     && (R.injected.lines || []).some(l => /APP1/.test(l)) && (R.injected.lines || []).some(l => /SECRET-INJECTED-MAKE/.test(l)),
+     JSON.stringify(R.injected));
+  ok('an original that changed after it was queued is refused, with Choose again', R.changed.status === 'failed'
+     && R.changed.state === 'The original changed after it was added' && R.changed.repick === 'reselect', JSON.stringify(R.changed));
+  ok('an original that reads back differently after the copy is refused, and no copy is kept', R.after.status === 'failed'
+     && R.after.state === 'The original could not be confirmed unchanged' && !R.after.out, JSON.stringify(R.after));
+  ok('an orientation this device cannot confirm is refused, not guessed', R.orient.status === 'failed'
+     && R.orient.state === 'Orientation could not be confirmed', JSON.stringify(R.orient));
+  await page.close();
+}
+
+/* EACH PHOTOGRAPH'S SETTINGS ARE ITS OWN (owner, V2 §11, §15–§17, tests E–H):
+   editing one changes that one; the two bulk actions change exactly the one
+   setting they name, and only when pressed and confirmed; and moving off a
+   photo never keeps or drops a change without asking. */
+section('Timestamp Photo V2: each photo’s time, zone and corner are its own');
+{
+  const page = await newPage();
+  await phDesk(page);
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await phOpenFromHome(page);
+  /* Six photos: 1–2 carry the camera's time WITH its zone (exact moments),
+     3–4 the camera's time with NO zone, 5–6 no time at all. */
+  const tiffs = [0, 1, 2, 3, 4, 5].map(i => i < 2 ? phRichTiff({ when: `2026:09:26 06:1${i}:02`, zone: '-04:00' })
+    : i < 4 ? phRichTiff({ when: `2026:09:26 07:1${i}:02`, zone: '' }) : null);
+  const base = Buffer.from(await page.evaluate(() => { const c = document.createElement('canvas'); c.width = 240; c.height = 160;
+    const cx = c.getContext('2d'); cx.fillStyle = '#3f6ea8'; cx.fillRect(0, 0, 240, 160); return c.toDataURL('image/jpeg', 0.9).split(',')[1]; }), 'base64');
+  const files = tiffs.map((t, i) => ({ name: `SET_${i + 1}.jpg`, mimeType: 'image/jpeg',
+    buffer: t ? Buffer.concat([base.subarray(0, 2), phSeg(0xE1, Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), t])), base.subarray(2)]) : base }));
+  await phChoose(page, files);
+  await phIdle(page, 6);
+  const R = await phRun(page, `
+    const snap = () => PQ.items.map(v => ({mo: v.mo, da: v.da, yr: v.yr, hr: v.hr, mi: v.mi, se: v.se, ap: v.ap, tz: v.tz,
+      pos: v.pos, confirmed: v.confirmed, source: v.source, ms: vstStart(v).ok ? vstStart(v).ms : null,
+      detected: JSON.stringify(v.detected), status: pqStatus(v)}));
+    const out = {start: snap()};
+    const [P1, P2, P3, P4, P5, P6] = PQ.items;
+    /* E — photo 2's time, typed and saved: only photo 2 moves. */
+    await pSave(P2, {hr: '08', mi: '30', se: '15', ap: 'AM'});
+    out.e = snap();
+    /* §11 — the detected time stays what the file said. */
+    out.detectedKept = JSON.stringify(P2.detected) === out.start[1].detected;
+    /* F — photo 4's corner, saved: only photo 4 moves. */
+    await pSave(P4, {pos: 'tl'});
+    out.f = snap();
+    /* §16 — an unsaved change, then Next: the editor asks, and Stay keeps it. */
+    await pType(P5, {mo: '09', da: '26', yr: '2026', hr: '09', mi: '00', se: '00', ap: 'PM'});
+    pClick('pqEditNext');
+    out.asked = !!document.getElementById('pq_ask') && String(PQ.sel) === String(P5.qid);
+    pClick('pqAskStay');
+    out.stayed = String(PQ.sel) === String(P5.qid) && pqDraftDiff(P5);
+    pClick('pqEditNext');
+    pClick('pqAskDiscard');
+    out.discarded = String(PQ.sel) === String(P6.qid) && !P5.draft && P5.mo === '';
+    pqNavigate({sel: P5.qid});
+    await pType(P5, {mo: '09', da: '26', yr: '2026', hr: '09', mi: '00', se: '00', ap: 'PM'});
+    pClick('pqEditNext');
+    pClick('pqAskSave');
+    out.savedOn = String(PQ.sel) === String(P6.qid) && P5.confirmed && P5.hr === '09' && pqStatus(P5) === 'ready';
+    /* G — Apply timezone to all: pick Central on photo 1, press it, confirm. */
+    pqNavigate({sel: P1.qid});
+    await new Promise(r => setTimeout(r, 20));
+    pFire(document.getElementById('pst_tz'), 'America/Chicago');
+    out.liveZone = document.getElementById('pst_res').textContent;
+    pClick('pqApplyTz');
+    out.gAsk = /Apply the Central time zone to 6 photos/.test(pScreen());
+    const beforeG = snap();
+    pClick('pqConfirmYes');
+    out.g = {before: beforeG, after: snap()};
+    /* H — Apply stamp position to all: bottom left, from photo 3. */
+    pqNavigate({sel: P3.qid});
+    await new Promise(r => setTimeout(r, 20));
+    pFire(document.getElementById('pst_pos_bl'));
+    pClick('pqApplyPos');
+    const beforeH = snap();
+    pClick('pqConfirmYes');
+    out.h = {before: beforeH, after: snap()};
+    return out;
+  `);
+  const same = (a, b, keys) => keys.every(k => String(a[k]) === String(b[k]));
+  const TIME = ['mo', 'da', 'yr', 'hr', 'mi', 'se', 'ap'];
+  ok('E: saving photo 2\'s time changes photo 2', R.e[1].hr === '08' && R.e[1].mi === '30' && R.e[1].confirmed, JSON.stringify(R.e[1]));
+  ok('E: and photos 1 and 3 are exactly as they were', same(R.e[0], R.start[0], [...TIME, 'tz', 'pos', 'confirmed'])
+     && same(R.e[2], R.start[2], [...TIME, 'tz', 'pos', 'confirmed']), JSON.stringify([R.e[0], R.e[2]]));
+  ok('E: every other photo too', [0, 2, 3, 4, 5].every(i => same(R.e[i], R.start[i], [...TIME, 'tz', 'pos', 'confirmed'])));
+  ok('§11: the detected time is still what the file said — editing the selected time never overwrites it', R.detectedKept);
+  ok('the camera\'s zoned time is Ready, a zone-less one and none at all Need review', R.start[0].status === 'ready'
+     && R.start[2].status === 'needs' && R.start[4].status === 'needs', JSON.stringify(R.start.map(x => x.status)));
+  ok('F: photo 4\'s corner is its own', R.f[3].pos === 'tl' && [0, 1, 2, 4, 5].every(i => R.f[i].pos === 'br'),
+     JSON.stringify(R.f.map(x => x.pos)));
+  ok('F: and saving it confirmed photo 4\'s time, which is now Ready', R.f[3].confirmed && R.f[3].status === 'ready', JSON.stringify(R.f[3]));
+  ok('§16: Next with an unsaved change asks first', R.asked === true);
+  ok('§16: Stay keeps the change where it was', R.stayed === true);
+  ok('§16: Discard drops it and moves on', R.discarded === true);
+  ok('§16: Save and continue saves it — Needs review becomes Ready — and moves on', R.savedOn === true);
+  ok('G: the zone is shown for the date as it is typed', /CDT$/.test(R.liveZone), R.liveZone);
+  ok('G: Apply timezone to all asks first, naming the zone and the count', R.gAsk === true);
+  const g = R.g;
+  ok('G: every photo is in the new zone', g.after.every(x => x.tz === 'America/Chicago'), JSON.stringify(g.after.map(x => x.tz)));
+  /* Photo 1 still shows the camera's own moment; photo 2 carries a time the
+     operator typed over it, so it is a wall-clock reading like the rest. */
+  ok('G: a camera time WITH its zone stays the same moment, shown in the new zone',
+     g.after[0].ms === g.before[0].ms && g.after[0].hr === '05' && g.before[0].hr === '06', JSON.stringify([g.before[0], g.after[0]]));
+  ok('G: any other time keeps its date and time exactly — a typed one included — now read in the new zone',
+     [1, 2, 3, 4, 5].every(i => same(g.after[i], g.before[i], TIME)) && g.after[1].ms !== g.before[1].ms,
+     JSON.stringify([g.before[1], g.after[1], g.before[2], g.after[2]]));
+  ok('G: only the zone changed — corners, confirmations and sources are as they were',
+     g.after.every((x, i) => same(x, g.before[i], ['pos', 'confirmed', 'source'])));
+  const h = R.h;
+  ok('H: every photo takes the bottom-left corner', h.after.every(x => x.pos === 'bl'), JSON.stringify(h.after.map(x => x.pos)));
+  ok('H: and nothing else changed — times, zones, confirmations', h.after.every((x, i) => same(x, h.before[i], [...TIME, 'tz', 'confirmed', 'ms'])));
+  await page.close();
+}
+
+/* ONE AT A TIME, IN THE ORDER THE OPERATOR CHOOSES (tests I and J): #7 first,
+   then Process next — to the next READY photo, only when pressed, and never
+   holding two finished copies in memory without asking. */
+section('Timestamp Photo V2: one at a time — #7 first, then Process next');
+{
+  const page = await newPage();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await phOpenFromHome(page);
+  const R = await phRun(page, `
+    const files = [];
+    for(let i = 1; i <= 9; i++) files.push(await canvasFile('SEQ_' + String(i).padStart(2, '0') + '.jpg', 320, 200, 'image/jpeg', null, 1790000000000 + i));
+    pqAdd(files, {caseNo: ''});
+    await pIdle(9);
+    const it = n => PQ.items[n - 1];
+    /* Photo 4 is left at Needs review; the others are saved. */
+    for(const n of [1, 2, 3, 5, 6, 7, 8, 9]) await pSave(it(n), T0);
+    const out = {order: PQ.items.map(x => x.name), pills: [...document.querySelectorAll('#pstamp .vqd-pill')].map(p => p.innerText.replace(/\\s+/g, ' ').trim())};
+    out.stop = document.querySelectorAll('#pstamp [data-act="vstAbort"], #pstamp .vqd-stop').length;
+    /* I — #7 first, from its own row. */
+    pClick('pqGo', it(7).qid);
+    out.runningOthers = PQ.items.filter(x => x !== it(7)).map(pqStatus).includes('processing');
+    await pMade(it(7));
+    out.seven = {made: !!it(7).out, others: PQ.items.filter(x => x.out && x !== it(7)).length,
+                 name: it(7).out && it(7).out.name, screen: pScreen()};
+    /* Nothing else started on its own. */
+    await new Promise(r => setTimeout(r, 400));
+    out.idle = !PQ.busy && PQ.items.filter(x => x.out).length === 1;
+    /* J — Process next: #8 is next. The copy of #7 is not saved, so it asks. */
+    pClick('pqProcessNext');
+    out.asked = /has not been saved/.test(pScreen()) && PQ.confirm && PQ.confirm.kind === 'release';
+    pClick('pqConfirmYes');
+    await pMade(it(8));
+    out.eight = {made: !!it(8).out, sevenReleased: !!(it(7).out && it(7).out.released), sevenStatus: pqStatus(it(7))};
+    it(8).savedHere = true;
+    /* Next after #8 is #9; after #9 it wraps to the top, #1. */
+    pClick('pqProcessNext'); await pMade(it(9));
+    it(9).savedHere = true;
+    out.nextName = (pqNextReady(it(9)) || {}).name;
+    pClick('pqProcessNext'); await pMade(it(1));
+    it(1).savedHere = true;
+    /* AND IT SKIPS a photo that needs review: #3 made on its own, then the
+       Process next on screen names #5 — never #4 — and makes #5. */
+    pClick('pqGo', it(3).qid); await pMade(it(3));
+    it(3).savedHere = true;
+    const nx = [...document.querySelectorAll('#pstamp [data-act="pqProcessNext"]')].find(pVisible);
+    out.afterThree = nx ? (nx.getAttribute('aria-label') || nx.textContent) : '(no Process next on screen)';
+    pClick('pqProcessNext'); await pMade(it(5));
+    out.made = PQ.items.filter(x => x.out).map(x => x.name);
+    out.four = pqStatus(it(4));
+    return out;
+  `);
+  ok('the queue is in name order', R.order.join() === ['01', '02', '03', '04', '05', '06', '07', '08', '09'].map(n => 'SEQ_' + n + '.jpg').join(),
+     R.order.join());
+  ok('the summary counts are words with numbers', R.pills.some(p => /^8 Ready$/.test(p)) && R.pills.some(p => /^1 Need review$/.test(p))
+     && R.pills.some(p => /^9 Total$/.test(p)), JSON.stringify(R.pills));
+  ok('I: photo 7 is made first, and no other photo is touched', R.seven.made && R.seven.others === 0 && !R.runningOthers,
+     JSON.stringify(R.seven));
+  ok('I: its copy is named for its moment and its place in the queue',
+     R.seven.name === 'API-Timestamped-20260926-061102-007.jpg', R.seven.name);
+  ok('nothing else starts on its own', R.idle === true);
+  ok('there is no Stop to pretend with — a photo is one short pass', R.stop === 0);
+  ok('J: Process next asks before letting go of an unsaved copy', R.asked === true);
+  ok('J: and then makes the next READY photo, #8', R.eight.made && R.eight.sevenReleased && R.eight.sevenStatus === 'complete',
+     JSON.stringify(R.eight));
+  ok('J: after #9 it wraps to the top of the queue, #1', R.nextName === 'SEQ_01.jpg', JSON.stringify(R));
+  ok('J: after #3, Process next names #5 — it skips #4, which needs review', /SEQ_05\.jpg/.test(R.afterThree)
+     && !/SEQ_04/.test(R.afterThree), R.afterThree);
+  ok('J: and makes #5, while #4 still waits for its date and time', R.made.join() === 'SEQ_01.jpg,SEQ_03.jpg,SEQ_05.jpg,SEQ_07.jpg,SEQ_08.jpg,SEQ_09.jpg'
+     && R.four === 'needs', JSON.stringify(R));
+  await page.close();
+}
+
+/* REMOVING AND CLEARING RELEASE REFERENCES AND NOTHING ELSE (tests K–M, §33–
+   §34), AND NOTHING LEAVES THE DEVICE (§41): the originals are read back
+   byte for byte after each, and every door is counted. */
+section('Timestamp Photo V2: removing and clearing never touch a file, and nothing leaves the device');
+{
+  const page = await newPage();
+  await phDesk(page);
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await phOpenFromHome(page);
+  const R = await phRun(page, `
+    const doors = pDoors();
+    const files = [];
+    for(let i = 1; i <= 6; i++) files.push(await canvasFile('KEEP_' + i + '.jpg', 300, 200, 'image/jpeg', null, 1790000000100 + i));
+    const before = await Promise.all(files.map(async f => sha(new Uint8Array(await f.arrayBuffer()))));
+    pqAdd(files, {caseNo: ''});
+    await pIdle(6);
+    const out = {};
+    /* K — remove #2 through its own menu item. */
+    const two = PQ.items[1];
+    pClick('pqRemove', two.qid);
+    out.k = {left: PQ.items.map(x => x.name), msg: pScreen().includes('The file on your device is untouched')};
+    /* Make #1 and #3 and keep them (a saved copy), make #4 and leave it unsaved. */
+    for(const v of [PQ.items[0], PQ.items[1], PQ.items[2]]){ await pSave(v, T0); pClick('pqGo', v.qid);
+      if(PQ.confirm) pClick('pqConfirmYes'); await pMade(v); if(v !== PQ.items[2]) v.savedHere = true; }
+    /* L — Clear completed: the unsaved copy of #4 makes it ask first. */
+    pClick('pqClearDone');
+    out.lAsk = PQ.confirm && PQ.confirm.kind === 'cleardone' && /not been saved/.test(pScreen());
+    pClick('pqConfirmYes');
+    out.l = PQ.items.map(x => x.name);
+    /* M — Clear queue: saved settings on a photo not yet made make it ask. */
+    await pSave(PQ.items[0], T0);
+    pClick('pqClearAll');
+    out.mAsk = PQ.confirm && PQ.confirm.kind === 'clearall' && /settings you saved/.test(pScreen());
+    pClick('pqConfirmYes');
+    out.m = PQ.items.length;
+    out.after = await Promise.all(files.map(async f => sha(new Uint8Array(await f.arrayBuffer()))));
+    out.before = before;
+    doors.restore();
+    out.doors = {fetches: doors.fetches, xhr: doors.xhr, beacons: doors.beacons, downloads: doors.downloads, urls: doors.urls};
+    return out;
+  `);
+  ok('K: Remove takes the photo out of the queue and says the file is untouched', !R.k.left.includes('KEEP_2.jpg')
+     && R.k.left.length === 5 && R.k.msg, JSON.stringify(R.k));
+  ok('L: Clear completed asks first when a finished copy was never saved', R.lAsk === true);
+  ok('L: and clears only the finished photos', R.l.join() === 'KEEP_5.jpg,KEEP_6.jpg', JSON.stringify(R.l));
+  ok('M: Clear queue asks first when saved settings would be forgotten, and then empties the list', R.mAsk === true && R.m === 0);
+  ok('K–M: every original reads back byte for byte what was chosen', R.after.join() === R.before.join(),
+     JSON.stringify([R.before, R.after]));
+  ok('§41: adding, checking, making and clearing sent nothing anywhere — no request, beacon or download',
+     R.doors.fetches === 0 && R.doors.xhr === 0 && R.doors.beacons === 0 && R.doors.downloads === 0, JSON.stringify(R.doors));
+  const src = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
+  const block = src.slice(src.indexOf('/* ============================================================ Timestamp Photo'),
+                          src.indexOf('function paintVStamp(){'));
+  /* The only requests the photo tool can make are the case-filing ones a
+     person presses (and the case list and case photo reads that go with
+     them): counted in the source, so a new one cannot arrive unseen. */
+  const calls = [...block.matchAll(/fetch\(`([^`]+)`/g)].map(m => m[1].replace(/\$\{[^}]+\}/g, ':x')).sort();
+  const reads = [...block.matchAll(/\bapi\(("[^"]*"|`[^`]*`)/g)].map(m => m[1]);
+  ok('§41: the photo tool\'s only requests are filing to a case, and reading a case photo, both pressed by a person',
+     calls.join() === '/portal-api/cases/:x/evidence,/portal-api/cases/:x/evidence/:x/file,/portal-api/cases/:x/photo-stamp',
+     JSON.stringify(calls));
+  ok('§41: and reading the case list, when a case is being chosen', reads.length === 2
+     && reads.every(r => r === '"/submissions?limit=200"'), JSON.stringify(reads));
+  await page.close();
+}
+
+/* §36 AND TEST C: 1, 10, 50 and 100 photographs, the UI usable at each, and
+   never more than one full-size picture being decoded for the queue at once
+   (the editor's preview is the one other). */
+section('Timestamp Photo V2: 1, 10, 50 and 100 photos, one full picture at a time');
+{
+  const page = await newPage();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await phOpenFromHome(page);
+  const R = await phRun(page, `
+    let live = 0, peak = 0, calls = 0;
+    const real = window.pstDecode;
+    window.pstDecode = async src => { live++; calls++; peak = Math.max(peak, live);
+      try{ return await real(src); } finally{ live--; } };
+    const out = {};
+    for(const n of [1, 10, 50, 100]){
+      pqClose(true); pstLaunch('');
+      peak = 0; calls = 0;
+      const files = [];
+      for(let i = 1; i <= n; i++) files.push(await canvasFile('BULK_' + String(i).padStart(3, '0') + '.jpg', 640, 480, 'image/jpeg', null, 1790000001000 + i));
+      const t0 = performance.now();
+      pqAdd(files, {caseNo: ''});
+      const listed = PQ.items.length;
+      const firstPaint = document.querySelectorAll('#pstamp .vqd-row').length;
+      await pIdle(n);
+      await new Promise(r => setTimeout(r, 200));
+      const mid = PQ.items[Math.floor(n / 2)];
+      await pSave(mid, T0);
+      out[n] = {listed, firstPaint, rows: document.querySelectorAll('#pstamp .vqd-row').length, peak, calls,
+        ms: Math.round(performance.now() - t0), ready: pqStatus(mid),
+        held: PQ.items.filter(v => Object.values(v).some(x => x instanceof ImageBitmap || x instanceof HTMLCanvasElement)).length,
+        over: document.documentElement.scrollWidth - innerWidth};
+    }
+    window.pstDecode = real;
+    /* THE CEILING, STATED: past it, the rest are left out and the screen says so. */
+    pqClose(true); pstLaunch('');
+    const tiny = new Uint8Array([0xFF, 0xD8, 0xFF, 0xD9]);
+    const many = []; for(let i = 1; i <= 503; i++) many.push(new File([tiny], 'CAP_' + String(i).padStart(3, '0') + '.jpg', {type: 'image/jpeg'}));
+    pqAdd(many, {caseNo: ''});
+    out.cap = {n: PQ.items.length, msg: PQ.msg};
+    pqClose(true);
+    return out;
+  `);
+  for (const n of [1, 10, 50, 100]) {
+    const r = R[n];
+    ok(`${n}: every photo joins the queue at once, and every row is drawn`, r.listed === n && r.firstPaint === n && r.rows === n,
+       JSON.stringify(r));
+    ok(`${n}: checking them decodes one full picture at a time — never more than two decodes at once, counting the editor's preview`,
+       r.peak >= 1 && r.peak <= 2, JSON.stringify(r));
+    ok(`${n}: no photograph holds decoded pixels in the queue`, r.held === 0, JSON.stringify(r));
+    ok(`${n}: the editor still works on a photo in the middle of the queue`, r.ready === 'ready', JSON.stringify(r));
+    ok(`${n}: and nothing scrolls sideways`, r.over <= 0, JSON.stringify(r));
+  }
+  ok('a queue holds 500 photos, and says so when more are chosen', R.cap.n === 500
+     && /3 photos left out — the queue holds 500 at most/.test(R.cap.msg), JSON.stringify(R.cap));
+  await page.close();
+}
+
+/* TEST D AND §5: a drop adds — several photos, a folder, even a file that is
+   not a photo, which is named and left out — and starts nothing. */
+section('Timestamp Photo V2: drag and drop adds, and never starts anything');
+{
+  const page = await newPage();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await phOpenFromHome(page);
+  const R = await phRun(page, `
+    const dt = new DataTransfer();
+    for(let i = 1; i <= 4; i++) dt.items.add(await canvasFile('DROP_' + i + '.jpg', 300, 200, 'image/jpeg', null, 1790000002000 + i));
+    dt.items.add(new File(['notes'], 'notes.txt', {type: 'text/plain'}));
+    const target = document.querySelector('#pstamp .vqd-drop');
+    const fire = (type) => { const e = new DragEvent(type, {bubbles: true, cancelable: true, dataTransfer: dt}); target.dispatchEvent(e); return e.defaultPrevented; };
+    const out = {};
+    out.enterPrevented = fire('dragenter');
+    out.over = fire('dragover');
+    out.highlight = document.querySelector('#pstamp .vqd').getAttribute('data-drag');
+    out.release = getComputedStyle(document.querySelector('#pstamp .vqd-drop-r')).display !== 'none';
+    out.dropPrevented = fire('drop');
+    await pIdle(4);
+    out.names = PQ.items.map(x => x.name);
+    out.msg = PQ.msg;
+    out.started = PQ.items.some(x => x.out || x.stage) || !!PQ.busy;
+    out.highlightAfter = document.querySelector('#pstamp .vqd').getAttribute('data-drag');
+    /* A drop onto a photo's own screen adds nothing behind it. */
+    pClick('pqDetails', PQ.items[0].qid);
+    const dt2 = new DataTransfer(); dt2.items.add(await canvasFile('LATE.jpg', 100, 100));
+    document.querySelector('#pstamp .vst').dispatchEvent(new DragEvent('drop', {bubbles: true, cancelable: true, dataTransfer: dt2}));
+    await new Promise(r => setTimeout(r, 100));
+    out.lateAdded = PQ.items.some(x => x.name === 'LATE.jpg');
+    return out;
+  `);
+  ok('D: holding files over the dashboard highlights it and says Release to add photos',
+     R.enterPrevented && R.over && R.highlight === '1' && R.release, JSON.stringify(R));
+  ok('D: the drop is taken by the page, never by the browser', R.dropPrevented === true);
+  ok('D: every photo dropped joins the queue, in name order', R.names.join() === 'DROP_1.jpg,DROP_2.jpg,DROP_3.jpg,DROP_4.jpg',
+     JSON.stringify(R.names));
+  ok('D: a file that is not a photo is named and left out, without losing the photos', /not a photo \(notes\.txt\)/.test(R.msg), R.msg);
+  ok('D: nothing starts', R.started === false);
+  ok('D: the highlight goes when the drop lands', R.highlightAfter === '0');
+  ok('a drop onto a photo\'s own screen adds nothing behind it', R.lateAdded === false);
+  await page.close();
+}
+
+/* §46 — ON A DESK: the table, the editor beside it, and the processing row,
+   at the three widths the owner named. Measured, never assumed. */
+section('Timestamp Photo V2 on a desk: the table, the editor and the processing row at 1280, 1440 and 1920');
+{
+  for (const [width, height] of [[1280, 800], [1440, 900], [1920, 1080]]) {
+    const page = await newPage();
+    await signIn(page, 'trever', 'AdminPassword1x');
+    await page.setViewportSize({ width, height });
+    await page.waitForTimeout(200);
+    await phOpenFromHome(page);
+    await phRun(page, `
+      const files = [];
+      for(let i = 1; i <= 6; i++) files.push(await canvasFile('DESK_' + i + '.jpg', 480, 320, 'image/jpeg', null, 1790000003000 + i));
+      files.push(await canvasFile('A_VERY_LONG_CAMERA_FILE_NAME_WITHOUT_ANY_BREAKS_00007.JPG', 480, 320, 'image/jpeg', null, 1790000003007));
+      pqAdd(files, {caseNo: ''});
+      await pIdle(7);
+      for(const v of PQ.items) await pSave(v, T0);
+      pClick('pqEdit', PQ.items[2].qid);
+    `);
+    await page.waitForTimeout(150);
+    const M = await page.evaluate(() => {
+      const box = el => { const r = el.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height }; };
+      const vis = el => el && el.getBoundingClientRect().width > 0 && getComputedStyle(el).display !== 'none';
+      const root = document.getElementById('pstamp');
+      const head = [...root.querySelectorAll('.vqd-thead > span')].filter(vis).map(e => e.textContent.trim());
+      const row = root.querySelector('.vqd-row.is-sel');
+      const plain = root.querySelector('.vqd-row:not(.is-sel)');
+      const ed = document.getElementById('pq_edit');
+      /* Radio buttons are pressed by their labels, which are the targets. */
+      const ctl = [...ed.querySelectorAll('input:not([type=radio]), select, button, .pqd-pgrid label')].filter(vis)
+        .map(e => ({ t: e.id || e.dataset.act || e.textContent.trim().slice(0, 20), h: Math.round(e.getBoundingClientRect().height) }));
+      const drop = root.querySelector('.vqd-drop');
+      const dr = box(drop);
+      const hit = document.elementFromPoint(dr.l + dr.w / 2, dr.t + dr.h / 2);
+      const cells = [...(row || root.querySelector('.vqd-row')).querySelectorAll('.vqd-c')].filter(vis);
+      const over = cells.some((c, i) => i && box(c).l < box(cells[i - 1]).r - 0.5);
+      const eb = box(ed), lb = box(root.querySelector('.vqd-left'));
+      /* GENERATE AND SAVE ARE THINGS A PERSON CAN PRESS: brought into view,
+         and the element at their centre is them. */
+      const reachable = sel => { const el = root.querySelector(sel); if (!el) return 'absent';
+        el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect();
+        const h = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return h === el || el.contains(h) ? 'ok' : (h ? h.className || h.tagName : 'nothing'); };
+      return { head, sel: row && row.dataset.qid, cur: row && row.getAttribute('aria-current'),
+               selBg: row && getComputedStyle(row).backgroundColor, plainBg: plain && getComputedStyle(plain).backgroundColor,
+               edVisible: vis(ed), edSel: ed.dataset.qid, edW: Math.round(eb.w),
+               edBeside: eb.l >= lb.r - 0.5 && eb.r <= innerWidth + 0.5,
+               small: ctl.filter(x => x.h < 44), pageOver: document.documentElement.scrollWidth - innerWidth,
+               bodyOver: (b => b.scrollWidth - b.clientWidth)(document.getElementById('pq_body')),
+               dropUsable: dr.w > 300 && dr.h >= 120 && !!hit && (hit === drop || drop.contains(hit)), cellsOverlap: over,
+               go: reachable('#pq_go'), save: reachable('[data-act="pqSaveTime"]'), ed: eb };
+    });
+    ok(`${width}: the queue is the table, with the approved columns`,
+       M.head.join('|') === (width >= 1440
+         ? '#|Thumbnail|Filename|Size|Format|Detected date & time|Selected date & time|Status|Actions'
+         : '#|Thumbnail|Filename|Format|Detected date & time|Selected date & time|Status|Actions'), M.head.join('|'));
+    ok(`${width}: nothing scrolls sideways, and no cell runs into the next`, M.pageOver <= 0 && M.bodyOver <= 0 && !M.cellsOverlap,
+       JSON.stringify([M.pageOver, M.bodyOver, M.cellsOverlap]));
+    ok(`${width}: the selected row is obvious — to the eye and to a screen reader — and the editor is that photo’s`,
+       M.sel && M.edSel === M.sel && M.edVisible && M.selBg !== M.plainBg && M.cur === 'true',
+       JSON.stringify([M.sel, M.edSel, M.selBg, M.plainBg, M.cur]));
+    ok(`${width}: the editor stands beside the table at its full width, inside the screen`,
+       M.edW >= 300 && M.edBeside, JSON.stringify({ w: M.edW, beside: M.edBeside, ed: M.ed }));
+    ok(`${width}: every field, button and corner choice in the editor is at least 44px`, M.small.length === 0, JSON.stringify(M.small));
+    ok(`${width}: the drop target is on screen, large, and uncovered`, M.dropUsable, JSON.stringify(M));
+    ok(`${width}: Save and Generate can be pressed where they are drawn`, M.save === 'ok' && M.go === 'ok', JSON.stringify([M.save, M.go]));
+    const P = await phRun(page, `
+      pClick('pqGo', PQ.items[0].qid);
+      await qWait(() => PQ.items[0].stage || PQ.items[0].out);
+      const r = el => el.getBoundingClientRect();
+      const run = document.getElementById('pq_run'), ed = document.getElementById('pq_edit');
+      const a = r(run), b = r(ed);
+      const overlap = !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top);
+      const out = {overlap, edW: Math.round(b.width), onScreen: a.top < innerHeight && a.bottom > 0};
+      await pMade(PQ.items[0]);
+      await new Promise(res => setTimeout(res, 150));
+      const nx = [...document.querySelectorAll('#pstamp [data-act="pqProcessNext"]')].find(pVisible);
+      if(nx){ nx.scrollIntoView({block: 'center'}); const q = nx.getBoundingClientRect();
+        const h = document.elementFromPoint(q.left + q.width / 2, q.top + q.height / 2);
+        out.next = h === nx || nx.contains(h) ? 'ok' : (h ? h.className || h.tagName : 'nothing');
+        out.nextName = nx.getAttribute('aria-label') || nx.textContent; }
+      out.made = !!PQ.items[0].out;
+      out.expect = PQ.items[1].name;          // the list is in name order, so the next READY one is second
+      out.over = document.documentElement.scrollWidth - innerWidth;
+      return out;
+    `);
+    ok(`${width}: the processing panel never overlaps the editor, and is on screen`,
+       !P.overlap && P.edW >= 300 && P.onScreen, JSON.stringify(P));
+    ok(`${width}: after the copy, Process next is on screen, names what it will start, and can be pressed`,
+       P.made && P.next === 'ok' && P.expect === 'DESK_1.jpg' && (P.nextName || '').includes(P.expect), JSON.stringify(P));
+    ok(`${width}: and still nothing scrolls sideways`, P.over <= 0, String(P.over));
+    await page.close();
+  }
+}
+
+/* §38 AND §46 — ON A PHONE: cards, 44px, nothing sideways, nothing covered;
+   the editor and the run each take the whole screen, and Back puts the list
+   back exactly where it was. */
+section('Timestamp Photo V2 on a phone: cards, 44px, nothing sideways, nothing covered');
+{
+  for (const width of [390, 320]) {
+    const page = await newPage();
+    await signIn(page, 'trever', 'AdminPassword1x');
+    /* Opened from the art Home on the desk, where its door is one tap, then
+       the screen becomes the phone's — the dashboard redraws for it. */
+    await phOpenFromHome(page);
+    await page.setViewportSize({ width, height: width === 320 ? 568 : 844 });
+    await page.waitForTimeout(200);
+    const measure = () => page.evaluate(() => {
+      const root = document.getElementById('pstamp');
+      const reach = el => { const r = el.getBoundingClientRect(); const d = el.closest('details');
+        return r.width > 0 && r.height > 0 && !el.closest('[inert]') && !(d && !d.open && !el.closest('summary')); };
+      const els = [...root.querySelectorAll('button, summary, input:not([type=radio]), select, .pqd-pgrid label')].filter(reach);
+      const small = els.map(el => ({ t: (el.dataset.act || el.id || el.tagName) + ':' + el.innerText.slice(0, 20),
+        h: Math.round(el.getBoundingClientRect().height) })).filter(x => x.h < 44);
+      const covered = [];
+      for (const el of root.querySelectorAll('[data-act="pqGo"], [data-act="pqEdit"], [data-act="pqProcessNext"], [data-act="pqListBack"], [data-act="pqRunBack"], [data-act="pqSaveCopy"], [data-act="pqSaveTime"], [data-act="pqAdd"], [data-act="pqEditNext"], [data-act="pqEditPrev"]')) {
+        if (!reach(el)) continue;
+        el.scrollIntoView({ block: 'center' });
+        const r = el.getBoundingClientRect();
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        if (!hit || !(hit === el || el.contains(hit))) covered.push((el.dataset.act) + '→' + (hit ? hit.className || hit.tagName : 'none'));
+      }
+      const body = document.getElementById('pq_body');
+      const vis = el => el && el.getBoundingClientRect().width > 0;
+      return { small, covered, over: document.documentElement.scrollWidth - window.innerWidth,
+               bodyOver: body ? body.scrollWidth - body.clientWidth : 0, text: root ? root.innerText : '',
+               table: vis(root.querySelector('.vqd-thead')), cards: root.querySelectorAll('.vqd-row').length,
+               addTop: (() => { const b = [...root.querySelectorAll('[data-act="pqAdd"]')].find(vis);
+                 return b ? Math.round(b.getBoundingClientRect().top) : null; })() };
+    });
+    await phRun(page, `
+      const files = [];
+      for(let i = 1; i <= 6; i++) files.push(await canvasFile('SURVEILLANCE_PHOTO_WITH_A_LONG_NAME_000' + i + '.JPG', 480, 320, 'image/jpeg', null, 1790000004000 + i));
+      pqAdd(files, {caseNo: ''});
+      await pIdle(6);
+      /* Saved times written straight into the entries: the editor on screen
+         still shows the old boxes, so the next paint must not read them back
+         as an edit (the product's own rule for a programmatic seed). */
+      for(const v of PQ.items){ for(const k of Object.keys(T0)) v[k] = T0[k]; v.confirmed = true; }
+      PQ.sel = PQ.items[0].qid; PQ.focus = 'list';
+      PQ.items[0].skipCapture = true;
+      paintPStamp();
+    `);
+    const dash = await measure();
+    ok(`${width}: the queue fits the screen — nothing scrolls sideways`, dash.over <= 0 && dash.bodyOver <= 0,
+       `${dash.over} / ${dash.bodyOver}`);
+    ok(`${width}: the queue is cards, not the desk's table`, !dash.table && dash.cards === 6, JSON.stringify([dash.table, dash.cards]));
+    ok(`${width}: Add photos is at the top of the screen`, dash.addTop != null && dash.addTop < 140, String(dash.addTop));
+    ok(`${width}: every control on the queue is at least 44px`, dash.small.length === 0, JSON.stringify(dash.small));
+    ok(`${width}: Edit, Generate and Add photos are not covered by anything`, dash.covered.length === 0, JSON.stringify(dash.covered));
+    ok(`${width}: each card shows its name, its status and its time`,
+       /SURVEILLANCE_PHOTO_WITH_A_LONG_NAME_0001\.JPG/.test(dash.text) && /Ready/.test(dash.text)
+       && /09\/26\/2026 06:11:02 AM EDT/.test(dash.text), dash.text.slice(0, 400));
+    /* The editor takes the screen, and Back returns to the list exactly where
+       it was scrolled. */
+    const at = await page.evaluate(() => { const b = document.getElementById('pq_body'); b.scrollTop = 260; return b.scrollTop; });
+    await phRun(page, `
+      const el = [...document.querySelectorAll('#pstamp .vqd-ac [data-act="pqEdit"][data-id="' + PQ.items[3].qid + '"]')].find(pVisible);
+      el.click();
+      await new Promise(r => setTimeout(r, 80));
+    `);
+    const ed = await measure();
+    ok(`${width}: the editor fits, and every field and corner choice is 44px`, ed.over <= 0 && ed.small.length === 0,
+       JSON.stringify(ed.small) + ' ' + ed.over);
+    ok(`${width}: the editor's Save, Previous, Next and its way back are reachable`, ed.covered.length === 0, JSON.stringify(ed.covered));
+    const edShot = await page.evaluate(() => { const e = document.getElementById('pq_edit'); const r = e.getBoundingClientRect();
+      return { full: Math.abs(Math.round(r.top)) <= 1 && Math.abs(Math.round(r.bottom) - innerHeight) <= 1,
+               top: Math.round(r.top), bottom: Math.round(r.bottom), gen: !!e.querySelector('[data-act="pqGo"]'),
+               focus: document.activeElement && document.activeElement.id }; });
+    ok(`${width}: the editor is the whole screen, carries Generate, and has the focus`, edShot.full && edShot.gen && edShot.focus === 'pq_ehead',
+       JSON.stringify(edShot));
+    await phRun(page, `pClick('pqListBack'); await new Promise(r => setTimeout(r, 80));`);
+    const back = await page.evaluate(() => document.getElementById('pq_body').scrollTop);
+    ok(`${width}: Back returns to the queue at the same scroll position`, at > 0 && Math.abs(back - at) <= 1, `${at} -> ${back}`);
+    await phRun(page, `pClick('pqGo', PQ.items[0].qid); await pMade(PQ.items[0]); await new Promise(r => setTimeout(r, 120));`);
+    const done = await measure();
+    ok(`${width}: the finished screen fits, and its Save copy, Process next and Back are 44px and uncovered`,
+       done.over <= 0 && done.small.length === 0 && done.covered.length === 0
+       && /Process next/.test(done.text) && /Save copy/.test(done.text) && /Back to queue/.test(done.text),
+       JSON.stringify({ small: done.small, covered: done.covered, over: done.over }));
+    ok(`${width}: and it says the copy passed its metadata check and the original is unchanged`,
+       /Metadata clean verification PASS/.test(done.text) && /Original unchanged/.test(done.text), done.text.slice(0, 600));
+    /* The photo's own screen, on a phone. */
+    await phRun(page, `pClick('pqDetails', PQ.items[0].qid); await new Promise(r => setTimeout(r, 80));`);
+    const dr = await page.evaluate(() => { const v = document.querySelector('#pstamp .vst'); const r = v.getBoundingClientRect();
+      const small = [...v.querySelectorAll('button')].filter(b => b.getBoundingClientRect().width > 0)
+        .map(b => ({ t: b.textContent.trim().slice(0, 24), h: Math.round(b.getBoundingClientRect().height) })).filter(x => x.h < 44);
+      return { w: Math.round(r.width), over: document.documentElement.scrollWidth - innerWidth, small,
+               behind: !!document.querySelector('#pstamp .vqd[inert]') }; });
+    ok(`${width}: a photo's own screen fits, its buttons are 44px, and the queue behind it is out of reach`,
+       dr.over <= 0 && dr.w <= width && dr.small.length === 0 && dr.behind, JSON.stringify(dr));
+    await page.close();
+  }
+}
+
+/* §47 — ACCESSIBILITY: every control has a name, a status is a word as well
+   as a colour, the drop zone is a button a keyboard reaches, and Escape steps
+   back one layer at a time without ever closing the queue. */
+section('Timestamp Photo V2: accessible by name and by keyboard, and Escape steps back one layer at a time');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await phOpenFromHome(page);
+  const E = await page.evaluate(() => {
+    const d = document.querySelector('#pstamp .vqd-drop');
+    return { tag: d.tagName, type: d.type, name: d.getAttribute('aria-label') || '',
+             dialog: document.querySelector('#pstamp .pqd').getAttribute('role'),
+             label: document.querySelector('#pstamp .pqd').getAttribute('aria-label') };
+  });
+  ok('the drop zone is a real button, named for what it does', E.tag === 'BUTTON' && E.type === 'button'
+     && /Add photos/.test(E.name) && /choose several files/.test(E.name), JSON.stringify(E));
+  ok('the dashboard is a named dialog', E.dialog === 'dialog' && E.label === 'Timestamp photo', JSON.stringify(E));
+  /* The keyboard reaches the drop zone and Enter opens the chooser. */
+  await page.locator('#pstamp .vqd-drop').focus();
+  const [chooser] = await Promise.all([page.waitForEvent('filechooser', { timeout: 5000 }), page.keyboard.press('Enter')]);
+  ok('Enter on the drop zone opens the chooser, for several files', !!chooser && chooser.isMultiple());
+  await chooser.setFiles([]);
+  const A = await phRun(page, `
+    const files = [];
+    for(let i = 1; i <= 4; i++) files.push(await canvasFile('A11Y_' + i + '.jpg', 300, 200, 'image/jpeg', null, 1790000005000 + i));
+    files.push(new File([new Uint8Array([0xFF, 0xD8, 0xFF, 0xD9])], 'A11Y_5_broken.jpg', {type: 'image/jpeg', lastModified: 1790000005005}));
+    pqAdd(files, {caseNo: ''});
+    await qWait(() => PQ.items.length === 5 && PQ.items.every(x => x.analysis === 'done') && !PQ.busy);
+    await pSave(PQ.items[0], T0);
+    const root = document.getElementById('pstamp');
+    const named = el => {
+      if(el.getAttribute('aria-label')) return el.getAttribute('aria-label').trim();
+      if(el.getAttribute('aria-labelledby')) return el.getAttribute('aria-labelledby').split(' ').map(id => (document.getElementById(id) || {}).textContent || '').join(' ').trim();
+      if(el.id && root.querySelector('label[for="' + el.id + '"]')) return root.querySelector('label[for="' + el.id + '"]').textContent.trim();
+      if(el.closest('label')) return el.closest('label').textContent.trim();
+      return (el.innerText || el.textContent || '').trim();
+    };
+    const out = {};
+    out.unnamed = [...root.querySelectorAll('button, summary, input, select, [role="img"]')].filter(el => !named(el))
+      .map(el => el.outerHTML.slice(0, 80));
+    /* What a screen reader hears: the word, without the mark drawn beside it. */
+    out.badges = [...root.querySelectorAll('.vqd-row .vqd-st')].map(e => { const c = e.cloneNode(true);
+      c.querySelectorAll('[aria-hidden="true"]').forEach(x => x.remove()); return c.textContent.trim(); });
+    out.posTab = [...root.querySelectorAll('[tabindex]')].filter(e => +e.getAttribute('tabindex') > 0).length;
+    out.live = !!root.querySelector('#pq_dirty[aria-live]') && !!root.querySelector('.vqd-msg[aria-live]');
+    out.pos = {legend: (root.querySelector('.pqd-pos legend') || {}).textContent, radios: root.querySelectorAll('.pqd-pos input[type=radio][name="pst_pos"]').length};
+    out.tz = named(document.getElementById('pst_tz'));
+    /* The checks are words, and a screen reader hears which were done. */
+    pClick('pqGo', PQ.items[0].qid);
+    await pMade(PQ.items[0]);
+    out.checks = [...root.querySelectorAll('.vqd-checks li')].map(li => li.innerText.trim());
+    PQ.items[0].savedHere = true;          // kept, so nothing below is a question about losing it
+    await pSave(PQ.items[1], T0);          // a setting saved on a photo not yet made — what Clear queue asks about
+    /* Escape, one layer at a time — LAST, and every step survives the queue
+       having gone, so a queue that Escape closes fails by name rather than
+       crashing the lines after it. */
+    const menu = root.querySelector('.vqd-row .vqd-menu');
+    menu.open = true;
+    const esc = () => document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
+    esc();
+    out.menuClosed = !menu.open && document.activeElement && document.activeElement.tagName === 'SUMMARY';
+    if(PQ){ pClick('pqClearAll'); out.asked = !!(PQ.confirm && PQ.confirm.kind === 'clearall'); esc(); }
+    out.confirmClosed = !!PQ && !PQ.confirm && PQ.items.length === 5;
+    if(PQ){ pClick('pqDetails', PQ.items[1].qid); out.drawer = !!document.querySelector('#pstamp .vst'); esc(); }
+    out.drawerClosed = !!PQ && !document.querySelector('#pstamp .vst') && !PST;
+    esc(); esc();
+    out.stillOpen = !!PQ && !!document.querySelector('#pstamp .pqd') && PQ.items.length === 5;
+    return out;
+  `);
+  ok('every control and picture on the dashboard has a name', A.unnamed.length === 0, JSON.stringify(A.unnamed));
+  ok('each status is a word, not only a colour', A.badges.length === 5 && A.badges.includes('Ready')
+     && A.badges.includes('Needs review') && A.badges.includes('Failed'), JSON.stringify(A.badges));
+  ok('nothing is forced into the tab order', A.posTab === 0, String(A.posTab));
+  ok('changes and results are announced', A.live === true);
+  ok('the stamp position is a named group of four choices', /Stamp position/.test(A.pos.legend || '') && A.pos.radios === 4,
+     JSON.stringify(A.pos));
+  ok('the time zone picker is labelled', /Timezone/.test(A.tz), A.tz);
+  ok('Escape closes an open menu first, and gives the focus back to it', A.menuClosed === true);
+  ok('then a question', A.asked && A.confirmClosed);
+  ok('then a photo\'s own screen', A.drawer && A.drawerClosed);
+  ok('and never closes the queue — Close is a deliberate button', A.stillOpen === true);
+  ok('a finished copy lists what was checked, in words', A.checks.some(t => /Metadata clean verification PASS/.test(t))
+     && A.checks.some(t => /Timestamp burned into the pixels/.test(t)), JSON.stringify(A.checks));
   await page.close();
 }
 
@@ -22538,22 +23970,37 @@ section('Every art card is a direct launcher, and Back returns to an art Home');
        svBack.tab === 'dashboard' && svBack.sv === false && svBack.art === 7,
        JSON.stringify(svBack));
 
-    /* THE PHOTO TOOL OPENS THE PICKER ITSELF — one tap, no landing screen.
-       `filechooser` firing IS the assertion: it is what a direct launcher
-       does. Cancelling leaves the page where it was, which is an art Home. */
+    /* TIMESTAMP PHOTO OPENS ITS QUEUE — since Photo V2 (owner, 2026-09-28)
+       the door is the dashboard, the video tool's shape: one tap, its own full
+       screen with no launcher on it and nothing chosen yet, and its drop zone
+       IS the picker. Close is the way back to art Home. */
     {
       let fired = false;
       const onChooser = () => { fired = true; };
       page.on('filechooser', onChooser);
       await page.evaluate(() => document.querySelector('.qtapp[data-qt="photo"]').click());
       await page.waitForTimeout(1200);
+      const open = await page.evaluate(() => {
+        const d = document.querySelector('#pstamp .pqd'); const r = d && d.getBoundingClientRect();
+        return { queue: !!PQ && PQ.items.length === 0, whole: !!r && Math.round(r.top) === 0
+                   && Math.round(r.bottom) === innerHeight && Math.round(r.width) === innerWidth,
+                 strip: document.querySelectorAll('#pstamp .qtapps').length, drop: !!document.querySelector('#pstamp .vqd-drop') };
+      });
+      const onTap = fired;
+      await page.locator('#pstamp .vqd-drop').click();
+      await page.waitForTimeout(800);
       page.off('filechooser', onChooser);
+      const fromDrop = fired && !onTap;
+      await page.locator('#pstamp [data-act="pqClose"]').first().click();
+      await page.waitForTimeout(800);
       const after = await page.evaluate(() => ({
-        tab: TAB, art: document.querySelectorAll('.qtools .qtapp.uiart').length,
+        tab: TAB, queue: !!PQ, art: document.querySelectorAll('.qtools .qtapp.uiart').length,
       }));
-      ok(`${w}: Timestamp Photo opens its file picker directly, and cancelling leaves art Home`,
-         fired === true && after.tab === 'dashboard' && after.art === 7,
-         JSON.stringify({ fired, ...after }));
+      ok(`${w}: Timestamp Photo opens its queue directly — the whole screen, empty, no launcher on it`,
+         open.queue && open.whole && open.drop && open.strip === 0 && !onTap, JSON.stringify({ ...open, onTap }));
+      ok(`${w}: its drop zone opens the file picker, and Close leaves art Home`,
+         fromDrop && after.tab === 'dashboard' && !after.queue && after.art === 7,
+         JSON.stringify({ fromDrop, ...after }));
     }
     /* TIMESTAMP VIDEO OPENS ITS QUEUE — since V2 (owner, 2026-09-28) the door
        is the dashboard, because a dropped file needs somewhere to land: one
@@ -22770,24 +24217,13 @@ section('Every direct-launch destination has a visible way back, at the tap floo
        await page.evaluate(() => TAB === 'dashboard'
          && document.querySelectorAll('.qtools .qtapp.uiart').length === 7));
 
-    /* ---- Timestamp Photo: the tool's own close, measured live -------- */
+    /* ---- Timestamp Photo: the queue's own close, measured live -------- */
     await page.evaluate(() => { SHEET_WIZ = null; VIEW = 'list'; TAB = 'dashboard'; paint(); });
     await page.waitForTimeout(400);
-    const jpg = await page.evaluate(() => {
-      const c = document.createElement('canvas');
-      c.width = 320; c.height = 240;
-      const cx = c.getContext('2d'); cx.fillStyle = '#2d5f8a'; cx.fillRect(0, 0, 320, 240);
-      return c.toDataURL('image/jpeg', 0.9).split(',')[1];
-    });
-    const [chooser] = await Promise.all([
-      page.waitForEvent('filechooser'),
-      page.evaluate(() => document.querySelector('.qtapp[data-qt="photo"]').click()),
-    ]);
-    await chooser.setFiles({ name: 'back.jpg', mimeType: 'image/jpeg',
-      buffer: Buffer.from(jpg, 'base64') });
-    await page.waitForTimeout(1600);
-    const vstx = await page.evaluate(() => {
-      const b = document.querySelector('#pstamp .vst-x');
+    await page.evaluate(() => document.querySelector('.qtapp[data-qt="photo"]').click());
+    await page.waitForTimeout(900);
+    const pqx = await page.evaluate(() => {
+      const b = document.querySelector('#pstamp .vqd-x');
       if (!b) return null;
       const r = b.getBoundingClientRect();
       return { text: b.textContent.trim(), act: b.dataset.act,
@@ -22795,11 +24231,11 @@ section('Every direct-launch destination has a visible way back, at the tap floo
                y: Math.round(r.top) };
     });
     ok(`${w}: Timestamp Photo's own Close is near the top and at the tap floor`,
-       vstx && vstx.h >= 44 && vstx.w >= 44 && vstx.y < 60, JSON.stringify(vstx));
-    await page.locator('#pstamp .vst-x').click();
+       pqx && pqx.text === 'Close' && pqx.act === 'pqClose' && pqx.h >= 44 && pqx.w >= 44 && pqx.y < 60, JSON.stringify(pqx));
+    await page.locator('#pstamp .vqd-x').click();
     await page.waitForTimeout(700);
     ok(`${w}: and closing it leaves an art Home`,
-       await page.evaluate(() => !document.querySelector('#pstamp .vst')
+       await page.evaluate(() => !document.querySelector('#pstamp .pqd')
          && TAB === 'dashboard'
          && document.querySelectorAll('.qtools .qtapp.uiart').length === 7));
   }
@@ -22812,8 +24248,8 @@ section('Every direct-launch destination has a visible way back, at the tap floo
   const src = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
   ok('Timestamp Video carries the same head close, wired to its own handler',
      /<button class="vst-x" data-act="vstClose">Close<\/button>/.test(src));
-  ok('and Timestamp Photo carries its twin',
-     /<button class="vst-x" data-act="pstClose">Close<\/button>/.test(src));
+  ok('and Timestamp Photo’s queue carries the dashboard’s own Close, wired to its handler',
+     /<button class="vqd-x" data-act="pqClose">Close<\/button>/.test(src));
 
   /* NO HISTORY IS PUSHED, so native Back cannot loop between tabs — it leaves
      the portal, which is what it did before this unit. Asserted as the absence
