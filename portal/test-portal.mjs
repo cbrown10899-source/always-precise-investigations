@@ -11830,6 +11830,18 @@ async function phZonedJpeg(page, when, { w = 240, h = 160 } = {}) {
   return Buffer.concat([base.subarray(0, 2),
     phSeg(0xE1, Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), phRichTiff({ when, zone: '-04:00' })])), base.subarray(2)]);
 }
+/* Press what a person would press, and wait for what should follow — failing
+   BY NAME when either does not happen, rather than crashing the run on a
+   locator or wait timeout. A crash is caught, not named (the `need()` rule),
+   and it takes every section after it down with it. */
+async function phPress(page, sel, what) {
+  try { await page.locator(sel).first().click({ timeout: 5000 }); return true; }
+  catch (e) { ok(`${what} — it is there to be pressed`, false, `${sel}: ${String(e.message).split('\n')[0]}`); return false; }
+}
+async function phUntil(page, fn, arg, what, timeout = 20000) {
+  try { await page.waitForFunction(fn, arg, { timeout }); return true; }
+  catch (e) { ok(`${what} — it happened`, false, String(e.message).split('\n')[0]); return false; }
+}
 /* The iPhone's way of keeping a file: no save picker, and a share sheet that
    completes. Every other door a byte could leave by is counted beside it. */
 const PH_IPHONE_SAVE = `
@@ -11942,6 +11954,7 @@ section('Timestamp Photo V2 on a phone, Case = None: one JPEG — READY, Generat
     await phChoose(page, [{ name: 'IMG_0001.JPG', mimeType: 'image/jpeg', buffer: buf }]);
     await phIdle(page, 1);
     await page.waitForTimeout(150);
+    flow: {
     const L = await page.evaluate(() => {
       const root = document.getElementById('pstamp');
       const v = PQ.items[0];
@@ -11980,8 +11993,8 @@ section('Timestamp Photo V2 on a phone, Case = None: one JPEG — READY, Generat
        JSON.stringify({ cb: L.cb, g: L.g, text: L.caseText }));
     ok(`${width}: nothing scrolls sideways`, L.over <= 0 && L.bodyOver <= 0, JSON.stringify([L.over, L.bodyOver]));
     /* Pressed the way a person presses it. */
-    await page.locator('#pstamp .pqd-go:visible').click();
-    await page.waitForFunction(() => PQ && !PQ.busy && !!PQ.items[0].out && !PQ_PAINT_T, null, { timeout: 20000 });
+    if (!await phPress(page, '#pstamp .pqd-go:visible', `${width}: the card's Generate`)
+        || !await phUntil(page, () => PQ && !PQ.busy && !!PQ.items[0].out && !PQ_PAINT_T, null, `${width}: the copy is made`)) break flow;
     await page.waitForTimeout(150);
     const D = await page.evaluate(() => {
       const run = document.getElementById('pq_run');
@@ -12010,8 +12023,8 @@ section('Timestamp Photo V2 on a phone, Case = None: one JPEG — READY, Generat
        JSON.stringify(D));
     ok(`${width}: the keyboard went to the finished screen's heading, not behind it`, D.focus === 'pq_runh', String(D.focus));
     ok(`${width}: and it does not scroll sideways`, D.over <= 0, String(D.over));
-    await page.locator('#pq_run [data-act="pqSaveCopy"]:visible').click();
-    await page.waitForFunction(() => PQ && PQ.items[0].savedHere && !PQ_PAINT_T, null, { timeout: 10000 });
+    if (!await phPress(page, '#pq_run [data-act="pqSaveCopy"]:visible', `${width}: Save to device`)
+        || !await phUntil(page, () => PQ && PQ.items[0].savedHere && !PQ_PAINT_T, null, `${width}: the copy is saved`, 10000)) break flow;
     await page.waitForTimeout(100);
     const K = await phRun(page, `
       const v = PQ.items[0], o = v.out;
@@ -12029,6 +12042,7 @@ section('Timestamp Photo V2 on a phone, Case = None: one JPEG — READY, Generat
        JSON.stringify(K.doors));
     ok(`${width}: the original is untouched — the same bytes, the fingerprint recorded before, and the copy says so`,
        K.origNow === origSha && K.origRecorded === origSha && K.origSame === true, JSON.stringify([K.origNow, origSha, K.origRecorded]));
+    }
     await page.close();
   }
 }
@@ -12049,10 +12063,11 @@ section('Timestamp Photo V2 on a phone, Case = None: five photos — Generate th
   const G = await page.evaluate(PH_GEN_GUARD);
   ok('all five are READY, each with Generate on its own card', G.ready === 5 && G.bad.length === 0, JSON.stringify(G));
   const qids = await page.evaluate(() => PQ.items.map(x => x.qid));
-  await page.locator(`#pq_rgo_${qids[0]}`).click();
-  await page.waitForFunction((id) => { const v = pqById(id); return !!v && !PQ.busy && !!v.out && !PQ_PAINT_T; }, qids[0], { timeout: 20000 });
-  await page.locator('#pq_run [data-act="pqSaveCopy"]:visible').click();
-  await page.waitForFunction((id) => pqById(id).savedHere && !PQ_PAINT_T, qids[0], { timeout: 10000 });
+  const made = id => phUntil(page, (id) => { const v = pqById(id); return !!v && !PQ.busy && !!v.out && !PQ_PAINT_T; }, id, `the copy of card ${id} is made`);
+  const saved = id => phUntil(page, (id) => pqById(id).savedHere && !PQ_PAINT_T, id, `the copy of card ${id} is saved`, 10000);
+  flow: {
+  if (!await phPress(page, `#pq_rgo_${qids[0]}`, 'the first card\'s Generate') || !await made(qids[0])
+      || !await phPress(page, '#pq_run [data-act="pqSaveCopy"]:visible', 'Save to device') || !await saved(qids[0])) break flow;
   const N1 = await page.evaluate(() => {
     const b = [...document.querySelectorAll('#pq_run [data-act="pqProcessNext"]')].find(e => e.getClientRects().length && !e.closest('[inert]'));
     if (!b) return null;
@@ -12061,12 +12076,9 @@ section('Timestamp Photo V2 on a phone, Case = None: five photos — Generate th
   });
   ok('after the first is saved, Process next is on the finished screen, names the next photo, 44px and uncovered',
      !!N1 && N1.name === 'Process next: SEQ_2.JPG' && N1.h >= 44 && N1.hit && N1.b <= N1.vh, JSON.stringify(N1));
-  await page.locator('#pq_run [data-act="pqProcessNext"]:visible').click();
-  await page.waitForFunction((id) => { const v = pqById(id); return !!v && !PQ.busy && !!v.out && !PQ_PAINT_T; }, qids[1], { timeout: 20000 });
-  await page.locator('#pq_run [data-act="pqSaveCopy"]:visible').click();
-  await page.waitForFunction((id) => pqById(id).savedHere && !PQ_PAINT_T, qids[1], { timeout: 10000 });
-  await page.locator('#pq_run [data-act="pqProcessNext"]:visible').click();
-  await page.waitForFunction((id) => { const v = pqById(id); return !!v && !PQ.busy && !!v.out && !PQ_PAINT_T; }, qids[2], { timeout: 20000 });
+  if (!await phPress(page, '#pq_run [data-act="pqProcessNext"]:visible', 'Process next') || !await made(qids[1])
+      || !await phPress(page, '#pq_run [data-act="pqSaveCopy"]:visible', 'Save to device, second') || !await saved(qids[1])
+      || !await phPress(page, '#pq_run [data-act="pqProcessNext"]:visible', 'Process next, again') || !await made(qids[2])) break flow;
   const R = await phRun(page, `
     const lab = i => PQ.items[i].out ? PQ.items[i].out.label : null;
     const out = { labels: [0, 1, 2, 3, 4].map(lab), saved: PQ.items.map(x => !!x.savedHere), shared: window.__shared.map(x => x.name),
@@ -12089,6 +12101,7 @@ section('Timestamp Photo V2 on a phone, Case = None: five photos — Generate th
      && R.doors.beacons === 0 && R.doors.downloads === 0, JSON.stringify({ caseNo: R.caseNo, cases: R.cases, doors: R.doors }));
   ok('back on the queue, the two not yet made still carry Generate on their cards', R.after.ready === 2 && R.after.bad.length === 0,
      JSON.stringify(R.after));
+  }
   await page.close();
 }
 
@@ -12105,47 +12118,41 @@ section('Timestamp Photo V2: the editor\'s Generate — straight away when saved
   await phChoose(page, files);
   await phIdle(page, 4);
   const qids = await page.evaluate(() => PQ.items.map(x => x.qid));
-  const openEditor = async (qid) => {
-    await page.locator(`#pstamp .vqd-row[data-qid="${qid}"] .vqd-ac [data-act="pqEdit"]`).click();
-    await page.waitForFunction((id) => PQ.focus === 'edit' && String(PQ.sel) === String(id), qid, { timeout: 5000 });
-  };
+  const openEditor = async (qid) => await phPress(page, `#pstamp .vqd-row[data-qid="${qid}"] .vqd-ac [data-act="pqEdit"]`, `Edit on card ${qid}`)
+    && await phUntil(page, (id) => PQ.focus === 'edit' && String(PQ.sel) === String(id), qid, `the editor opens for card ${qid}`, 5000);
+  const made = id => phUntil(page, (id) => { const v = pqById(id); return !!v && !PQ.busy && !!v.out && !PQ_PAINT_T; }, id, `the copy of card ${id} is made`);
   /* Kept with Save to device before the next is made — one finished copy is
      held in memory, and an unsaved one is only let go of after asking. */
-  const keep = async (qid) => {
-    await page.locator('#pq_run [data-act="pqSaveCopy"]:visible').click();
-    await page.waitForFunction((id) => pqById(id).savedHere && !PQ_PAINT_T, qid, { timeout: 10000 });
-  };
+  const keep = async (qid) => await phPress(page, '#pq_run [data-act="pqSaveCopy"]:visible', 'Save to device')
+    && await phUntil(page, (id) => pqById(id).savedHere && !PQ_PAINT_T, qid, `the copy of card ${qid} is saved`, 10000);
   const goState = () => page.evaluate(() => { const b = document.getElementById('pq_go');
     return b ? { words: b.innerText.trim(), disabled: b.disabled, act: b.dataset.act,
                  why: (document.getElementById('pq_gowhy') || {}).innerText || '' } : null; });
+  flow: {
   /* (a) Nothing changed: the editor's Generate goes at once. */
-  await openEditor(qids[0]);
+  if (!await openEditor(qids[0])) break flow;
   const A = await goState();
   ok('in the editor, a READY photo with nothing changed offers Generate timestamped copy, ready to press',
      !!A && A.words === 'Generate timestamped copy' && !A.disabled && A.act === 'pqGo' && A.why === '', JSON.stringify(A));
-  await page.locator('#pq_go').click();
-  await page.waitForFunction((id) => { const v = pqById(id); return !!v && !PQ.busy && !!v.out && !PQ_PAINT_T; }, qids[0], { timeout: 20000 });
+  if (!await phPress(page, '#pq_go', 'the editor\'s Generate') || !await made(qids[0])) break flow;
   ok('and the copy carries the time the camera recorded', await page.evaluate((id) => pqById(id).out.label, qids[0]) === '09/26/2026 06:11:02 AM EDT');
-  await keep(qids[0]);
-  await page.locator('#pq_run [data-act="pqRunBack"]:visible').click();
+  if (!await keep(qids[0]) || !await phPress(page, '#pq_run [data-act="pqRunBack"]:visible', 'Back to queue')) break flow;
   /* (b) A valid change, not yet saved: the button says it will save it, and does. */
-  await openEditor(qids[1]);
+  if (!await openEditor(qids[1])) break flow;
   await page.locator('#pst_hr').fill('08');
   const B = await goState();
   ok('change the time without pressing Save, and the button says what it will do: Save & generate timestamped copy',
      !!B && B.words === 'Save & generate timestamped copy' && !B.disabled && B.act === 'pqSaveGo'
      && /saved to this photo first/.test(B.why), JSON.stringify(B));
-  await page.locator('#pq_go').click();
-  await page.waitForFunction((id) => { const v = pqById(id); return !!v && !PQ.busy && !!v.out && !PQ_PAINT_T; }, qids[1], { timeout: 20000 });
+  if (!await phPress(page, '#pq_go', 'Save & generate') || !await made(qids[1])) break flow;
   const Bv = await page.evaluate((id) => { const v = pqById(id); return { hr: v.hr, confirmed: v.confirmed, draft: v.draft, source: v.source,
     label: v.out.label, status: pqStatus(v) }; }, qids[1]);
   ok('pressing it saved the change to that photo and made the copy with it — nothing dropped',
      Bv.hr === '08' && Bv.confirmed === true && !Bv.draft && Bv.source === 'operator' && Bv.label === '09/26/2026 08:12:02 AM EDT'
      && Bv.status === 'complete', JSON.stringify(Bv));
-  await keep(qids[1]);
-  await page.locator('#pq_run [data-act="pqRunBack"]:visible').click();
+  if (!await keep(qids[1]) || !await phPress(page, '#pq_run [data-act="pqRunBack"]:visible', 'Back to queue')) break flow;
   /* (c) An invalid change: never saved, never made, never thrown away. */
-  await openEditor(qids[2]);
+  if (!await openEditor(qids[2])) break flow;
   await page.locator('#pst_mo').fill('13');
   const C = await goState();
   ok('an impossible date disables Generate, and says why in Save\'s own words',
@@ -12158,25 +12165,24 @@ section('Timestamp Photo V2: the editor\'s Generate — straight away when saved
   /* Leaving the editor with a change pending still asks, as it always did. */
   await page.locator('#pst_mo').fill('09');
   await page.locator('#pst_hr').fill('10');
-  await page.locator('#pstamp [data-act="pqListBack"]:visible').click();
-  await page.waitForFunction(() => !!document.getElementById('pq_ask'), null, { timeout: 5000 });
+  if (!await phPress(page, '#pstamp [data-act="pqListBack"]:visible', 'Back to queue from the editor')
+      || !await phUntil(page, () => !!document.getElementById('pq_ask'), null, 'the unsaved-change question', 5000)) break flow;
   ok('leaving the editor with a change asks — the queue is never reached with a change silently kept or dropped',
      await page.evaluate(() => !!(PQ.editAsk && PQ.focus === 'edit')));
-  await page.locator('#pstamp [data-act="pqAskStay"]').click();
-  await page.locator('#pstamp [data-act="pqUndo"]').click();
-  await page.locator('#pstamp [data-act="pqListBack"]:visible').click();
+  if (!await phPress(page, '#pstamp [data-act="pqAskStay"]', 'Stay here') || !await phPress(page, '#pstamp [data-act="pqUndo"]', 'Undo changes')
+      || !await phPress(page, '#pstamp [data-act="pqListBack"]:visible', 'Back to queue')) break flow;
   /* (d) The one real way a change can be pending with the cards on screen:
      an iPad in landscape, where the editor sits beside the list, turned to
      portrait. The card's Generate is refused by name, the change is kept, and
      the editor opens so the reason is on the screen rather than behind it. */
   await page.setViewportSize({ width: 1366, height: 1024 });
   await page.waitForTimeout(150);
-  await page.locator(`#pstamp .vqd-row[data-qid="${qids[2]}"] .vqd-name`).click();
-  await page.waitForFunction((id) => String(PQ.sel) === String(id) && !!document.getElementById('pst_hr'), qids[2], { timeout: 5000 });
+  if (!await phPress(page, `#pstamp .vqd-row[data-qid="${qids[2]}"] .vqd-name`, 'the row on the landscape iPad')
+      || !await phUntil(page, (id) => String(PQ.sel) === String(id) && !!document.getElementById('pst_hr'), qids[2], 'the editor beside it', 5000)) break flow;
   await page.locator('#pst_hr').fill('10');
   await page.setViewportSize({ width: 1024, height: 1366 });
   await page.waitForTimeout(150);
-  await page.locator(`#pq_rgo_${qids[2]}`).click();
+  if (!await phPress(page, `#pq_rgo_${qids[2]}`, 'the card\'s Generate on the portrait iPad')) break flow;
   await page.waitForTimeout(120);
   const Dd = await page.evaluate((id) => { const v = pqById(id); const ed = document.getElementById('pq_edit');
     const err = ed && [...ed.querySelectorAll('.vqd-err')].find(e => e.getClientRects().length);
@@ -12189,10 +12195,10 @@ section('Timestamp Photo V2: the editor\'s Generate — straight away when saved
   const D2 = await goState();
   ok('and the editor offers Save & generate for it, right there', !!D2 && D2.act === 'pqSaveGo' && !D2.disabled
      && D2.words === 'Save & generate timestamped copy', JSON.stringify(D2));
-  await page.locator('#pq_go').click();
-  await page.waitForFunction((id) => { const v = pqById(id); return !!v && !PQ.busy && !!v.out && !PQ_PAINT_T; }, qids[2], { timeout: 20000 });
+  if (!await phPress(page, '#pq_go', 'Save & generate in the opened editor') || !await made(qids[2])) break flow;
   ok('which saves the change and makes the copy with it',
      await page.evaluate((id) => pqById(id).out.label, qids[2]) === '09/26/2026 10:13:02 AM EDT');
+  }
   await page.close();
 }
 
@@ -12218,8 +12224,9 @@ section('Timestamp Photo V2 on a desk, Case = None: the ▶ and the editor both 
      G.ready === 3 && G.bad.length === 0 && await page.evaluate(() => { const b = document.getElementById('pq_go');
        return !!b && b.innerText.trim() === 'Generate timestamped copy' && !b.disabled; }), JSON.stringify(G));
   const qids = await page.evaluate(() => PQ.items.map(x => x.qid));
-  await page.locator(`#pstamp .vqd-row[data-qid="${qids[0]}"] .vqd-go`).click();
-  await page.waitForFunction((id) => { const v = pqById(id); return !!v && !PQ.busy && !!v.out && !PQ_PAINT_T; }, qids[0], { timeout: 20000 });
+  const made = id => phUntil(page, (id) => { const v = pqById(id); return !!v && !PQ.busy && !!v.out && !PQ_PAINT_T; }, id, `1280: the copy of row ${id} is made`);
+  flow: {
+  if (!await phPress(page, `#pstamp .vqd-row[data-qid="${qids[0]}"] .vqd-go`, '1280: the row\'s ▶') || !await made(qids[0])) break flow;
   const S = await page.evaluate(() => { const run = document.getElementById('pq_run');
     const sv = [...run.querySelectorAll('[data-act="pqSaveCopy"]')].find(e => e.getClientRects().length);
     return { head: document.getElementById('pq_runh').innerText, pass: (document.getElementById('pq_pass') || {}).innerText || '',
@@ -12228,15 +12235,15 @@ section('Timestamp Photo V2 on a desk, Case = None: the ▶ and the editor both 
   ok('1280: the finished copy says complete and PASS, and offers Save copy as the gold action, with no case asked',
      /^Timestamped copy complete ✓$/.test(S.head.trim()) && /Metadata clean verification: PASS/.test(S.pass) && S.save === 'Save copy'
      && S.gold && S.caseActs === 0, JSON.stringify(S));
-  await page.locator('#pq_run [data-act="pqSaveCopy"]').click();
-  await page.waitForFunction((id) => pqById(id).savedHere && !PQ_PAINT_T, qids[0], { timeout: 10000 });
-  await page.locator('#pstamp .vqd-next [data-act="pqProcessNext"]').click();
-  await page.waitForFunction((id) => { const v = pqById(id); return !!v && !PQ.busy && !!v.out && !PQ_PAINT_T; }, qids[1], { timeout: 20000 });
+  if (!await phPress(page, '#pq_run [data-act="pqSaveCopy"]', '1280: Save copy')
+      || !await phUntil(page, (id) => pqById(id).savedHere && !PQ_PAINT_T, qids[0], '1280: the copy is saved', 10000)
+      || !await phPress(page, '#pstamp .vqd-next [data-act="pqProcessNext"]', '1280: Process next') || !await made(qids[1])) break flow;
   const R = await phRun(page, `return { saved: window.__saved, oSha: PQ.items[0].out.sha256, name: PQ.items[0].out.name,
     second: !!PQ.items[1].out, caseNo: PQ.caseNo, doors: ${phDoorsOut} };`);
   ok('1280: Save copy wrote the copy itself to this computer, and Process next made the next one — with no case and no request',
      R.saved.length === 1 && R.saved[0].sha === R.oSha && R.saved[0].name === R.name && R.second && R.caseNo === ''
      && R.doors.fetches === 0 && R.doors.xhr === 0 && R.doors.downloads === 0, JSON.stringify(R));
+  }
   await page.close();
 }
 
@@ -12249,29 +12256,31 @@ section('Timestamp Photo V2: a case, when one is chosen, is offered on the finis
   await page.waitForTimeout(150);
   await phChoose(page, [{ name: 'CASE_1.JPG', mimeType: 'image/jpeg', buffer: await phZonedJpeg(page, '2026:09:26 06:21:02') }]);
   await phIdle(page, 1);
-  await page.locator('#pstamp [data-act="pqCase"]').click();
-  await page.waitForFunction(() => document.querySelectorAll('#pstamp [data-act="pqPickCase"][data-case]:not([data-case=""])').length > 0,
-    null, { timeout: 10000 });
+  flow: {
+  if (!await phPress(page, '#pstamp [data-act="pqCase"]', 'Choose a case (optional)')
+      || !await phUntil(page, () => document.querySelectorAll('#pstamp [data-act="pqPickCase"][data-case]:not([data-case=""])').length > 0,
+           null, 'the case list', 10000)) break flow;
   const caseNo = await page.evaluate(() => document.querySelector('#pstamp [data-act="pqPickCase"][data-case]:not([data-case=""])').dataset.case);
-  await page.locator(`#pstamp [data-act="pqPickCase"][data-case="${caseNo}"]`).click();
+  if (!await phPress(page, `#pstamp [data-act="pqPickCase"][data-case="${caseNo}"]`, 'the case')) break flow;
   await page.waitForTimeout(100);
   const L = await page.evaluate(() => ({ caseText: document.querySelector('#pstamp .pqd-casebox').innerText,
     go: !!document.querySelector('#pstamp .pqd-go') && document.querySelector('#pstamp .pqd-go').getClientRects().length > 0 }));
   ok('with a case chosen the queue names it, and the card still carries Generate', L.caseText.includes(caseNo) && L.go, JSON.stringify(L));
-  await page.locator('#pstamp .pqd-go:visible').click();
-  await page.waitForFunction(() => PQ && !PQ.busy && !!PQ.items[0].out && !PQ_PAINT_T, null, { timeout: 20000 });
+  if (!await phPress(page, '#pstamp .pqd-go:visible', 'the card\'s Generate, with a case')
+      || !await phUntil(page, () => PQ && !PQ.busy && !!PQ.items[0].out && !PQ_PAINT_T, null, 'the copy is made, with a case')) break flow;
   const F = await page.evaluate(() => { const acts = [...document.querySelectorAll('#pq_run .pqd-doneacts button')]
       .filter(b => b.getClientRects().length).map(b => ({ act: b.dataset.act, words: b.innerText.trim(), gold: /gradient/.test(getComputedStyle(b).backgroundImage) }));
     return { acts }; });
   ok('its finished screen offers Save to device first and gold, then Save to Dropbox · the case, never gold',
      F.acts.length >= 2 && F.acts[0].act === 'pqSaveCopy' && F.acts[0].gold && F.acts[0].words === 'Save to device'
      && F.acts.some(a => a.act === 'pqToCase' && a.words === `Save to Dropbox · ${caseNo}` && !a.gold), JSON.stringify(F.acts));
-  await page.locator('#pq_run [data-act="pqToCase"]').click();
-  await page.waitForFunction(() => !!document.querySelector('#pstamp .vst'), null, { timeout: 5000 });
+  if (!await phPress(page, '#pq_run [data-act="pqToCase"]', 'Save to Dropbox · the case')
+      || !await phUntil(page, () => !!document.querySelector('#pstamp .vst'), null, 'the confirmation opens', 5000)) break flow;
   const T = await page.evaluate(() => ({ inc: !!document.getElementById('pst_inc'), file: !!document.querySelector('#pstamp [data-act="pstFile"]'),
     text: document.querySelector('#pstamp .vst').innerText }));
   ok('and Save to Dropbox opens the existing confirmation for that case — nothing is uploaded until it is pressed there',
      T.inc && T.file && T.text.includes(caseNo), JSON.stringify({ inc: T.inc, file: T.file }));
+  }
   await page.close();
 }
 

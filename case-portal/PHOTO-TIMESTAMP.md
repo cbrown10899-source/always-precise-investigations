@@ -458,8 +458,8 @@ as it was.
 position, from the one writer the video uses. The details drawer shows both
 fingerprints, both formats, the detected and selected times, the corner, the
 verification, when it was made, and what the original carried (*"location
-(GPS), camera … — none of it goes into the copy"*). **Save copy** uses the
-browser's save dialog where it has one, the share sheet on an iPhone or iPad
+(GPS), camera … — none of it goes into the copy"*). **Save copy** (*Save to
+device* on a phone, since V2.1) uses the browser's save dialog where it has one, the share sheet on an iPhone or iPad
 (which resolves only when the operator completes it, so it may honestly be
 called a save), and otherwise a download — which the page does not call saved
 until the operator says the file arrived. **Save to Dropbox** is the unchanged
@@ -588,3 +588,69 @@ owner's device:** HEIC decoding (Chromium decodes none, so the HEIC reader is
 proven on built bytes and the decode is Safari's); the iPhone Photo Library's
 multiple selection and share-sheet save; real camera files with their own maker
 data; and memory on a 48-megapixel photo.
+
+---
+
+# V2.1 — A READY PHOTO IS MADE FROM ITS OWN CARD — 2026-09-28 (a live iPhone defect)
+
+Owner, the day V2 shipped, on a real iPhone: *"photo loads successfully, photo
+shows READY, timestamp is detected, queue works, Edit exists, Case correctly
+says 'None — copies stay on this device' … BUT there is NO visible primary
+action to simply GENERATE TIMESTAMPED COPY → SAVE TO THIS DEVICE. The only
+obvious action below the queue is 'Choose a case (optional)'. This makes the
+optional case workflow appear mandatory."* A small, photo-only unit: no
+redesign, no video change, and the clean-derivative logic, the fingerprints and
+case filing untouched.
+
+## 1. Why a READY card had no Generate
+
+`.vqd-ac .vqd-go{display:none}` — a SHARED dashboard rule — hides the row's ▶
+below the desk's 1240px line, where the desk rule shows it again. On a photo
+card that left **Edit** and **⋮**: Generate was inside the closed menu, and at
+the far end of the full-screen editor, below the preview, the fields, the four
+corners, Previous / Save / Next and Undo. Under the card the only full-width
+control was the case chooser, so it read as the next step. **Reproduced on
+master before anything changed**, at 390, 320, 768 and 1024 — every card width —
+with one READY JPEG and Case = None: three Generate controls in the page, and
+none of them one a person could reach.
+
+**The test named for it had passed over it.** *"Edit, Generate and Add photos
+are not covered by anything"* hit-tested only the controls it could reach, so a
+Generate that was never drawn could never fail it — the `[].every()` vacuous
+truth, in a hit-test. The guard that replaces it (§3) starts from the STATE:
+every READY row, then its Generate.
+
+## 2. What changed
+
+| Where | Before | After |
+| --- | --- | --- |
+| A READY card, below 1240 | Edit · ⋮ (Generate inside ⋮) | Edit · ⋮, then **Generate timestamped copy** in words, gold, full width, on a row of its own |
+| A READY row on the desk | ▶ only while it could be made now | ▶ always; disabled while another photo is being made |
+| A READY row while another is made | lost its Generate | keeps it, disabled, and the row says *Waits its turn — photos are made one at a time* |
+| The case area | *Case: None…* beside a full button, *Choose a case (optional)* | headed **Optional case filing**, the same case line, the same words as a quiet underlined link — still 44px |
+| Editor, nothing changed | Generate timestamped copy | unchanged |
+| Editor, a valid unsaved change | Generate disabled — *Save or undo the changes first* | **Save & generate timestamped copy**: saves exactly as Save does, then makes the copy with it |
+| Editor, an invalid unsaved change | disabled — *Save or undo…* | disabled with Save's own reason (*The month is 1 to 12.*), and the change kept |
+| Generate pressed elsewhere with a change pending | refused into an editor that, on a phone, was behind the list | refused by name, and on a phone the editor opens so the reason is on screen |
+| The finished screen | *Complete ✓ — photo 1 of 1*, the checks, then Save copy · View · Process next | **Timestamped copy complete ✓**, **Metadata clean verification: PASS**, then **Save to device** (gold, first) · Process next · *Save to Dropbox · CASE* only when a case is chosen · View, then the checks |
+| The keyboard after Generate on a phone | lost behind the run screen | on the run's heading, as View already did |
+
+**`pqGoPlan` is the one writer of the editor's Generate** — its label, whether it
+can be pressed, and the reason when it cannot — for the button drawn and the
+button updated in place while somebody types. **A NEEDS REVIEW photo with
+nothing changed still waits for Save**, and still has no Generate on its card:
+that press is the look the READY rule exists to require.
+
+**Save to device is the phone's word, and Save copy the desk's** — the owner used
+each for its own surface — so it is one button with two spans, each shown on
+its own side of the 1240 line. **Filing to a case IS saving to that case's
+Dropbox folder in this portal**, so the brief's *Save to Dropbox* and *Add to
+case* are one button, drawn only when a case has been chosen; it opens the
+existing confirmation, and nothing is uploaded until that is pressed there.
+Save to device is the unchanged `pstSaveDevice` — the share sheet on an iPhone,
+the save dialog where there is one, a download otherwise — and needs no case.
+
+**What did not move:** the video dashboard (every new rule is under `.pqd`, the
+video's markup is untouched, and its sections were re-run), the clean
+derivative and its check, both fingerprints, the six phases, one copy in memory
+and its release question, the case route and its confirmation.

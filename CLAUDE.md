@@ -5812,6 +5812,59 @@ section on the probe's next line instead of failing it; the Escape walk now
 runs last and every step survives the queue having gone. Both then failed by
 name. Numbers in `PHOTO-TIMESTAMP.md` V2 §12.
 
+### A READY photo is made from its own card — the live iPhone defect
+
+Owner, 2026-09-28, on a real iPhone, the day V2 shipped: a photo loaded, showed
+READY with its time detected and *Case: None — copies stay on this device*, and
+the only obvious control under the queue was **Choose a case (optional)** —
+which therefore read as the required next step. Record in
+`case-portal/PHOTO-TIMESTAMP.md` (*V2.1*).
+
+**THE CAUSE WAS ONE SHARED RULE.** `.vqd-ac .vqd-go{display:none}` hides the
+row's ▶ on every width below the desk's 1240px, where the desk rule shows it
+again. On a photo card that left Edit and ⋮: Generate lived inside the closed
+menu and at the far end of the full-screen editor. Reproduced on master at 390,
+320, 768 and 1024 before anything changed — three Generate controls in the
+page, none of them one a person could reach.
+
+**AND THE TEST NAMED FOR IT HAD PASSED OVER IT.** The phone section's *"Edit,
+Generate and Add photos are not covered by anything"* hit-tested only the
+controls it could reach, so a Generate that was never drawn could never fail it
+— the `[].every()` vacuous truth, in a hit-test. The guard that replaces it
+starts from the STATE: every READY row must yield a Generate a person can press
+— drawn, not in the closed ⋮, not inert, 44px, uncovered at its centre and four
+corners, named for what it does, and on the card screens in words and gold;
+disabled only while another photo is being made, with the reason on the row. It
+is named `NEVER READY WITHOUT GENERATE` and runs at 320, 390, 768, 1024, 1280,
+1440 and 1920. **Write a presence check from the state that promises the
+control, never from the controls that happen to be there.**
+
+**PHOTO ONLY, AND THE DESK DID NOT MOVE.** Each READY card carries *Generate
+timestamped copy* on a row of its own (`.pqd-gocell`, below 1240 only); the desk
+keeps its ▶ and the editor's labelled button. Every new rule is under `.pqd`, so
+the video dashboard's CSS and markup are untouched, and its sections were
+re-run.
+
+**THE EDITOR'S GENERATE SAVES A VALID CHANGE, AND SAYS SO BEFORE IT IS
+PRESSED.** `pqGoPlan` is the one writer of that button's label, state and
+reason: nothing changed → *Generate timestamped copy*; a valid unsaved change →
+*Save & generate timestamped copy*, which saves exactly as Save does and makes
+the copy with it; an invalid one → disabled with Save's own reason, the change
+kept. Generate pressed anywhere else with a change pending is refused by name —
+and on a phone the editor OPENS, because a refusal written into a screen hidden
+behind the list is a silent failure. A needs-review photo with nothing changed
+still waits for Save, and still has no Generate on its card: that press is the
+look.
+
+**THE CASE IS OPTIONAL AND LOOKS IT.** *Optional case filing*, the unchanged case
+line, and *Choose a case (optional)* as a quiet underlined link — still 44px.
+**The finished screen** reads *Timestamped copy complete ✓*, *Metadata clean
+verification: PASS*, then **Save to device** first and gold (*Save copy* on the
+desk — the owner's word for each surface, one button), Process next, and *Save
+to Dropbox · CASE* only when a case was chosen: filing to a case IS saving to
+its Dropbox folder in this portal, so that is one button, and with Case = None
+the screen says nothing about a case at all.
+
 ## Active Surveillance Mode
 
 `SV` in `portal/index.html` is the field view: a dark, one-handed, full-screen
