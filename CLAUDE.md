@@ -5801,7 +5801,16 @@ source-order casualty again. Fixed for the photo dashboard with one scoped rule;
 the video dashboard is left exactly as it shipped (§42 forbids touching it) and
 the fix is offered as its own task.
 
-TBD-CLAUDE-NUMBERS
+**TWENTY-EIGHT MUTATIONS, AND THE TWO THAT WALKED PAST WERE THE TEST.** Each
+was applied in a worktree and run against the sections that hold its property;
+26 were named on the first run. *Process next taking a NEEDS REVIEW photo*
+passed because the walk never put one between the photo just made and the next
+READY one — an ORDER that could not reach the defect, the `[].every()` vacuous
+truth wearing a queue; the walk now requires Process next to NAME and then make
+the photo beyond the skipped one. *Escape closing the queue* crashed the
+section on the probe's next line instead of failing it; the Escape walk now
+runs last and every step survives the queue having gone. Both then failed by
+name. Numbers in `PHOTO-TIMESTAMP.md` V2 §12.
 
 ## Active Surveillance Mode
 

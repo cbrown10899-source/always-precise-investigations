@@ -513,7 +513,54 @@ selected row is obvious to the eye and carries `aria-current`.
 
 ## 12. Tests, mutations, and what is left for the device
 
-TBD-TESTS
+**Twenty photo sections of `portal/test-portal.mjs`.** The seven that existed
+were re-aimed at the queue rather than deleted — the stamp really in the
+pixels, nothing guessed, the package rule, the served CSP, the operator's own
+file decoded, picture first and case only to file, and the burned stamp's
+geometry — and thirteen are new: the corner (pinned pixel for pixel against the
+function Video V2 shipped); the clean derivative over metadata-rich JPEG, PNG
+and WebP fixtures, audited by the suite's own JPEG walker and by exiftool; the
+HEIC reader; orientation, all eight tags through two decoders plus the
+stored-pixels negative; fail-closed (tests N and O, and a changed or re-read
+original); each photo's own settings and the two bulk actions (E–H, and the
+unsaved-change question); one at a time and Process next (I, J); removing and
+clearing, and nothing leaving the device (K–M, §41); 1, 10, 50 and 100 photos
+and the 500 ceiling (A–C, §36); drag and drop (D); the desk at 1280, 1440 and
+1920; the phone at 390 and 320; and accessibility with Escape's layering. The
+Home art-card walk and the direct-launch "way back" section were re-aimed too:
+the photo card opens its queue, and the queue's own Close is measured.
+
+**Twenty-eight mutations**, each in a git worktree (never the working tree),
+each run against the sections that hold its property alone, each counted only
+when an assertion **naming it** failed. Twenty-six were named on the first run:
+the scrub bypassed or keeping APP1; the clean check ignored or blind to the
+original's words; no manual turn, or a turn applied twice; a HEIC's tag
+applied again; a changed original, an original reading back differently, and
+an unconfirmable orientation each let through; a zone-less camera time treated
+as READY; the zone applied without keeping the camera's moment, or without
+asking; the unsaved-change question removed; one edit reaching every photo; a
+held copy released without asking; runs chaining on by themselves; analyses in
+parallel; decoded pixels kept on the entry; a request made while making; a
+drop let through to the browser; the copy fingerprinted as the original; the
+corner ignored; the selected row losing `aria-current`; no 500 ceiling; and
+Clear completed never asking.
+
+**The other two were the TEST'S fault, and both tests were strengthened rather
+than the mutations retired:**
+
+- **Process next taking a NEEDS REVIEW photo** passed, because the walk never
+  put one between the photo just made and the next READY one — #4 sat after
+  #1, which was ready, so *"skips #4"* was asserted over an order that could
+  not have reached it. The walk now makes #3 on its own and requires the
+  Process next on screen to NAME #5, and then to make it. Mutated, it fails
+  both, by name (*"Process next: SEQ_04.jpg"*).
+- **Escape closing the queue** crashed the section instead of failing it: the
+  mutation worked, and the probe's next line read the closed queue. A crash is
+  caught, not named (`CLAUDE.md`). The Escape walk now runs last and every step
+  survives the queue having gone; mutated, it fails *"and never closes the
+  queue"* by name.
+
+TBD-FULL
 
 **Proven here:** everything above, in Chromium, on bytes built by the test
 itself — the metadata-rich fixtures carry EXIF (GPS, make, model, serial, lens,
