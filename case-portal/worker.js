@@ -14186,10 +14186,22 @@ async function recordVideoStamp(request, env, user, caseNo) {
      Matched on the original's own name rather than a caller-supplied id: the
      operator picks a file from their device, so the file is what identifies the
      work, and a caller cannot supersede a record belonging to another original
-     by naming its id. */
+     by naming its id.
+
+     AND A NAME IS NOT ENOUGH ON ITS OWN (Timestamp Video V2, 2026-09-28). A
+     camcorder numbers its files from 00000 again whenever its card is
+     formatted, so two different days' recordings can both be 00029.MTS in one
+     case — and with a whole card processed in one queue that stops being a
+     corner. A record is superseded only when nothing about the two says they
+     are DIFFERENT files: the same name, and no disagreement on size or
+     fingerprint where both were recorded. A correction of the same file
+     (same size, same fingerprint, or either one not sent) still supersedes,
+     exactly as before. One `?` per use, the live-D1 rule. */
   await env.DB.prepare(
-    'UPDATE video_stamp SET superseded_at = ? WHERE case_no = ? AND original_name = ? AND superseded_at IS NULL')
-    .bind(now, caseNo, originalName).run();
+    `UPDATE video_stamp SET superseded_at = ? WHERE case_no = ? AND original_name = ? AND superseded_at IS NULL
+       AND (? IS NULL OR original_size IS NULL OR original_size = ?)
+       AND (? IS NULL OR original_hash IS NULL OR original_hash = ?)`)
+    .bind(now, caseNo, originalName, size, size, hash, hash).run();
 
   const res = await env.DB.prepare(
     `INSERT INTO video_stamp (case_no, original_name, original_size, original_hash, start_utc, tz,

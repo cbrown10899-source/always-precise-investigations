@@ -3664,10 +3664,12 @@ person leaves too.
 **DO NOT RUN `case-portal/test-worker.mjs` WHILE `portal/test-portal.mjs` IS
 RUNNING.** Two video-stamp assertions failed on a concurrent run — *"the
 output carries bright pixels there — 0"* — and passed on the same tree run
-alone. `vstDraw` + `MediaRecorder` encodes in REAL TIME, so CPU contention
-drops the stamped frames, and it fails in exactly the shape of a product
-regression: the burn-in test, reporting that the timestamp is not in the
-pixels. This file already said two agents must not run the portal suite at
+alone. The burn-in test then encoded in REAL TIME through `MediaRecorder`, so
+CPU contention dropped the stamped frames, and it failed in exactly the shape
+of a product regression: the timestamp reported as not in the pixels. (Since
+V2 it runs the frame-counted WebCodecs pipeline, which cannot lose a frame
+silently — but the Stop and progress sections are still timing-sensitive, and
+the rule stands.) This file already said two agents must not run the portal suite at
 once because they bind the same port; the stronger rule is that nothing
 CPU-heavy may run beside it at all.
 
@@ -3929,11 +3931,11 @@ The portal tests run the real page against the real Worker against real SQLite,
 so they catch SQL and permission mistakes rather than mocking past them.
 
 **`portal/test-portal.mjs` GETS THE MACHINE TO ITSELF.** Beyond the port it
-binds, its video-stamp section encodes in real time through `MediaRecorder`,
-so anything CPU-heavy beside it — the Worker suite, another Playwright run —
-drops the stamped frames and the burn-in assertions fail as though the
-timestamp had stopped reaching the pixels. Measured 2026-09-21: two failures
-concurrent, zero on the same tree run alone.
+binds, it runs real video encodes and timing-sensitive Stop checks, so
+anything CPU-heavy beside it — the Worker suite, another Playwright run — can
+fail a section as though the product had broken. Measured 2026-09-21 on the
+old real-time recorder: two failures concurrent, zero on the same tree run
+alone.
 
 ## The client package
 
@@ -5183,7 +5185,9 @@ is the only way one can exist.
 **`video_stamp` is metadata and audit only. There is no blob column and there
 must never be one** — a test reads `schema.sql` rather than a comment about it.
 A correction does not edit a row: it inserts a new one and stamps the earlier
-one `superseded_at`, matched on the original's own filename so a caller cannot
+one `superseded_at`, matched on the original itself — its name, and (since V2)
+no disagreement on size or fingerprint where both were recorded, because a
+camcorder's `00029.MTS` on two days' cards is two files — so a caller cannot
 supersede another original by naming its id. This is the project's existing
 audit shape (`send_log`, `build_events`, `invoice_events`), not a new one.
 
@@ -5194,14 +5198,15 @@ the operator confirms it arrived. It is written once — a second tap does not
 move the moment the file reached the device. Safari cannot silently put a file
 in Photos and nothing here pretends it can.
 
-**The renderer is canvas + `MediaRecorder` (VP9/WebM), and mp4 is refused by
-construction.** A capability proof run before any feature code found WebCodecs
-**absent** in this browser, so the architecture audit's first recommendation
-could not be used or proven; the same proof took a clip through decode → canvas
-→ burn → encode → **re-decode** and found the burned marker present in the
-output with a control pixel elsewhere clean. It also found `video/mp4` reporting
-supported while its only real codec `avc1` reports **not** — recording to it
-produces a file nothing can play. `vstMime()` never offers it.
+**The renderer is the WebCodecs pipeline, and nothing else since V2
+(2026-09-28).** It began as canvas + `MediaRecorder` (a capability proof then
+found WebCodecs absent in the test browser), and that route wrote the owner's
+iPhone a file it could not read back. The pipeline — demux, `VideoDecoder`,
+burn, `VideoEncoder` (H.264), the vendored MP4 muxer — replaced it for every
+file the owner records, and V2 RETIRED the recorder outright: a real-time
+capture drops frames without a word and writes the browser's own container,
+so it can prove a copy neither whole nor clean. `vstMime`, `vstProveMime` and
+the proven-format checks went with it; a test pins that they stay gone.
 
 **The clock runs on the footage's timeline, never on this machine's.** The label
 for a frame is the operator's chosen start plus that frame's own presentation
@@ -5212,13 +5217,14 @@ they change, and the stamp must not move.
 
 Known limits, stated rather than papered over: the copy is **picture only** (no
 dependable cross-browser audio capture, and the original with its audio is
-untouched on the device), the output is **WebM**, rendering is **real time**
-because the clip is played through once, and the original's SHA-256 is taken
-only up to 128 MB and recorded as **absent** above that — never as a placeholder.
+untouched on the device), the output is an **H.264 MP4**, a long clip takes a
+while and the screen has to stay open, and the original's SHA-256 is taken only
+up to 128 MB and recorded as **absent** above that — never as a placeholder.
+The COPY's SHA-256 is taken at any size, in place (see the V2 section).
 
 `VST` and the `#vstamp` sibling root follow the evidence viewer's pattern for
-one more reason: a render runs as long as the clip does, and nothing underneath
-may be rebuilt while it goes.
+one more reason: a render runs a long time, and nothing underneath may be
+rebuilt while it goes.
 
 **Adding this table means a manual `portal-setup.yml` dispatch after merge.**
 Every read is guarded through `missingTables()` — the list degrades, the
@@ -5228,9 +5234,9 @@ workspace carries an empty array, the write returns 503 naming the workflow.
 navigation foot for both roles on every screen and as one compact `.qtools` row
 on the Dashboard; an investigator has no Dashboard, which is why the nav door is
 the real answer. Its `data-case` is empty **on purpose** so it cannot adopt
-whichever case is open behind it — opened from outside a case it asks, against
-the caller's own `/submissions` list, and the record still goes through
-`caseFor`. A copy may also be made with no case at all, and the screen then says
+whichever case is open behind it — opened from outside a case, the queue
+offers an optional case choice from the caller's own `/submissions` list, and
+the record still goes through `caseFor`. A copy may also be made with no case at all, and the screen then says
 plainly that the portal holds no record of it until it is attached.
 
 **A control that renders is not a control that can be seen.** The Timestamp Video
