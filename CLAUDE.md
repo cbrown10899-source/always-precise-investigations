@@ -147,7 +147,7 @@ published. The stager **fails if a listed path is missing**, so a renamed
 directory is caught at build time instead of by someone finding a 404 later.
 
 ```bash
-node .github/test-deploy.mjs   # 127 checks (2026-09-24): what may and may not be published
+node .github/test-deploy.mjs   # 127 checks (2026-09-28): what may and may not be published
 ```
 
 It runs the real stager and asserts both halves — that the site is complete,
@@ -3912,8 +3912,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 4389 checks (2026-09-24): auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 4158 checks (2026-09-24): the page against the real Worker
+node case-portal/test-worker.mjs   # 4389 checks (2026-09-28): auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 4262 checks (2026-09-28): the page against the real Worker
 ```
 
 **WRITE A SUITE'S OUTPUT TO A FILE, NEVER A PIPE.** Every suite ends in
@@ -5377,10 +5377,13 @@ own software decoder is the local one that fits.
 portal suite replaces only `VideoDecoder`/`VideoEncoder`; the canvas, the burn,
 `VideoFrame`, `EncodedVideoChunk` and the vendored muxer are real, and
 `vstScenario` drives a whole Generate. TS_LIB now writes High-profile SPS, real
-field slice headers (paired and split), AC-3 audio, lead-in frames and six
-byte-level damage injectors — which **refuse an index past the last packet**,
-because an injector that damages nothing makes a damage test pass on a clean
-file. The device decode of the owner's real file remains the owner's check.
+field slice headers (paired and split), AC-3 audio, lead-in frames, a
+corrupt-NAL option and five byte-level injectors (a flagged packet, a lost
+packet, a broken grid, a cut-off tail, and the standard's duplicate, which must
+NOT count as damage) — and the injectors **refuse an index past the last
+packet**, because one that damages nothing makes a damage test pass on a clean
+file. **Every safety property was mutated in a worktree: 21 of 21 fail an
+assertion that names them.** The device decode of the owner's real file remains the owner's check.
 
 ## A photograph is timestamped into the case, not onto the device
 
