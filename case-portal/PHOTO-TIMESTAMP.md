@@ -257,3 +257,270 @@ hold material back; a document is refused; another case's photograph is refused;
 an investigator can stamp on their own case and reaches nothing on another's;
 deleted and archived are refused by the gate; the table missing degrades the
 read and 503s the write; and Dropbox refusing leaves no row of any kind.
+
+---
+
+# V2 — MANY PHOTOS, ONE AT A TIME, EVERY COPY A CLEAN DERIVATIVE — 2026-09-28
+
+Owner brief (51 sections), built only after Timestamp Video V2 had shipped
+(PR #343), on the merged master, as its own PR: *"Do not mix Video and Photo
+changes in one PR. Do not let the second unit alter or regress the first. Reuse
+shared queue/UI components only where genuinely appropriate. Keep separate
+media-specific processing logic."* Everything in the sections above still
+holds — the route, the table, the package rule, the doors, the inherited
+classification — and every one of their tests still runs.
+
+## 1. What is shared with Video V2, and what is the photo's own
+
+**Shared, because it is presentation or generic:** the dashboard's CSS (the
+`.vqd` classes, with a `.pqd` modifier for the three places a photograph looks
+different), the icons, the name sort, the folder walker, the drag test, the
+narrow-screen test, the size and badge helpers, `vstLabel`/`vstStart`/`vstToUtc`
+(one clock, one wording), `vstSha256`, and `vstDraw` — which gained a corner
+argument (§4).
+
+**The photo's own, because it is media processing:** everything that touches a
+picture's bytes — the metadata reader (`pqMeta`), the orientation plan, the
+render, the JPEG scrub, the clean check, the fingerprints, the queue state
+(`PQ`), its statuses and its dashboard's markup. No video function was changed
+except the two below, and both keep the video's output byte-identical:
+
+| Shared function | Change | Why the video is unaffected |
+| --- | --- | --- |
+| `vstDraw(cx, W, H, text, pos = "br")` | a corner | the video never passes one; a test compares the new function, pixel for pixel, against a frozen copy of the one Video V2 shipped (master `845a50c`) at five video and photo sizes, with and without the corner named |
+| `vstCopyName(ms, tz, n, ext = "mp4")` | an extension | the video never passes one |
+
+## 2. The door opens the queue
+
+Every door — the navigation foot, the Home card, Case media, the field view —
+opens the dashboard, empty, with nothing chosen and nothing read, because the
+queue is where photographs are dropped. Its drop zone is a `<button>`, so a
+click, a tap, Enter and a drop all arrive at one door. The picker takes several
+files at once (`multiple`, `accept="image/*"`, **no `capture`** — capture would
+force the camera, and the operator is choosing photographs that already exist;
+on an iPhone this is the Photo Library with multiple selection, Take Photo and
+Files). A desk browser also offers *Select folder*.
+
+**Adding is not starting.** A drop, a pick and a folder all go through one
+`pqAdd`: what is not a photograph is left out and named; a photograph already in
+the queue is not added twice; from a FOLDER a file must positively look like a
+photo (a folder holds more than photographs), while a file picked by hand gets
+the forgiving test the single picker always used. **The queue holds 500**
+(`PQ_MAX`), and past it the screen says how many were left out — measured
+usable at 1, 10, 50 and 100 (§9). The queue lasts while the page is open and is
+saved nowhere (§37): closing the page clears the list, never the files.
+
+**The Case media door** (`pstOpen`) opens the queue with that photograph in the
+editor and its case already known, read back from the case through the existing
+evidence route and decoded from the recorded content type — the IMG_3576 rule.
+
+## 3. One writer per status, and READY means a time you can stand behind
+
+`pqStatus` derives READY / NEEDS REVIEW / ANALYZING / PROCESSING / COMPLETE /
+FAILED from the entry every time it is drawn. **READY needs the camera's own
+record WITH its zone** (EXIF `DateTimeOriginal` + `OffsetTimeOriginal` — an
+exact moment), **or a time the operator saved.** A camera time with no zone is a
+reading on a clock, not a moment, so it stands at NEEDS REVIEW until it is
+saved; so does a photo with no time at all. `file.lastModified` is still never
+used (D3 above), and neither is today's date.
+
+**This amends D3**, which interpreted a zone-less camera time as Eastern and
+said so. It still fills the boxes with that reading, in Eastern by default,
+with the zone picker beside it — but Generate waits for a Save, because Process
+next (§7) must not be a way round the look the single screen always made the
+operator take.
+
+## 4. Each photograph's settings are its own
+
+The editor holds THIS photograph's date, time, zone and stamp corner. Typed
+values are a **draft** until Save writes them to this photo and no other; typing
+never repaints (the burned-in label, the preview's stamp and the zone names are
+updated in place); and **moving off a photo with an unsaved change asks** — Save
+and continue, Discard changes, or Stay here — and never keeps or drops the change
+silently (§16).
+
+- **Eight named zones** (Eastern, Central, Mountain, Arizona, Pacific, Alaska,
+  Hawaii, UTC), each labelled for the photo's own date — *"EDT (UTC−4) —
+  Eastern"* in September, EST in January.
+- **Four corners**, bottom right first because it is where the stamp has always
+  gone. `vstDraw` computes the corner from the same face and the same safe
+  margin; the stamp moves, it never resizes (asserted to 2px across corners).
+- **The detected time is shown beside the selected one and is never
+  overwritten** (§11). Where the camera's time is an exact moment and the
+  operator has not typed over it, changing the zone shows **the same moment** in
+  the new zone; any other time is a reading on a clock, and the zone only says
+  which clock.
+
+**Safe bulk convenience (§17)** is two buttons, each changing exactly one
+setting, only when pressed and confirmed, naming the zone or corner and the
+count: *Apply timezone to all* and *Apply stamp position to all*. Neither
+touches a date or a time. A photograph already made keeps the settings its copy
+was made with.
+
+## 5. Orientation — CRITICAL (§13, §45)
+
+**The copy is turned into the pixels, and carries no tag to be turned by
+again.** `pqOrientPlan` decides, per photograph, who turns it:
+
+| Plan | When | Who turns it |
+| --- | --- | --- |
+| `none` | tag absent or 1 | nobody |
+| `decoder` | this browser's decoder applies EXIF orientation for this format | the decoder, once |
+| `manual` | this browser's decoder ignores it for this format | the page, by the tag's own transform |
+| `heif` | HEIC / HEIF / AVIF | the decoder, from the format's own `irot`/`imir` — an EXIF tag inside a HEIC is never applied a second time |
+| `fail` | the answer cannot be established | **nobody — the photo is FAILED, never guessed** |
+
+Which decoders turn which formats is **measured on this device**, once per
+format, by decoding a 4×2 probe carrying orientation 6 (`PQ_PROBE`, cached in
+`PQ_ORIENT`) — never assumed from a browser's name. For tags 5–8 the decoded
+size is also held against the raw stored size read from the file's own header
+(JPEG SOF, PNG IHDR, WebP VP8/VP8L/VP8X, TIFF, BMP, HEIF `ispe`), so a decoder
+that turned one photo and not another cannot slip through. **Measured here:**
+Chromium turns a JPEG by its tag and **ignores the tag on a WebP**, so a WebP
+stored on its side is `manual` — a copy made on the assumption that "the browser
+handles it" would have come out on its side.
+
+## 6. The clean derivative (§22–§29)
+
+The owner's preferred architecture, and the only one this has:
+
+    decode the original → orient into pixels → stamp → FRESH JPEG encode
+    → scrub → verify clean → decode back → fingerprint copy → re-check original
+
+**Nothing of the original's container reaches the copy.** The canvas is filled
+white (a transparent PNG must not turn black), drawn in sRGB, stamped and
+encoded at quality 0.92. The encoder's own output is then **scrubbed**
+(`pqScrubJpeg`) down to what a picture needs:
+
+| Kept | Dropped |
+| --- | --- |
+| SOI; a **fresh** JFIF APP0 this tool writes (1.01, 1:1, no thumbnail); DQT; DHT; the one SOF; DRI; SOS and its scan; EOI | every other APPn (EXIF, XMP, ICC, IPTC/Photoshop, maker data, MPF previews), COM, and anything after EOI. **An unknown marker returns null** — a structure this is not ours to guess at, refused as an encode fault |
+
+**Measured, and the reason the scrub is load-bearing:** this browser's own
+canvas JPEG carries an ICC APP2 naming its maker (*"Google Inc. 2016"*). With the
+scrub switched off, the check below refuses every copy (test O), so a copy that
+ships with the encoder's own signature is not a possibility the tests merely
+hope against.
+
+**Colour (§24).** The pixels are sRGB and the copy carries **no** profile: an
+untagged JPEG is read as sRGB by convention, which is generic and names nobody.
+A wide-gamut original (an iPhone's Display P3) is converted to sRGB by the
+browser when drawn, so the most saturated colours can clip slightly — the
+appearance of the correctly rendered original, within sRGB, which is what §24
+asks for.
+
+**`pqCleanCheck` proves it, independently of the steps that made it clean** —
+run on the bytes that will be offered, before any Blob exists: exactly the
+fresh APP0 at offset 2; well-formed DQT/DHT/SOF/SOS/DRI; one frame, at the size
+it was drawn; image data present; an end marker and **nothing after it**; no
+other segment of any kind; and every word the original's metadata carried,
+plus its file name, stem and folder path, searched for — in UTF-8, UTF-16LE and
+UTF-16BE — in every byte that is not image data or a proven table. A failure is
+a **`clean` fault**: no copy, no object URL, no Generate under it, the check's
+own words on the screen (*"The copy carries an APP2 (colour profile or
+previews)…"*).
+
+**Then:** the copy is decoded back and must be a picture at the size it was
+drawn; its SHA-256 is taken (Web Crypto, or the in-place hasher); and the
+**original is read again** and held to its fingerprint from before (or byte for
+byte where no fingerprint could be taken). An original that changed after it
+was queued is refused before anything is made (*Choose this photo again*); one
+that reads back differently after is refused and the copy discarded. **Two
+fingerprints, two fields, never one** (§28–§29).
+
+## 7. One at a time, and only when pressed
+
+Generate makes one photograph. Nothing else starts. *Process next* names the
+next READY photo after the one just made, wraps to the top, skips any NEEDS
+REVIEW, and runs only because the operator pressed it. **One finished copy is
+held in memory**: starting another lets go of a copy already saved or filed,
+and asks first about one that is not. The run shows the owner's six phases —
+Reading original, Normalizing orientation, Applying timestamp, Encoding clean
+derivative, Verifying metadata, Fingerprinting derivative — each ticked only
+when the work reaches it, and **no percentage**, because there is nothing to
+count.
+
+**THERE IS NO STOP, AND THAT IS §21 BEING OBEYED.** *"If photo generation is
+effectively instantaneous and cannot meaningfully be stopped mid-operation: do
+not fake a Stop control. Be truthful to the architecture."* A photograph is made
+in a few seconds by a decode and an encode the browser does not let a page
+interrupt part-way; a Stop would only ever take effect at the end. Closing the
+tool or removing the photo is still read between every phase, and abandons the
+copy.
+
+**A failure is that photograph's alone (§32).** A photo this device cannot
+decode is FAILED at analysis and says why, and every other photo stays exactly
+as it was.
+
+## 8. The copy, its name, its details, and where it can go
+
+`API-Timestamped-YYYYMMDD-HHMMSS-NNN.jpg` — the burned moment and the queue
+position, from the one writer the video uses. The details drawer shows both
+fingerprints, both formats, the detected and selected times, the corner, the
+verification, when it was made, and what the original carried (*"location
+(GPS), camera … — none of it goes into the copy"*). **Save copy** uses the
+browser's save dialog where it has one, the share sheet on an iPhone or iPad
+(which resolves only when the operator completes it, so it may honestly be
+called a save), and otherwise a download — which the page does not call saved
+until the operator says the file arrived. **Save to Dropbox** is the unchanged
+filing route above, original first. Remove, Clear completed and Clear queue let go of references
+only, and ask first only when something would be lost — a copy never saved,
+settings saved for a photo not yet made, or a change never saved.
+
+## 9. Local, light, and measured
+
+**Nothing is uploaded to make a copy.** Adding, checking, making, removing and
+clearing make no request, beacon or download — counted in the page — and the
+photo block's own source is inventoried: its only requests are filing to a case
+and reading a case photo, both pressed by a person, and reading the case list
+while one is being chosen.
+
+**Light (§35):** each photograph is analysed once and in turn — its metadata
+read, its fingerprint taken, and **one** decode that proves this device can make
+the copy, gives its size and draws a 240px thumbnail, after which the pixels
+are let go. The editor's preview (≤1280px, oriented as the copy will be, the
+stamp where it will burn) is the only other full decode, and it is for the
+selected photo only. Measured at 1, 10, 50 and 100 photos: never more than two
+decodes at once, no entry holding decoded pixels, and the editor still working
+on a photo in the middle of the queue.
+
+## 10. Layout
+
+The same two shapes as the video dashboard, at the same 1240px line: a desk
+gets the table (with Size from 1440), the editor beside it and the processing
+row; narrower gets cards, and the editor and the run each take the whole
+screen, with Back returning to the list at the same scroll position. Measured at
+1280, 1440 and 1920, and at 390 and 320: nothing scrolls sideways, every control
+and corner choice is at least 44px, nothing a person must press is covered, the
+selected row is obvious to the eye and carries `aria-current`.
+
+## 11. Found on the way
+
+- **The empty VIDEO dashboard shows *Select folder* twice** — `.vqd-b
+  {display:inline-flex}` outranks `.vqd-hfold{display:none}` by source order.
+  Fixed for the photo dashboard with one scoped rule; the video dashboard is left
+  exactly as it shipped (§42) and the fix is offered as its own task.
+- **Four instrument defects, none of them the product.** A finished check
+  repaints up to 120ms later (`pqPaintSoon`), so a test reading the controls
+  the moment the state said "done" read a stale row — the helpers wait for the
+  paint now. The suite's own JPEG walker stopped four bytes early and reported
+  every clean copy as having no end marker. A test that wrote saved times
+  straight into the entries was read back by the render-time capture as an
+  unsaved edit — the `fcSeed` lesson, answered with the product's own
+  `skipCapture`. And the suite's default 1200px page is NARROW here (<1240), so
+  after a run the list was behind the run screen: sections whose subject is not
+  layout run on a desk.
+
+## 12. Tests, mutations, and what is left for the device
+
+TBD-TESTS
+
+**Proven here:** everything above, in Chromium, on bytes built by the test
+itself — the metadata-rich fixtures carry EXIF (GPS, make, model, serial, lens,
+owner, software, dates and zones, maker note, text tags, a thumbnail), XMP
+(people regions, history), IPTC, a comment and a trailer, as JPEG, PNG and WebP,
+and are read by exiftool as well as by the suite's own walker. **Left for the
+owner's device:** HEIC decoding (Chromium decodes none, so the HEIC reader is
+proven on built bytes and the decode is Safari's); the iPhone Photo Library's
+multiple selection and share-sheet save; real camera files with their own maker
+data; and memory on a 48-megapixel photo.

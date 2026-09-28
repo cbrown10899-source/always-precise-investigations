@@ -10535,15 +10535,54 @@ section('Timestamp Photo V2: the stamp goes in the corner the operator chose, an
                top: minY, bottom: H - 1 - maxY, width: maxX - minX + 1, found: maxX >= 0 };
     };
     const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+    /* THE FUNCTION AS IT SHIPPED WITH TIMESTAMP VIDEO V2 (master 845a50c),
+       frozen here byte for byte in its body, so "the video's stamp is
+       unchanged" is a comparison of pixels rather than a reading of a diff. */
+    const shipped = (cx, W, H, text) => {
+      const pad = Math.round(Math.min(W, H) * 0.035);
+      const face = px => `600 ${px}px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`;
+      const room = Math.max(1, W - pad * 2);
+      const PROBE = 100;
+      cx.font = face(PROBE);
+      const per = Math.max(0.0001, cx.measureText(text).width / PROBE);
+      let size = Math.round(W * 0.52 / per);
+      size = Math.min(size, Math.round(H * 0.08));
+      size = Math.max(8, size);
+      cx.font = face(size);
+      for (let i = 0; i < 64 && size > 8 && cx.measureText(text).width > room; i++) { size -= 1; cx.font = face(size); }
+      cx.textAlign = 'right';
+      cx.textBaseline = 'alphabetic';
+      cx.save();
+      cx.shadowColor = 'rgba(0,0,0,.85)';
+      cx.shadowBlur = Math.max(2, Math.round(size * 0.3));
+      cx.lineWidth = Math.max(2, Math.round(size * 0.16));
+      cx.lineJoin = 'round';
+      cx.strokeStyle = 'rgba(0,0,0,.92)';
+      cx.strokeText(text, W - pad, H - pad);
+      cx.shadowBlur = 0;
+      cx.fillStyle = '#ffffff';
+      cx.fillText(text, W - pad, H - pad);
+      cx.restore();
+    };
+    const drawShipped = (W, H) => {
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const cx = c.getContext('2d'); cx.fillStyle = '#3f6ea8'; cx.fillRect(0, 0, W, H);
+      shipped(cx, W, H, label);
+      return cx.getImageData(0, 0, W, H).data;
+    };
     const out = {};
     for (const [W, H] of [[1200, 800], [800, 1200]]) for (const pos of ['tl', 'tr', 'bl', 'br']) out[`${W}x${H} ${pos}`] = box(W, H, pos);
     out.defaultIsBr = same(draw(1200, 800), draw(1200, 800, 'br')) && same(draw(800, 1200), draw(800, 1200, 'br'));
+    out.asShipped = [[1920, 1080], [1280, 720], [1080, 1920], [640, 480], [1200, 800]].map(([W, H]) =>
+      ({ size: `${W}x${H}`, none: same(draw(W, H), drawShipped(W, H)), br: same(draw(W, H, 'br'), drawShipped(W, H)) }));
     return out;
   });
   ok('bottom right is exactly the stamp this tool always drew — the video renderer, which names no corner, is untouched',
      r.defaultIsBr === true);
+  ok('and it is pixel for pixel the stamp the shipped video tool drew, at video and photo sizes, with and without the corner named',
+     r.asShipped.every(x => x.none && x.br), JSON.stringify(r.asShipped));
   for (const [k, b] of Object.entries(r)) {
-    if (k === 'defaultIsBr') continue;
+    if (k === 'defaultIsBr' || k === 'asShipped') continue;
     const pos = k.split(' ')[1];
     const nearLeft = b.left >= b.pad * 0.7 && b.left < b.W * 0.08;
     const nearRight = b.right >= b.pad * 0.7 && b.right < b.W * 0.08;

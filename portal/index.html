@@ -18341,7 +18341,10 @@ function pqCleanCheck(u8, o){
         for(let i = 0; same && i < PQ_APP0.length; i++) if(u8[at + i] !== PQ_APP0[i]) same = false;
         if(!same) say("has a JFIF header that is not the plain one this tool writes");
       }
-      else say(`carries a ${PQ_JPEG_NAMES[mk] || "0x" + mk.toString(16).toUpperCase() + " segment"}, which a clean copy has no use for`);
+      else {
+        const nm = PQ_JPEG_NAMES[mk] || "0x" + mk.toString(16).toUpperCase() + " segment";
+        say(`carries ${/^A/.test(nm) ? "an" : "a"} ${nm}, which a clean copy has no use for`);
+      }
     }
     at = e;
   }
