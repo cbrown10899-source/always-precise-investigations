@@ -18298,7 +18298,7 @@ const PQ_JPEG_NAMES = {0xE1: "APP1 (EXIF or XMP)", 0xE2: "APP2 (colour profile o
 function pqCleanCheck(u8, o){
   const problems = [];
   const say = s => { if(problems.length < 12) problems.push(s); };
-  if(!(u8 && u8.length > 4 && u8[0] === 0xFF && u8[1] === 0xD8)) return {ok: false, problems: ["it is not a JPEG file"]};
+  if(!(u8 && u8.length > 4 && u8[0] === 0xFF && u8[1] === 0xD8)) return {ok: false, problems: ["is not a JPEG file"]};
   const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
   /* WHERE A WORD COULD HIDE: every byte that is not image data and not one of
      the tables whose length the check below proves — so a segment this check
@@ -18306,30 +18306,30 @@ function pqCleanCheck(u8, o){
   const text = [];
   let at = 2, sof = 0, sos = 0, app0 = 0, eoi = -1, w = 0, h = 0;
   for(let guard = 0; guard < 20000; guard++){
-    if(at + 2 > u8.length){ say("it ends before its image is complete"); break; }
-    if(u8[at] !== 0xFF){ say("it carries bytes outside any segment"); text.push([at, u8.length]); break; }
+    if(at + 2 > u8.length){ say("ends before its image is complete"); break; }
+    if(u8[at] !== 0xFF){ say("carries bytes outside any segment"); text.push([at, u8.length]); break; }
     const mk = u8[at + 1];
     if(mk === 0xD9){ eoi = at + 2; break; }
     if(mk === 0xFF || mk === 0x00 || mk === 0x01 || (mk >= 0xD0 && mk <= 0xD8)){
-      say(`it carries a stray marker (0x${mk.toString(16).toUpperCase()})`); at += 2; continue;
+      say(`carries a stray marker (0x${mk.toString(16).toUpperCase()})`); at += 2; continue;
     }
-    if(at + 4 > u8.length){ say("a segment runs past the end of the file"); break; }
+    if(at + 4 > u8.length){ say("has a segment that runs past the end of the file"); break; }
     const len = dv.getUint16(at + 2);
     const s = at + 4, e = at + 2 + len;
-    if(len < 2 || e > u8.length){ say("a segment runs past the end of the file"); break; }
-    if(mk === 0xDB){ if(!pqDqtOk(u8, s, e)) say("a quantisation table is not well formed"); }
-    else if(mk === 0xC4){ if(!pqDhtOk(u8, s, e)) say("a Huffman table is not well formed"); }
+    if(len < 2 || e > u8.length){ say("has a segment that runs past the end of the file"); break; }
+    if(mk === 0xDB){ if(!pqDqtOk(u8, s, e)) say("has a quantisation table that is not well formed"); }
+    else if(mk === 0xC4){ if(!pqDhtOk(u8, s, e)) say("has a Huffman table that is not well formed"); }
     else if(mk === 0xC0 || mk === 0xC1 || mk === 0xC2){
       sof++;
       const nf = u8[s + 5];
-      if(u8[s] !== 8 || (nf !== 1 && nf !== 3) || len !== 8 + 3 * nf) say("its frame header is not well formed");
+      if(u8[s] !== 8 || (nf !== 1 && nf !== 3) || len !== 8 + 3 * nf) say("has a frame header that is not well formed");
       h = dv.getUint16(s + 1); w = dv.getUint16(s + 3);
     }
-    else if(mk === 0xDD){ if(len !== 4) say("its restart interval is not well formed"); }
+    else if(mk === 0xDD){ if(len !== 4) say("has a restart interval that is not well formed"); }
     else if(mk === 0xDA){
       sos++;
       const ns = u8[s];
-      if(ns < 1 || ns > 4 || len !== 6 + 2 * ns) say("a scan header is not well formed");
+      if(ns < 1 || ns > 4 || len !== 6 + 2 * ns) say("has a scan header that is not well formed");
       at = pqScanEnd(u8, e);
       continue;
     }
@@ -18339,22 +18339,22 @@ function pqCleanCheck(u8, o){
         app0++;
         let same = e - at === PQ_APP0.length && at === 2;
         for(let i = 0; same && i < PQ_APP0.length; i++) if(u8[at + i] !== PQ_APP0[i]) same = false;
-        if(!same) say("its JFIF header is not the plain one this tool writes");
+        if(!same) say("has a JFIF header that is not the plain one this tool writes");
       }
-      else say(`it carries a ${PQ_JPEG_NAMES[mk] || "0x" + mk.toString(16).toUpperCase() + " segment"}, which a clean copy has no use for`);
+      else say(`carries a ${PQ_JPEG_NAMES[mk] || "0x" + mk.toString(16).toUpperCase() + " segment"}, which a clean copy has no use for`);
     }
     at = e;
   }
-  if(eoi < 0) say("it has no end-of-image marker");
-  else if(eoi < u8.length){ say(`it carries ${u8.length - eoi} bytes after the end of the picture`); text.push([eoi, u8.length]); }
-  if(app0 !== 1) say(app0 ? "it carries more than one JFIF header" : "it has no JFIF header");
-  if(sof !== 1) say(sof ? "it carries more than one frame" : "it has no frame header");
-  if(!sos) say("it has no image data");
-  if(o && o.w && (w !== o.w || h !== o.h)) say(`its picture is ${w} × ${h}, not the ${o.w} × ${o.h} it was drawn at`);
+  if(eoi < 0) say("has no end-of-image marker");
+  else if(eoi < u8.length){ say(`carries ${u8.length - eoi} bytes after the end of the picture`); text.push([eoi, u8.length]); }
+  if(app0 !== 1) say(app0 ? "carries more than one JFIF header" : "has no JFIF header");
+  if(sof !== 1) say(sof ? "carries more than one frame" : "has no frame header");
+  if(!sos) say("has no image data");
+  if(o && o.w && (w !== o.w || h !== o.h)) say(`is ${w} × ${h}, not the ${o.w} × ${o.h} it was drawn at`);
   const fixed = new TextDecoder("latin1").decode(PQ_APP0);
   for(const str of (o && o.strings) || []){
     if(!str || str.length < 4 || fixed.includes(str)) continue;
-    if(pqPatterns(str).some(p => pqFindIn(u8, text, p))) say(`it still carries text from the original ("${str.slice(0, 40)}")`);
+    if(pqPatterns(str).some(p => pqFindIn(u8, text, p))) say(`still carries text from the original ("${str.slice(0, 40)}")`);
   }
   return {ok: !problems.length, problems, w, h};
 }
@@ -18780,7 +18780,7 @@ async function pqGo(id){
   /* ONE FINISHED COPY IN MEMORY: a saved one is let go; an unsaved one only
      when the operator says so. */
   const held = PQ.items.find(x => x !== v && x.out && x.out.blob);
-  if(held && !held.savedHere){
+  if(held && !pqKept(held)){
     PQ.confirm = {kind: "release", held: held.qid, next: v.qid};
     PST = null;
     return paintPStamp();
@@ -18990,7 +18990,10 @@ function pqRemove(id){
   paintPStamp();
   pqPump();
 }
-const pqUnsaved = list => list.filter(x => x.out && x.out.blob && !x.savedHere);
+/* A copy is KEPT when it is saved on this device or filed to a case — either
+   way letting go of this tab's own copy loses nothing. */
+const pqKept = x => !!(x.savedHere || x.filed);
+const pqUnsaved = list => list.filter(x => x.out && x.out.blob && !pqKept(x));
 function pqClear(kind, sure){
   if(!PQ || pqRunning()) return;
   const going = kind === "done" ? PQ.items.filter(x => pqStatus(x) === "complete") : PQ.items.slice();
@@ -19747,8 +19750,9 @@ function pqdWhy(v, st){
     : "Check the date and time and Save.";
   if(st === "failed") return v.fault ? v.fault.state : "Cannot be processed on this device.";
   if(st === "analyzing") return v.analysis === "waiting" ? "Waiting its turn to be checked." : "Checking the photo…";
-  if(st === "complete") return v.out.released ? (v.savedHere ? "Saved on your device." : "Released from memory before it was saved.")
-    : v.savedHere ? "Copy made and saved." : "Copy made — not saved yet.";
+  if(st === "complete") return v.out.released ? (pqKept(v) ? (v.savedHere ? "Saved on your device." : "Filed to the case.")
+      : "Released from memory before it was saved.")
+    : v.savedHere ? "Copy made and saved." : v.filed ? "Copy made and filed to the case." : "Copy made — not saved yet.";
   if(pqStale(v)) return "Changed after the last copy was made.";
   return "";
 }
@@ -19948,7 +19952,7 @@ function pqdRunHtml(){
         o.origSame ? "" : `<li><i aria-hidden="true">&#8211;</i>Original ${esc(o.origWhy || vstOrigHashWhy(v))}</li>`}</ul>
       ${pqStale(v) ? `<p class="vqd-note">This photo&rsquo;s settings were changed after this copy was made. The copy
         carries the settings it was made with; generate again for one with the new ones.</p>` : ""}
-      ${o.released ? `<p class="vqd-note">${v.savedHere ? "The copy is saved on your device. This tab has let go of its own copy, so the next photo had the memory."
+      ${o.released ? `<p class="vqd-note">${pqKept(v) ? "The copy is kept &mdash; saved on your device or filed to the case &mdash; and this tab has let go of its own, so the next photo had the memory."
         : "This copy was released from memory before it was saved, when you chose to start another. Make it again to get a new one &mdash; the original is unchanged."}</p>` : ""}
       ${v.err ? `<p class="vqd-err">${esc(v.err)}</p>` : ""}
       ${v.saveMsg ? `<p class="vqd-ok">${esc(v.saveMsg)}</p>` : ""}
@@ -20191,6 +20195,9 @@ function pqDetailsBody(v){
         ${live ? `<img class="pst-prev" src="${esc(o.url)}" alt="The timestamped copy of ${esc(v.name)}">
           <div class="vst-res">${esc(o.label)}<small>${o.source === "exif" ? "from the camera's own record"
             : "entered by the operator"} &middot; ${esc(pqPosWord(o.pos).toLowerCase())}</small></div>` : ""}
+        ${o && o.released ? `<p class="vst-note">${pqKept(v)
+          ? "The copy is kept — saved on your device or filed to the case — and this tab has let go of its own, so the next photo had the memory."
+          : "This copy was released from memory before it was saved, when you chose to start another. Make it again to get a new one &mdash; the original is unchanged."}</p>` : ""}
         ${v.msg ? `<p class="vst-ok">${esc(v.msg)}</p>` : ""}
         ${v.err ? `<p class="vst-err">${esc(v.err)}</p>` : ""}
         ${live && !v.savedHere ? `<button class="vst-btn go" data-act="pstSaveDevice">${
