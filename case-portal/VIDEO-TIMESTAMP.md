@@ -1720,7 +1720,7 @@ labelled, which it had only named), and the four sections re-ran green.
 
 | suite | result |
 | --- | --- |
-| `portal/test-portal.mjs` | {{PORTAL_TOTAL}} |
+| `portal/test-portal.mjs` | **4486 passed, 0 failed** (the first full run: 4476 passed, 8 failed — above) |
 | `case-portal/test-worker.mjs` | **4393 passed, 0 failed** |
 | `.github/test-deploy.mjs` | **127 passed, 0 failed** |
 | `portal/test-ceo-gate.mjs` | **43 PASS, 0 WARN, 0 FAIL** — the CEO Bot's recorded summary still agrees |
