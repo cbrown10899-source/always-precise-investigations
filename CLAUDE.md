@@ -5429,14 +5429,16 @@ muxer follows it (`vstMuxCodec`) — real decode, burn, encode, mux, clean check
 read-back, then the copy played by the browser and its pixels looked at.
 Production encodes H.264 everywhere.
 
-**THE QUEUE IS THE OLD SCREEN, MANY TIMES.** An entry is the object the single
-tool always worked on; `VST` is the open entry, null the list. The existing
-time, details, run and finished screens gained a header and a way back rather
-than a rewrite, and nothing one entry holds can reach another.
+**THE QUEUE IS ONE DASHBOARD, AND A VIDEO'S DETAILS ARE THE OLD SCREEN.** An
+entry is the object the single tool always worked on; `VQ.sel` is the one in
+the editor, and `VST` the one whose details are open over the dashboard — the
+drawer, which is `vstHtml`, the single-video screen, not a rewrite. Nothing one
+entry holds can reach another. The dashboard itself is the owner's approved
+mockup; its durable rules are the next subsection.
 
-- **One heavy thing at a time.** Analysis — structure, decoder questions,
-  fingerprint — is sequential and pauses during a run; Generate waits for the
-  analysis in flight.
+- **One heavy thing at a time.** Analysis — structure, decoder questions, one
+  thumbnail frame, fingerprint — is sequential and pauses during a run;
+  Generate waits for the analysis in flight.
 - **One finished copy in memory.** Starting another lets go of a saved copy;
   an unsaved one only after the operator agrees.
 - **An entry is light.** A checked MOV/MP4 lets its frame table go and keeps
@@ -5447,15 +5449,16 @@ than a rewrite, and nothing one entry holds can reach another.
   held a table here.
 - **READY means a start you can stand behind** — capture metadata, or a time
   the operator saved. A modified-date or zone-less creation time is NEEDS
-  DATE/TIME: the single flow always made you look at it, and Process Next must
+  REVIEW: the single flow always made you look at it, and Process Next must
   not be the way round that.
 - **Nothing runs unpressed.** Process Next names the next READY video and runs
   that one; Stop ends the run where it stands and keeps the queue.
-- **A queue repaints while somebody is using it.** `paintVStamp` keeps scroll,
-  an open More, focus and caret, and a half-typed editor correction (as the
-  entry's draft — only Save writes the entry) across a repaint of the same
-  screen. **Found by a screenshot that would not stay scrolled** — every suite
-  was green over it, the same lesson as every other "look at it" in this file.
+- **A queue repaints while somebody is using it.** `paintVStamp` keeps the
+  list's and the editor's scroll, an open ⋮ menu, focus and caret, a playing
+  preview, and a half-typed editor correction (as the entry's draft — only Save
+  writes the entry). **Found by a screenshot that would not stay scrolled** —
+  every suite was green over it, the same lesson as every other "look at it"
+  in this file.
 
 **A CAMCORDER NAME IS NOT A FILE.** `recordVideoStamp` superseded by original
 name alone, and a camcorder numbers from 00000 again after a format — so a
@@ -5492,6 +5495,67 @@ fingerprinted in the browser at any size. The limit (Web Crypto, whole file,
 per the brief, and it is named as this tool's. Lifting it is possible now (the
 in-place hasher reads slices) but costs phone CPU on every queued original,
 so it is the owner's call, not a keystroke.
+
+### The dashboard: the approved mockup, built, and every control wired
+
+Owner brief 2026-09-28 (the second, A–AW), against an approved mockup:
+*"THIS IS NOT JUST A VISUAL MOCKUP. Build the complete working product behind
+it."* Record in `case-portal/VIDEO-TIMESTAMP.md` (*V2 §6*).
+
+**THE DOOR OPENS THE DASHBOARD, NOT THE PICKER.** The queue is where videos are
+dropped, so it is on screen before any are chosen — empty, reading nothing.
+The drop zone is itself a `<button>`, so a click, a tap, Enter and a drop all
+arrive at one door; dragging is never the only way in. A drop is ADDING (the
+same `vqAdd`, nothing starts), a dropped folder is walked by entry name and
+only its videos join, and no drop ever falls through to the browser.
+
+**ONE DOM, TWO SHAPES, AT 1240.** A desk gets the table beside a sticky editor
+and a processing row; narrower gets cards, and the editor and the run each
+take the whole screen in turn (`data-focus`), with what is behind them
+`inert`. Below 1240 the table's columns cannot sit beside the editor without a
+sideways scroll, so an iPad in landscape gets the cards.
+
+**A QUEUED RUN BELONGS TO THE QUEUE.** `vstRunLive` used to end a run the
+moment its video was not the one on screen — right for a lone screen, and it
+would have killed every dashboard run, which is shown in place with no `VST`
+at all. A queued run now lives while its video is in the queue and nobody has
+pressed Stop or Close; the lone rule is unchanged.
+
+**A TYPED TIME OUTRANKS THE FILE'S DATE, EVEN BEFORE AN INPUT EVENT.**
+`vqAnalyze` writes the capture time into an entry only when nothing is typed,
+and it now takes the editor's boxes as the draft BEFORE deciding — found by the
+existing typing test after the rewrite, where a value set without an input
+event was overwritten the moment the file's own date arrived.
+
+**THE PREVIEW IS MOVED, NOT REBUILT.** One `<video>` of the selected original,
+from a local object URL; each repaint moves that element into the new editor
+inside the same task, and the HTML spec only pauses a media element still out
+of the document once the task ends — so a repaint does not stop what is
+playing. A transport stream is never handed to the player; it shows its first
+frame and says why.
+
+**A THUMBNAIL IS ONE FRAME** — one keyframe, one decoder, closed at once, a
+160px JPEG in this tab. Asserted over twenty videos (one decoder per video at
+most, each fed one chunk, one alive at a time, no encoder); the old assertion
+"no decoder was made" was the right rule for a queue with no pictures and is
+replaced, not loosened.
+
+**THE PROCESSING ROW STICKS ONLY ON A TALL DESK.** At 1280×800 a sticky row
+covered the whole queue — measured in the first screenshot, before a test
+existed. Below 1000px high it sits under the queue, and starting a run brings
+it into view.
+
+**THREE INSTRUMENT LESSONS FROM RE-AIMING THE SUITE, NONE OF THEM THE PRODUCT.**
+A menu item inside a CLOSED `<details>` still returns a real box from
+`getBoundingClientRect` (the content is skipped, not unlaid-out), so a
+"reachable controls" check must exclude it or it reports hidden items as
+covered. A read counter that counts every `vstParse` also counts the COPY's
+read-back, which is not the original's table being read again — count by the
+file. And a source-slicing test used the comment `/* Opening the generator` as
+its end marker: renaming the comment silently widened what it scanned, so the
+wording was kept rather than the test re-pointed. (The receipt, which reads the
+clock on purpose, moved out of the range the "no clock in the opener" guard
+scans — it had been sitting inside it.)
 
 **TWO MORE TRIMMED-RUNNER ARTEFACTS, NOT DEFECTS** (beside the two "long case
 number" ones). "Timestamp video is reachable without opening a case" and

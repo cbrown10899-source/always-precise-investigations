@@ -16337,7 +16337,14 @@ function vqCanGo(v){
 /* ---- GENERATE, ONE AT A TIME ---- */
 async function vqGo(id){
   const v = vqById(id);
-  if(!v || vqRunning() || v.fault) return;
+  if(!v || v.run || VQ.busy === v || v.fault) return;
+  /* ONE AT A TIME, said rather than swallowed: a Generate pressed while
+     another video is being made explains itself and changes nothing. */
+  if(vqRunning()){
+    v.err = "Another video is being processed — videos are made one at a time.";
+    if(VST === v) paintVStamp(); else { VQ.msg = v.err; v.err = ""; paintVStamp(); }
+    return;
+  }
   /* A CORRECTION NOT YET SAVED is not the time this copy would carry. The
      button is withdrawn while one is open, and this refuses it anyway. */
   vqTakeDraft(v);

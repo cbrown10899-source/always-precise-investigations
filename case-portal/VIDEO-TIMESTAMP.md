@@ -1481,31 +1481,32 @@ being copied without proof.
 
 | Rule | How |
 | --- | --- |
-| Many at once | the door opens the device picker with `multiple`; a desktop with a folder picker also gets **Add a folder** (never drawn on touch / iOS). Batches are sorted by name, numbers as numbers (camera order); Move up/down change it |
-| Each video is its own | an entry is the same object the single tool always used; `VST` is the open one. Editing video 2 writes video 2 |
-| One heavy thing at a time | analysis (structure, decoder questions, fingerprint) is sequential and pauses during a run; Generate waits for the analysis in flight |
+| Many at once | **Add videos** opens the device picker with `multiple`; files can be dropped on the dashboard (§6); a desktop with a folder picker also gets **Select folder** (never drawn on touch / iOS). Batches are sorted by name, numbers as numbers (camera order); Move up/down change it |
+| Each video is its own | an entry is the same object the single tool always used; `VQ.sel` is the one in the editor, `VST` the one whose details are open. Editing video 2 writes video 2 |
+| One heavy thing at a time | analysis (structure, decoder questions, one thumbnail frame, fingerprint) is sequential and pauses during a run; Generate waits for the analysis in flight |
 | One finished copy in memory | starting another lets go of a saved copy; an unsaved one only after **Save it first / Let it go** |
 | Light entries | a checked MOV/MP4 lets its frame table go and keeps the count (`vstSlim`; measured in V8 at ~85 bytes a frame — 1.4 MB for ten minutes at 30 fps, 18 MB for an hour at 60, per entry). Generate reads the table again from the same file and refuses one that no longer reads with the frames that were checked. A transport stream never held a table in the queue |
-| READY means a start you can stand behind | capture metadata, or a time the operator saved. Modified-date and zone-less creation times are **NEEDS DATE/TIME** |
-| Nothing runs unpressed | Generate per row; **Process next: NAME** after a copy, naming the next READY video; nothing processes the rest on its own |
+| READY means a start you can stand behind | capture metadata, or a time the operator saved. Modified-date and zone-less creation times are **NEEDS REVIEW** |
+| Nothing runs unpressed | Generate per row (▶ on a desk, ⋮ and the editor everywhere); **Process next** after a copy, naming the next READY video; nothing processes the rest on its own |
 | Stop | ends the run where it stands; the entry reads STOPPED and can be generated again; the queue stays |
 | Remove / Clear | take entries out of the list only; asked first only when an unsaved copy or saved start times would be lost |
 | Session only | the queue holds references to the chosen files for as long as the page is open; nothing about it is stored |
 | Receipt | per video: original name, size and fingerprint; the start found and where; the start burned in; processing time; decoder; the copy's name, size and fingerprint; metadata-clean PASS and what the original carried; the result. A text file the operator saves; never in any video |
 
-Statuses: ANALYZING, READY, NEEDS DATE/TIME, PROCESSING, TRYING COMPATIBILITY
-MODE, COMPLETE, FAILED, STOPPED — one writer (`vqStatus`), derived each time a
-row is drawn.
+Statuses: ANALYZING, READY, NEEDS REVIEW, PROCESSING, TRYING COMPATIBILITY
+MODE, VERIFYING, COMPLETE, FAILED, STOPPED — one writer (`vqStatus`), derived
+each time a row is drawn.
 
 **No timezone selector exists in this tool** (the start is always resolved in
 America/New_York, EST or EDT from the date), so there is no "apply timezone
 to all"; the brief made it conditional on one existing.
 
 **A queue repaints while somebody is using it.** Each video finishes its check
-on its own schedule; `paintVStamp` keeps the list's scroll position, an open
-More, the focused field and its caret, and a half-typed correction (as the
-entry's draft — only Save writes the entry) across repaints of the same
-screen. Found by a screenshot that would not stay scrolled.
+on its own schedule; `paintVStamp` keeps the list's and the editor's scroll
+positions, an open ⋮ menu, the focused field and its caret, the control that
+had the keyboard, a playing preview, and a half-typed correction (as the
+entry's draft — only Save writes the entry). Found by a screenshot that would
+not stay scrolled.
 
 **The case record** is the existing `video_stamp` row (no schema change): the
 original's name, size and fingerprint, the start, the zone and the copy's
@@ -1513,3 +1514,205 @@ clean name. The Worker now supersedes an earlier record only for the SAME
 original — the same name and no disagreement on size or fingerprint — because
 a camcorder numbers from 00000 again after its card is formatted, and a queue
 of two days' cards is two different `00029.MTS`.
+
+## 6. The dashboard — the approved mockup, built (second brief, 2026-09-28)
+
+"THIS IS NOT JUST A VISUAL MOCKUP. Build the complete working product behind
+it." The queue of §5 is now one screen, and every control on it is wired to
+the same queue logic — nothing on the dashboard is a picture of a feature.
+
+### One screen, two shapes
+
+| Region | Desk (≥ 1240px) | Phone and tablet |
+| --- | --- | --- |
+| Header | title, the owner's lede, the four promises in one bordered strip, Close | title, Close and **+ Add videos**; the promises as a 2×2 grid while the queue is empty, and under the queue once it is not |
+| Way in | drop zone (the button itself), Supported formats, Select folder | the same, until videos are listed; then the header's Add videos |
+| Queue | a table: # · thumbnail · filename · size (≥ 1440) · format · detected start · edit time · status · actions | a card per video: number, thumbnail, name, size · format, start, status, **Edit** and **⋮** |
+| Editor | the right-hand column, sticky, always showing the selected video | the whole screen, with **Back to queue** |
+| Processing | a row under the queue: the run, and Next in queue | the whole screen while a run is shown: progress, steps, **Stop**, then **Save copy / View / Process next / Back to queue** |
+| Details | a drawer at the side, the dashboard dimmed behind it | the whole screen |
+
+**1240, not 1180.** Below 1240 the table's columns cannot sit beside the
+editor without the page scrolling sideways, so an iPad in landscape gets the
+cards — the layout built for touch. The controls are the same elements with
+the same acts at every width; what a width does not show is `display:none`,
+never a second copy.
+
+**The processing row stays in view only on a tall desk** (≥ 1000px high). At
+1280×800 a sticky row covered the whole queue — measured in the first
+screenshot, before any test was written. On a shorter desk it sits under the
+queue and starting a run brings it into view (`scrollIntoView`, `nearest`).
+
+### Adding
+
+- **The door opens the dashboard**, not the picker: the queue is where videos
+  are dropped, so it has to be on screen before any are chosen. It opens
+  empty, reading nothing.
+- **The drop zone is a `<button>`** — a click, a tap, Enter and a drop all
+  arrive at the same door. Dragging is never the only way in.
+- **Drag and drop** targets the whole dashboard while it is open, shows
+  *Release to add videos*, and is ADDING: the same `vqAdd`, the same checks
+  and messages, and nothing starts. A dropped **folder** is walked from its
+  entries by name (depth 6, 500 files at most), and only files that look like
+  video join — an AVCHD card's index and clip-info files are named as left
+  out. A drop onto an open video's details adds nothing, and no drop ever
+  falls through to the browser (which would navigate away to the file).
+
+### A thumbnail is one frame
+
+During analysis, after the decoder has said yes: the first keyframe — one
+sample of an MP4/MOV, one access unit from the first 8 MB of a transport
+stream — is read by `file.slice`, decoded by one decoder made for it and
+closed at once, drawn 160px wide (turned upright by the file's own rotation)
+and kept as a small JPEG in this tab only. It is decoration: a file it cannot
+draw keeps a placeholder, and nothing else about the entry changes. Asserted
+over twenty videos: one decoder per video at most, each fed one chunk, only
+one alive at a time, no encoder.
+
+### The editor
+
+- **Detected source time and the time being set are two things**, shown
+  apart: the first is read-only with where it came from; the second is the
+  form, and **Burned into the copy** repeats it as the burn will say it.
+- **Date and time are typed as parts** (MM / DD / YYYY, hh : mm : ss AM/PM),
+  not native pickers: the iPhone's time picker has no seconds, and a
+  surveillance start needs them.
+- **The zone is shown, not chosen**: EDT (UTC−4) or EST (UTC−5), resolved
+  from the date being set. The tool has no zone selector (§5).
+- **Typing never repaints** (`vqTimeLive`): the burned-in line, the preview's
+  stamp, EST/EDT and whether Generate can be pressed update in place.
+- **Leaving an unsaved change asks** — Previous, Next, another row, or Back on
+  a phone: *Save and continue*, *Discard changes*, or *Stay here*. Nothing is
+  kept or dropped silently. Previous and Next step through every video.
+- **The preview is the selected video's, played on this device**: a local
+  object URL of the original, `preload="metadata"`, muted. Only one exists.
+  The element is MOVED into each repaint inside the same task, so a repaint
+  does not pause it (the HTML spec only pauses a media element that is still
+  out of the document once the task has finished). A transport stream is
+  never handed to the player; it shows its first frame and says why. A file
+  this device will not play in the page says that this does not affect making
+  the copy — a preview is not a verdict.
+
+### The processing panel
+
+The owner's steps — *Reading source file, Applying timestamp overlay,
+Encoding video, Trying compatibility mode, Finalizing file, Verifying clean
+metadata, Creating output file* — each ticked only when the pipeline has
+actually reached the next one (`v.seen`, the stages the run really emitted).
+Decode, stamp and encode happen together, a frame at a time, so those rows
+advance together and carry the real frame percentage; after the frame loop
+the bar stands at 99% until the copy is proven. The compatibility row appears
+only when this run needed it, and a damage-read row only when no decoder
+finished. **Stop** is on the panel; on a desk it is also reachable from the
+row's **View**.
+
+### Palette
+
+`--vqd-*` in `:root`: near-black navy, restrained gold, cream serif headings,
+blue-grey borders. Each ink measured on its own ground — cream 14.3:1 and ink
+14.5 on the panel, muted 8.1, gold 8.2, dark ink on the gold button 7.1 and
+more, every status ink 8.2–10.5 on its own tint. A status is always a WORD;
+the colour only repeats it.
+
+### Keyboard and screen readers
+
+Every action is a `<button>` (the drop zone included). A row is selected by
+its **Edit**; a region that opens takes focus on its heading, never on a text
+field, so no screen opens the on-screen keyboard by being arrived at; what is
+behind a phone's full-screen region, a confirmation or a drawer is `inert`.
+**Escape** steps back one layer — a ⋮ menu, a question, the drawer, a phone's
+editor — and never closes the queue.
+
+### Where the build differs from the mockup, on purpose
+
+- **Timezone** is read-only (see above), not a dropdown.
+- **Date and time** are typed parts, not pickers (seconds).
+- **No bottom navigation on the phone** (Queue / Process / Help): the list,
+  the editor and the run each take the screen in turn, and every one has its
+  own way back; a Help tab would need help content nobody has written.
+- **The fourth promise reads "Local processing only (no upload to
+  process)"**, not "(No Upload)": a finished copy that belongs to a case can
+  still be sent, on the operator's own press in its details, to the case's
+  Dropbox folder — the owner-approved optional step of 2026-08-18. Processing
+  never uploads anything; that button is the one way a video byte (the clean
+  derivative, never an original) can leave the device.
+- **The processing row is sticky only on tall desks** (measured above).
+
+## 7. Found on the way, and fixed there
+
+- **A failed MP4 finish on the MOV/MP4 path offered the same run again.** The
+  transport-stream path already classified a writer that throws at its last
+  step (`encoder`, or `memory` for a `RangeError`); the MOV/MP4 path called
+  `finalize()` bare, so the error reached the screen with no class,
+  `vstFaultView` returned nothing, and the preview drew Generate over the
+  failure. Found by writing item 35's "failed mux/finalization" test; both
+  paths now answer the same way and the test holds each.
+- **"Too large to fingerprint in a browser" stopped being true** the day the
+  copy was fingerprinted in the browser at any size. The limit is this tool's
+  (the original's workflow is Web Crypto, whole file, ≤128 MB), and
+  `vstOrigHashWhy` is now the one writer of that sentence — both screens and
+  the receipt. Each queue row also carries the brief's compact *Original
+  fingerprint recorded ✓* (under *More*, so the phone card stays compact).
+- **A queue entry was not light.** Each checked MOV/MP4 kept its whole frame
+  table — measured in V8 at ~85 bytes a frame, so 18 MB for an hour at 60 fps
+  — and a queue of long clips held every one at once, against item 16's
+  "lightweight references". A checked entry now keeps the count
+  (`vstSlim`); Generate reads the table again from the same file and refuses a
+  file that no longer reads with the frames that were checked (a `read` fault,
+  offered *Choose this video again*).
+- **A time typed a moment before the file's own date arrived was written
+  over by it.** Analysis writes the capture time into an entry only when
+  nothing is typed, and it read "nothing typed" from the draft — which a value
+  put in the box without an input event did not have yet. It now takes the
+  editor's boxes as the draft first. Found by the existing typing test after
+  the dashboard rewrite.
+- **The receipt sat inside a guard's range.** "The opener never falls back to
+  the current clock" scans from `vstOpen` to `vstLoadCases`; the receipt,
+  which reads the clock on purpose, had been placed between them, so the
+  guard was failing on the branch. The receipt moved out of the range; the
+  guard was not narrowed.
+- **A Generate pressed while another video was processing did nothing,
+  silently.** It now says videos are made one at a time.
+- **"Everything happens on this device and nothing is uploaded"** was wider
+  than the product: a finished copy that belongs to a case can still be sent,
+  on the operator's explicit press, to the case's Dropbox folder — the
+  owner-approved optional step of 2026-08-18, unchanged here. The queue now
+  says *every copy is made on this device, and nothing is uploaded to make
+  it*, which is exactly true. **That button is the only path by which any
+  video byte leaves the device**, it sends the clean DERIVATIVE only, never an
+  original, and nothing presses it for the operator.
+
+## 8. Tests
+
+{{TESTS}}
+
+## 9. Every safety property, mutated
+
+Each mutation was applied in a git worktree (never the working tree), the
+sections that hold that property were run alone, and the mutation counts only
+when an assertion **naming it** failed — a crash or an unrelated failure does
+not count.
+
+{{MUTATIONS}}
+
+## 10. Proven here, and what is left for the device
+
+Proven in this container: the whole pipeline on real codecs (VP9 decode →
+burn → encode → mux → scrub → clean check → fingerprint → read-back → played
+by the browser, stamp measured in the pixels) for MP4 and a metadata-loaded
+MOV; the MTS/M2TS/AVCHD paths, the H.264 NAL walk and SEI stripping on stub
+codecs with the real muxer; SHA-256 against Web Crypto; every queue rule A–L;
+the dashboard at 1280, 1440, 1920, 390 and 320 — including drag and drop, the
+editor's local preview, the unsaved-change prompt and the scroll position kept
+across the phone's editor.
+
+**Not provable here, and the owner's check:** this Chromium has no H.264
+decoder or encoder, so an H.264 copy made by a real device's encoder — the
+iPhone's — is proven by the same code path and the same check, but not by a
+run in this container. The first real copy on the iPhone is the test that
+settles it: it either passes the clean check, or it is refused with the
+check's own words, and nothing in between is possible.
+
+**The copy is picture only** (unchanged): the original's audio stays on the
+original. The brief's "audio remains aligned where applicable" does not apply
+to a copy with no audio track, and nothing claims otherwise.
