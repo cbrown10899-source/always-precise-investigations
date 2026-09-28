@@ -1928,6 +1928,34 @@
   .pqd-pgrid input{width:20px;height:20px;flex:none;margin:0;accent-color:var(--vqd-gold);}
   .pqd-pgrid label:has(input:checked){border-color:var(--vqd-gold);background:var(--vqd-panel-2);}
   .pqd-pos[disabled] label{opacity:.6;cursor:default;}
+  /* A READY PHOTO IS MADE FROM ITS OWN CARD (owner, 2026-09-28 — a live
+     iPhone defect). The shared rule above hides the row's ▶ below the desk,
+     so a READY card on a phone or a tablet showed Edit and ⋮ and nothing
+     else: Generate lived in the closed ⋮ and at the far end of the editor,
+     and the only full-width control under the list was the OPTIONAL case
+     chooser, which therefore read as the next step. The card carries Generate
+     in words now, on a row of its own under its status. The desk keeps its ▶
+     in the Actions column and the labelled button in the editor beside it. */
+  .pqd-gocell, .pqd .pqd-only-d{display:none;}
+  @media(max-width:1239px){
+    .pqd .vqd-row[data-status="ready"]{grid-template-areas:"n th nm nm" "n st st ac" "n go go go";}
+    .pqd .pqd-gocell{display:block;grid-area:go;}
+    .pqd .pqd-go{display:flex;width:100%;min-height:48px;font-size:1rem;}
+    .pqd .pqd-save{flex:1 1 100%;min-height:50px;font-size:1rem;}
+  }
+  @media(min-width:1240px){ .pqd .pqd-only-d{display:inline;} }
+  /* THE CASE IS OPTIONAL, AND LOOKS IT: a quiet line under the list, headed
+     as optional, whose control is a link rather than a button that reads as
+     the next thing to do. Still 44px — quiet is not small. */
+  .pqd .pqd-casebox{margin-top:14px;padding-top:10px;border-top:1px solid var(--vqd-line);}
+  .pqd .pqd-caseh{flex:1 1 100%;margin:0;font-family:inherit;font-size:.74rem;font-weight:800;
+    letter-spacing:.06em;text-transform:uppercase;color:var(--vqd-muted);}
+  .pqd .pqd-casebtn{padding:0 6px;text-decoration:underline;text-underline-offset:3px;}
+  /* The finished copy: the result, then the two things to do with it, then
+     the list of what was checked. */
+  .pqd .pqd-pass{margin:0 0 4px;display:flex;align-items:center;gap:6px;color:var(--vqd-ok);
+    font-size:.95rem;font-weight:700;}
+  .pqd .pqd-doneacts{margin-top:8px;}
   /* The record list, shown in the case's Evidence tab. */
   .vsrow{border:1px solid var(--line);border-radius:10px;padding:8px 10px;
     margin-bottom:8px;}
@@ -18755,7 +18783,7 @@ function pqRelease(v){
   try{ if(o.url) URL.revokeObjectURL(o.url); }catch{}
   o.blob = null; o.url = ""; o.released = true;
 }
-async function pqGo(id){
+async function pqGo(id, opts = {}){
   const v = pqById(id);
   if(!v || !PQ || PQ.busy === v || v.fault) return;
   if(pqRunning()){
@@ -18765,9 +18793,24 @@ async function pqGo(id){
   }
   pqTakeDraft(v);
   if(pqDraftDiff(v)){
-    v.err = "Save or undo the changes to this photo first — the copy uses the saved settings.";
-    PQ.sel = v.qid;
-    return paintPStamp();
+    /* THE EDITOR'S "Save & generate": a valid change is saved exactly as Save
+       saves it, and the copy is made with it; an invalid one is refused by
+       Save's own reason and kept, never dropped. */
+    if(opts.save){
+      if(!pqSaveTime(v)){
+        PQ.sel = v.qid;
+        if(vqNarrow()) PQ.focus = "edit";
+        return paintPStamp();
+      }
+    } else {
+      /* Pressed anywhere else — a card, the ▶, the ⋮, Process next — a change
+         nobody saved is neither used nor thrown away. The editor says why, and
+         on a phone it is opened so the reason is on screen, not behind it. */
+      v.err = "Save or undo the changes to this photo first — the copy uses the saved settings.";
+      PQ.sel = v.qid;
+      if(vqNarrow()){ PQ.focus = "edit"; PQ.focusTo = "pq_ehead"; }
+      return paintPStamp();
+    }
   }
   if(v.analysis !== "done"){
     v.err = "This photo is still being checked.";
@@ -18791,6 +18834,9 @@ async function pqGo(id){
   if(held) pqRelease(held);
   PQ.confirm = null; PQ.msg = ""; PQ.err = "";
   PQ.busy = v; PQ.runId = v.qid; PQ.focus = "run"; PQ.scrollTo = "pq_run";
+  /* On a phone the run takes the screen and the card that was pressed goes
+     behind it, so the keyboard goes to the run's heading — as View does. */
+  if(vqNarrow()) PQ.focusTo = "pq_runh";
   if(v.out){ pqRelease(v); v.out = null; }
   v.savedHere = false; v.started = false; v.filed = null;
   v.err = ""; v.saveMsg = ""; v.msg = ""; v.seen = new Set(); v.stage = "";
@@ -19151,9 +19197,10 @@ function pqLive(){
   const note = $("pq_dirty");
   if(note) note.textContent = dirty ? "Not saved yet — Save writes these settings to this photo only." : "";
   const go = $("pq_go");
-  if(go) go.disabled = dirty || !pqCanGo(v);
+  const plan = pqGoPlan(v);
+  if(go){ go.disabled = !plan.ok; go.textContent = plan.label; go.dataset.act = plan.save ? "pqSaveGo" : "pqGo"; }
   const why = $("pq_gowhy");
-  if(why) why.textContent = pqGoWhy(v);
+  if(why) why.textContent = plan.why;
 }
 
 /* WHERE THE BURNED TIME CAME FROM, decided from the values themselves: the
@@ -19391,15 +19438,33 @@ function pqOrientText(v){
   if(!p) return v.analysis === "done" ? "not determined" : "not read yet";
   return p.why;
 }
-function pqGoWhy(v){
+/* WHAT THE EDITOR'S GENERATE WILL DO, and why not when it cannot — the one
+   writer of that button's label, its state and its reason, whether it is
+   drawn or updated in place while somebody types (owner, 2026-09-28: "Do not
+   silently discard edits"). A VALID change that is not saved yet is saved by
+   this button, and its label says so before it is pressed; an invalid one is
+   never saved, and the reason is the one Save itself would give. A photo that
+   needs review with nothing changed still waits for Save: that press is the
+   look the READY rule exists to require. */
+function pqGoPlan(v){
+  const plan = (ok, save, why) => ({ok, save, why,
+    label: save ? "Save & generate timestamped copy" : "Generate timestamped copy"});
+  if(!v || !PQ) return plan(false, false, "");
   const st = pqStatus(v);
-  if(st === "processing" || st === "complete" || st === "failed") return "";
-  if(pqDraftDiff(v)) return "Save or undo the changes first — the copy uses the saved settings.";
-  if(st === "needs") return "Check the date and time and press Save first.";
-  if(st === "analyzing") return "Still checking this photo…";
-  if(pqRunning()) return "Another photo is being made — photos are made one at a time.";
-  return "";
+  if(st === "analyzing") return plan(false, false, "Still checking this photo…");
+  if(st !== "ready" && st !== "needs") return plan(false, false, "");
+  if(pqDraftDiff(v)){
+    const d = pqDrafted(v), s = vstStart(d);
+    if(!s.ok) return plan(false, false, s.why);
+    if(!PQ_POS.some(p => p[0] === d.pos)) return plan(false, false, "Choose where the stamp goes.");
+    if(pqRunning()) return plan(false, true, "Another photo is being made — photos are made one at a time.");
+    return plan(true, true, "Your changes are saved to this photo first, and the copy is made with them.");
+  }
+  if(st === "needs") return plan(false, false, "Check the date and time and press Save first.");
+  if(pqRunning()) return plan(false, false, "Another photo is being made — photos are made one at a time.");
+  return plan(pqCanGo(v), false, "");
 }
+const pqGoWhy = v => pqGoPlan(v).why;
 function pqPvNote(v, hasPv, locked){
   if(locked) return "This photo is being made.";
   if(v.fault) return "No preview — this photo cannot be processed on this device.";
@@ -19756,8 +19821,11 @@ function pqdWhy(v, st){
   if(st === "complete") return v.out.released ? (pqKept(v) ? (v.savedHere ? "Saved on your device." : "Filed to the case.")
       : "Released from memory before it was saved.")
     : v.savedHere ? "Copy made and saved." : v.filed ? "Copy made and filed to the case." : "Copy made — not saved yet.";
-  if(pqStale(v)) return "Changed after the last copy was made.";
-  return "";
+  /* A READY row's Generate is disabled only while another photo is being
+     made, and the row says so rather than leaving a dead button. */
+  const wait = st === "ready" && pqRunning() ? "Waits its turn — photos are made one at a time." : "";
+  if(pqStale(v)) return "Changed after the last copy was made." + (wait ? " " + wait : "");
+  return wait;
 }
 function pqdRowHtml(v, n){
   const q = PQ;
@@ -19769,6 +19837,10 @@ function pqdRowHtml(v, n){
   const busy = st === "processing";
   const why = pqdWhy(v, st);
   const go = pqCanGo(v);
+  /* EVERY READY ROW CARRIES GENERATE, at every width: live when it can be
+     made now, and drawn disabled — with its reason on the row — while another
+     photo is being made, never simply absent. */
+  const ready = st === "ready";
   const sel = String(q.sel) === String(id);
   const primary = busy
     ? `<button class="vqd-b" data-act="pqView" data-id="${id}" aria-label="View progress of ${name}">View</button>`
@@ -19781,7 +19853,7 @@ function pqdRowHtml(v, n){
           : "Original fingerprint " + esc(vstOrigHashWhy(v))}</p>` : ""}
         <button class="vqd-b vqd-mi" data-act="pqDetails" data-id="${id}">${st === "failed" ? "What happened" : "Details"}</button>
         ${st === "complete" && v.out && v.out.blob && !v.savedHere
-          ? `<button class="vqd-b vqd-mi" data-act="pqSaveCopy" data-id="${id}">Save copy</button>` : ""}
+          ? `<button class="vqd-b vqd-mi" data-act="pqSaveCopy" data-id="${id}">${pqdSaveWords()}</button>` : ""}
         ${st === "ready" ? `<button class="vqd-b vqd-mi" data-act="pqGo" data-id="${id}"${go ? "" : " disabled"}>Generate timestamped copy</button>` : ""}
         ${v.fault && v.fault.retry === "reselect" ? `<button class="vqd-b vqd-mi" data-act="pqRepick" data-id="${id}">Choose this photo again</button>` : ""}
         ${st !== "complete" ? `<button class="vqd-b vqd-mi" data-act="pqRemove" data-id="${id}">Remove from queue</button>` : ""}
@@ -19800,10 +19872,15 @@ function pqdRowHtml(v, n){
           aria-label="Edit the date and time of ${name}"${busy ? " disabled" : ""}><span>${cur
           ? `${esc(cur.date)}<br>${esc(cur.time)} ${esc(cur.zone)}` : "Set date &amp; time"}</span>${VQD_I.cal}</button></span>
       <span class="vqd-c vqd-st">${vqdBadge(st)}</span>
-      <span class="vqd-c vqd-ac">${primary}${go ? `<button class="vqd-b vqd-go" data-act="pqGo" data-id="${id}"
+      <span class="vqd-c vqd-ac">${primary}${ready ? `<button class="vqd-b vqd-go" data-act="pqGo" data-id="${id}"${go ? "" : " disabled"}
           aria-label="Generate timestamped copy of ${name}" title="Generate timestamped copy">&#9654;</button>` : ""}${menu}</span>
+      ${ready ? `<span class="vqd-c pqd-gocell"><button class="vqd-b vqd-gold pqd-go" id="pq_rgo_${id}" data-act="pqGo"
+          data-id="${id}"${go ? "" : " disabled"} aria-label="Generate timestamped copy of ${name}">Generate timestamped copy</button></span>` : ""}
     </li>`;
 }
+/* "Save to device" where the owner reads it on a phone; the desk keeps the
+   words it always had. One button, whichever the screen shows. */
+const pqdSaveWords = () => `<span class="only-m">Save to device</span><span class="pqd-only-d">Save copy</span>`;
 
 /* The editor: THIS photograph's date, time, zone and stamp position, and
    nothing else. Its inputs are drawn from the draft while there is one. */
@@ -19823,6 +19900,7 @@ function pqdEditHtml(){
   const locked = q.busy === v;
   const i = q.items.indexOf(v), n = q.items.length;
   const dirty = pqDraftDiff(v);
+  const plan = pqGoPlan(v);
   const hasPv = !!(q.pv && q.pv.qid === v.qid);
   const inp = (k, label, max, wide) => `<input id="pst_${k}" class="vqd-in${wide ? " w4" : ""}" inputmode="numeric"
       maxlength="${max}" autocomplete="off" aria-label="${label}" data-act-input="pqField"
@@ -19838,8 +19916,8 @@ function pqdEditHtml(){
       ? `<button class="vqd-b vqd-wide" data-act="pqDetails" data-id="${v.qid}">View the timestamped copy</button>`
     : locked ? `<button class="vqd-b vqd-wide" data-act="pqView" data-id="${v.qid}">View progress</button>`
     : st === "failed" ? `<button class="vqd-b vqd-wide" data-act="pqDetails" data-id="${v.qid}">What happened</button>`
-    : `<button class="vqd-b vqd-gold vqd-wide" id="pq_go" data-act="pqGo" data-id="${v.qid}"${
-        dirty || !pqCanGo(v) ? " disabled" : ""}>Generate timestamped copy</button>`;
+    : `<button class="vqd-b vqd-gold vqd-wide" id="pq_go" data-act="${plan.save ? "pqSaveGo" : "pqGo"}" data-id="${v.qid}"${
+        plan.ok ? "" : " disabled"}>${esc(plan.label)}</button>`;
   const ms = s.ok ? s.ms : null;
   return `<aside class="vqd-edit" id="pq_edit" aria-label="Edit date and time" data-qid="${v.qid}">${back}
     ${head(`${esc(v.name)} <span class="vqd-pos">&middot; photo ${i + 1} of ${n}</span>`)}
@@ -19948,26 +20026,38 @@ function pqdRunHtml(){
     const checks = [pqOrientCheck(o), "Timestamp burned into the pixels", "Metadata clean verification PASS",
                     o.sha256 ? "Derivative fingerprint recorded" : "",
                     o.origSame ? "Original unchanged &mdash; same bytes, same fingerprint" : ""].filter(Boolean);
-    return shell(`Complete &#10003; &mdash; photo ${pos} of ${total}`,
-      `<b>${esc(o.name)}</b><small>${vqdMb(o.size)} &middot; JPEG &middot; ${o.w} &times; ${o.h}</small>
+    /* THE FINISHED SCREEN (owner, 2026-09-28): the result first, then keeping
+       the copy on this device — which needs no case — then Process next. A
+       case action is drawn only when a case has been chosen: filing to a case
+       IS saving to its Dropbox folder in this portal, so that is one button,
+       and with Case = None there is nothing about a case here at all. */
+    const live = !o.released && !!o.blob && !pqStale(v);
+    const toCase = live && v.caseNo && !v.filed
+      ? `<button class="vqd-b" data-act="pqToCase" data-id="${v.qid}">Save to Dropbox &middot; ${esc(v.caseNo)}</button>` : "";
+    return shell(`Timestamped copy complete &#10003;`,
+      `<b>${esc(o.name)}</b><small>Photo ${pos} of ${total}</small>
+        <small>${vqdMb(o.size)} &middot; JPEG &middot; ${o.w} &times; ${o.h}</small>
         <small>Made from ${name}</small><small>Stamped ${esc(o.label)}, ${esc(pqPosWord(o.pos).toLowerCase())}</small>`,
-      `<ul class="vqd-checks">${checks.map(t => `<li><i aria-hidden="true">&#10003;</i>${t}</li>`).join("")}${
-        o.origSame ? "" : `<li><i aria-hidden="true">&#8211;</i>Original ${esc(o.origWhy || vstOrigHashWhy(v))}</li>`}</ul>
-      ${pqStale(v) ? `<p class="vqd-note">This photo&rsquo;s settings were changed after this copy was made. The copy
-        carries the settings it was made with; generate again for one with the new ones.</p>` : ""}
-      ${o.released ? `<p class="vqd-note">${pqKept(v) ? "The copy is kept &mdash; saved on your device or filed to the case &mdash; and this tab has let go of its own, so the next photo had the memory."
-        : "This copy was released from memory before it was saved, when you chose to start another. Make it again to get a new one &mdash; the original is unchanged."}</p>` : ""}
+      `${o.clean && o.clean.ok ? `<p class="pqd-pass" id="pq_pass"><i aria-hidden="true">&#10003;</i><span>Metadata clean verification: PASS</span></p>` : ""}
+      <div class="vqd-runacts pqd-doneacts">
+        ${o.released ? "" : v.savedHere ? `<span class="vqd-ok">Saved to this device &#10003;</span>`
+          : `<button class="vqd-b vqd-gold pqd-save" data-act="pqSaveCopy" data-id="${v.qid}">${pqdSaveWords()}</button>`}
+        ${nextBtn}
+        ${toCase}
+        <button class="vqd-b" data-act="pqDetails" data-id="${v.qid}">View</button>
+      </div>
+      ${v.filed ? `<p class="vqd-ok">Saved to Dropbox &middot; ${esc(v.filed.caseNo)} &#10003;</p>` : ""}
       ${v.err ? `<p class="vqd-err">${esc(v.err)}</p>` : ""}
       ${v.saveMsg ? `<p class="vqd-ok">${esc(v.saveMsg)}</p>` : ""}
       ${v.started && !v.savedHere ? `<p class="vqd-note">The download has started. This page cannot see where your
         browser put it, so it will not claim the file is saved &mdash; check it landed, then confirm.</p>
         <button class="vqd-b" data-act="pqSavedMark" data-id="${v.qid}">I have got the file &mdash; mark it saved</button>` : ""}
-      <div class="vqd-runacts">
-        ${o.released ? "" : v.savedHere ? `<span class="vqd-ok">Saved to this device &#10003;</span>`
-          : `<button class="vqd-b vqd-gold" data-act="pqSaveCopy" data-id="${v.qid}">Save copy</button>`}
-        <button class="vqd-b" data-act="pqDetails" data-id="${v.qid}">View</button>
-        ${nextBtn}
-      </div>`);
+      ${pqStale(v) ? `<p class="vqd-note">This photo&rsquo;s settings were changed after this copy was made. The copy
+        carries the settings it was made with; generate again for one with the new ones.</p>` : ""}
+      ${o.released ? `<p class="vqd-note">${pqKept(v) ? "The copy is kept &mdash; saved on your device or filed to the case &mdash; and this tab has let go of its own, so the next photo had the memory."
+        : "This copy was released from memory before it was saved, when you chose to start another. Make it again to get a new one &mdash; the original is unchanged."}</p>` : ""}
+      <ul class="vqd-checks">${checks.map(t => `<li><i aria-hidden="true">&#10003;</i>${t}</li>`).join("")}${
+        o.origSame ? "" : `<li><i aria-hidden="true">&#8211;</i>Original ${esc(o.origWhy || vstOrigHashWhy(v))}</li>`}</ul>`);
   }
   if(st === "failed"){
     const f = v.fault;
@@ -20149,9 +20239,10 @@ function pqHtml(){
                 <span>Status</span><span>Actions</span></div>
               <ol class="vqd-list">${q.items.map((v, i) => pqdRowHtml(v, i + 1)).join("")}</ol>`
               : `<p class="vqd-empty">No photos yet. Drop them here, or press Add photos.</p>`}
-            <div class="vqd-qfoot">
+            <div class="vqd-qfoot pqd-casebox" role="group" aria-labelledby="pq_caseh">
+              <h4 class="pqd-caseh" id="pq_caseh">Optional case filing</h4>
               <span>Case: <b>${q.caseNo ? esc(q.caseNo) : "None &mdash; copies stay on this device"}</b></span>
-              <button class="vqd-b" data-act="pqCase">${q.caseNo ? "Change the case" : "Choose a case (optional)"}</button>
+              <button class="vqd-b vqd-link pqd-casebtn" data-act="pqCase">${q.caseNo ? "Change the case" : "Choose a case (optional)"}</button>
             </div>
             <p class="vqd-note">Your original photos are never modified. Timestamped copies are newly generated
               derivatives with source metadata removed. Original file fingerprints are kept separate from
@@ -32185,6 +32276,14 @@ document.addEventListener("click", ev => {
   }
   else if(act === "pqListBack"){ if(PQ) pqNavigate({back: true}); }
   else if(act === "pqGo"){ pqGo(el.dataset.id); }
+  else if(act === "pqSaveGo"){ pqGo(el.dataset.id, {save: true}); }
+  /* A finished copy to the queue's case — the drawer's own Save to Dropbox
+     confirmation, reached from the finished screen. Drawn only when a case
+     has been chosen; with none, nothing about a case is offered there. */
+  else if(act === "pqToCase"){
+    const v = pqById(el.dataset.id);
+    if(v && PQ.busy !== v && v.caseNo && v.out && v.out.blob){ v.step = "confirm"; v.err = ""; v.msg = ""; PST = v; paintPStamp(); }
+  }
   else if(act === "pqView"){
     const v = pqById(el.dataset.id);
     if(v){ PQ.runId = v.qid; PQ.focus = "run"; PQ.focusTo = "pq_runh"; PQ.scrollTo = "pq_run"; paintPStamp(); }
