@@ -5391,6 +5391,82 @@ packet**, because one that damages nothing makes a damage test pass on a clean
 file. **Every safety property was mutated in a worktree: 21 of 21 fail an
 assertion that names them.** The device decode of the owner's real file remains the owner's check.
 
+## Timestamp Video V2: a copy is clean by construction and proven clean, and many go through one queue
+
+Owner brief 2026-09-28 (40 items). Record in `case-portal/VIDEO-TIMESTAMP.md`
+(*V2*).
+
+**THE COPY STARTS CLEAN; IT IS NOT CLEANED.** Every frame is decoded, stamped
+and encoded afresh and the vendored muxer has no metadata API, so the
+original's GPS, camera, dates, MDPM and name have no path into the copy — the
+brief's preferred architecture was already this one. What the NEW writer and
+encoder add is dealt with in order: user-data SEI (4, 5) and unspecified NALs
+(24–31) are stripped from each encoded chunk before the muxer
+(`vstCleanChunk`); the writer's processing-time stamps in `mvhd`/`tkhd`/`mdhd`
+are zeroed and its `mp4-muxer-hdlr` name blanked, in place (`vstScrubMp4`); and
+then `vstCleanCheck`, which trusts neither, reads the finished bytes against a
+strict box allow-list, the zeroed fields, a NAL walk of every frame and a
+search for every string the original's metadata carried plus its file name. A
+failure is a `clean` fault: no copy, no object URL, never retried on the other
+decoder. `vstFinishCopy` is the one place both transcode paths finish.
+
+**PROCESSING TIME IS AUDIT, SO IT IS NOT IN THE FILE.** Zero is the standard's
+"not set" and what ffmpeg writes with `-map_metadata -1`; the receipt holds the
+moment instead. Scrubbing in place rather than patching the vendored library
+means a muxer update keeps working — or fails the check loudly.
+
+**THE COPY'S FINGERPRINT IS TAKEN IN PLACE** (`vstSha256`, FIPS 180-4 in JS)
+because Web Crypto copies its input and a phone holding two copies of a long
+clip closes the tab. Held to Web Crypto at every block and slice boundary. The
+ORIGINAL keeps its workflow (Web Crypto, ≤128 MB). Two files, two digests,
+never one field. Copies are named `API-Timestamped-YYYYMMDD-HHMMSS-NNN.mp4`
+from the burned start and the queue position (`vstCopyName`, the one writer).
+
+**THE CANVAS RECORDER IS RETIRED** — see *Video is device-first*. The burn-in
+pixel proof moved onto the real pipeline: this browser has VP9 encode and
+decode in WebCodecs, so `useVp9` swaps the encoder configuration and the
+muxer follows it (`vstMuxCodec`) — real decode, burn, encode, mux, clean check,
+read-back, then the copy played by the browser and its pixels looked at.
+Production encodes H.264 everywhere.
+
+**THE QUEUE IS THE OLD SCREEN, MANY TIMES.** An entry is the object the single
+tool always worked on; `VST` is the open entry, null the list. The existing
+time, details, run and finished screens gained a header and a way back rather
+than a rewrite, and nothing one entry holds can reach another.
+
+- **One heavy thing at a time.** Analysis — structure, decoder questions,
+  fingerprint — is sequential and pauses during a run; Generate waits for the
+  analysis in flight.
+- **One finished copy in memory.** Starting another lets go of a saved copy;
+  an unsaved one only after the operator agrees.
+- **READY means a start you can stand behind** — capture metadata, or a time
+  the operator saved. A modified-date or zone-less creation time is NEEDS
+  DATE/TIME: the single flow always made you look at it, and Process Next must
+  not be the way round that.
+- **Nothing runs unpressed.** Process Next names the next READY video and runs
+  that one; Stop ends the run where it stands and keeps the queue.
+- **A queue repaints while somebody is using it.** `paintVStamp` keeps scroll,
+  an open More, focus and caret, and a half-typed editor correction (as the
+  entry's draft — only Save writes the entry) across a repaint of the same
+  screen. **Found by a screenshot that would not stay scrolled** — every suite
+  was green over it, the same lesson as every other "look at it" in this file.
+
+**A CAMCORDER NAME IS NOT A FILE.** `recordVideoStamp` superseded by original
+name alone, and a camcorder numbers from 00000 again after a format — so a
+queue of two days' cards would have marked day one's records superseded by day
+two's. It now supersedes only when name matches and size and fingerprint do
+not disagree where both are known.
+
+**NO TIMEZONE SELECTOR EXISTS**, so there is no "apply timezone to all" — the
+brief made it conditional on one, and adding a zone picker to make the bulk
+button possible would be the tail wagging the dog.
+
+**TWO MORE TRIMMED-RUNNER ARTEFACTS, NOT DEFECTS** (beside the two "long case
+number" ones). "Timestamp video is reachable without opening a case" and
+"Timestamp Photo is reachable in the field" fail in a trimmed run on master
+too — they rely on state earlier sections build. Check any trimmed-run failure
+against master in a worktree before chasing it.
+
 ## A photograph is timestamped into the case, not onto the device
 
 **The owner's brief for this is four words** — *"Build Timestamp Photo"*, item 2

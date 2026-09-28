@@ -1372,3 +1372,143 @@ keyframe (a later part of a split recording) cannot be decoded by any decoder
 and are **reported** on the finished screen, never dropped silently; the MOV /
 MP4 path keeps its single decoder, and gains the completeness count, the
 read-back and a Stop that stops.
+
+# V2 — CLEAN DERIVATIVES + A MULTI-VIDEO QUEUE — 2026-09-28
+
+Owner brief (40 items): every newly generated timestamped video must be a
+**clean derivative** — original untouched, stamp burned in, all source-carried
+metadata stripped, only what playback needs left — and **many videos** must go
+through one queue: selected together, each with its own start, generated one
+at a time, never processed without the operator pressing for it. Local only,
+throughout. Nothing in the MTS/AVCHD fail-closed protections (2026-09-27) was
+loosened; every one of those sections still runs and passes.
+
+## 1. The copy starts clean — the architecture the brief preferred was already this one
+
+The copy is a NEW container of NEW encoded frames: every frame is decoded,
+drawn, stamped and encoded afresh, and the vendored muxer (mp4-muxer 5.2.2) has
+no metadata API at all. So the original's boxes, its SEI, its GPS, its camera
+model and its name have **no path** into the copy. The audit of what the muxer
+writes on its own found exactly three things that are not playback:
+
+| Field | Written by | What it was | Now |
+| --- | --- | --- | --- |
+| `mvhd`/`tkhd`/`mdhd` creation + modification time | mp4-muxer | the moment of PROCESSING | zero — the standard's "not set"; the brief calls processing time audit information |
+| `hdlr` name | mp4-muxer | `"mp4-muxer-hdlr"` — the library signing its work | empty |
+| sample-entry compressor name | mp4-muxer | already 32 zero bytes | verified empty |
+
+and one thing a DEVICE encoder may add: SEI user data (type 5, where x264 and
+others write their name and settings; type 4, registered user data) and the
+"unspecified" NAL types 24–31. Those are stripped from every encoded chunk
+before the muxer sees it (`vstCleanChunk` → `vstStripUserData`, which rebuilds
+an SEI NAL keeping its other messages and re-applies emulation prevention).
+
+The processing-time fields are zeroed **in place** after the muxer finishes
+(`vstScrubMp4`) rather than by editing the vendored library: same length, so
+no box and no frame moves, and a future update of the muxer keeps working —
+or, if it ever started writing something new, fails the check below loudly.
+
+## 2. Proven clean — `vstCleanCheck`, independent of the steps that made it clean
+
+Run on the bytes that will be saved, before a Blob exists:
+
+- **structure** — exactly `ftyp, moov, mdat`; one video track; every box on a
+  strict allow-list (`mvhd, trak, tkhd, mdia, mdhd, hdlr, minf, vmhd, dinf,
+  dref, url, stbl, stsd, stts, stss, stsc, stsz, stco|co64, ctts, avc1, avcC,
+  colr`); anything else — `udta`, `meta`, `uuid`, `XMP_`, `tref`/chapters, an
+  edit list, a second track, free space — fails, named;
+- **fields** — every creation/modification time zero, the handler named
+  nothing and typed `vide`, the compressor named nothing, the language `und`,
+  the data reference self-contained, the file-type brands only generic ones;
+- **frames** (H.264) — every sample walked NAL by NAL: only slice, SEI,
+  parameter-set, delimiter and filler units; no SEI carrying user data; a unit
+  that cannot be read fails;
+- **the source** — every piece of text read out of the ORIGINAL's metadata
+  (`vstIsoMeta`: QuickTime text atoms, Apple `mdta` keys, iTunes item lists,
+  3GPP atoms) and the original's file name and stem, searched for in every
+  byte of the copy that is not compressed picture or a table of numbers.
+
+A failure is a **`clean` fault**: no copy, no object URL, no Generate under it,
+the check's own words on the screen, and it is never retried on the other
+decoder (the pictures were whole; the file around them was not).
+
+### What the copy carries, exactly, and why
+
+`ftyp` (isom / avc1 / mp41), one video track's timescales, durations and
+dimensions, the display matrix (rotation — playback information: the copy is
+upright wherever the original was), language `und`, handler type `vide`, a
+self-contained data reference, the sample tables, the new encoder's SPS/PPS
+(`avcC`) and its colour parameters (`colr`) when it reports them, and the
+pictures. Nothing else. The new file's filesystem date is whenever the
+operator saves it; nothing tries to fake it.
+
+### What the original may carry, and the copy never does
+
+`vstIsoMeta` inventories the source by category — **recording date and time;
+location (GPS); camera make and model; device and software details; title,
+author, comments and other text tags; chapters; cover art or attachments; XMP;
+manufacturer-specific data; timecode, text or timed-metadata tracks** — and a
+transport stream's **camcorder MDPM record** (AVCHD writes date, time and
+camera settings as SEI user data in the picture stream) and any other user
+data there. The finished screen and the receipt name what was found; none of
+it is in the copy.
+
+## 3. Two fingerprints, never one field
+
+- **Original** — as before: Web Crypto, when the file is chosen, up to
+  `VST_HASH_MAX` (128 MB), recorded as absent above that. Unchanged, per the
+  brief ("according to the current workflow").
+- **Copy** — `vstSha256`, FIPS 180-4 in JavaScript, over the finished buffer
+  **in place**. Web Crypto takes a private copy of its input, and a phone
+  holding the writer's buffer plus a second copy of a long clip closes the tab.
+  ~90 MB/s in this container; held to Web Crypto at every block and 4 MB slice
+  boundary and on NIST's `abc`; a stopped run returns no fingerprint rather
+  than a partial one. The Dropbox upload still computes its own digest of what
+  it uploads, as before.
+
+## 4. The canvas recorder is retired
+
+It played the clip in real time and let `MediaRecorder` catch what it could:
+a frame dropped under load leaves no trace, and its container is the browser's
+(Chrome names itself in it). It could prove a copy neither whole nor clean,
+and V2 offers no copy that is not both. Every file the owner records — iPhone
+MOV/MP4 and camcorder MTS — takes the WebCodecs pipeline, so the loss is a
+browser with no WebCodecs, or a container the pipeline cannot list frame by
+frame (WebM, MKV, AVI); those are refused at the door, in words, instead of
+being copied without proof.
+
+## 5. The queue
+
+| Rule | How |
+| --- | --- |
+| Many at once | the door opens the device picker with `multiple`; a desktop with a folder picker also gets **Add a folder** (never drawn on touch / iOS). Batches are sorted by name, numbers as numbers (camera order); Move up/down change it |
+| Each video is its own | an entry is the same object the single tool always used; `VST` is the open one. Editing video 2 writes video 2 |
+| One heavy thing at a time | analysis (structure, decoder questions, fingerprint) is sequential and pauses during a run; Generate waits for the analysis in flight |
+| One finished copy in memory | starting another lets go of a saved copy; an unsaved one only after **Save it first / Let it go** |
+| READY means a start you can stand behind | capture metadata, or a time the operator saved. Modified-date and zone-less creation times are **NEEDS DATE/TIME** |
+| Nothing runs unpressed | Generate per row; **Process next: NAME** after a copy, naming the next READY video; nothing processes the rest on its own |
+| Stop | ends the run where it stands; the entry reads STOPPED and can be generated again; the queue stays |
+| Remove / Clear | take entries out of the list only; asked first only when an unsaved copy or saved start times would be lost |
+| Session only | the queue holds references to the chosen files for as long as the page is open; nothing about it is stored |
+| Receipt | per video: original name, size and fingerprint; the start found and where; the start burned in; processing time; decoder; the copy's name, size and fingerprint; metadata-clean PASS and what the original carried; the result. A text file the operator saves; never in any video |
+
+Statuses: ANALYZING, READY, NEEDS DATE/TIME, PROCESSING, TRYING COMPATIBILITY
+MODE, COMPLETE, FAILED, STOPPED — one writer (`vqStatus`), derived each time a
+row is drawn.
+
+**No timezone selector exists in this tool** (the start is always resolved in
+America/New_York, EST or EDT from the date), so there is no "apply timezone
+to all"; the brief made it conditional on one existing.
+
+**A queue repaints while somebody is using it.** Each video finishes its check
+on its own schedule; `paintVStamp` keeps the list's scroll position, an open
+More, the focused field and its caret, and a half-typed correction (as the
+entry's draft — only Save writes the entry) across repaints of the same
+screen. Found by a screenshot that would not stay scrolled.
+
+**The case record** is the existing `video_stamp` row (no schema change): the
+original's name, size and fingerprint, the start, the zone and the copy's
+clean name. The Worker now supersedes an earlier record only for the SAME
+original — the same name and no disagreement on size or fingerprint — because
+a camcorder numbers from 00000 again after its card is formatted, and a queue
+of two days' cards is two different `00029.MTS`.

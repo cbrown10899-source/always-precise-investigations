@@ -1577,6 +1577,7 @@
   .vq-acts, .vq-two{display:grid;grid-template-columns:repeat(auto-fit, minmax(128px, 1fr));gap:0 8px;}
   .vq-acts .vst-btn, .vq-two .vst-btn{min-height:48px;line-height:1.25;padding:6px 10px;}
   .vq-more{margin-top:8px;border-top:1px solid var(--field-line-2);}
+  .vq-more .vq-fp{margin:0 0 6px;}
   .vq-more summary{min-height:44px;display:flex;align-items:center;cursor:pointer;
     color:var(--field-label);font-size:.85rem;font-weight:700;overflow-wrap:anywhere;}
   .vq-sum{font-weight:700;color:#fff;margin:0 0 6px;font-size:.92rem;}
@@ -12508,6 +12509,17 @@ function vstIsIOS(){
   return /iPhone|iPad|iPod/.test(ua);
 }
 
+/* WHY AN ORIGINAL CARRIES NO FINGERPRINT, said one way on every screen and
+   in the receipt. The original is fingerprinted exactly as it always was —
+   whole, up to VST_HASH_MAX. "Too large to fingerprint in a browser" stopped
+   being true the day the COPY was fingerprinted in place at any size, so it
+   is not said: the limit is this tool's, and it is named as this tool's. */
+function vstOrigHashWhy(v){
+  return v && v.size > VST_HASH_MAX
+    ? `not taken — this tool fingerprints originals up to ${Math.round(VST_HASH_MAX / 1048576)} MB`
+    : "not taken";
+}
+
 async function vstHash(file){
   if(!file || file.size > VST_HASH_MAX) return null;
   if(!(window.crypto && crypto.subtle && crypto.subtle.digest)) return null;
@@ -14245,9 +14257,28 @@ async function vstTranscode(file, parsed, startMs, tz, onStage, run){
   /* NO AUDIO IS ADDED. Not a fallback and not a failure — the milestone's
      output is picture only, so no audio sample is ever read from the file. */
   if(onStage) onStage("finishing", 99);
-  muxer.finalize();
+  /* THE WRITER CAN FAIL AT ITS LAST STEP TOO, and that is the writer's
+     failure, said as one — the two answers the transport-stream path already
+     gives. A raw error here reached the screen with no class, so the failure
+     panel never replaced Generate and the same doomed run was offered again. */
+  try{
+    muxer.finalize();
+  }catch(e){
+    if(e instanceof RangeError) throw vstFault("memory", "This device ran out of memory while finishing the copy. "
+      + "No timestamped copy was created and your original is unchanged.", {text: vstErrText(e), decoded});
+    throw vstFault("encoder", "The MP4 could not be finished (" + vstErrText(e)
+      + "). No timestamped copy was created and your original is unchanged.", {text: vstErrText(e)});
+  }
   /* CLEAN, PROVEN CLEAN, FINGERPRINTED — before a Blob exists to be saved. */
-  const fin = await vstFinishCopy(muxer.target.buffer, {codec, strip, parsed, name: file.name, run, onStage});
+  let fin;
+  try{
+    fin = await vstFinishCopy(muxer.target.buffer, {codec, strip, parsed, name: file.name, run, onStage});
+  }catch(e){
+    if(e && e.vstKind) throw e;
+    if(e instanceof RangeError) throw vstFault("memory", "This device ran out of memory while finishing the copy. "
+      + "No timestamped copy was created and your original is unchanged.", {text: vstErrText(e), decoded});
+    throw e;
+  }
   const blob = fin.blob;
   if(onStage) onStage("verifying", 99);
   const back = await vstReadBack(blob, W, H, muxed, null, fps);
@@ -15967,8 +15998,8 @@ function vqReceiptLines(v, n){
   const st = vqStatus(v);
   const bytes = x => `${Number(x || 0).toLocaleString("en-US")} bytes`;
   L.push(`${n}. ${v.name}`);
-  L.push(`   Original: ${v.name} · ${bytes(v.size)} · SHA-256 ${v.hash ? v.hash
-    : v.size > VST_HASH_MAX ? "not taken (larger than the 128 MB this device fingerprints)" : "not taken"}`);
+  L.push(`   Original: ${v.name} · ${bytes(v.size)} · SHA-256 ${v.hash
+    || (v.analysis && v.analysis !== "done" ? "not yet taken — the file was still being checked" : vstOrigHashWhy(v))}`);
   L.push(`   Detected start: ${vqDetectedText(v)}`);
   const s = vstStart(v);
   const burned = v.out && v.out.startMs != null ? v.out.startMs : s.ok ? s.ms : null;
@@ -17525,7 +17556,7 @@ function vstHtml(){
           <div class="vst-k"><span>Stamp position</span><span>Bottom right</span></div>
           <div class="vst-k"><span>Fingerprint</span><span>${v.hash
             ? esc(v.hash.slice(0, 16)) + "…"
-            : v.size > VST_HASH_MAX ? "not taken &mdash; the file is too large to fingerprint in a browser"
+            : v.size > VST_HASH_MAX ? esc(vstOrigHashWhy(v))
             : v.hashP ? "being taken&hellip;" : "not taken"}</span></div>
           ${vstContainer(v) ? `<div class="vst-k"><span>Container</span><span>${
             esc(vstContainer(v))}</span></div>` : ""}
@@ -17650,8 +17681,7 @@ function vstHtml(){
           <div class="vst-k"><span>Checked</span><span>${esc(vstCheckText(v.out.check))}</span></div>` : ""}
           <div class="vst-k"><span>Original&rsquo;s fingerprint</span><span>${v.hash
             ? esc(v.hash.slice(0, 16)) + "&hellip; (SHA-256, of the original)"
-            : v.size > VST_HASH_MAX ? "not taken &mdash; the file is too large to fingerprint in a browser"
-            : "not taken"}</span></div>
+            : esc(vstOrigHashWhy(v))}</span></div>
           ${v.out ? `<div class="vst-k"><span>Copy&rsquo;s fingerprint</span><span>${v.out.sha256
             ? esc(v.out.sha256.slice(0, 16)) + "&hellip; (SHA-256, of this copy)" : "not taken"}</span></div>` : ""}
           ${v.out && v.out.clean && v.out.clean.ok ? `<div class="vst-k"><span>Metadata</span><span>Checked clean
@@ -17856,6 +17886,8 @@ function vqRowHtml(v, n, mb){
       ${why ? `<p class="vq-why">${why}</p>` : ""}
       <div class="vq-acts">${primary}</div>
       <details class="vq-more"><summary>More for ${name}</summary>
+        ${v.analysis === "done" ? `<p class="vq-sub vq-fp">${v.hash ? "Original fingerprint recorded &#10003;"
+          : "Original fingerprint " + esc(vstOrigHashWhy(v))}</p>` : ""}
         <div class="vq-acts">
           <button class="vst-btn" data-act="vqDetails" data-id="${id}">Details</button>
           ${canMove ? `<button class="vst-btn" data-act="vqUp" data-id="${id}" aria-label="Move ${name} up" ${n === 1 ? "disabled" : ""}>Move up</button>

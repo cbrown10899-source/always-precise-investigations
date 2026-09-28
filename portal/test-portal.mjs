@@ -8372,7 +8372,7 @@ const VP9_LIB = String.raw`
   const XMP_UUID = [0xbe, 0x7a, 0xcf, 0xcb, 0x97, 0xa9, 0x42, 0xe8, 0x9c, 0x71, 0x99, 0x94, 0x91, 0xe3, 0xaf, 0xac];
   const MOV_META = {
     gps: '+37.4138-079.1422+201.000/', make: 'Apple', model: 'iPhone 15 Pro', software: '17.5.1',
-    date: '2026-09-26T06:11:02-0400', title: 'Surveillance day 3', author: 'Corey Brown',
+    date: '2026-09-26T06:11:02-0400', title: 'Surveillance day 3', author: 'A. Field Investigator',
     comment: 'Subject left the residence at 06:10', tool: 'Lavf60.3.100',
     serial: '8F3B2C1A-SERIAL-12345', xmpTool: 'SecretCam 2.1',
   };
@@ -12210,13 +12210,26 @@ section('Clean derivative: a MOV loaded with metadata comes out carrying none of
       const afterBytes = await readFileBytes(f);
       let same = beforeBytes.length === afterBytes.length;
       for (let i = 0; same && i < beforeBytes.length; i++) if (beforeBytes[i] !== afterBytes[i]) same = false;
-      let plays = false;
+      let plays = false, stampBand = null, restBand = null;
       if (out && out.url) {
         const v = document.createElement('video'); v.muted = true; v.src = out.url;
         plays = await new Promise(r => { v.onloadeddata = () => r(v.videoWidth === 320);
           v.onerror = () => r(false); setTimeout(() => r(false), 8000); });
+        /* AND THE STAMP IS IN THIS COPY'S PIXELS: the brightest point of the
+           bottom-right band against a band of the same frame away from both the
+           stamp and the clip's own moving marker. */
+        if (plays) {
+          await new Promise(r => { v.onseeked = r; v.currentTime = 0.05; setTimeout(r, 1500); });
+          const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
+          const x = c.getContext('2d'); x.drawImage(v, 0, 0);
+          const brightest = (bx0, by0, bw, bh) => { const d = x.getImageData(bx0, by0, bw, bh).data; let best = 0;
+            for (let i = 0; i < d.length; i += 4) best = Math.max(best, 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
+            return Math.round(best); };
+          stampBand = brightest(Math.round(c.width * 0.3), Math.round(c.height * 0.86), Math.round(c.width * 0.68), Math.round(c.height * 0.12));
+          restBand = brightest(Math.round(c.width * 0.1), Math.round(c.height * 0.45), Math.round(c.width * 0.5), Math.round(c.height * 0.3));
+        }
       }
-      return { cats: parsed.meta && parsed.meta.cats, strings: parsed.meta && parsed.meta.strings,
+      return { cats: parsed.meta && parsed.meta.cats, strings: parsed.meta && parsed.meta.strings, stampBand, restBand,
                trusted: !!(parsed.capture && parsed.capture.trusted),
                name: out && out.name, clean: out && out.clean, fault: VST && VST.fault && VST.fault.lines,
                paths: tree && tree.map(b => b.path), zeroTimes, hdlrBlank,
@@ -12259,6 +12272,8 @@ section('Clean derivative: a MOV loaded with metadata comes out carrying none of
   ok('the copy has its own fingerprint — the SHA-256 of the copy, not the original',
      R.copySha === R.copyReal && R.copySha !== R.before, `${R.copySha} / ${R.copyReal}`);
   ok('the copy plays back', R.plays === true);
+  ok('and the timestamp is burned into its pixels, with the rest of the picture left alone',
+     R.stampBand > 170 && R.restBand < 90, `${R.stampBand} / ${R.restBand}`);
   ok('and nothing left the device', R.fetches === 0, String(R.fetches));
   ok('the finished screen says it was checked clean, and what stayed on the original',
      /Checked clean/.test(R.screen) && /location \(GPS\)/.test(R.screen), R.screen.slice(0, 600));
@@ -12405,6 +12420,66 @@ section('Clean derivative: a copy that fails its check is never offered');
   await page.close();
 }
 
+section('A writer that cannot finish the MP4 leaves no copy, on either path');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  /* "Failed mux/finalization" (item 35): the MP4 writer throws at its last
+     step. Nothing is offered, the failure is the writer's by name, no Generate
+     sits under it to repeat the run, and the original is untouched — on the
+     MOV/MP4 path (real codecs) and the MTS path (stub codecs) alike. */
+  const R = await vstRun(page, `
+    const M = await vstMuxer();
+    const realFin = M.Muxer.prototype.finalize;
+    const boom = function(){ throw new Error('the writer could not finish'); };
+    const look = v => ({ out: !!(v && v.out), kind: v && v.fault && v.fault.kind,
+                         lines: v && v.fault ? v.fault.lines : [], err: v && v.err,
+                         go: document.querySelectorAll('[data-act="vstGo"]').length, screen: qScreen() });
+    const out = {};
+    try {
+      const restore = useVp9();
+      try {
+        const f = new File([await vp9Clip({ frames: 12 })], 'fin.mp4', { type: 'video/mp4', lastModified: 1790000000000 });
+        const before = await sha(await readFileBytes(f));
+        const parsed = await vstParse(f);
+        const W = watchDoors();
+        M.Muxer.prototype.finalize = boom;
+        VST = tsVst(f, parsed, { codec: { cc: 'vp09', name: 'VP9' } });
+        try { await vstGenerate(); } finally { M.Muxer.prototype.finalize = realFin; W.restore(); }
+        out.mov = Object.assign(look(VST), { urls: W.urls.length,
+                                             unchanged: before === await sha(await readFileBytes(f)) });
+        vstClose();
+      } finally { restore(); }
+      const f2 = new File([makeTs({ frames: 12 })], '00033.MTS', { type: '', lastModified: 1790000000000 });
+      const before2 = await sha(await readFileBytes(f2));
+      const parsed2 = await vstParse(f2);
+      const S = stubCodecs({});
+      VST_PRIMARY_FAILED.clear();
+      const W2 = watchDoors();
+      M.Muxer.prototype.finalize = boom;
+      VST = tsVst(f2, parsed2, { compatOk: true, lane: 'auto' });
+      try { await vstGenerate(); } finally { M.Muxer.prototype.finalize = realFin; S.restore(); W2.restore(); }
+      out.ts = Object.assign(look(VST), { urls: W2.urls.length,
+                                          unchanged: before2 === await sha(await readFileBytes(f2)),
+                                          lanes: S.log.cfgs.map(c => c.hardwareAcceleration || 'default') });
+      vstClose();
+    } finally { M.Muxer.prototype.finalize = realFin; }
+    return out;
+  `);
+  for (const [k, what] of [['mov', 'MOV/MP4'], ['ts', 'MTS']]) {
+    const r = R[k] || {};
+    ok(`${what}: a writer that cannot finish makes no copy, and the failure is the writer’s by name`,
+       r.out === false && r.kind === 'encoder' && (r.lines || []).some(l => /the writer could not finish/.test(l)),
+       JSON.stringify(r).slice(0, 300));
+    ok(`${what}: no Generate is offered to repeat it`, r.go === 0, String(r.go));
+    ok(`${what}: no object URL was made, and the original is unchanged`, r.urls === 0 && r.unchanged === true,
+       `${r.urls} / ${r.unchanged}`);
+  }
+  ok('MTS: a writer failure is not retried on the compatibility decoder',
+     JSON.stringify((R.ts || {}).lanes) === JSON.stringify(['default']), JSON.stringify((R.ts || {}).lanes));
+  await page.close();
+}
+
 section('The copy’s fingerprint is SHA-256, taken in place');
 {
   const page = await newPage();
@@ -12459,6 +12534,8 @@ section('Timestamp queue: many videos at once, sorted, and checked one at a time
                  hashOk: hashes.every(([a, b]) => a === b), distinct: new Set(hashes.map(h => h[0])).size,
                  summary: (document.querySelector('.vq-sum') || {}).innerText || '',
                  rows: document.querySelectorAll('.vq-row').length,
+                 fp: [...document.querySelectorAll('.vq-row .vq-fp')].map(e => e.textContent.trim()),
+                 why: [vstOrigHashWhy({ size: VST_HASH_MAX + 1 }), vstOrigHashWhy({ size: 1 })],
                  fetches: W.fetches + W.xhr + W.beacons, msg: VQ.msg };
       } finally { window.vstParse = rp; window.vstHash = rh; window.VideoDecoder = RD; window.VideoEncoder = RE; W.restore(); }
     } finally { restore(); vstClose(); }
@@ -12475,6 +12552,11 @@ section('Timestamp queue: many videos at once, sorted, and checked one at a time
      `${R.dec} / ${R.enc}`);
   ok('every video carries the fingerprint of its own file, never another’s', R.hashOk && R.distinct === 20,
      String(R.distinct));
+  ok('each row says, compactly, that its original’s fingerprint is recorded',
+     R.fp.length === 20 && R.fp.every(t => t === 'Original fingerprint recorded ✓'), JSON.stringify(R.fp.slice(0, 2)));
+  ok('an original past the limit says why it has none, and names the limit as this tool’s',
+     R.why[0] === 'not taken — this tool fingerprints originals up to 128 MB' && R.why[1] === 'not taken',
+     JSON.stringify(R.why));
   ok('the top of the queue counts them by state', /20 videos loaded/.test(R.summary) && /need/.test(R.summary),
      R.summary);
   ok('a start time the file only guessed at is marked as needing a look', R.statuses.join() === 'needs',
@@ -12791,11 +12873,22 @@ section('Timestamp queue: Add videos, Add a folder, and what a folder brings');
       await qWait(() => one.out || one.fault);
       const single = { status: vqStatus(one), screen: qScreen(), next: !!document.querySelector('[data-act="vqProcessNext"]') };
       S2.restore();
+      /* THE QUEUE HOLDS A HUNDRED: the rest of a bigger selection is left out,
+         and the screen says how many. (Analysis is held off for this — it is
+         the list being checked, not a hundred files being read.) */
+      vstClose();
+      const realPump = window.vqPump;
+      window.vqPump = () => {};
+      const many = [];
+      for (let i = 1; i <= 105; i++) many.push(new File(['x'], 'BULK' + i + '.mp4', { type: 'video/mp4', lastModified: 1790000001000 + i }));
+      vqAdd(many, { caseNo: '' });
+      const cap = { n: VQ.items.length, msg: VQ.msg, last: VQ.items[VQ.items.length - 1].name };
+      window.vqPump = realPump;
       /* A NON-VIDEO CHOSEN ON ITS OWN is refused the way it always was. */
       vstClose();
       vqAdd([new File(['%PDF'], 'report.pdf', { type: 'application/pdf' })], { caseNo: '' });
       const refused = { step: VST && VST.step, queue: !!VQ, screen: qScreen() };
-      return { seen, folder, dup, touchFolder, single, refused };
+      return { seen, folder, dup, touchFolder, single, refused, cap };
     } finally { HTMLInputElement.prototype.click = rc; vstClose(); }
   `);
   ok('Add videos opens the device picker with multiple selection',
@@ -12812,6 +12905,9 @@ section('Timestamp queue: Add videos, Add a folder, and what a folder brings');
      && /Complete ✓/.test(R.single.screen), R.single.screen.slice(0, 200));
   ok('with no Process Next when nothing else is ready',
      R.single.next === false && /No other video in the queue is ready/.test(R.single.screen));
+  ok('a queue holds a hundred videos, and says how many more were left out',
+     R.cap.n === 100 && R.cap.last === 'BULK100.mp4' && /5 videos left out — the queue holds 100 at most/.test(R.cap.msg),
+     JSON.stringify(R.cap));
   ok('a non-video chosen on its own is refused as it always was, with no queue',
      R.refused.step === 'reject' && R.refused.queue === false && /Video files only/.test(R.refused.screen),
      JSON.stringify(R.refused).slice(0, 200));
