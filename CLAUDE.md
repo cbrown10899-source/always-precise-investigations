@@ -2069,10 +2069,13 @@ Rate Sheet's own form is a modal and always sat at the top (117 / 84,
 unchanged); its defect was the way back.
 
 The other three were already direct and are untouched: Active Surveillance
-takes its own full screen, and both timestamp tools open the file picker itself
-— the chooser fires on the first tap, measured. **A probe once reported those
-two as doing nothing**, which was the probe swallowing the chooser with
-`setFiles([])` rather than the product; do not repeat that reading.
+takes its own full screen, and both timestamp tools open their own tool — the
+photo tool's chooser fires on the first tap, measured, and since Timestamp
+Video V2 (2026-09-28) the video card opens the queue dashboard, whose drop zone
+and *Add videos* are the chooser, rather than a bare picker. **A probe once
+reported those two as doing nothing**, which was the probe swallowing the
+chooser with `setFiles([])` rather than the product; do not repeat that
+reading.
 
 **`homeTabs()` IS PER ROLE AND RETURNS A SET, AND BOTH HALVES WERE PAID FOR.**
 The default tab is `cases`, flipped to `dashboard` only for an ADMIN — an
