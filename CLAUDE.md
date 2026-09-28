@@ -147,7 +147,7 @@ published. The stager **fails if a listed path is missing**, so a renamed
 directory is caught at build time instead of by someone finding a 404 later.
 
 ```bash
-node .github/test-deploy.mjs   # 127 checks (2026-09-24): what may and may not be published
+node .github/test-deploy.mjs   # 127 checks (2026-09-28): what may and may not be published
 ```
 
 It runs the real stager and asserts both halves — that the site is complete,
@@ -3912,8 +3912,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 4389 checks (2026-09-24): auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 4158 checks (2026-09-24): the page against the real Worker
+node case-portal/test-worker.mjs   # 4389 checks (2026-09-28): auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 4262 checks (2026-09-28): the page against the real Worker
 ```
 
 **WRITE A SUITE'S OUTPUT TO A FILE, NEVER A PIPE.** Every suite ends in
@@ -5287,6 +5287,103 @@ button under the section reads *Upload picture or document*, because a control
 saying "upload video" would promise what the Worker refuses; the section carries
 the owner's word and no individual control states an untruth. The four field
 actions stay **Activity / Photo / Video / Note**, asserted by name and count.
+
+## Timestamp Video has two local decoders, and a copy is proven whole or not made
+
+Owner, 2026-09-27, on a real `00029.MTS` (M2TS / AVCHD, H.264): the file was
+read, timed and fingerprinted, the decode began — and stopped with *"The
+device's video codec stopped part-way: Decoding error."* The screen then
+offered the identical Generate again under *"Ready — decoded and re-encoded on
+this device"*. Record in `case-portal/VIDEO-TIMESTAMP.md` (*MID-DECODE
+FAILURE*).
+
+**THE PIPELINE HAD ONE DECODER.** WebCodecs `VideoDecoder`, Annex B, no
+`hardwareAcceleration` key — the browser's default, on most computers the GPU.
+When it failed there was nothing else, and the catch put Generate back. Why
+the owner's device decoder stopped is **not determinable here** (this
+container's Chromium has no H.264 at all); interlaced 1080i, the AVCHD
+default, is the leading hypothesis and is labelled as one. The failure screen
+now says how far each decoder got, which settles it on the next report.
+
+**REPRODUCED ON master FIRST, AND THE SECOND ROW IS THE DEFECT THAT MATTERED.**
+Chromium's ordering (close and error callback in one task) reproduced the
+owner's screen exactly. A codec seen closed a moment BEFORE its callback ran
+made master offer **a 15-frame copy of a 90-frame clip as "ready"** — it
+treated a closed decoder as the end of the stream and checked nothing about
+the copy. *"The encoder ended without throwing"* is not evidence of anything.
+
+**TWO LANES, ONE DIFFERENCE.** `vstTsAttempt(…, lane, …)` is one complete pass;
+the lanes differ in exactly one line — the compatibility lane adds
+`hardwareAcceleration: "prefer-software"`, this browser's own software decoder,
+local, no download, no CSP change. The primary lane is configured exactly as
+before (asserted: no `hardwareAcceleration` key, no `description`), so a device
+where it worked behaves identically. `vstTranscodeTs` runs the primary, then —
+only for a DECODER-class failure (`decoder`, `verify`) — the compatibility
+lane from the first keyframe, from the same `File`, output of the failed pass
+discarded. Stream, encoder, read, memory and setup failures never get a second
+decoder: that would be the same doomed run twice.
+
+**A COPY IS OFFERED ONLY WHEN IT IS PROVEN WHOLE.** The attempt keeps a ledger:
+the frames the stream HOLDS (from the slice headers — two fields are one
+frame, in one PES or two, so `vstAuScan` reads `field_pic_flag` with the SPS's
+`sliceSyntax`), every one back from the decoder exactly once and nothing
+stray, every one stamped, encoded and muxed, the stream read to its end, the
+source clock span matching the parse, and the finished MP4 **read back by the
+page's own parser** (`vstReadBack`) with that many frames, that size, that
+running time. Anything short of that is a classified fault and no file.
+
+**DAMAGE STOPS THE READ, AND IS NEVER RETRIED.** `vstTsReader` keeps a damage
+ledger on the picture stream — broken grid, TEI, continuity gap, short PES,
+unfinished PES header, reserved adaptation field, scrambling, a file cut
+mid-packet, a NAL with `forbidden_zero_bit` — and a strict read stops at the
+first. A software decoder CONCEALS damage rather than refusing it, and a
+concealed hole in evidence is the one outcome worse than no copy. The
+standard's permitted duplicate packet is not damage, and its payload is no
+longer appended twice (it was — silently corrupting that frame).
+
+**WHEN NO DECODER FINISHES, THE FILE IS READ ONCE MORE FOR DAMAGE ALONE**
+(`vstTsIntegrity`), so `vstTsVerdict` can say *which*: FILE / STREAM ERROR
+(damage found), DEVICE DECODER COMPATIBILITY ERROR (packets clean, no software
+decoder here), its *(probable)* form (both refused the first frame), FILE /
+STREAM ERROR *(probable)* (both stopped at the same moment part-way), or
+CAUSE NOT DETERMINED. The headline is the owner's sentence verbatim:
+*"Video could not be completely decoded. No timestamped copy was created and
+your original is unchanged."*
+
+**NO LOOP, AND IT IS STRUCTURAL.** A fault replaces Generate (`vstFaultHtml`)
+and `vstGenerate` refuses while `v.fault` or `v.run` is set. The only way on is
+*Choose the video again* after an original stopped being READABLE — a
+different run. `VST_PRIMARY_FAILED` (tab memory only, keyed name|size|mtime)
+sends a file whose primary already failed straight to compatibility mode, and
+`vstLaneFor` is the ONE writer of which lane a run starts with, read by the
+ready screen and the run alike. The ready line says what WILL happen (*"Ready —
+will be decoded and re-encoded"*); the past tense only after it did.
+
+**STOP STOPS THE WORK.** Stop used to close the screen while the decode ran on
+to the end of the file behind it. A run object (`{owner, cancelled, lane}`) is
+read between frames by every loop — TS and MOV — and `vstClose` cancels it.
+
+**THE MOV PATH KEPT ONE DECODER** and gained the same completeness count, the
+read-back and a Stop that stops. Adding the compatibility lane there is a small
+follow-up, not done because the brief was the transport stream.
+
+**FFmpeg/WASM WAS EVALUATED AGAIN AND IS NOT BUILT — AN OWNER DECISION.**
+`@ffmpeg/core` 0.12.10's wasm is 30.7 MiB (Pages caps a file at 25 MiB);
+libav.js publishes no H.264-decoding variant (its source-only one is OpenH264,
+no interlaced); the portal CSP would need `'wasm-unsafe-eval'`. The browser's
+own software decoder is the local one that fits.
+
+**TESTED WITH STUB CODECS AND EVERYTHING ELSE REAL.** `VST_STUBS` in the
+portal suite replaces only `VideoDecoder`/`VideoEncoder`; the canvas, the burn,
+`VideoFrame`, `EncodedVideoChunk` and the vendored muxer are real, and
+`vstScenario` drives a whole Generate. TS_LIB now writes High-profile SPS, real
+field slice headers (paired and split), AC-3 audio, lead-in frames, a
+corrupt-NAL option and five byte-level injectors (a flagged packet, a lost
+packet, a broken grid, a cut-off tail, and the standard's duplicate, which must
+NOT count as damage) — and the injectors **refuse an index past the last
+packet**, because one that damages nothing makes a damage test pass on a clean
+file. **Every safety property was mutated in a worktree: 21 of 21 fail an
+assertion that names them.** The device decode of the owner's real file remains the owner's check.
 
 ## A photograph is timestamped into the case, not onto the device
 

@@ -13028,7 +13028,9 @@ function vstSps(nal){
       br.u1();                                      // qpprime_y_zero_transform_bypass
       if(br.u1()) vstSkipScaling(br, chroma !== 3 ? 8 : 12);
     }
-    br.ue();                                        // log2_max_frame_num_minus4
+    /* KEPT, NOT SKIPPED: a slice header's frame_num is this many bits wide,
+       and frame_num is how two fields are recognised as one frame. */
+    const frameNumBits = br.ue() + 4;               // log2_max_frame_num_minus4 + 4
     const poc = br.ue();
     if(poc === 0) br.ue();
     else if(poc === 1){
@@ -13055,6 +13057,7 @@ function vstSps(nal){
     if(!(width > 0 && height > 0)) return null;
     return {profile, compat, level, width, height,
             interlaced: !frameMbsOnly, chroma,
+            frameNumBits, frameMbsOnly: frameMbsOnly === 1, separate: separate === 1,
             codecString: "avc1." + [profile, compat, level]
               .map(b => b.toString(16).padStart(2, "0")).join("").toUpperCase()};
   }catch{ return null; }
@@ -13071,14 +13074,26 @@ function vstNalStarts(d){
 
 /* What an access unit contains: whether it is a keyframe, its parameter sets,
    and HOW MANY PICTURES it holds. That last one is not curiosity — see
-   `vstTsAu`. */
-function vstAuScan(d){
+   `vstTsAu`.
+
+   With the stream's SPS in hand (`sliceSyntax`, from `vstTsParse`) each
+   picture's slice header is read as far as `field_pic_flag`: an interlaced
+   camcorder stream codes each FIELD as its own picture, and two fields are one
+   frame on screen. The transcode counts the frames the stream holds from this,
+   so it can check the decoder handed every one of them back. Without the SPS
+   the pictures are counted and nothing more is claimed.
+
+   A NAL whose forbidden_zero_bit is set is damage inside the picture data
+   itself — emulation prevention guarantees no valid NAL header carries it. */
+function vstAuScan(d, sps){
   const starts = vstNalStarts(d);
-  const out = {idr: false, sps: null, pps: null, pictures: 0, nals: starts.length};
+  const out = {idr: false, sps: null, pps: null, pictures: 0, nals: starts.length,
+               pics: [], badNal: 0};
   for(let i = 0; i < starts.length; i++){
     const s = starts[i];
     let e = i + 1 < starts.length ? starts[i + 1] - 3 : d.length;
     while(e > s && d[e - 1] === 0) e--;              // trailing zero_byte padding
+    if(d[s] & 0x80) out.badNal++;
     const type = d[s] & 0x1f;
     if(type === 5) out.idr = true;
     if(type === 7 && !out.sps) out.sps = d.slice(s, e);
@@ -13087,10 +13102,22 @@ function vstAuScan(d){
       /* first_mb_in_slice is the first value in every slice header, and zero
          means a picture starts here. Counting them is how a PES carrying more
          than one frame announces itself. */
+      let br = null;
       try{
-        const br = vstBits(vstRbsp(d.subarray(s + 1, Math.min(e, s + 9))));
+        br = vstBits(vstRbsp(d.subarray(s + 1, Math.min(e, s + 25))));
         if(br.ue() === 0) out.pictures++;
-      }catch{ /* an unreadable slice header is not a picture claim */ }
+        else br = null;
+      }catch{ br = null; /* an unreadable slice header is not a picture claim */ }
+      if(br && sps){
+        try{
+          br.ue(); br.ue();                          // slice_type, pic_parameter_set_id
+          if(sps.separate) br.u(2);                  // colour_plane_id
+          const frameNum = br.u(sps.frameNumBits);
+          let field = false, bottom = false;
+          if(!sps.frameMbsOnly){ field = br.u1() === 1; if(field) bottom = br.u1() === 1; }
+          out.pics.push({field, bottom, frameNum});
+        }catch{ out.pics.push({unknown: true}); }
+      }
     }
   }
   return out;
@@ -13141,17 +13168,40 @@ function vstPsiSection(slot, bytes, pay, end, pusi){
 
 /* The reader is a state machine over packet-aligned byte runs. `feed` may be
    called with any number of whole packets; access units come out through
-   `emit`. It holds one PES at a time and nothing else. */
+   `emit`. It holds one PES at a time and nothing else.
+
+   IT ALSO KEEPS A LEDGER OF DAMAGE on the picture's own stream, by kind: a
+   position that is not a sync byte (the grid broke), a packet the writer
+   flagged as damaged, a continuity gap (a packet that never arrived), a PES
+   that declared its length and came up short, an unreadable header, a
+   scrambled picture stream. The parse's head and tail reads ignore it; a
+   STRICT read — the transcode's, and the integrity check's — stops at the
+   first entry, because a software decoder CONCEALS damage rather than
+   refusing it, and a concealed hole in evidence is worse than no copy. */
+function vstCat(a, b){
+  const o = new Uint8Array(a.length + b.length);
+  o.set(a, 0); o.set(b, a.length);
+  return o;
+}
+
 function vstTsReader(layout, seed){
   const st = {
     stride: layout.stride, start: layout.start,
     pmtPid: -1, videoPid: -1, videoType: -1, audioPid: -1, audioType: -1,
-    streams: [], programs: 0, packets: 0, desync: 0, scrambled: 0,
+    streams: [], programs: 0, packets: 0, desync: 0, scrambled: 0, tei: 0, dup: 0,
     pat: {parts: null, len: 0}, pmt: {parts: null, len: 0},
-    pes: null, prevPts: null,
+    pes: null, prevPts: null, vcc: -1, vdup: false,
+    damaged: 0, firstDamage: null,
+    dmg: {desync: 0, tei: 0, continuity: 0, pes: 0, header: 0, scrambled: 0, tail: 0},
   };
   if(seed){ st.videoPid = seed.videoPid; st.videoType = seed.videoType;
             st.pmtPid = seed.pmtPid; }
+
+  function damage(kind){
+    st.damaged++;
+    st.dmg[kind] = (st.dmg[kind] || 0) + 1;
+    if(!st.firstDamage) st.firstDamage = {kind, packet: st.packets, pts: st.prevPts};
+  }
 
   function readPat(sec){
     if(sec[0] !== 0x00) return;
@@ -13181,10 +13231,39 @@ function vstTsReader(layout, seed){
     }
   }
 
+  /* A PES HEADER IS READ WHOLE, even when the writer split it across two
+     packets — rare, and legal, and dropping that frame would be a hole in the
+     copy nobody announced. A unit start that is not a PES header at all is
+     damage. */
+  function pesTake(bytes, from, to){
+    const p = st.pes;
+    if(p.ready){ p.parts.push(bytes.slice(from, to)); p.len += to - from; return; }
+    const got = p.pend ? vstCat(p.pend, bytes.subarray(from, to)) : bytes.subarray(from, to);
+    if(got.length < 9){ p.pend = got.slice(); return; }
+    if(got[0] !== 0 || got[1] !== 0 || got[2] !== 1){ st.pes = null; damage("pes"); return; }
+    const hlen = got[8];
+    if(got.length < 9 + hlen){ p.pend = got.slice(); return; }
+    const pf = (got[7] >> 6) & 3;
+    let h = 9;
+    if((pf & 2) && hlen >= 5){ p.pts = vstTsStamp(got, h); h += 5; }
+    if(pf === 3 && hlen >= 10){ p.dts = vstTsStamp(got, h); }
+    const plen = (got[4] << 8) | got[5];
+    /* PES_packet_length counts the three flag/length bytes and the optional
+       header too; zero means "unbounded", which video usually is. */
+    p.want = plen ? plen - 3 - hlen : null;
+    p.ready = true; p.pend = null;
+    if(got.length > 9 + hlen){ p.parts.push(got.slice(9 + hlen)); p.len = got.length - 9 - hlen; }
+  }
+
   function closePes(emit){
     const p = st.pes;
     st.pes = null;
-    if(!p || !p.len || !emit) return;
+    if(!p) return;
+    /* A header that never finished arriving, or a PES that declared its length
+       and came up short (or long), lost bytes on the way: the picture in it is
+       not whole. */
+    if(!p.ready || (p.want != null && p.len !== p.want)){ damage("pes"); return; }
+    if(!p.len || !emit) return;
     const data = new Uint8Array(p.len);
     let o = 0;
     for(const q of p.parts){ data.set(q, o); o += q.length; }
@@ -13197,15 +13276,37 @@ function vstTsReader(layout, seed){
   function feed(bytes, emit){
     const stride = st.stride;
     for(let off = 0; off + VST_TS_PKT <= bytes.length; off += stride){
-      if(bytes[off] !== 0x47){ st.desync++; continue; }
+      /* After damage the continuity counter is judged afresh: one bad packet
+         is one place, not a second "gap" reported against the packet after it. */
+      if(bytes[off] !== 0x47){ st.desync++; damage("desync"); st.vcc = -1; continue; }
       st.packets++;
       const b1 = bytes[off + 1], b3 = bytes[off + 3];
-      if(b1 & 0x80) continue;                      // transport_error_indicator
-      if((b3 >> 6) & 3){ st.scrambled++; continue; }
+      const pid = ((b1 & 0x1f) << 8) | bytes[off + 2];
+      /* A packet its writer flagged as damaged is never read — and on the
+         picture's own stream that is not a detail to step over quietly: the
+         frame it belonged to is now missing bytes. */
+      if(b1 & 0x80){ st.tei++; if(pid === st.videoPid){ damage("tei"); st.vcc = -1; } continue; }
+      if((b3 >> 6) & 3){ st.scrambled++; if(pid === st.videoPid){ damage("scrambled"); st.vcc = -1; } continue; }
       const afc = (b3 >> 4) & 3;
+      if(pid === st.videoPid){
+        if(afc === 0){ damage("header"); st.vcc = -1; continue; }   // reserved: no valid writer emits it
+        /* CONTINUITY. The counter steps by one on every packet that carries
+           payload, so a gap is a packet that never arrived. One repeat is the
+           standard's permitted duplicate — its payload is already in hand and
+           is not appended twice — and a jump the writer announced with the
+           discontinuity indicator is not an error. */
+        if(afc & 1){
+          const cc = b3 & 0x0f;
+          const disc = afc === 3 && bytes[off + 4] > 0 && (bytes[off + 5] & 0x80) !== 0;
+          if(st.vcc >= 0 && !disc && cc !== ((st.vcc + 1) & 0x0f)){
+            if(cc === st.vcc && !st.vdup){ st.dup++; st.vdup = true; continue; }
+            damage("continuity");
+          }
+          st.vcc = cc; st.vdup = false;
+        }
+      }
       if(afc === 0 || afc === 2) continue;         // no payload in this packet
       const pusi = (b1 & 0x40) !== 0;
-      const pid = ((b1 & 0x1f) << 8) | bytes[off + 2];
       let pay = off + 4;
       if(afc === 3) pay += 1 + bytes[off + 4];
       const end = off + VST_TS_PKT;
@@ -13220,33 +13321,25 @@ function vstTsReader(layout, seed){
       } else if(pid === st.videoPid){
         if(pusi){
           closePes(emit);
-          if(end - pay >= 9 && bytes[pay] === 0 && bytes[pay + 1] === 0 && bytes[pay + 2] === 1){
-            const flags = bytes[pay + 7], hlen = bytes[pay + 8];
-            const pf = (flags >> 6) & 3;
-            let pts = null, dts = null, h = pay + 9;
-            if((pf & 2) && h + 5 <= end){ pts = vstTsStamp(bytes, h); h += 5; }
-            if(pf === 3 && h + 5 <= end){ dts = vstTsStamp(bytes, h); h += 5; }
-            const at = pay + 9 + hlen;
-            st.pes = {parts: [], len: 0, pts, dts};
-            if(at < end){ st.pes.parts.push(bytes.slice(at, end)); st.pes.len = end - at; }
-          }
+          st.pes = {parts: [], len: 0, pts: null, dts: null, want: null, ready: false, pend: null};
+          pesTake(bytes, pay, end);
         } else if(st.pes){
-          st.pes.parts.push(bytes.slice(pay, end));
-          st.pes.len += end - pay;
+          pesTake(bytes, pay, end);
         }
       }
     }
   }
 
-  return {st, feed, flush: emit => closePes(emit)};
+  return {st, feed, damage, flush: emit => closePes(emit)};
 }
 
 /* One access unit, in the shape `vstTranscodeTs` feeds the decoder. Timestamps
    stay in the stream's own 90 kHz until the very last moment. */
-function vstTsAu(pes){
-  const scan = vstAuScan(pes.data);
+function vstTsAu(pes, sps){
+  const scan = vstAuScan(pes.data, sps);
   return {data: pes.data, pts: pes.pts, dts: pes.dts, sync: scan.idr,
-          sps: scan.sps, pps: scan.pps, pictures: scan.pictures};
+          sps: scan.sps, pps: scan.pps, pictures: scan.pictures,
+          pics: scan.pics, badNal: scan.badNal};
 }
 
 /* Packet-aligned reading. Every slice begins on a packet boundary, so the
@@ -13276,11 +13369,20 @@ async function vstTsScan(file, layout, seed, onAu, opts){
        that still holds a whole packet is fed. */
     const whole = Math.floor(buf.length / stride) * stride;
     const rem = buf.length - whole;
+    /* A FILE THAT ENDS PART-WAY THROUGH A PACKET WAS CUT SHORT — an interrupted
+       copy, or a recording that never closed. The remainder is not fed (it is
+       not a packet), and it is not ignored either: it is damage. */
+    if(stop === file.size && pos + buf.length >= file.size && rem > 0 && rem < VST_TS_PKT){
+      reader.damage("tail");
+    }
     const usable = whole + (rem >= VST_TS_PKT ? rem : 0);
     if(usable < VST_TS_PKT) break;
     const batch = [];
-    reader.feed(buf.subarray(0, usable), pes => batch.push(vstTsAu(pes)));
+    reader.feed(buf.subarray(0, usable), pes => batch.push(vstTsAu(pes, o.sps)));
     pos += usable;
+    /* A STRICT READ STOPS AT THE FIRST HOLE: nothing past damage may become
+       part of a copy that claims to be complete. */
+    if(o.strict && reader.st.damaged){ stopped = true; break; }
     for(const au of batch){
       if(await onAu(au) === false){ stopped = true; break; }
     }
@@ -13288,9 +13390,14 @@ async function vstTsScan(file, layout, seed, onAu, opts){
   }
   if(!stopped){
     const tail = [];
-    reader.flush(pes => tail.push(vstTsAu(pes)));
-    for(const au of tail){ if(await onAu(au) === false) break; }
+    reader.flush(pes => tail.push(vstTsAu(pes, o.sps)));
+    if(!(o.strict && reader.st.damaged)){
+      for(const au of tail){ if(await onAu(au) === false){ stopped = true; break; } }
+    } else stopped = true;
   }
+  /* Whether the read got to the end of what it was asked to read — the one
+     fact a caller cannot tell from the units it was handed. */
+  reader.st.reachedEnd = !stopped;
   return reader.st;
 }
 
@@ -13409,6 +13516,10 @@ async function vstTsParse(file, layout){
     samples: null,
     firstPts: minPts, multiPicture, pictures: maxPics,
     headFrames: frames, headPackets: head.packets,
+    /* WHAT A SLICE HEADER NEEDS FROM THE SPS to say whether a picture is a
+       field — see `vstAuScan`. Null when the SPS could not be read. */
+    sliceSyntax: ps ? {frameNumBits: ps.frameNumBits, frameMbsOnly: ps.frameMbsOnly,
+                       separate: ps.separate} : null,
   };
   return out;
 }
@@ -13776,7 +13887,11 @@ function vstPath(){
      instead. */
   if(v.parsed && vstIsTs(v.parsed)){
     if(!vstCanPipeline() || !vstTsReady(v.parsed)) return "none";
-    return v.decodeOk === true ? "pipeline" : v.decodeOk === null ? "checking" : "none";
+    /* EITHER LOCAL DECODER IS A ROUTE: the device's default, or this browser's
+       software decoder (compatibility mode). An answer still outstanding is
+       not a refusal. */
+    if(v.decodeOk === true || v.compatOk === true) return "pipeline";
+    return v.decodeOk === null || (v.decodeOk === false && v.compatOk === null) ? "checking" : "none";
   }
   const pipeReady = vstCanPipeline() && v.parsed && v.parsed.video && v.parsed.video.samples;
   if(pipeReady && v.decodeOk === true) return "pipeline";
@@ -13819,7 +13934,8 @@ function vstCompatText(){
     const tsWhy = r || (!vstCanPipeline()
       ? "This browser has no WebCodecs, which is the only way a transport stream can be processed here."
       : v.decodeOk === false
-        ? "This device's video decoder declined this stream's configuration."
+        ? "This device's video decoder declined this stream's configuration"
+          + (v.compatOk === false ? ", and this browser's software decoder does not accept it either." : ".")
         : "This device could not decode it.");
     return `${what} ${tsWhy} Your original is unchanged.`;
   }
@@ -13845,9 +13961,15 @@ function vstCompatText(){
    and the second is the iOS case. */
 function vstCompatState(){
   if(!VST) return "";
+  /* AFTER A RUN, THE LINE SAYS WHAT HAPPENED. "Ready — decoded and re-encoded
+     on this device" used to stand above a decoder failure: a sentence about a
+     decode that had not happened, left standing over one that had failed. */
+  if(VST.fault) return esc(VST.fault.state);
   switch(vstPath()){
     case "checking":  return "checking on this device&hellip;";
-    case "pipeline":  return "Ready &mdash; decoded and re-encoded on this device";
+    case "pipeline":  return vstLaneFor(VST) === "compat"
+      ? "Ready &mdash; compatibility mode will be used"
+      : "Ready &mdash; will be decoded and re-encoded on this device";
     case "legacy":    return "Ready";
     default:          return VST.readable === true
       ? "this device can play it, but cannot write the copy here"
@@ -13927,11 +14049,11 @@ async function vstCodecDrain(codec){
 
 /* THE TRANSCODE. Returns {blob, mime, name, audio, frames} or throws with a
    sentence the screen can show. `onStage` reports progress without the caller
-   needing to know the stages. */
-async function vstTranscode(file, parsed, startMs, tz, onStage){
-  /* A transport stream is streamed rather than read from a sample table. Same
-     muxer, same burn, same MP4 out — see `vstTranscodeTs`. */
-  if(vstIsTs(parsed)) return vstTranscodeTs(file, parsed, startMs, tz, onStage);
+   needing to know the stages; `run` is the generator's run, which Stop ends. */
+async function vstTranscode(file, parsed, startMs, tz, onStage, run){
+  /* A transport stream is streamed rather than read from a sample table, and
+     has a second, local decoder to fall back on — see `vstTranscodeTs`. */
+  if(vstIsTs(parsed)) return vstTranscodeTs(file, parsed, startMs, tz, onStage, run);
   const M = await vstMuxer();
   const V = parsed && parsed.video, A = parsed && parsed.audio;
   if(!V || !V.samples || !V.samples.length) throw new Error("The video track's sample table could not be read, so nothing was generated. Your original is unchanged.");
@@ -13973,10 +14095,13 @@ async function vstTranscode(file, parsed, startMs, tz, onStage){
   cv.width = W; cv.height = H;
   const cx = cv.getContext("2d", {alpha: false});
 
-  let encoded = 0, decoded = 0, encErr = null;
+  let encoded = 0, decoded = 0, muxed = 0, fed = 0, encErr = null, muxErr = null;
   const fail = e => { if(!encErr) encErr = e; };
   const encoder = new VideoEncoder({
-    output: (chunk, meta) => { muxer.addVideoChunk(chunk, meta); encoded++; },
+    output: (chunk, meta) => {
+      encoded++;
+      try{ muxer.addVideoChunk(chunk, meta); muxed++; }catch(e){ if(!muxErr) muxErr = e; }
+    },
     error: fail,
   });
   encoder.configure(encCfg);
@@ -14004,7 +14129,7 @@ async function vstTranscode(file, parsed, startMs, tz, onStage){
 
   const total = V.samples.length;
   for(let i = 0; i < total; i++){
-    if(encErr || decoder.state !== "configured") break;
+    if(encErr || decoder.state !== "configured" || !vstRunLive(run)) break;
     const sm = V.samples[i];
     // One sample at a time — the file is never held whole.
     const buf = await file.slice(sm.offset, sm.offset + sm.size).arrayBuffer();
@@ -14016,50 +14141,204 @@ async function vstTranscode(file, parsed, startMs, tz, onStage){
         data: buf,
       }));
     }catch(e){ fail(e); break; }
+    fed++;
     if(i % 12 === 0){
       if(onStage) onStage("decoding", Math.round(i / total * 100));
       // Let the decoder drain rather than queueing the whole film at once.
-      while(decoder.decodeQueueSize > 24) await new Promise(r => setTimeout(r, 8));
+      while(decoder.decodeQueueSize > 24 && vstRunLive(run)) await new Promise(r => setTimeout(r, 8));
     }
   }
+  /* STOP MEANS STOP: the codecs are closed and nothing is flushed or written.
+     Before, the loop went on to the last sample behind a closed screen. */
+  if(!vstRunLive(run)){
+    vstCodecClose(decoder); vstCodecClose(encoder);
+    throw vstFault("cancel", "Stopped — nothing was saved and your original is unchanged.");
+  }
+  const closedEarly = decoder.state === "closed";
   await vstCodecDrain(decoder);
   await vstCodecDrain(encoder);
+  /* An error the codec reports on the task after it is seen closed still
+     belongs to this run — one turn of the event loop lets it land. */
+  await new Promise(r => setTimeout(r, 0));
   if(encErr) throw new Error("The device's video codec stopped part-way: "
-    + (encErr.message || encErr) + ". Nothing was saved and your original is unchanged.");
+    + vstErrText(encErr) + ". Nothing was saved and your original is unchanged.");
   if(!encoded) throw new Error("No frames came out of the encoder, so no file was written. Your original is unchanged.");
+  /* NOT COMPLETE UNTIL COUNTED. A codec that closed without reporting why, or
+     returned fewer frames than it was handed, ends here with no file — "the
+     encoder ended without throwing" is not evidence the copy is whole. */
+  const short = closedEarly || fed !== total
+    ? `the decoder closed after ${vstNum(fed)} of ${vstNum(total)} frames without reporting why`
+    : decoded !== total ? `the decoder returned ${vstNum(decoded)} of ${vstNum(total)} frames`
+    : encoded !== decoded ? `the encoder returned ${vstNum(encoded)} of ${vstNum(decoded)} frames`
+    : muxed !== encoded || muxErr ? `the MP4 writer took ${vstNum(muxed)} of ${vstNum(encoded)} frames`
+    : "";
+  if(short) throw vstFault("verify", VST_INCOMPLETE + " " + short.charAt(0).toUpperCase() + short.slice(1) + ".",
+                           {text: short, problems: [short], decoded, fed, expected: total});
 
   /* NO AUDIO IS ADDED. Not a fallback and not a failure — the milestone's
      output is picture only, so no audio sample is ever read from the file. */
   if(onStage) onStage("finishing", 99);
   muxer.finalize();
   const blob = new Blob([muxer.target.buffer], {type: "video/mp4"});
+  const back = await vstReadBack(blob, W, H, muxed, null, fps);
+  if(back.problem) throw vstFault("verify", VST_INCOMPLETE + " The finished MP4 did not check out: " + back.problem + ".",
+                                  {text: "the finished MP4 did not check out: " + back.problem, problems: [back.problem]});
   return {blob, mime: "video/mp4", frames: encoded,
           audio: "stripped", sourceAudio};
 }
 
-/* ---- THE TRANSPORT-STREAM TRANSCODE ----
+/* ---- THE TRANSPORT-STREAM TRANSCODE — two local decoders, one verdict ----
 
-   Same shape as `vstTranscode`, same muxer, same burn, same output: an MP4
-   with H.264 picture and no audio track. What differs is only where the
-   encoded frames come from — streamed out of the packet grid instead of read
-   from a sample table — and the fact that the decoder is configured WITHOUT a
-   description, which is what tells WebCodecs the bitstream is Annex B.
+   OWNER, 2026-09-27, on a real 00029.MTS (M2TS / AVCHD, H.264 / AVC): the
+   file was opened, timed and fingerprinted, the decode began — and the
+   device's decoder stopped part-way with "Decoding error." That was the
+   pipeline's ONLY decoder, so the run ended there, and the screen then offered
+   the identical Generate again, over a Compatibility line still reading
+   "Ready — decoded and re-encoded on this device".
 
-   MEMORY: the file is read in packet-aligned slices of about a megabyte and
-   one access unit is held back at a time. A 20 GB card file is never resident,
-   nothing is uploaded, nothing is written to R2, D1, localStorage,
-   sessionStorage or IndexedDB, and the original is opened read-only — the
-   output is one Blob the operator then saves. */
-async function vstTranscodeTs(file, parsed, startMs, tz, onStage){
+   So a transport stream now has TWO decoders, both local, both the same API:
+   the device's default ("primary" — on most computers its graphics hardware)
+   and, when that fails, this browser's SOFTWARE decoder ("compat", asked for
+   with `hardwareAcceleration: "prefer-software"`), which decodes what a
+   hardware decoder refuses — interlaced 1080i above all, the default
+   recording mode of most AVCHD camcorders. Nothing is uploaded, installed or
+   downloaded for it, and the incomplete output of the failed pass is thrown
+   away before the second begins.
+
+   AND NEITHER IS BELIEVED. A copy is offered only when it is PROVEN whole:
+   every frame the stream holds came back from the decoder once, was stamped,
+   encoded and muxed, and the finished MP4 reads back with that many frames
+   over the same span of time. Measured before this was written: a decoder
+   seen closed before its error callback ran was enough for the old code to
+   offer a 15-frame copy of a 90-frame clip as ready. "The encoder ended
+   without throwing" is not evidence of anything.
+
+   THE STREAM IS CHECKED AS IT IS READ, and damage stops the read (see
+   `vstTsReader`). When both decoders fail, or the second is not available,
+   the whole file is read through once more for damage ALONE, so the verdict
+   can say which it is: the file, or this device. */
+
+/* The owner's sentence for a copy that could not be made whole. */
+const VST_INCOMPLETE = "Video could not be completely decoded. No timestamped copy was created and your original is unchanged.";
+
+/* A failure with a CLASS, because the operator is owed a different answer for
+   each: the stream itself is damaged ("stream"), a decoder on this device
+   refused it or returned less than it was given ("decoder", "verify"), the
+   encoder or the MP4 writer failed ("encoder"), the original stopped being
+   readable ("read"), memory ran out ("memory"), nothing could be set up
+   ("setup"), or the operator stopped it ("cancel"). */
+function vstFault(kind, message, detail){
+  const e = new Error(message);
+  e.vstKind = kind;
+  e.vstDetail = detail || null;
+  return e;
+}
+const vstDecoderClass = e => !!e && (e.vstKind === "decoder" || e.vstKind === "verify");
+/* A codec's own sentence, without its full stop — Chromium's reads "Decoding
+   error." and the old wording printed "Decoding error.. Nothing was saved". */
+const vstErrText = e => String((e && (e.message || e.name)) || e || "no reason was given")
+  .trim().replace(/\.+$/, "") || "no reason was given";
+const vstNum = n => Number(n || 0).toLocaleString("en-US");
+const vstPlural = (n, w) => `${vstNum(n)} ${w}${n === 1 ? "" : "s"}`;
+
+/* One run of the generator. Stop, Close and choosing another file all end it,
+   and every loop below reads this between frames — so Stop stops the WORK, not
+   just the screen that showed it (before, the decode went on to the end of the
+   file behind a closed tool). No run at all, as the suites call it, is live. */
+function vstRunLive(run){
+  return !run || (!run.cancelled && (!run.owner || VST === run.owner));
+}
+function vstCodecClose(codec){
+  try{ if(codec && codec.state !== "closed") codec.close(); }catch{}
+}
+
+/* WHICH FILES THIS TAB'S PRIMARY DECODER HAS ALREADY FAILED ON — in memory
+   only, since nothing about a video is persisted anywhere. It is what makes a
+   second Generate on the same file (a corrected time, the same file chosen
+   again) go straight to compatibility mode instead of re-running a decoder
+   already known to stop on it. */
+const VST_PRIMARY_FAILED = new Map();
+const vstFileKey = f => f ? [f.name, f.size, f.lastModified].join("|") : "";
+
+/* WHICH DECODER THE NEXT RUN STARTS WITH — the one writer of that answer, read
+   by the ready screen and by the run itself so the two cannot disagree. It is
+   compatibility mode when the device's own decoder already failed on this
+   file, or declined the stream when it was chosen while the software decoder
+   accepted it. */
+function vstLaneFor(v){
+  return v && (v.lane === "compat"
+    || (vstIsTs(v.parsed) && v.decodeOk === false && v.compatOk === true)) ? "compat" : "auto";
+}
+
+/* Does THIS BROWSER'S SOFTWARE DECODER accept this stream? Asked of the real
+   configuration, exactly like the primary check. */
+async function vstCompatAccepts(v){
+  if(typeof VideoDecoder === "undefined") return {supported: false, why: "this browser has no WebCodecs decoder"};
+  if(!v || !v.codecString) return {supported: false, why: "the stream's codec could not be read"};
+  try{
+    const r = await VideoDecoder.isConfigSupported({codec: v.codecString,
+      codedWidth: v.width || undefined, codedHeight: v.height || undefined,
+      hardwareAcceleration: "prefer-software"});
+    return r && r.supported ? {supported: true, why: ""}
+      : {supported: false, why: "this browser offers no software decoder that accepts this stream"};
+  }catch(e){ return {supported: false, why: vstErrText(e)}; }
+}
+
+/* A position in the clip, the way the operator would say it: 0.5 s, 1:23,
+   1:02:03. Under a minute it is seconds, because "0:00" says nothing about a
+   stop half a second in. */
+function vstClipAt(sec){
+  if(sec == null || !isFinite(sec)) return "";
+  if(sec < 60) return Math.max(0, sec).toFixed(1) + " s";
+  const s = Math.max(0, Math.floor(sec));
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), r = s % 60;
+  return (h ? h + ":" + String(m).padStart(2, "0") : String(m)) + ":" + String(r).padStart(2, "0");
+}
+
+/* DAMAGE, IN WORDS — what a strict read found wrong with the file itself. */
+const VST_DAMAGE_WORDS = {
+  desync: "the packet grid breaks — bytes are missing from, or were added to, the file",
+  tei: "packets on the picture stream were flagged as damaged by whatever wrote them",
+  continuity: "packets are missing from the picture stream",
+  pes: "a picture's data is cut short",
+  header: "packet headers on the picture stream cannot be read",
+  scrambled: "the picture stream is scrambled",
+  tail: "the file ends part-way through a packet — it looks cut short",
+  nal: "picture data carries an invalid header",
+  clock: "the stream's own clock runs backwards or repeats a frame's time",
+  nokey: "the stream never reaches a keyframe (IDR), which every decoder needs to begin — this is what a later part of a recording split across files looks like",
+};
+function vstTsDamage(st, base){
+  if(!st || !st.damaged) return null;
+  const f = st.firstDamage || {};
+  return {kind: f.kind || "desync", count: st.damaged, counts: Object.assign({}, st.dmg),
+          at: f.pts != null && base != null ? Math.max(0, (f.pts - base) / VST_TS_HZ) : null};
+}
+function vstStreamFault(dmg, extra){
+  const where = dmg.at != null ? `, first about ${vstClipAt(dmg.at)} into the clip` : "";
+  const many = dmg.count > 1 ? ` (${vstNum(dmg.count)} places)` : "";
+  const text = `${VST_DAMAGE_WORDS[dmg.kind] || "the stream is damaged"}${where}${many}. `
+    + "This is in the file itself, so it is not something another decoder on this device could fix.";
+  const label = "FILE / STREAM ERROR";
+  const lines = (extra || []).filter(Boolean);
+  return vstFault("stream", [VST_INCOMPLETE].concat(lines, [label + ": " + text]).join(" "),
+                  {cls: "stream", label, classText: text, lines, damage: dmg});
+}
+
+/* ---- ONE COMPLETE PASS OVER THE STREAM, WITH ONE DECODER ----
+
+   `lane` names the decoder and is the ONLY difference between the two passes:
+   demux, burn, encoder and muxer are identical, so a copy from either is made
+   and checked the same way. Returns the copy with the ledger that proves it
+   whole, or throws a classified fault and keeps nothing. */
+async function vstTsAttempt(file, parsed, startMs, tz, lane, run, onStage){
   const M = await vstMuxer();
-  const V = parsed && parsed.video;
-  const refusal = vstTsRefusal(parsed);
-  if(refusal) throw new Error(refusal + " Nothing was generated and your original is unchanged.");
-
+  const V = parsed.video;
   const W = V.width, H = V.height, fps = V.fps || 30;
   const encCfg = await vstEncoderConfig(W, H, fps);
-  if(!encCfg) throw new Error("This device would not accept any H.264 encoder configuration for "
+  if(!encCfg) throw vstFault("setup", "This device would not accept any H.264 encoder configuration for "
     + `${W}x${H}, so no MP4 could be written. Your original is unchanged.`);
+  if(!vstRunLive(run)) throw vstFault("cancel", "Stopped.");
 
   const muxer = new M.Muxer({
     target: new M.ArrayBufferTarget(),
@@ -14070,99 +14349,414 @@ async function vstTranscodeTs(file, parsed, startMs, tz, onStage){
     fastStart: "in-memory",
     firstTimestampBehavior: "offset",
   });
-
   const cv = document.createElement("canvas");
   cv.width = W; cv.height = H;
   const cx = cv.getContext("2d", {alpha: false});
 
-  let encoded = 0, decoded = 0, encErr = null;
-  const fail = e => { if(!encErr) encErr = e; };
+  /* THE LEDGER the copy is checked against. `expected` is the frames the
+     stream HOLDS (two fields make one), counted from the slice headers as the
+     units are fed; everything after it must match it. */
+  const t = {skipped: 0, fed: 0, expected: 0, decoded: 0, drawn: 0, encIn: 0, encoded: 0,
+             muxed: 0, stray: 0, twice: 0, inferred: 0, firstFed: null, lastFed: null,
+             firstOut: null, lastEnd: null, srcFirst: null, srcLast: null};
+  const expectTs = new Set(), outTs = new Set();
+  let decErr = null, encErr = null, muxErr = null, frameErr = null, bad = null;
+  const failDec = e => { if(!decErr) decErr = e; };
+  const failEnc = e => { if(!encErr) encErr = e; };
+
   const encoder = new VideoEncoder({
-    output: (chunk, meta) => { muxer.addVideoChunk(chunk, meta); encoded++; },
-    error: fail,
+    output: (chunk, meta) => {
+      t.encoded++;
+      try{ muxer.addVideoChunk(chunk, meta); t.muxed++; }
+      catch(e){ if(!muxErr) muxErr = e; }
+    },
+    error: failEnc,
   });
-  encoder.configure(encCfg);
+  try{ encoder.configure(encCfg); }
+  catch(e){ throw vstFault("setup", "This device's H.264 encoder refused its own configuration ("
+    + vstErrText(e) + "), so no MP4 could be written. Your original is unchanged."); }
 
   const decoder = new VideoDecoder({
     output: frame => {
+      t.decoded++;
       try{
-        const tSec = Math.max(0, frame.timestamp / 1e6);
+        const ts = frame.timestamp;
+        if(!expectTs.has(ts)) t.stray++;            // a picture nobody fed it
+        else if(outTs.has(ts)) t.twice++;           // the same picture twice
+        outTs.add(ts);
+        if(t.firstOut == null || ts < t.firstOut) t.firstOut = ts;
+        const end = ts + (frame.duration || 0);
+        if(t.lastEnd == null || end > t.lastEnd) t.lastEnd = end;
+        /* THE STAMP IS A FUNCTION OF THE FRAME'S OWN PRESENTATION TIME, never
+           of this machine's clock. */
+        const tSec = Math.max(0, ts / 1e6);
         cx.drawImage(frame, 0, 0, W, H);
         vstDraw(cx, W, H, vstLabel(startMs + Math.floor(tSec) * 1000, tz));
-        const out = new VideoFrame(cv, {timestamp: frame.timestamp,
-                                        duration: frame.duration || undefined});
-        if(encoder.state === "configured") encoder.encode(out, {keyFrame: decoded % (fps * 2) === 0});
-        out.close();
-      } finally { frame.close(); decoded++; }
+        t.drawn++;
+        if(encoder.state === "configured"){
+          const out = new VideoFrame(cv, {timestamp: ts, duration: frame.duration || undefined});
+          try{ encoder.encode(out, {keyFrame: (t.drawn - 1) % (fps * 2) === 0}); t.encIn++; }
+          finally{ out.close(); }
+        }
+      }catch(e){ if(!frameErr) frameErr = e; }
+      finally{ frame.close(); }
     },
-    error: fail,
+    error: failDec,
   });
-  decoder.configure({codec: V.codecString, codedWidth: W, codedHeight: H});
+  /* THE ONE PLACE THE TWO LANES DIFFER. Annex B, so no description either way
+     (see `vstTsParse`); the compatibility lane asks for the software decoder. */
+  const decCfg = {codec: V.codecString, codedWidth: W, codedHeight: H};
+  if(lane === "compat") decCfg.hardwareAcceleration = "prefer-software";
+  try{ decoder.configure(decCfg); }catch(e){ failDec(e); }
 
   /* The base is the earliest PRESENTATION stamp the head scan measured, so the
      burned clock starts at the operator's chosen moment and advances with the
      footage rather than with this machine. */
   const base = V.firstPts != null ? V.firstPts : 0;
-  const us = t => Math.round((t - base) * (1e6 / VST_TS_HZ));
+  const us = pts => Math.round((pts - base) * (1e6 / VST_TS_HZ));
+  const nominal = Math.round(VST_TS_HZ / fps);
+  const halted = () => !vstRunLive(run) || !!(decErr || encErr || muxErr || frameErr || bad)
+    || decoder.state !== "configured" || encoder.state !== "configured";
+
+  /* HOW MANY FRAMES AN ACCESS UNIT BEGINS. A frame picture is one. A field is
+     one only when it is not the second half of the field before it — same
+     frame_num, opposite parity — so a stream that carries each field in its
+     own packet still counts one frame per pair, and a PES holding the pair
+     counts one. A slice header that could not be read counts its pictures and
+     claims nothing finer, which can only make the check stricter. */
+  let pairing = null;
+  const begins = au => {
+    const pics = au.pics || [];
+    if(!pics.length || pics.some(p => p.unknown)){ pairing = null; return au.pictures || 0; }
+    let n = 0;
+    for(const p of pics){
+      if(!p.field){ n++; pairing = null; continue; }
+      if(pairing && pairing.bottom !== p.bottom && pairing.frameNum === p.frameNum){ pairing = null; continue; }
+      n++; pairing = p;
+    }
+    return n;
+  };
 
   /* One access unit is held back so its duration can be the DISTANCE TO THE
      NEXT ONE rather than a frame rate assumed for it. The last unit takes the
-     median interval, which is the only honest answer for a frame with nothing
-     after it. */
-  let held = null, started = false, skipped = 0, fed = 0;
-  const nominal = Math.round(VST_TS_HZ / fps);
-
+     nominal interval, the only honest answer for a frame with nothing after it. */
+  let held = null, started = false;
   const push = async (au, dur) => {
-    if(encErr || decoder.state !== "configured") return;
+    if(halted()) return false;
     if(!started){
-      /* DECODING MUST BEGIN AT A KEYFRAME. A transport stream can be cut
-         anywhere, and handing a decoder a mid-GOP frame produces either an
-         error or a smeared picture that looks like a fault in the camera. */
-      if(!au.sync){ skipped++; return; }
+      /* DECODING MUST BEGIN AT A KEYFRAME. What comes before the first one
+         refers to pictures that are not in this file; it is counted and
+         reported on the finished screen, never dropped without a word. */
+      if(!au.sync){ t.skipped++; return true; }
       started = true;
     }
+    const raw = au.pts != null ? au.pts : au.dts;
+    let ts;
+    if(raw != null) ts = us(raw);
+    else { ts = t.lastFed != null ? t.lastFed + Math.round(nominal * (1e6 / VST_TS_HZ)) : 0; t.inferred++; }
+    const n = begins(au);
+    /* A frame whose time is before the clip's start, or the same as an earlier
+       frame's, cannot carry an honest stamp of its own. */
+    if(ts < 0 || (n > 0 && expectTs.has(ts))){ bad = {kind: "clock", at: Math.max(0, ts / 1e6)}; return false; }
+    t.expected += n;
+    if(n > 0) expectTs.add(ts);
+    if(t.firstFed == null) t.firstFed = ts;
+    t.lastFed = ts;
     try{
       decoder.decode(new EncodedVideoChunk({
         type: au.sync ? "key" : "delta",
-        timestamp: us(au.pts != null ? au.pts : au.dts),
+        timestamp: ts,
         duration: Math.round(Math.max(1, dur) * (1e6 / VST_TS_HZ)),
         data: au.data,
       }));
-    }catch(e){ fail(e); return; }
-    fed++;
+    }catch(e){ failDec(e); return false; }
+    t.fed++;
     // Let the decoder drain rather than queueing the whole card at once.
     let guard = 0;
-    while(decoder.decodeQueueSize > 24 && !encErr && guard++ < 4000){
+    while(decoder.decodeQueueSize > 24 && !halted() && guard++ < 4000){
       await new Promise(r => setTimeout(r, 8));
     }
+    return !halted();
   };
 
-  await vstTsScan(file, parsed.layout, null, async au => {
-    if(encErr || decoder.state !== "configured") return false;
-    if(held){
-      const d = (held.dts != null && au.dts != null && au.dts > held.dts)
-        ? au.dts - held.dts : nominal;
-      await push(held, d);
-    }
-    held = au;
-    return true;
-  }, {onProgress: (pos, stop) => {
-    if(onStage) onStage("decoding", Math.min(98, Math.round(pos / stop * 100)));
-  }});
-  if(held && !encErr) await push(held, nominal);
+  let st = null, readErr = null;
+  try{
+    st = await vstTsScan(file, parsed.layout, null, async au => {
+      if(halted()) return false;
+      if(au.pts != null){
+        if(t.srcFirst == null || au.pts < t.srcFirst) t.srcFirst = au.pts;
+        if(t.srcLast == null || au.pts > t.srcLast) t.srcLast = au.pts;
+      }
+      if(au.badNal){ bad = {kind: "nal", pts: au.pts}; return false; }
+      if(held){
+        const d = (held.dts != null && au.dts != null && au.dts > held.dts) ? au.dts - held.dts : nominal;
+        if(await push(held, d) === false) return false;
+      }
+      held = au;
+      return true;
+    }, {strict: true, sps: V.sliceSyntax, onProgress: (pos, stop) => {
+      if(onStage && vstRunLive(run)) onStage(lane === "compat" ? "compat" : "decoding",
+                                             Math.min(98, Math.round(pos / stop * 100)));
+    }});
+  }catch(e){ readErr = e; }
+  if(held && st && st.reachedEnd && !readErr) await push(held, nominal);
 
+  /* STOPPED: nothing is flushed, drawn or written; the codecs are closed and
+     whatever was made so far is left for the garbage collector. */
+  if(!vstRunLive(run)){
+    vstCodecClose(decoder); vstCodecClose(encoder);
+    throw vstFault("cancel", "Stopped — nothing was saved and your original is unchanged.");
+  }
+  const closedEarly = decoder.state === "closed";
   await vstCodecDrain(decoder);
-  await vstCodecDrain(encoder);
-  if(encErr) throw new Error("The device's video codec stopped part-way: "
-    + (encErr.message || encErr) + ". Nothing was saved and your original is unchanged.");
-  if(!encoded) throw new Error("No frames came out of the encoder, so no file was written. Your original is unchanged.");
+  if(decErr || closedEarly || bad || readErr) vstCodecClose(encoder);
+  else await vstCodecDrain(encoder);
+  /* An error the codec reports on the task AFTER it is seen closed still
+     belongs to this pass; one turn of the event loop lets it land before
+     anything is decided. */
+  await new Promise(r => setTimeout(r, 0));
 
-  if(onStage) onStage("finishing", 99);
-  muxer.finalize();
-  const blob = new Blob([muxer.target.buffer], {type: "video/mp4"});
-  return {blob, mime: "video/mp4", frames: encoded, audio: "stripped",
+  const detail = {lane, decoded: t.decoded, fed: t.fed, expected: t.expected,
+    at: t.lastEnd != null ? t.lastEnd / 1e6 : (t.firstFed != null ? t.firstFed / 1e6 : 0)};
+
+  if(readErr){
+    if(readErr instanceof RangeError) throw vstFault("memory", "This device ran out of memory while making the copy. "
+      + "No timestamped copy was created and your original is unchanged.", Object.assign({text: vstErrText(readErr)}, detail));
+    throw vstFault("read", "The original stopped being readable part-way through ("
+      + vstErrText(readErr) + "). No timestamped copy was created and your original is unchanged.",
+      Object.assign({text: vstErrText(readErr)}, detail));
+  }
+  const dmg = vstTsDamage(st, base)
+    || (bad && bad.kind === "nal" ? {kind: "nal", count: 1, counts: {nal: 1},
+          at: bad.pts != null ? Math.max(0, (bad.pts - base) / VST_TS_HZ) : null} : null)
+    || (bad && bad.kind === "clock" ? {kind: "clock", count: 1, counts: {clock: 1}, at: bad.at} : null);
+  if(dmg) throw vstStreamFault(dmg);
+  if(st && st.reachedEnd && !started) throw vstStreamFault({kind: "nokey", count: 1, counts: {}, at: null});
+  if(decErr || closedEarly){
+    throw vstFault("decoder", VST_INCOMPLETE + " The decoder stopped: "
+      + (decErr ? vstErrText(decErr) : "it closed itself without reporting why") + ".",
+      Object.assign({text: decErr ? vstErrText(decErr) : "it closed itself without reporting why"}, detail));
+  }
+  if(encErr) throw vstFault("encoder", "This device's video encoder stopped part-way ("
+    + vstErrText(encErr) + "). No timestamped copy was created and your original is unchanged.",
+    Object.assign({text: vstErrText(encErr)}, detail));
+  if(muxErr || frameErr){
+    const e = muxErr || frameErr;
+    if(e instanceof RangeError) throw vstFault("memory", "This device ran out of memory while making the copy. "
+      + "No timestamped copy was created and your original is unchanged.", Object.assign({text: vstErrText(e)}, detail));
+    if(muxErr) throw vstFault("encoder", "The MP4 writer refused a frame (" + vstErrText(e)
+      + "). No timestamped copy was created and your original is unchanged.", Object.assign({text: vstErrText(e)}, detail));
+    throw vstFault("decoder", VST_INCOMPLETE + " A decoded picture could not be drawn: " + vstErrText(e) + ".",
+      Object.assign({text: "a decoded picture could not be drawn (" + vstErrText(e) + ")"}, detail));
+  }
+
+  /* ---- COMPLETE, OR NOTHING ---- */
+  const why = [];
+  if(!st || !st.reachedEnd) why.push("the stream was not read to its end");
+  if(!t.expected) why.push("the stream holds no picture after its first keyframe");
+  let missing = 0;
+  for(const ts of expectTs) if(!outTs.has(ts)) missing++;
+  if(t.decoded !== t.expected || missing || t.stray || t.twice){
+    why.push(`the decoder returned ${vstNum(t.decoded)} frames for the ${vstNum(t.expected)} the stream holds`
+      + (missing ? `; ${vstNum(missing)} never came out` : "")
+      + (t.stray ? `; ${vstNum(t.stray)} were never fed to it` : "")
+      + (t.twice ? `; ${vstNum(t.twice)} came out twice` : ""));
+  }
+  if(t.drawn !== t.decoded) why.push(`${vstNum(t.decoded - t.drawn)} decoded frames were not stamped`);
+  const srcSeconds = t.srcFirst != null && t.srcLast != null
+    ? (t.srcLast - t.srcFirst + nominal) / VST_TS_HZ : null;
+  if(srcSeconds != null && V.seconds != null && Math.abs(srcSeconds - V.seconds) > 2 / fps + 0.02){
+    why.push(`the stream's clock runs ${V.seconds.toFixed(2)} s but ${srcSeconds.toFixed(2)} s were read`);
+  }
+  const copySpan = t.lastEnd != null && t.firstOut != null ? (t.lastEnd - t.firstOut) / 1e6 : null;
+  const wantSpan = srcSeconds != null && t.firstFed != null ? srcSeconds - t.firstFed / 1e6 : null;
+  if(copySpan != null && wantSpan != null && Math.abs(copySpan - wantSpan) > 2 / fps + 0.02){
+    why.push(`the copy covers ${copySpan.toFixed(2)} s of the ${wantSpan.toFixed(2)} s from the first keyframe`);
+  }
+  if(why.length) throw vstFault("verify", VST_INCOMPLETE + " " + why[0].charAt(0).toUpperCase() + why[0].slice(1) + ".",
+                                Object.assign({text: why[0], problems: why}, detail));
+  const wrote = [];
+  if(t.encIn !== t.drawn) wrote.push(`${vstNum(t.drawn - t.encIn)} stamped frames never reached the encoder`);
+  if(t.encoded !== t.encIn) wrote.push(`the encoder returned ${vstNum(t.encoded)} of ${vstNum(t.encIn)} frames`);
+  if(t.muxed !== t.encoded) wrote.push(`the MP4 writer took ${vstNum(t.muxed)} of ${vstNum(t.encoded)} frames`);
+  if(wrote.length) throw vstFault("encoder", "The copy could not be completed: " + wrote[0]
+    + ". No timestamped copy was created and your original is unchanged.",
+    Object.assign({text: wrote[0], problems: wrote}, detail));
+
+  if(onStage && vstRunLive(run)) onStage("verifying", 99);
+  let blob;
+  try{
+    muxer.finalize();
+    blob = new Blob([muxer.target.buffer], {type: "video/mp4"});
+  }catch(e){
+    if(e instanceof RangeError) throw vstFault("memory", "This device ran out of memory while finishing the copy. "
+      + "No timestamped copy was created and your original is unchanged.", Object.assign({text: vstErrText(e)}, detail));
+    throw vstFault("encoder", "The MP4 could not be finished (" + vstErrText(e)
+      + "). No timestamped copy was created and your original is unchanged.", Object.assign({text: vstErrText(e)}, detail));
+  }
+  const back = await vstReadBack(blob, W, H, t.muxed, copySpan, fps);
+  if(back.problem) throw vstFault("encoder", "The finished MP4 did not check out: " + back.problem
+    + ". No timestamped copy was created and your original is unchanged.",
+    Object.assign({text: back.problem, lines: ["The finished MP4 did not check out: " + back.problem + "."],
+                   head: "The finished copy did not check out, so it is not offered. "
+                     + "No timestamped copy was created and your original is unchanged."}, detail));
+  if(!vstRunLive(run)) throw vstFault("cancel", "Stopped — nothing was saved and your original is unchanged.");
+  return {blob, mime: "video/mp4", frames: t.encoded, audio: "stripped",
           sourceAudio: parsed.audio ? parsed.audio.name : null,
-          skippedLeading: skipped};
+          skippedLeading: t.skipped, lane,
+          check: {lane, frames: t.encoded, expected: t.expected, mp4Frames: back.frames,
+                  seconds: back.seconds, sourceSeconds: srcSeconds,
+                  skipped: t.skipped, skippedSeconds: t.skipped && t.firstFed != null ? t.firstFed / 1e6 : 0,
+                  firstLabelMs: startMs + Math.floor(Math.max(0, (t.firstOut || 0) / 1e6)) * 1000,
+                  inferred: t.inferred, duplicatePackets: st ? st.dup : 0}};
+}
+
+/* THE FINISHED MP4, READ BACK with this page's own parser before it is
+   offered: the writer closing without throwing is not the same as a file with
+   every frame in it. Frames, picture size and running time must all be what
+   was written. */
+async function vstReadBack(blob, W, H, frames, span, fps){
+  let p = null;
+  try{ p = await vstParse(new File([blob], "copy.mp4", {type: "video/mp4"})); }catch{ p = null; }
+  const v = p && p.video;
+  if(!v || !v.samples) return {problem: "it could not be read back"};
+  if(v.samples.length !== frames) return {problem: `it reads back with ${vstNum(v.samples.length)} frames, not ${vstNum(frames)}`};
+  if(v.width !== W || v.height !== H) return {problem: `it reads back at ${v.width}x${v.height}, not ${W}x${H}`};
+  if(span != null && v.seconds != null && Math.abs(v.seconds - span) > 2 / (fps || 30) + 0.02){
+    return {problem: `it runs ${v.seconds.toFixed(2)} s, not the ${span.toFixed(2)} s of frames written into it`};
+  }
+  return {frames: v.samples.length, seconds: v.seconds};
+}
+
+/* THE WHOLE FILE, READ FOR DAMAGE ALONE — no decoding, the same bounded slices,
+   nothing held. It runs when no decoder could finish, because that leaves the
+   operator one question worth answering: is it the FILE, or this device? */
+async function vstTsIntegrity(file, parsed, run, onStage){
+  const V = parsed.video;
+  const base = V.firstPts != null ? V.firstPts : 0;
+  let nal = null;
+  const st = await vstTsScan(file, parsed.layout, null, au => {
+    if(!vstRunLive(run)) return false;
+    if(au.badNal){ nal = {pts: au.pts}; return false; }
+    return true;
+  }, {strict: true, sps: V.sliceSyntax, onProgress: (pos, stop) => {
+    if(onStage && vstRunLive(run)) onStage("checking", Math.min(98, Math.round(pos / stop * 100)));
+  }});
+  if(!vstRunLive(run)) return null;
+  const dmg = vstTsDamage(st, base);
+  if(dmg) return dmg;
+  if(nal) return {kind: "nal", count: 1, counts: {nal: 1},
+                  at: nal.pts != null ? Math.max(0, (nal.pts - base) / VST_TS_HZ) : null};
+  if(!st.reachedEnd) throw new Error("the file could not be read to its end");
+  return null;
+}
+
+/* What each decoder did, in one sentence apiece — the lines the failure
+   screen shows, and the reason the operator can tell a first-frame refusal
+   (a format this decoder cannot take) from a mid-stream stop. */
+function vstFaultBrief(e){
+  const d = (e && e.vstDetail) || {};
+  return {kind: e && e.vstKind, text: d.text || vstErrText(e), decoded: d.decoded || 0,
+          at: d.at != null ? d.at : null, verify: !!(e && e.vstKind === "verify")};
+}
+function vstDecoderLine(who, f){
+  if(!f) return "";
+  if(f.declined) return `${who} declined this stream's configuration when the file was chosen.`;
+  if(f.remembered) return `${who} already stopped on this file earlier (${f.text}), so it was not run again.`;
+  if(f.verify) return `${who} finished without reporting an error, but its output did not check out: ${f.text}.`;
+  const where = f.decoded
+    ? `after ${vstPlural(f.decoded, "frame")}` + (f.at != null ? ` (about ${vstClipAt(f.at)} into the clip)` : "")
+    : "before it produced a single frame";
+  return `${who} stopped ${where}: ${f.text}.`;
+}
+const VST_PRIMARY_WHO = "This device's decoder";
+const VST_COMPAT_WHO = "Compatibility mode (this browser's software decoder)";
+
+/* BOTH DECODERS STOPPED AT THE SAME MOMENT OF THE FOOTAGE, part-way through —
+   within a second and a half, which absorbs how far ahead of its output a
+   decoder is fed. Two refusals of the very FIRST frame are a different fact
+   (see `vstTsVerdict`). */
+function vstSamePlace(a, b){
+  return !!(a && b && !a.verify && !b.verify && a.at != null && b.at != null
+    && !a.remembered && !a.declined && a.decoded > 0 && b.decoded > 0
+    && Math.abs(a.at - b.at) <= 1.5);
+}
+const vstNeverStarted = f => !!(f && !f.verify && !f.remembered && !f.declined && !f.decoded);
+
+/* THE VERDICT WHEN NO DECODER COULD FINISH. The integrity read decides between
+   the file and the device where it can, and says so where it cannot. */
+async function vstTsVerdict(file, parsed, run, onStage, primary, compat){
+  let damage = null, scanned = false;
+  try{ damage = await vstTsIntegrity(file, parsed, run, onStage); scanned = true; }
+  catch{ scanned = false; }
+  if(!vstRunLive(run)) return vstFault("cancel", "Stopped — nothing was saved and your original is unchanged.");
+  const lines = [vstDecoderLine(VST_PRIMARY_WHO, primary),
+    compat.available ? vstDecoderLine(VST_COMPAT_WHO, compat.fault)
+                     : `Compatibility mode is not available here: ${compat.why}.`].filter(Boolean);
+  if(damage) return vstStreamFault(damage, lines);
+  let label, text, cls;
+  if(!scanned){
+    cls = "unknown"; label = "CAUSE NOT DETERMINED";
+    text = "the file could not be read through again to check it for damage.";
+  } else if(!compat.available){
+    cls = "device"; label = "DEVICE DECODER COMPATIBILITY ERROR";
+    text = "the file's packets read cleanly from start to end, so this is the decoder on this device, "
+      + "not damage in the file — and this browser has no second decoder that accepts the stream.";
+  } else if(vstNeverStarted(primary) && vstNeverStarted(compat.fault)){
+    cls = "device"; label = "DEVICE DECODER COMPATIBILITY ERROR (probable)";
+    text = "the file's packets read cleanly from start to end, and neither decoder on this device would "
+      + "decode even its first frame — most likely a format this device cannot take, rather than damage "
+      + "in the file.";
+  } else if(vstSamePlace(primary, compat.fault)){
+    cls = "stream-probable"; label = "FILE / STREAM ERROR (probable)";
+    text = "the file's packets read cleanly, but both decoders stopped at the same moment, about "
+      + vstClipAt(compat.fault.at) + " into the clip — which points to damage inside the picture data "
+      + "there rather than to this device.";
+  } else {
+    cls = "unknown"; label = "CAUSE NOT DETERMINED";
+    text = "the file's packets read cleanly from start to end, but the two decoders stopped at different "
+      + "points, so whether the picture data itself is damaged could not be established here.";
+  }
+  return vstFault("decoder", [VST_INCOMPLETE].concat(lines, [label + ": " + text]).join(" "),
+                  {cls, label, classText: text, lines, primary, compat});
+}
+
+/* THE ORCHESTRATOR: the primary decoder, then — only if IT failed — the
+   compatibility decoder, then a verdict. A stream fault, an encoder fault, a
+   read or memory failure is not the decoder's, so no second decoder is tried
+   for it: that would be the same doomed run twice. */
+async function vstTranscodeTs(file, parsed, startMs, tz, onStage, run){
+  const V = parsed && parsed.video;
+  const refusal = vstTsRefusal(parsed);
+  if(refusal) throw vstFault("setup", refusal + " Nothing was generated and your original is unchanged.");
+  const key = vstFileKey(file);
+  let primary = null;
+  if(VST_PRIMARY_FAILED.has(key)){
+    primary = Object.assign({remembered: true}, VST_PRIMARY_FAILED.get(key));
+  } else if(run && run.lane === "compat"){
+    primary = {declined: true};
+  } else {
+    try{ return await vstTsAttempt(file, parsed, startMs, tz, "primary", run, onStage); }
+    catch(e){
+      if(!vstDecoderClass(e)) throw e;
+      primary = vstFaultBrief(e);
+      VST_PRIMARY_FAILED.set(key, primary);
+    }
+  }
+  if(!vstRunLive(run)) throw vstFault("cancel", "Stopped — nothing was saved and your original is unchanged.");
+  const avail = await vstCompatAccepts(V);
+  if(!vstRunLive(run)) throw vstFault("cancel", "Stopped — nothing was saved and your original is unchanged.");
+  if(!avail.supported) throw await vstTsVerdict(file, parsed, run, onStage, primary,
+                                                {available: false, why: avail.why});
+  if(onStage) onStage("compat-start", 0, primary);
+  try{
+    const r = await vstTsAttempt(file, parsed, startMs, tz, "compat", run, onStage);
+    r.primary = primary;
+    return r;
+  }catch(e){
+    if(!vstDecoderClass(e)) throw e;
+    throw await vstTsVerdict(file, parsed, run, onStage, primary, {available: true, fault: vstFaultBrief(e)});
+  }
 }
 
 /* IS THIS CONFIDENTLY NOT A VIDEO? (owner, 2026-08-18: desktop must reject a
@@ -14248,7 +14842,12 @@ function vstOpen(caseNo){
       // null = still checking. Nothing offers Generate until this is true.
       readable: null, codec: null, caps: vstCaps(), diag: "",
       // null = still being decided. Never read as "no".
-      decodeOk: null,
+      decodeOk: null, compatOk: null,
+      /* A FILE THIS TAB'S PRIMARY DECODER ALREADY FAILED ON goes straight to
+         compatibility mode — choosing it again must not re-run a decoder known
+         to stop on it. */
+      lane: VST_PRIMARY_FAILED.has(vstFileKey(f)) ? "compat" : "auto",
+      fault: null, phase: "", run: null,
     };
     paintVStamp();
     if(!caseNo) vstLoadCases();
@@ -14273,7 +14872,13 @@ function vstOpen(caseNo){
         vstDecoderAccepts(p.video).then(r => {
           if(VST && VST.url === url){ VST.decodeOk = !!(r && r.supported); paintVStamp(); }
         });
-      } else if(VST) VST.decodeOk = false;
+        /* THE SECOND DECODER, ASKED UP FRONT for a transport stream, so the
+           screen can say before anything runs whether compatibility mode is
+           there to fall back on. */
+        if(vstIsTs(p)) vstCompatAccepts(p.video).then(r => {
+          if(VST && VST.url === url){ VST.compatOk = !!(r && r.supported); VST.compatWhy = r && r.why; paintVStamp(); }
+        });
+      } else if(VST){ VST.decodeOk = false; VST.compatOk = false; }
       /* A TRANSPORT STREAM IS NEVER HANDED TO THE MEDIA ELEMENT. No browser
          here plays MPEG-TS, so the probe below would refuse every camcorder
          file after a 20-second timeout and its verdict would mean nothing —
@@ -14304,7 +14909,12 @@ function vstOpen(caseNo){
       if(r.ok){ VST.vw = r.w; VST.vh = r.h; VST.vdur = r.dur; }
       paintVStamp();
     });
-    const vhash = await vstHash(f);
+    /* THE ORIGINAL'S FINGERPRINT is taken from the file as chosen, before any
+       copy exists, and Generate waits for it (`vstGenerate`) — the derivative
+       never stands in for it. */
+    const hp = vstHash(f);
+    if(VST && VST.url === url) VST.hashP = hp;
+    const vhash = await hp;
     if(VST && VST.url === url){ VST.hash = vhash; paintVStamp(); }
   };
   inp.click();
@@ -14335,6 +14945,9 @@ async function vstLoadCases(){
 
 function vstClose(){
   const v = VST;
+  /* Closing ends the run: the pipeline reads this between frames and stops,
+     rather than decoding to the end of the file behind a closed screen. */
+  if(v && v.run) v.run.cancelled = true;
   if(v){
     try{ if(v._src){ v._src.pause(); v._src.removeAttribute("src"); v._src.load(); } }catch{}
     // The tab holds no video once this is closed: both object URLs go.
@@ -14362,6 +14975,10 @@ function vstCollect(){
 async function vstGenerate(){
   const v = VST;
   if(!v) return;
+  /* NO LOOP. After a failure the screen offers no Generate — a second press
+     would only repeat the run that just failed — and this refuses it even
+     called directly. */
+  if(v.fault || v.run) return paintVStamp();
   const s = vstStart();
   if(!s.ok){ v.err = s.why; v.step = "when"; return paintVStamp(); }
   /* THE ROUTE DECIDES, not the media element. This used to return early on
@@ -14381,33 +14998,67 @@ async function vstGenerate(){
   v.savedHere = false; v.started = false; v.recId = null; v.previewFailed = false;
   if(v.out && v.out.url){ try{ URL.revokeObjectURL(v.out.url); }catch{} }
   v.out = null;
+  v.phase = "processing"; v.primaryNote = null;
   paintVStamp();
 
+  /* THE ORIGINAL IS FINGERPRINTED BEFORE ANY COPY EXISTS. The hash started
+     when the file was chosen; if it is still running, the copy waits for it. */
+  if(v.hash == null && v.hashP){
+    v.stage = "fingerprinting"; paintVStamp();
+    const h = await v.hashP;
+    if(VST !== v) return;
+    if(v.hash == null) v.hash = h;
+    v.stage = "";
+  }
+
   /* THE WEBCODECS PATH IS THE PATH when this device has it and the file was
-     parsed — it decodes what the media element would not, writes a real MP4,
-     and carries the audio across. The MediaRecorder route below is the legacy
-     one and only runs where WebCodecs is absent. */
+     parsed — it decodes what the media element would not and writes a real
+     MP4. The MediaRecorder route below is the legacy one and only runs where
+     WebCodecs is absent. */
   if(route === "pipeline"){
+    /* ONE RUN, OWNED BY THIS SCREEN. Stop and Close end it, and it goes
+       straight to compatibility mode when the device's own decoder is already
+       known not to take this file — declined when it was chosen, or failed on
+       it earlier in this tab. */
+    const run = {owner: v, cancelled: false, lane: vstLaneFor(v)};
+    v.run = run;
     try{
       v.stage = "preparing";
-      const r = await vstTranscode(v.file, v.parsed, v.startMs, v.tz, (stage, pct) => {
-        if(!VST) return;
-        VST.stage = stage; VST.pct = Math.min(99, pct); vstProgress();
-      });
-      if(!VST || VST._abort) return;
+      const r = await vstTranscode(v.file, v.parsed, v.startMs, v.tz, (stage, pct, info) => {
+        if(!vstRunLive(run)) return;
+        const moved = VST.stage !== stage;
+        VST.stage = stage; VST.pct = Math.min(99, Math.max(0, Math.round(pct || 0)));
+        if(stage === "compat-start" || stage === "compat"){
+          VST.phase = "compat";
+          if(info) VST.primaryNote = info;
+        } else if(stage === "checking") VST.phase = "checking";
+        else if(stage === "verifying") VST.phase = "verifying";
+        if(moved) paintVStamp(); else vstProgress();
+      }, run);
+      if(!vstRunLive(run) || VST._abort) return;
       const base = String(v.name || "video").replace(/\.[A-Za-z0-9]+$/, "")
         .replace(/[^A-Za-z0-9._ -]/g, "_").slice(0, 90) || "video";
       v.out = {blob: r.blob, url: URL.createObjectURL(r.blob),
                name: base + "-timestamped.mp4", size: r.blob.size, mime: r.mime,
-               audio: r.audio, frames: r.frames, via: "webcodecs"};
-      v.pct = 100; v.step = "done"; v.stage = "";
+               audio: r.audio, frames: r.frames, via: "webcodecs",
+               /* WHAT THE ORIGINAL CARRIES, so the finished screen can say its
+                  audio is still on it — the row existed and was never fed. */
+               sourceAudio: r.sourceAudio || null,
+               lane: r.lane || null, check: r.check || null, primary: r.primary || null};
+      if(r.lane === "compat") v.lane = "compat";
+      v.pct = 100; v.step = "done"; v.stage = ""; v.phase = "complete";
       paintVStamp();
       await vstRecord();
       return paintVStamp();
     }catch(e){
-      if(VST){ VST.err = (e && e.message) || String(e); VST.step = "preview"; VST.stage = ""; }
+      /* Stopped or closed: the screen that asked is gone, so nothing is said. */
+      if(!vstRunLive(run) || (e && e.vstKind === "cancel")) return;
+      if(VST_PRIMARY_FAILED.has(vstFileKey(v.file))) v.lane = "compat";
+      v.fault = vstFaultView(e);
+      v.err = v.fault ? "" : ((e && e.message) || String(e));
+      v.step = "preview"; v.stage = ""; v.phase = v.fault ? "failed" : "";
       return paintVStamp();
-    }
+    }finally{ if(v.run === run) v.run = null; }
   }
 
   const src = document.createElement("video");
@@ -14759,6 +15410,15 @@ async function vstDiagnose(){
   const dec = vid ? await vstDecoderAccepts(vid) : {supported: false, why: "no video track was read"};
   lines.push(row("WebCodecs decode", dec.supported ? "yes — accepts THIS file's configuration"
     : "no — " + (dec.why || "declined")));
+  /* THE SECOND DECODER — this browser's software one — asked of the same real
+     configuration. It is what a transport stream falls back on when the
+     device's own decoder stops part-way. */
+  if(p && vstIsTs(p)){
+    const soft = vid ? await vstCompatAccepts(vid) : {supported: false, why: "no video track was read"};
+    lines.push(row("Compatibility decode", soft.supported
+      ? "yes — this browser's software decoder accepts it" : "no — " + (soft.why || "declined")));
+    if(VST) VST.compatOk = !!soft.supported;
+  }
   const enc = await vstEncoderAccepts(vid && vid.width, vid && vid.height);
   lines.push(row("Encode H.264", enc.supported ? "yes — " + enc.codec : "no — " + (enc.why || "declined")));
 
@@ -15581,6 +16241,85 @@ function paintVStamp(){
   };
 }
 
+/* ---- WHAT THE SCREEN SAYS ABOUT A RUN ----
+
+   The owner's states, in order: READY -> PROCESSING -> primary decoder failed
+   -> TRYING COMPATIBILITY MODE -> COMPLETE, or -> COULD NOT COMPLETELY DECODE.
+   Each is said once, by these, and never ahead of what actually happened. */
+const VST_PHASE_WORDS = {
+  processing: "Processing",
+  compat: "Primary decoder failed &mdash; trying compatibility mode",
+  checking: "Could not completely decode &mdash; checking the file for damage",
+  verifying: "Checking the copy is complete",
+};
+const VST_STAGE_WORDS = {
+  preparing: "preparing", fingerprinting: "fingerprinting the original first",
+  decoding: "decoding", "compat-start": "compatibility mode", compat: "compatibility mode",
+  checking: "reading the file for damage", verifying: "checking the copy", finishing: "finishing",
+};
+
+/* A failure, as the screen will state it. Stopping says nothing (the screen
+   that asked is gone), and a setup refusal keeps its own sentence. */
+function vstFaultView(e){
+  if(!e || !e.vstKind || e.vstKind === "cancel" || e.vstKind === "setup") return null;
+  const d = e.vstDetail || {};
+  const head = d.head || {
+    encoder: "The copy could not be completed — this device's video encoder or MP4 writer stopped part-way. No timestamped copy was created and your original is unchanged.",
+    memory: "This device ran out of memory while making the copy. No timestamped copy was created and your original is unchanged.",
+    read: "The original stopped being readable part-way through. No timestamped copy was created and your original is unchanged.",
+  }[e.vstKind] || VST_INCOMPLETE;
+  const rest = String(e.message || "").startsWith(head) ? String(e.message).slice(head.length).trim() : "";
+  const lines = d.label ? (d.lines || []).slice()
+    : d.lines && d.lines.length ? d.lines.slice()
+    : e.vstKind === "read" ? [`The browser said: ${d.text || "the file could not be read"}.`,
+        "If the file is on a camera card or an external drive, check it is still connected, then choose the video again."]
+    : e.vstKind === "memory" ? [`It had processed ${vstPlural(d.decoded || 0, "frame")}.`
+        + " A shorter clip, or a device with more memory, is what would change this."]
+    : e.vstKind === "encoder" ? [`It stopped with: ${d.text || rest || "no reason was given"}.`]
+    : [rest || (d.text ? d.text.charAt(0).toUpperCase() + d.text.slice(1) + "." : "")];
+  return {kind: e.vstKind, head, lines: lines.filter(Boolean), label: d.label || "",
+          classText: d.classText || "",
+          state: e.vstKind === "stream" ? "Could not completely decode \u2014 the file is damaged"
+            : e.vstKind === "read" ? "Could not completely decode \u2014 the original stopped being readable"
+            : e.vstKind === "memory" ? "Could not complete \u2014 this device ran out of memory"
+            : e.vstKind === "encoder" ? "Could not complete \u2014 the encoder stopped"
+            : "Could not completely decode on this device",
+          retry: e.vstKind === "read" ? "reselect" : ""};
+}
+
+/* THE FAILURE PANEL takes the place of Generate, for the reason the
+   compatibility stop does: a prominent button under a failure invites the same
+   run again. Only a file that stopped being READABLE is offered anything, and
+   that is choosing it again — a different run, not the same one repeated. */
+function vstFaultHtml(v){
+  const f = v.fault;
+  const cap = t => t ? t.charAt(0).toUpperCase() + t.slice(1) : "";
+  return `<div class="vst-stop" role="alert">
+      <b>${esc(f.head)}</b>
+      ${f.lines.map(l => `<p>${esc(l)}</p>`).join("")}
+      ${f.label ? `<p><b>${esc(f.label)}</b>${esc(cap(f.classText))}</p>` : ""}
+      <p>Nothing here changed the original and nothing was uploaded.${
+        f.retry ? "" : " Generating again would repeat the same run, so it is not offered."}</p>
+      ${f.retry === "reselect" ? `<button class="vst-btn go" data-act="vstOpen"
+        data-case="${esc(v.caseNo || "")}">Choose the video again</button>` : ""}
+      <button class="vst-btn" data-act="vstDiag">What can this device do?</button>
+      ${v.diag ? `<pre class="vst-diag">${esc(v.diag)}</pre>` : ""}</div>`;
+}
+
+/* The second decoder, as the ready screen states it before anything runs. */
+function vstCompatModeText(v){
+  if(vstLaneFor(v) === "compat") return "will be used for this file";
+  return v.compatOk === true ? "available if this device's decoder fails &mdash; this browser's software decoder accepts the stream"
+    : v.compatOk === false ? "not available in this browser"
+    : "checking&hellip;";
+}
+
+/* What the check proved, in one line on the finished screen. */
+function vstCheckText(c){
+  return `All ${vstPlural(c.frames, "frame")} decoded, stamped and re-encoded; the finished MP4 reads back`
+    + ` with ${vstPlural(c.mp4Frames, "frame")}` + (c.seconds != null ? `, ${c.seconds.toFixed(2)} s` : "");
+}
+
 function vstHtml(){
   const v = VST, mb = b => b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(b / 1024)) + " KB";
   const s = vstStart();
@@ -15667,13 +16406,14 @@ function vstHtml(){
         </div>`
     : v.step === "preview" ? `
         <div class="vst-card">
-          <h4>Ready to make the timestamped copy</h4>
+          <h4>${v.fault ? "The timestamped copy could not be made" : "Ready to make the timestamped copy"}</h4>
           <div class="vst-k"><span>Original</span><span>${esc(v.name)}</span></div>
           <div class="vst-k"><span>Starts at</span><span>${esc(preview)}</span></div>
           <div class="vst-k"><span>Stamp position</span><span>Bottom right</span></div>
           <div class="vst-k"><span>Fingerprint</span><span>${v.hash
             ? esc(v.hash.slice(0, 16)) + "…"
-            : "not taken &mdash; the file is too large to fingerprint in a browser"}</span></div>
+            : v.size > VST_HASH_MAX ? "not taken &mdash; the file is too large to fingerprint in a browser"
+            : v.hashP ? "being taken&hellip;" : "not taken"}</span></div>
           ${vstContainer() ? `<div class="vst-k"><span>Container</span><span>${
             esc(vstContainer())}</span></div>` : ""}
           <div class="vst-k"><span>Video codec</span><span>${
@@ -15681,9 +16421,15 @@ function vstHtml(){
               : v.readable === null ? "reading the file&hellip;"
               : "could not be determined from the file"}</span></div>
           <div class="vst-k"><span>Compatibility</span><span>${vstCompatState()}</span></div>
+          ${vstIsTs(v.parsed) && !v.fault ? `<div class="vst-k"><span>Compatibility mode</span><span>${
+            vstCompatModeText(v)}</span></div>` : ""}
           ${v.err ? `<p class="vst-err">${esc(v.err)}</p>` : ""}
           <p class="vst-note">The original is opened, read and left exactly as it is.
             The copy is made here on this device and nothing is uploaded.</p>
+          ${vstLaneFor(v) === "compat" && !v.fault ? `<p class="vst-note">This device&rsquo;s own decoder
+            ${VST_PRIMARY_FAILED.has(vstFileKey(v.file)) ? "has already stopped on this file" : "declined this stream"},
+            so the copy will be made in compatibility mode &mdash; this browser&rsquo;s software decoder,
+            still entirely on this device. It is slower.</p>` : ""}
           <!-- SAID BEFORE IT STARTS, not after. The clip is played through once,
                so a long one on a phone is a long wait on a hot battery, and the
                operator should be able to choose the laptop instead. The figure
@@ -15703,11 +16449,11 @@ function vstHtml(){
                pipeline was built for: on an iPhone the media element says no
                and WebCodecs says yes. It is a note now, and only "no route at
                all" takes the action away. -->
-          ${v.readable === false && vstPath() !== "none" ? `<p class="vst-note">
+          ${v.readable === false && vstPath() !== "none" && !v.fault && !vstIsTs(v.parsed) ? `<p class="vst-note">
             This device's ordinary media player could not open this file, but its
             video codec can &mdash; the copy is made by decoding and re-encoding
             it here, so generation is unaffected.</p>` : ""}
-          ${vstPath() === "none" ? `<div class="vst-stop">
+          ${v.fault ? vstFaultHtml(v) : vstPath() === "none" ? `<div class="vst-stop">
               <b>This video cannot be processed on this device.</b>
               <p>${esc(vstCompatText())}</p>
               <p>Nothing here has changed it and nothing was uploaded.
@@ -15721,6 +16467,7 @@ function vstHtml(){
             : `<button class="vst-btn go" data-act="vstGo" ${
                 vstPath() === "checking" ? "disabled" : ""}>${
                 vstPath() === "checking" ? "Checking this video&hellip;"
+                  : vstLaneFor(v) === "compat" ? "Generate timestamped copy (compatibility mode)"
                   : "Generate timestamped copy"
               }</button>`}
           <button class="vst-btn" data-act="vstEditTime">Edit timestamp</button>
@@ -15732,11 +16479,25 @@ function vstHtml(){
     : v.step === "working" ? `
         <div class="vst-card">
           <h4>Making the timestamped copy</h4>
+          <div class="vst-k"><span>Status</span><span id="vst_phase">${
+            VST_PHASE_WORDS[v.phase] || VST_PHASE_WORDS.processing}</span></div>
           <div class="vst-bar2"><i id="vst_bar" style="width:${v.pct}%"></i></div>
-          <p class="vst-note"><b id="vst_pc">${v.pct}%</b>${v.stage ? " &mdash; " + esc(v.stage) : ""}
-            &mdash; ${v.parsed && vstCanPipeline()
+          <p class="vst-note"><b id="vst_pc">${v.pct}%</b>${v.stage
+              ? " &mdash; " + (VST_STAGE_WORDS[v.stage] || esc(v.stage)) : ""}
+            &mdash; ${v.phase === "checking"
+              ? "the file is being read through once more; nothing is being decoded or written. Keep this screen open."
+              : v.phase === "verifying"
+              ? "the finished copy is being read back and counted before it is offered. Keep this screen open."
+              : v.parsed && vstCanPipeline()
               ? "frames are being decoded, stamped and re-encoded on this device. Keep this screen open."
               : "the clip is being played through once, so this takes about as long as the footage runs. Keep this screen open."}</p>
+          ${v.phase === "compat" ? `<p class="vst-note">${esc(vstDecoderLine(VST_PRIMARY_WHO, v.primaryNote)
+              || "This device's decoder did not finish.")}
+            Nothing from that attempt is kept. This browser&rsquo;s software decoder is decoding the
+            stream again from its first keyframe &mdash; slower, and still entirely on this device.</p>` : ""}
+          ${v.phase === "checking" ? `<p class="vst-note">No decoder on this device could finish the
+            stream, so the file is being read through once more, without decoding, to tell damage in
+            the file from a limit of this device.</p>` : ""}
           <button class="vst-btn" data-act="vstAbort">Stop</button>
         </div>`
     : `
@@ -15756,6 +16517,14 @@ function vstHtml(){
           <div class="vst-k" style="margin-top:8px"><span>File</span><span>${esc(v.out ? v.out.name : "")}</span></div>
           <div class="vst-k"><span>Size</span><span>${v.out ? mb(v.out.size) : ""}</span></div>
           <div class="vst-k"><span>Starts at</span><span>${esc(vstLabel(v.startMs, v.tz))}</span></div>
+          ${v.out && v.out.check ? `<div class="vst-k"><span>Status</span><span>Complete</span></div>
+          <div class="vst-k"><span>Decoder</span><span>${v.out.lane === "compat"
+            ? "Compatibility mode &mdash; this browser&rsquo;s software decoder" : "This device&rsquo;s decoder"}</span></div>
+          <div class="vst-k"><span>Checked</span><span>${esc(vstCheckText(v.out.check))}</span></div>` : ""}
+          <div class="vst-k"><span>Original&rsquo;s fingerprint</span><span>${v.hash
+            ? esc(v.hash.slice(0, 16)) + "&hellip; (SHA-256, of the original)"
+            : v.size > VST_HASH_MAX ? "not taken &mdash; the file is too large to fingerprint in a browser"
+            : "not taken"}</span></div>
           <div class="vst-k"><span>Audio</span><span>${
             v.out && v.out.audio === "stripped"
               ? "Not included &mdash; the copy is picture only"
@@ -15765,6 +16534,13 @@ function vstHtml(){
           <div class="vst-k"><span>On this device</span><span>${
             v.savedHere ? "Saved" : "Generated &mdash; not yet saved"}</span></div>
           <div class="vst-k"><span>Case</span><span>${v.caseNo ? esc(v.caseNo) : "Not attached to a case"}</span></div>
+          ${v.out && v.out.lane === "compat" ? `<p class="vst-ok">Compatibility mode was used for this
+            AVCHD/MTS file. Processing remained on this device.</p>` : ""}
+          ${v.out && v.out.check && v.out.check.skipped ? `<p class="vst-note">The first
+            ${vstPlural(v.out.check.skipped, "frame")} (${v.out.check.skippedSeconds.toFixed(2)} s) come before
+            the stream&rsquo;s first keyframe and refer to pictures that are not in this file, so no decoder can
+            rebuild them. The copy begins ${v.out.check.skippedSeconds.toFixed(2)} s after the original does;
+            its first frame is stamped ${esc(vstLabel(v.out.check.firstLabelMs, v.tz))}.</p>` : ""}
           ${v.err ? `<p class="vst-err">${esc(v.err)}</p>` : ""}
           ${v.saveMsg ? `<p class="vst-ok">${esc(v.saveMsg)}</p>` : ""}
           ${v.caseNo ? "" : `<p class="vst-note">Nothing about this copy is recorded in the portal
