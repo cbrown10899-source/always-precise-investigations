@@ -1784,6 +1784,7 @@
   .vqd-steps li.is-fail{color:var(--vqd-bad);}
   .vqd-checks li{color:var(--vqd-ink);}
   .vqd-runacts{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
+  .vqd-runacts .vqd-note{flex:1 1 100%;margin:0;}
   .only-m{display:contents;}
   /* Confirmations and the case chooser: a card over the screen, so it is on
      screen whichever region the operator was in when it was owed. */
@@ -15857,8 +15858,9 @@ function vstNotVideo(f){
   return true;
 }
 
-/* Choosing files. The files never leave the device: they are read straight
-   from the picker, one at a time, and nothing is copied anywhere.
+/* Opening the generator's picker. The files never leave the device: they
+   are read straight from the picker, one at a time, and nothing is copied
+   anywhere.
 
    MANY AT ONCE (owner, 2026-09-28, Timestamp Video V2): "I should NOT have to
    select each video from the device one at a time." This opens the device's
@@ -16129,7 +16131,10 @@ async function vqAnalyze(v){
   if(p && p.capture){
     v.detected = {ms: p.capture.ms, from: p.capture.trusted ? "capture" : "creation", note: p.capture.source};
     /* A correction the operator already typed outranks anything read from the
-       file — the rule the single picker always kept. */
+       file — the rule the single picker always kept. What is in the editor's
+       boxes is taken as their draft first, so a time typed a moment before
+       the file's own date arrives is never written over by it. */
+    if(VQ && String(VQ.sel) === String(v.qid)) vqTakeDraft(v);
     if(v.guessed && !v.confirmed && !v.draft){
       const c = vstParts(p.capture.ms);
       v.mo = c.month; v.da = c.day; v.yr = c.year;
@@ -16568,6 +16573,8 @@ function vqSaveTime(v){
   v.draft = null; v.err = ""; v.guessed = false; v.confirmed = true; v.startMs = s.ms;
   v.saveMsg = `Saved — this video starts ${vstLabel(s.ms, v.tz)}.`;
   v.skipCapture = true;
+  /* Saved is answered: a question about this video's unsaved change goes. */
+  if(VQ && VQ.editAsk && String(VQ.editAsk.from) === String(v.qid)) VQ.editAsk = null;
   paintVStamp();
   return true;
 }
@@ -18905,8 +18912,9 @@ function vqdRunHtml(){
   const st = vqStatus(v), pos = vqPos(v);
   const name = esc(v.name);
   const next = vqNextReady(v);
-  const nextBtn = next ? `<span class="only-m"><button class="vqd-b" data-act="vqProcessNext"${vqRunning() ? " disabled" : ""}
-      aria-label="Process next: ${esc(next.name)}">&#9654; Process next</button></span>` : "";
+  const nextBtn = `<span class="only-m">${next ? `<button class="vqd-b" data-act="vqProcessNext"${vqRunning() ? " disabled" : ""}
+      aria-label="Process next: ${esc(next.name)}">&#9654; Process next</button>`
+      : `<span class="vqd-note">No other video in the queue is ready to process.</span>`}</span>`;
   if(vqBusy(st)){
     return shell(`Processing: ${pos} of ${total}`,
       `<b>${name}</b><p>${v.stage === "waiting" ? "Waiting for the file check in progress to finish&hellip;"

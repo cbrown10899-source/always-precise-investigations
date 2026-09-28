@@ -8456,7 +8456,10 @@ const VP9_LIB = String.raw`
     while(!fn() && Date.now() - t0 < ms) await new Promise(r => setTimeout(r, 25)); return fn(); };
   const qClick = (act, id) => { const el = document.querySelector('[data-act="' + act + '"]'
     + (id != null ? '[data-id="' + id + '"]' : '')); if(el && !el.disabled) el.click(); return !!(el && !el.disabled); };
-  const qScreen = () => { const el = document.querySelector('.vst'); return el ? el.innerText : ''; };
+  /* What is on screen: a video's details when they are open over the
+     dashboard (or the single-video screen), otherwise the dashboard itself. */
+  const qScreen = () => { const el = document.querySelector('.vst') || document.querySelector('.vqd');
+    return el ? el.innerText : ''; };
   const metaClip = async (name, frames, lastModified) => new File([withMovMeta(await vp9Clip({frames: frames || 12}))],
     name, {type: 'video/quicktime', lastModified: lastModified || 1790000000000});
   const confirmTime = async v => { qClick('vqEdit', v.qid); qClick('vqSaveTime'); qClick('vqBack'); };
@@ -8596,9 +8599,16 @@ section('The video timestamp screen');
      refused.status === 400 && refused.body.code === 'video_device_first',
      JSON.stringify(refused).slice(0, 200));
 
+  /* THE DOOR OPENS THE DASHBOARD (owner, approved mockup, 2026-09-28): the
+     queue is where videos are dropped, so it is on screen before any are
+     chosen — empty, reading nothing, making nothing. */
   await page.locator('[data-act="vstOpen"]').click();
   await page.waitForTimeout(300);
-  ok('with no file chosen the generator stays shut', await page.locator('.vst').count() === 0);
+  const door = await page.evaluate(() => ({ dash: !!document.querySelector('.vqd'), video: !!document.querySelector('.vst'),
+    items: VQ ? VQ.items.length : -1, drop: !!document.querySelector('.vqd-drop'), running: vqRunning() }));
+  ok('the door opens the dashboard, empty, with nothing chosen and nothing made',
+     door.dash && !door.video && door.items === 0 && door.drop && !door.running, JSON.stringify(door));
+  await page.evaluate(() => vstClose());
 
   // Open it directly on a known state — the file picker cannot be driven here.
   /* A file the verified pipeline can take: WebCodecs accepts its configuration
@@ -12509,18 +12519,22 @@ section('Timestamp queue: many videos at once, sorted, and checked one at a time
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
   /* B and C: twenty videos chosen together all appear, and choosing them
-     decodes nothing — each is read in turn, one at a time. */
+     decodes nothing but ONE frame each for its thumbnail (G) — each is read in
+     turn, one at a time, with one short-lived decoder and never an encoder. */
   const R = await vstRun(page, `
     const restore = useVp9();
     try {
       const files = [];
       for (let i = 20; i >= 1; i--) files.push(new File([await vp9Clip({ frames: 3 + i, w: 160, h: 120 })],
         'CLIP' + i + '.mp4', { type: 'video/mp4', lastModified: 1790000000000 + i }));
-      let parse = 0, parseMax = 0, hash = 0, hashMax = 0, dec = 0, enc = 0;
+      let parse = 0, parseMax = 0, hash = 0, hashMax = 0, dec = 0, enc = 0, live = 0, liveMax = 0, fedMax = 0;
       const rp = window.vstParse, rh = window.vstHash, RD = window.VideoDecoder, RE = window.VideoEncoder;
       window.vstParse = async f => { parse++; parseMax = Math.max(parseMax, parse); try { return await rp(f); } finally { parse--; } };
       window.vstHash = async f => { hash++; hashMax = Math.max(hashMax, hash); try { return await rh(f); } finally { hash--; } };
-      window.VideoDecoder = class extends RD { constructor(i){ dec++; super(i); } };
+      window.VideoDecoder = class extends RD {
+        constructor(i){ dec++; super(i); live++; liveMax = Math.max(liveMax, live); this.fed = 0; }
+        decode(c){ this.fed++; fedMax = Math.max(fedMax, this.fed); return super.decode(c); }
+        close(){ if (this.state !== 'closed') live--; return super.close(); } };
       window.VideoEncoder = class extends RE { constructor(i){ enc++; super(i); } };
       const W = watchDoors();
       try {
@@ -12529,12 +12543,15 @@ section('Timestamp queue: many videos at once, sorted, and checked one at a time
         await qWait(() => VQ.items.every(x => x.analysis === 'done'), 60000);
         const hashes = [];
         for (const x of VQ.items) hashes.push([x.hash, await sha(await readFileBytes(x.file))]);
-        return { names: VQ.items.map(x => x.name), reading, parseMax, hashMax, dec, enc,
+        await new Promise(r => setTimeout(r, 50));
+        return { names: VQ.items.map(x => x.name), reading, parseMax, hashMax, dec, enc, liveMax, fedMax,
                  statuses: [...new Set(VQ.items.map(vqStatus))],
                  hashOk: hashes.every(([a, b]) => a === b), distinct: new Set(hashes.map(h => h[0])).size,
-                 summary: (document.querySelector('.vq-sum') || {}).innerText || '',
-                 rows: document.querySelectorAll('.vq-row').length,
-                 fp: [...document.querySelectorAll('.vq-row .vq-fp')].map(e => e.textContent.trim()),
+                 summary: (document.querySelector('.vqd-pills') || {}).innerText || '',
+                 rows: document.querySelectorAll('.vqd-row').length,
+                 thumbs: VQ.items.filter(x => /^blob:/.test(x.thumb || '')).length,
+                 imgs: document.querySelectorAll('.vqd-row img.vqd-img').length,
+                 fp: [...document.querySelectorAll('.vqd-row .vqd-fp')].map(e => e.textContent.trim()),
                  why: [vstOrigHashWhy({ size: VST_HASH_MAX + 1 }), vstOrigHashWhy({ size: 1 })],
                  fetches: W.fetches + W.xhr + W.beacons, msg: VQ.msg };
       } finally { window.vstParse = rp; window.vstHash = rh; window.VideoDecoder = RD; window.VideoEncoder = RE; W.restore(); }
@@ -12548,8 +12565,11 @@ section('Timestamp queue: many videos at once, sorted, and checked one at a time
   ok('adding them started at most one read', R.reading <= 1, String(R.reading));
   ok('and only one file was ever being read or fingerprinted at a time', R.parseMax === 1 && R.hashMax === 1,
      `${R.parseMax} / ${R.hashMax}`);
-  ok('no decoder or encoder was made just to list and check them', R.dec === 0 && R.enc === 0,
-     `${R.dec} / ${R.enc}`);
+  ok('no encoder was made just to list and check them', R.enc === 0, String(R.enc));
+  ok('each video’s thumbnail is one frame: one decoder per video at most, fed one chunk',
+     R.dec <= 20 && R.fedMax === 1, `${R.dec} decoders, at most ${R.fedMax} chunk(s) each`);
+  ok('and only one of those decoders was ever alive at a time', R.liveMax === 1, String(R.liveMax));
+  ok('every video has its thumbnail, drawn on its row', R.thumbs === 20 && R.imgs === 20, `${R.thumbs} / ${R.imgs}`);
   ok('every video carries the fingerprint of its own file, never another’s', R.hashOk && R.distinct === 20,
      String(R.distinct));
   ok('each row says, compactly, that its original’s fingerprint is recorded',
@@ -12557,7 +12577,7 @@ section('Timestamp queue: many videos at once, sorted, and checked one at a time
   ok('an original past the limit says why it has none, and names the limit as this tool’s',
      R.why[0] === 'not taken — this tool fingerprints originals up to 128 MB' && R.why[1] === 'not taken',
      JSON.stringify(R.why));
-  ok('the top of the queue counts them by state', /20 videos loaded/.test(R.summary) && /need/.test(R.summary),
+  ok('the top of the queue counts them by state', /20\s*Total/.test(R.summary) && /20\s*Needs review/.test(R.summary),
      R.summary);
   ok('a start time the file only guessed at is marked as needing a look', R.statuses.join() === 'needs',
      R.statuses.join());
@@ -12583,8 +12603,10 @@ section('Timestamp queue: a checked video keeps its frame count, not its frame t
       await qWait(() => VQ.items.every(x => x.analysis === 'done'));
       const [a, b, c] = VQ.items;
       const slim = VQ.items.map(x => ({ table: x.parsed.video.samples, count: x.parsed.video.sampleCount }));
+      /* Reads of THIS video's original — the copy's own read-back is a
+         different file and is not the frame table being read again. */
       let reads = 0;
-      window.vstParse = async f => { reads++; return rp(f); };
+      window.vstParse = async f => { if (f === b.file) reads++; return rp(f); };
       qClick('vqGo', b.qid);
       await qWait(() => b.out || b.fault);
       const made = { out: !!b.out, frames: b.out && b.out.check && b.out.check.mp4Frames, reads,
@@ -12623,7 +12645,8 @@ section('Timestamp queue: each video’s date and time is its own');
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
   /* D: editing video 2 leaves 1 and 3 exactly as they were; moving between
-     videos changes nothing; an unsaved correction holds you where you are. */
+     videos changes nothing; an unsaved correction is never kept or dropped
+     silently — moving off it asks (M): save and go on, discard, or stay. */
   const R = await vstRun(page, `
     const restore = useVp9();
     try {
@@ -12641,34 +12664,59 @@ section('Timestamp queue: each video’s date and time is its own');
       set('mo', '09'); set('da', '26'); set('yr', '2026'); set('hr', '06'); set('mi', '14'); set('se', '37');
       document.getElementById('vst_ap').value = 'AM';
       qClick('vqEditNext');
-      const held = { still: VST === b, err: VST && VST.err, unchanged: snap(b) === B0 };
+      const ask = document.querySelector('.vqd-ask');
+      const held = { still: String(VQ.sel) === String(b.qid), asked: !!VQ.editAsk,
+                     text: ask ? ask.innerText : '', unchanged: snap(b) === B0,
+                     acts: ask ? [...ask.querySelectorAll('button')].map(x => x.dataset.act).join() : '' };
+      qClick('vqAskStay');
+      const stayed = { on: String(VQ.sel) === String(b.qid), asked: !!VQ.editAsk,
+                       typed: document.getElementById('vst_mi').value, unchanged: snap(b) === B0 };
       qClick('vqSaveTime');
-      const saved = { b: snap(b), a: snap(a) === A0, c: snap(c) === C0, msg: b.saveMsg };
+      const saved = { b: snap(b), a: snap(a) === A0, c: snap(c) === C0, msg: b.saveMsg, asked: !!VQ.editAsk };
       qClick('vqEditNext');
-      const next = { on: VST === c, c: snap(c) === C0 };
+      const next = { on: String(VQ.sel) === String(c.qid), c: snap(c) === C0 };
       qClick('vqEditPrev');
-      const back = { on: VST === b, b: snap(b) };
+      const back = { on: String(VQ.sel) === String(b.qid), b: snap(b) };
       set('se', '59');
       qClick('vqUndoTime');
       const undone = { field: document.getElementById('vst_se').value, b: snap(b) };
+      /* Discard and Save-and-continue, each answered for real. */
+      set('se', '45');
+      qClick('vqEditNext');
+      qClick('vqAskDiscard');
+      const discarded = { on: String(VQ.sel) === String(c.qid), b: snap(b) === saved.b, draft: b.draft };
+      qClick('vqEditPrev');
+      set('se', '41');
+      qClick('vqEditNext');
+      qClick('vqAskSave');
+      const savedOn = { on: String(VQ.sel) === String(c.qid), b: snap(b) };
       qClick('vqBack');
-      return { editor, held, saved, next, back, undone, A0, B0, C0,
+      return { editor, held, stayed, saved, next, back, undone, discarded, savedOn, A0, B0, C0,
                statuses: VQ.items.map(vqStatus), dash: qScreen() };
     } finally { restore(); vstClose(); }
   `);
-  ok('the editor is for one video, and says so', /Video 2 of 3/.test(R.editor) && /this video only/i.test(R.editor),
+  ok('the editor is for one video, and says so', /video 2 of 3/i.test(R.editor) && /this video only/i.test(R.editor),
      R.editor.slice(0, 300));
-  ok('Next with an unsaved change stays put and says why',
-     R.held.still && /not saved/.test(R.held.err || '') && R.held.unchanged, JSON.stringify(R.held));
-  ok('saving writes video 2', R.saved.b.startsWith('09|26|2026|06|14|37|AM|true'), R.saved.b);
+  ok('Next with an unsaved change stays put and asks',
+     R.held.still && R.held.asked && /not saved/.test(R.held.text) && R.held.unchanged, JSON.stringify(R.held));
+  ok('the question offers save and continue, discard, or stay — nothing else',
+     R.held.acts === 'vqAskSave,vqAskDiscard,vqAskStay', R.held.acts);
+  ok('Stay keeps the typing on screen and still out of the video',
+     R.stayed.on && !R.stayed.asked && R.stayed.typed === '14' && R.stayed.unchanged, JSON.stringify(R.stayed));
+  ok('saving writes video 2, and the question goes with it', R.saved.b.startsWith('09|26|2026|06|14|37|AM|true') && !R.saved.asked,
+     R.saved.b);
   ok('and leaves videos 1 and 3 exactly as they were', R.saved.a && R.saved.c);
   ok('moving to the next video changes nothing on it', R.next.on && R.next.c);
   ok('and back again, video 2 still holds what was saved', R.back.on && R.back.b === R.saved.b);
   ok('Undo puts the saved time back in the form, and the video never took the edit',
      R.undone.field === '37' && R.undone.b === R.saved.b, JSON.stringify(R.undone));
+  ok('Discard moves on and the video keeps what was saved', R.discarded.on && R.discarded.b && !R.discarded.draft,
+     JSON.stringify(R.discarded));
+  ok('Save and continue writes the change, then moves on',
+     R.savedOn.on && R.savedOn.b.startsWith('09|26|2026|06|14|41|AM|true'), JSON.stringify(R.savedOn));
   ok('video 2 is ready; the two not yet checked still say so',
      JSON.stringify(R.statuses) === JSON.stringify(['needs', 'ready', 'needs']), JSON.stringify(R.statuses));
-  ok('the queue shows video 2 starting at the time given for it', /Starts 09\/26\/2026 06:14:37 AM EDT/.test(R.dash),
+  ok('the queue shows video 2 starting at the time given for it', /09\/26\/2026 06:14:41 AM EDT/.test(R.dash),
      R.dash.slice(0, 400));
   await page.close();
 }
@@ -12699,7 +12747,7 @@ section('Timestamp queue: one at a time, in the order the operator chooses');
       const working = qScreen();
       await qWait(() => d3.out || d3.fault);
       const done3 = qScreen();
-      const nextLabel = (document.querySelector('[data-act="vqProcessNext"]') || {}).innerText || '';
+      const nextLabel = (document.querySelector('[data-act="vqProcessNext"]') || { getAttribute: () => '' }).getAttribute('aria-label') || '';
       qClick('vqProcessNext');
       const confirm = { kind: VQ.confirm && VQ.confirm.kind, text: qScreen(), heldStill: !!(d3.out && d3.out.blob) };
       qClick('vqSaveFirst');
@@ -12720,7 +12768,7 @@ section('Timestamp queue: one at a time, in the order the operator chooses');
   ok('three videos with their own capture times are ready without asking', R.ready.join() === 'ready,ready,ready',
      R.ready.join());
   ok('the third is processed first when the operator presses it',
-     R.order[0] === 'DAY3.mov' && /Processing 3 of 3/.test(R.working), R.working.slice(0, 200));
+     R.order[0] === 'DAY3.mov' && /Processing: 3 of 3/.test(R.working), R.working.slice(0, 200));
   ok('its copy is named for its own start and its own place', /^API-Timestamped-\d{8}-\d{6}-003\.mp4$/.test(R.names[0] || ''),
      String(R.names[0]));
   ok('and the finished screen says Complete, with Process Next naming the next ready video',
@@ -12764,7 +12812,7 @@ section('Timestamp queue: one failed MTS does not stop the others, and only it i
       await qWait(() => a.fault || a.out);
       qClick('vqBack');
       const afterA = VQ.items.map(vqStatus);
-      const aRow = (document.querySelector('.vq-row[data-qid="' + a.qid + '"]') || {}).innerText || '';
+      const aRow = (document.querySelector('.vqd-row[data-qid="' + a.qid + '"]') || {}).innerText || '';
       const aGo = !!document.querySelector('[data-act="vqGo"][data-id="' + a.qid + '"]');
       plan.hwFailAt = 12;
       qClick('vqGo', b.qid);
@@ -12821,7 +12869,7 @@ section('Timestamp queue: Stop stops the video, and the queue stays');
       return { hadStop, at, later, status: vqStatus(v), out: !!v.out, fault: !!v.fault, run: !!v.run,
                onQueue: VST === null && !!VQ, n: VQ.items.length, w: vqStatus(w),
                go: !!document.querySelector('[data-act="vqGo"][data-id="' + v.qid + '"]'),
-               row: (document.querySelector('.vq-row[data-qid="' + v.qid + '"]') || {}).innerText || '' };
+               row: (document.querySelector('.vqd-row[data-qid="' + v.qid + '"]') || {}).innerText || '' };
     } finally { S.restore(); vstClose(); }
   `);
   ok('Stop is on the processing screen and works', R.hadStop === true);
@@ -12937,10 +12985,11 @@ section('Timestamp queue: Add videos, Add a folder, and what a folder brings');
       vqAdd(many, { caseNo: '' });
       const cap = { n: VQ.items.length, msg: VQ.msg, last: VQ.items[VQ.items.length - 1].name };
       window.vqPump = realPump;
-      /* A NON-VIDEO CHOSEN ON ITS OWN is refused the way it always was. */
+      /* A NON-VIDEO CHOSEN ON ITS OWN is refused in the words it always was —
+         "Video files only", naming the file — and nothing is added. */
       vstClose();
       vqAdd([new File(['%PDF'], 'report.pdf', { type: 'application/pdf' })], { caseNo: '' });
-      const refused = { step: VST && VST.step, queue: !!VQ, screen: qScreen() };
+      const refused = { drawer: !!VST, n: VQ ? VQ.items.length : -1, err: VQ ? VQ.err : '', screen: qScreen() };
       return { seen, folder, dup, touchFolder, single, refused, cap };
     } finally { HTMLInputElement.prototype.click = rc; vstClose(); }
   `);
@@ -12961,9 +13010,9 @@ section('Timestamp queue: Add videos, Add a folder, and what a folder brings');
   ok('a queue holds a hundred videos, and says how many more were left out',
      R.cap.n === 100 && R.cap.last === 'BULK100.mp4' && /5 videos left out — the queue holds 100 at most/.test(R.cap.msg),
      JSON.stringify(R.cap));
-  ok('a non-video chosen on its own is refused as it always was, with no queue',
-     R.refused.step === 'reject' && R.refused.queue === false && /Video files only/.test(R.refused.screen),
-     JSON.stringify(R.refused).slice(0, 200));
+  ok('a non-video chosen on its own is refused in the words it always was, and nothing is added',
+     !R.refused.drawer && R.refused.n === 0 && /Video files only/.test(R.refused.screen)
+     && /report\.pdf/.test(R.refused.err), JSON.stringify(R.refused).slice(0, 300));
   await page.close();
 }
 
@@ -13053,15 +13102,15 @@ section('Timestamp queue: a video finishing its check does not disturb the one b
                       caret: document.activeElement && document.activeElement.selectionStart,
                       entry: first.hr, hrBefore, draft: first.draft && first.draft.hr, checkedWhileTyping: 8 - paintsBefore };
       qClick('vqUndoTime'); qClick('vqBack');
-      const body = document.querySelector('.vst-body');
+      const body = document.getElementById('vq_body');
       body.scrollTop = 600;
-      const d = document.querySelector('.vq-row[data-qid="' + VQ.items[4].qid + '"] details');
+      const d = document.querySelector('.vqd-row[data-qid="' + VQ.items[4].qid + '"] .vqd-menu');
       d.open = true;
       const at = body.scrollTop;
       vqAdd([new File([await vp9Clip({ frames: 20, w: 160, h: 120 })], 'E9.mov', { type: 'video/quicktime', lastModified: 1790000000109 })], { caseNo: '' });
       await qWait(() => VQ.items.every(x => x.analysis === 'done'), 30000);
-      const list = { at, now: document.querySelector('.vst-body').scrollTop,
-                     open: !!document.querySelector('.vq-row[data-qid="' + VQ.items[4].qid + '"] details[open]') };
+      const list = { at, now: document.getElementById('vq_body').scrollTop,
+                     open: !!document.querySelector('.vqd-row[data-qid="' + VQ.items[4].qid + '"] .vqd-menu[open]') };
       return { typed, list };
     } finally { window.vstHash = rh; restore(); vstClose(); }
   `);
@@ -13081,55 +13130,384 @@ section('Timestamp queue on a phone: compact, 44px, nothing sideways, nothing co
   for (const width of [390, 320]) {
     const page = await newPage();
     await signIn(page, 'trever', 'AdminPassword1x');
-    await page.setViewportSize({ width, height: 844 });
+    await page.setViewportSize({ width, height: width === 320 ? 568 : 844 });
     await page.waitForTimeout(200);
+    /* WHAT A PERSON CAN REACH: controls with a box, outside anything inert
+       (the list behind a full-screen editor, the dashboard behind a drawer). */
     const measure = () => page.evaluate(() => {
-      const root = document.querySelector('.vst');
-      const els = [...document.querySelectorAll('.vst button, .vst summary, .vst input, .vst select')]
-        .filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+      const root = document.getElementById('vstamp');
+      const reach = el => { const r = el.getBoundingClientRect(); const d = el.closest('details');
+        return r.width > 0 && r.height > 0 && !el.closest('[inert]') && !(d && !d.open && !el.closest('summary')); };
+      const els = [...root.querySelectorAll('button, summary, input, select')].filter(reach);
       const small = els.map(el => ({ t: (el.dataset.act || el.id || el.tagName) + ':' + el.innerText.slice(0, 20),
         h: Math.round(el.getBoundingClientRect().height) })).filter(x => x.h < 44);
-      const body = document.querySelector('.vst-body');
       const covered = [];
-      for (const el of document.querySelectorAll('.vst [data-act="vqGo"], .vst [data-act="vqEdit"], .vst [data-act="vstAbort"], .vst [data-act="vqProcessNext"], .vst [data-act="vqBack"], .vst [data-act="vstSave"]')) {
+      for (const el of root.querySelectorAll('[data-act="vqGo"], [data-act="vqEdit"], [data-act="vstAbort"], [data-act="vqProcessNext"], [data-act="vqBack"], [data-act="vqListBack"], [data-act="vqRunBack"], [data-act="vqSaveCopy"], [data-act="vqSaveTime"], [data-act="vqAdd"]')) {
+        if (!reach(el)) continue;
         el.scrollIntoView({ block: 'center' });
         const r = el.getBoundingClientRect();
-        if (r.width === 0) continue;
         const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
         if (!hit || !(hit === el || el.contains(hit))) covered.push((el.dataset.act) + '→' + (hit ? hit.className || hit.tagName : 'none'));
       }
+      const body = document.getElementById('vq_body');
+      const vis = el => el && el.getBoundingClientRect().width > 0;
       return { small, covered, over: document.documentElement.scrollWidth - window.innerWidth,
-               bodyOver: body ? body.scrollWidth - body.clientWidth : 0, text: root ? root.innerText : '' };
+               bodyOver: body ? body.scrollWidth - body.clientWidth : 0, text: root ? root.innerText : '',
+               table: vis(document.querySelector('.vqd-thead')), cards: document.querySelectorAll('.vqd-row').length,
+               addTop: (() => { const b = [...root.querySelectorAll('[data-act="vqAdd"]')].find(vis);
+                 return b ? Math.round(b.getBoundingClientRect().top) : null; })() };
     });
     await vstRun(page, `
       window.__restoreVp9 = useVp9();
       const files = [];
-      for (const n of [1, 2, 3, 4]) files.push(await metaClip('AVCHD_CLIP_WITH_A_LONG_NAME_000' + n + '.MOV', 8 + n, 1790000000080 + n));
+      for (const n of [1, 2, 3, 4, 5, 6]) files.push(await metaClip('AVCHD_CLIP_WITH_A_LONG_NAME_000' + n + '.MOV', 8 + n, 1790000000080 + n));
+      vqOpen('');
       vqAdd(files, { caseNo: '' });
       await qWait(() => VQ.items.every(x => x.analysis === 'done'));
     `);
     const dash = await measure();
     ok(`${width}: the queue fits the screen — nothing scrolls sideways`, dash.over <= 0 && dash.bodyOver <= 0,
        `${dash.over} / ${dash.bodyOver}`);
+    ok(`${width}: the queue is cards, not the desk's table`, !dash.table && dash.cards === 6, JSON.stringify([dash.table, dash.cards]));
+    ok(`${width}: Add videos is at the top of the screen`, dash.addTop != null && dash.addTop < 140, String(dash.addTop));
     ok(`${width}: every control on the queue is at least 44px`, dash.small.length === 0, JSON.stringify(dash.small));
-    ok(`${width}: Edit and Generate are not covered by anything`, dash.covered.length === 0, JSON.stringify(dash.covered));
-    ok(`${width}: each row shows name, status, start and its two actions`,
-       /AVCHD_CLIP_WITH_A_LONG_NAME_0001\.MOV/.test(dash.text) && /READY/i.test(dash.text)
-       && /Starts 09\/26\/2026/.test(dash.text), dash.text.slice(0, 400));
-    await vstRun(page, `qClick('vqEdit', VQ.items[1].qid);`);
+    ok(`${width}: Edit, Generate and Add videos are not covered by anything`, dash.covered.length === 0, JSON.stringify(dash.covered));
+    ok(`${width}: each card shows name, status and start`,
+       /AVCHD_CLIP_WITH_A_LONG_NAME_0001\.MOV/.test(dash.text) && /Ready/.test(dash.text)
+       && /09\/26\/2026 06:11:02 AM EDT/.test(dash.text), dash.text.slice(0, 400));
+    /* AF: the editor takes the screen, and Back returns to the list exactly
+       where it was scrolled. */
+    const at = await page.evaluate(() => { const b = document.getElementById('vq_body'); b.scrollTop = 260; return b.scrollTop; });
+    await vstRun(page, `qClick('vqEdit', VQ.items[3].qid);`);
     const ed = await measure();
     ok(`${width}: the editor fits, and every field is 44px`, ed.over <= 0 && ed.small.length === 0,
        JSON.stringify(ed.small) + ' ' + ed.over);
-    await vstRun(page, `qClick('vqBack'); qClick('vqGo', VQ.items[0].qid);`);
+    ok(`${width}: the editor's Save and its way back are reachable`, ed.covered.length === 0, JSON.stringify(ed.covered));
+    const edShot = await page.evaluate(() => { const e = document.getElementById('vq_edit'); const r = e.getBoundingClientRect();
+      return { full: Math.round(r.top) <= 0 && Math.round(r.height) >= innerHeight - 1, gen: !!e.querySelector('[data-act="vqGo"]') }; });
+    ok(`${width}: the editor is the whole screen and carries Generate`, edShot.full && edShot.gen, JSON.stringify(edShot));
+    await vstRun(page, `qClick('vqListBack');`);
+    const back = await page.evaluate(() => document.getElementById('vq_body').scrollTop);
+    ok(`${width}: Back returns to the queue at the same scroll position`, at > 0 && Math.abs(back - at) <= 1, `${at} -> ${back}`);
+    await vstRun(page, `qClick('vqGo', VQ.items[0].qid);`);
     const run = await measure();
     await vstRun(page, `await qWait(() => VQ.items[0].out || VQ.items[0].fault, 30000);`);
     const done = await measure();
     ok(`${width}: the processing screen's Stop is reachable, or the run finished first`,
        run.covered.length === 0, JSON.stringify(run.covered));
-    ok(`${width}: the finished screen fits and its Save, Process Next and Back are 44px and uncovered`,
+    ok(`${width}: the finished screen fits and its Save copy, Process next and Back are 44px and uncovered`,
        done.over <= 0 && done.small.length === 0 && done.covered.length === 0
-       && /Process next/.test(done.text), JSON.stringify({ small: done.small, covered: done.covered, over: done.over }));
+       && /Process next/.test(done.text) && /Save copy/.test(done.text) && /Back to queue/.test(done.text),
+       JSON.stringify({ small: done.small, covered: done.covered, over: done.over }));
     await vstRun(page, `if (window.__restoreVp9) window.__restoreVp9(); vstClose();`);
+    await page.close();
+  }
+}
+
+section('Timestamp dashboard: drag and drop adds, and never starts anything');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  /* C and AS: files dropped on the dashboard join the queue exactly as picked
+     ones do; the drop zone says "Release to add videos" while something is
+     held over it; nothing is processed; a folder is walked by name and only
+     its videos join; a drop onto an open drawer adds nothing; and dragging is
+     never the only way in — the drop zone is itself a button. */
+  const R = await vstRun(page, `
+    const restore = useVp9();
+    const seen = [];
+    const rc = HTMLInputElement.prototype.click;
+    HTMLInputElement.prototype.click = function(){ if (this.type === 'file'){ seen.push({ multiple: this.multiple }); return; } return rc.call(this); };
+    try {
+      vqOpen('');
+      const zone = document.querySelector('.vqd-drop');
+      const dt = new DataTransfer();
+      dt.items.add(await metaClip('DROP2.mov', 9, 1790000000302));
+      dt.items.add(await metaClip('DROP1.mov', 8, 1790000000301));
+      dt.items.add(new File(['notes'], 'notes.pdf', { type: 'application/pdf' }));
+      const fire = (type, target) => { const e = new DragEvent(type, { dataTransfer: dt, bubbles: true, cancelable: true });
+        (target || zone).dispatchEvent(e); return e; };
+      const enter = fire('dragenter');
+      const over = fire('dragover');
+      const held = { drag: document.querySelector('.vqd').dataset.drag,
+                     release: getComputedStyle(document.querySelector('.vqd-drop-r')).display !== 'none',
+                     enterPrevented: enter.defaultPrevented, overPrevented: over.defaultPrevented };
+      const drop = fire('drop', document.querySelector('.vqd-drop-t'));
+      const added = { names: VQ.items.map(x => x.name), msg: VQ.msg, prevented: drop.defaultPrevented,
+                      drag: document.querySelector('.vqd').dataset.drag,
+                      running: vqRunning(), anyRun: VQ.items.some(x => x.run || x.out) };
+      await qWait(() => VQ.items.every(x => x.analysis === 'done'));
+      const afterCheck = { statuses: VQ.items.map(vqStatus), out: VQ.items.some(x => x.out || x.run) };
+      /* A FOLDER, as the browser hands it over: entries, walked by name. */
+      const file = f => ({ isFile: true, isDirectory: false, fullPath: '/CARD/' + f.name, file: (ok) => ok(f) });
+      const dir = (name, kids) => ({ isFile: false, isDirectory: true, fullPath: '/' + name,
+        createReader: () => { let done = false; return { readEntries: (ok) => { ok(done ? [] : kids); done = true; } }; } });
+      const m1 = new File([makeTs({ frames: 10 })], '00002.MTS', { type: '', lastModified: 1790000000312 });
+      const m2 = new File([makeTs({ frames: 10 })], '00001.MTS', { type: '', lastModified: 1790000000311 });
+      const card = dir('CARD', [file(new File(['x'], 'INDEX.BDM', { type: '' })), file(m1),
+        dir('STREAM', [file(m2), file(new File(['x'], '00001.CPI', { type: '' }))])]);
+      const S = stubCodecs({});
+      vqDropFiles({ items: [{ kind: 'file', webkitGetAsEntry: () => card }], files: [] });
+      await qWait(() => VQ.items.length === 4, 5000);
+      const folder = { names: VQ.items.map(x => x.name), msg: VQ.msg };
+      await qWait(() => VQ.items.every(x => x.analysis === 'done'));
+      S.restore();
+      /* A DROP ONTO AN OPEN DRAWER adds nothing, and still does not let the
+         browser navigate away to the file. */
+      qClick('vqDetails', VQ.items[0].qid);
+      const n0 = VQ.items.length;
+      const dt2 = new DataTransfer(); dt2.items.add(await metaClip('LATE.mov', 8, 1790000000399));
+      const late = new DragEvent('drop', { dataTransfer: dt2, bubbles: true, cancelable: true });
+      document.querySelector('.vst').dispatchEvent(late);
+      const refused = { n: VQ.items.length === n0, prevented: late.defaultPrevented, drawer: !!VST };
+      qClick('vqBack');
+      /* THE DROP ZONE IS A BUTTON: focusable, and it opens the picker. */
+      const z = document.querySelector('.vqd-drop');
+      const button = { tag: z.tagName, name: z.getAttribute('aria-label') || '' };
+      return { held, added, afterCheck, folder, refused, button, seen };
+    } finally { HTMLInputElement.prototype.click = rc; restore(); }
+  `);
+  ok('holding files over the dashboard says Release to add videos', R.held.drag === '1' && R.held.release,
+     JSON.stringify(R.held));
+  ok('and the browser is kept from opening them itself', R.held.enterPrevented && R.held.overPrevented && R.added.prevented);
+  ok('the dropped videos join the queue in name order, and the rest are named as left out',
+     JSON.stringify(R.added.names) === JSON.stringify(['DROP1.mov', 'DROP2.mov'])
+     && /2 videos added/.test(R.added.msg) && /1 file left out — not video \(notes\.pdf\)/.test(R.added.msg),
+     JSON.stringify(R.added));
+  ok('the highlight goes when the files land', R.added.drag === '0');
+  ok('a drop starts nothing — no run, no copy, before or after they are checked',
+     !R.added.running && !R.added.anyRun && !R.afterCheck.out, JSON.stringify(R.afterCheck));
+  ok('a dropped folder is walked by name: its videos join, its index files do not',
+     JSON.stringify(R.folder.names) === JSON.stringify(['DROP1.mov', 'DROP2.mov', '00001.MTS', '00002.MTS'])
+     && /2 files left out — not video \(INDEX\.BDM, 00001\.CPI\)/.test(R.folder.msg), JSON.stringify(R.folder));
+  ok('a drop onto an open video’s details adds nothing, and still stops the browser',
+     R.refused.n && R.refused.prevented && R.refused.drawer, JSON.stringify(R.refused));
+  ok('the drop zone is a button named Add videos', R.button.tag === 'BUTTON' && /^Add videos/.test(R.button.name),
+     JSON.stringify(R.button));
+  /* THE KEYBOARD WAY IN: the drop zone takes focus, and Enter opens the
+     device picker with multiple selection. */
+  await page.evaluate(() => {
+    vstClose(); vqOpen('');
+    window.__picks = [];
+    window.__rc = HTMLInputElement.prototype.click;
+    HTMLInputElement.prototype.click = function(){ if (this.type === 'file'){ window.__picks.push(this.multiple); return; }
+      return window.__rc.call(this); };
+    document.querySelector('.vqd-drop').focus();
+  });
+  const focused = await page.evaluate(() => document.activeElement && document.activeElement.className);
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(100);
+  const picked = await page.evaluate(() => { HTMLInputElement.prototype.click = window.__rc; return window.__picks; });
+  ok('it takes the keyboard focus', /vqd-drop/.test(focused || ''), String(focused));
+  ok('and Enter on it opens the device picker with multiple selection', picked.length === 1 && picked[0] === true,
+     JSON.stringify(picked));
+  await page.evaluate(() => vstClose());
+  await page.close();
+}
+
+section('Timestamp dashboard: five videos, the fourth made first, and a copy that fails its check stays failed');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  /* AP: five in one selection; editing #2 leaves #1 and #3 alone; #4 is made
+     first; Process next takes the next ready one after it; Remove, Clear
+     completed and Clear queue each do only what they say. Then a copy whose
+     metadata check fails is failed, offered no copy and no Generate, and the
+     videos either side are untouched. */
+  const R = await vstRun(page, `
+    const restore = useVp9();
+    const order = [];
+    const realT = window.vstTranscode;
+    window.vstTranscode = async function(file){ order.push(file.name); return realT.apply(this, arguments); };
+    const realScrub = window.vstScrubMp4;
+    try {
+      const files = [];
+      for (const n of [1, 2, 3, 4, 5]) files.push(await metaClip('FIVE' + n + '.mov', 8 + n, 1790000000400 + n));
+      vqOpen('');
+      vqAdd(files.slice().reverse(), { caseNo: '' });
+      await qWait(() => VQ.items.every(x => x.analysis === 'done'));
+      const sorted = VQ.items.map(x => x.name);
+      const [v1, v2, v3, v4, v5] = VQ.items;
+      const snap = x => [x.mo, x.da, x.yr, x.hr, x.mi, x.se, x.ap, x.confirmed].join('|');
+      const S1 = snap(v1), S3 = snap(v3);
+      qClick('vqEdit', v2.qid);
+      document.getElementById('vst_mi').value = '44';
+      qClick('vqSaveTime');
+      qClick('vqListBack');
+      const edited = { v2: snap(v2), v1: snap(v1) === S1, v3: snap(v3) === S3 };
+      qClick('vqGo', v4.qid);
+      await qWait(() => v4.out || v4.fault);
+      const fourth = { out: !!v4.out, name: v4.out && v4.out.name, others: [v1, v2, v3, v5].map(x => !!x.out) };
+      const nextName = (document.querySelector('[data-act="vqProcessNext"]') || { getAttribute: () => '' }).getAttribute('aria-label');
+      await vstConfirmSaved(v4);
+      qClick('vqProcessNext');
+      await qWait(() => v5.out || v5.fault);
+      const fifth = { out: !!v5.out, released4: !!(v4.out && v4.out.released) };
+      qClick('vqRunBack');
+      /* A FAILED METADATA CHECK, inside the queue. */
+      window.vstScrubMp4 = () => ({ times: 0, names: 0 });
+      const urlsBefore = [];
+      const ru = URL.createObjectURL; URL.createObjectURL = b => { urlsBefore.push(b && b.type); return ru(b); };
+      qClick('vqGo', v3.qid);
+      if (VQ.confirm) qClick('vqConfirmYes');
+      await qWait(() => v3.out || v3.fault);
+      URL.createObjectURL = ru;
+      window.vstScrubMp4 = realScrub;
+      const failed = { kind: v3.fault && v3.fault.kind, out: !!v3.out, status: vqStatus(v3),
+                       go: !!document.querySelector('[data-act="vqGo"][data-id="' + v3.qid + '"]'),
+                       videoUrls: urlsBefore.filter(t => /video/.test(t || '')).length,
+                       screen: qScreen(), neighbours: [vqStatus(v2), vqStatus(v1)] };
+      qClick('vqRunBack');
+      /* REMOVE, CLEAR COMPLETED, CLEAR QUEUE. */
+      qClick('vqRemove', v1.qid);
+      const removed = VQ.items.map(x => x.name);
+      qClick('vqClearDone');
+      if (VQ.confirm) qClick('vqConfirmYes');
+      const clearedDone = VQ.items.map(x => x.name);
+      qClick('vqClearAll');
+      if (VQ.confirm) qClick('vqConfirmYes');
+      return { sorted, queued: VQ ? VQ.items.length : -1, edited, fourth, nextName, fifth, failed,
+               removed, clearedDone, order };
+    } finally { window.vstTranscode = realT; window.vstScrubMp4 = realScrub; restore(); vstClose(); }
+  `);
+  ok('five chosen together are five rows, in name order whatever order they were handed over',
+     JSON.stringify(R.sorted) === JSON.stringify(['FIVE1.mov', 'FIVE2.mov', 'FIVE3.mov', 'FIVE4.mov', 'FIVE5.mov']),
+     JSON.stringify(R.sorted));
+  ok('editing video 2 writes video 2 and leaves 1 and 3 exactly as they were',
+     R.edited.v2.startsWith('09|26|2026|06|44|02|AM|true') && R.edited.v1 && R.edited.v3, JSON.stringify(R.edited));
+  ok('the fourth is made first, alone, under its own clean name',
+     R.fourth.out && /-004\.mp4$/.test(R.fourth.name || '') && R.fourth.others.every(x => !x) && R.order[0] === 'FIVE4.mov',
+     JSON.stringify(R.fourth));
+  ok('Process next names the next ready video after it', /^Process next: FIVE5\.mov$/.test(R.nextName || ''), String(R.nextName));
+  ok('and makes only that one', R.fifth.out && R.order.join() === 'FIVE4.mov,FIVE5.mov,FIVE3.mov', R.order.join());
+  ok('a copy that fails its metadata check is failed, with no copy', R.failed.kind === 'clean' && !R.failed.out
+     && R.failed.status === 'failed', JSON.stringify(R.failed).slice(0, 300));
+  ok('no video URL was ever made for it, and no Generate is offered to repeat it',
+     R.failed.videoUrls === 0 && !R.failed.go, JSON.stringify(R.failed).slice(0, 200));
+  ok('its screen says the copy could not be verified clean', /could not be verified free of the original/i.test(R.failed.screen),
+     R.failed.screen.slice(0, 300));
+  ok('and the videos either side are exactly as they were', JSON.stringify(R.failed.neighbours) === JSON.stringify(['ready', 'ready']),
+     JSON.stringify(R.failed.neighbours));
+  ok('Remove takes out that one video', JSON.stringify(R.removed) === JSON.stringify(['FIVE2.mov', 'FIVE3.mov', 'FIVE4.mov', 'FIVE5.mov']),
+     JSON.stringify(R.removed));
+  ok('Clear completed takes out only the finished ones', JSON.stringify(R.clearedDone) === JSON.stringify(['FIVE2.mov', 'FIVE3.mov']),
+     JSON.stringify(R.clearedDone));
+  ok('Clear queue empties it', R.queued === 0, String(R.queued));
+  await page.close();
+}
+
+section('Timestamp dashboard: the editor previews the original on this device, with the stamp where it will burn');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  /* J and AM: the selected MP4 plays in the editor from a local object URL
+     of the original — nothing is fetched — with the start that will be burned
+     laid where the burn goes; a transport stream is never handed to the
+     player and shows its first frame instead, and says why. A repaint keeps
+     the same player. */
+  const R = await vstRun(page, `
+    const restore = useVp9();
+    const mp4 = new File([await vp9Clip({ frames: 30, w: 320, h: 180 })], 'PREVIEW.mp4', { type: 'video/mp4', lastModified: 1790000000501 });
+    const W = watchDoors();
+    try {
+      vqOpen('');
+      vqAdd([mp4], { caseNo: '' });
+      await qWait(() => VQ.items.every(x => x.analysis === 'done'));
+      const v = VQ.items[0];
+      qClick('vqEdit', v.qid);
+      await qWait(() => !!document.getElementById('vq_pv'), 5000);
+      const pv = document.getElementById('vq_pv');
+      const first = { src: pv && pv.src, kind: document.getElementById('vq_pvhost').dataset.kind,
+                      stamp: document.getElementById('vq_stamp').textContent };
+      document.getElementById('vst_hr').value = '07';
+      document.getElementById('vst_hr').dispatchEvent(new Event('input', { bubbles: true }));
+      const live = { stamp: document.getElementById('vq_stamp').textContent, burn: document.getElementById('vst_res').textContent };
+      paintVStamp();
+      const same = document.getElementById('vq_pv') === pv;
+      qClick('vqUndoTime');
+      const S2 = stubCodecs({});
+      vqAdd([new File([makeTs({ frames: 12 })], '00061.MTS', { type: '', lastModified: 1790000000502 })], { caseNo: '' });
+      await qWait(() => VQ.items.every(x => x.analysis === 'done'));
+      S2.restore();
+      qClick('vqEdit', VQ.items[1].qid);
+      const ts = { player: !!document.getElementById('vq_pv'), kind: document.getElementById('vq_pvhost').dataset.kind,
+                   img: !!document.querySelector('#vq_pvhost img'),
+                   note: (document.querySelector('.vqd-pvnote') || {}).textContent || '' };
+      return { first, live, same, ts, fetches: W.fetches + W.xhr + W.beacons };
+    } finally { W.restore(); restore(); vstClose(); }
+  `);
+  ok('the selected MP4 plays in the editor from a local object URL', /^blob:/.test(R.first.src || '') && R.first.kind === 'video',
+     JSON.stringify(R.first));
+  ok('with the start that will be burned laid over it', R.first.stamp === '09/26/2026 06:11:02 AM EDT' || /\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}:\d{2} [AP]M E[SD]T/.test(R.first.stamp),
+     R.first.stamp);
+  ok('typing a new time moves the preview’s stamp and the burned-in line together, with no repaint',
+     /^\d{2}\/\d{2}\/\d{4} 07:/.test(R.live.stamp) && R.live.stamp === R.live.burn, JSON.stringify(R.live));
+  ok('a repaint keeps the same player', R.same === true);
+  ok('a transport stream is never handed to the player; it shows its first frame and says why',
+     !R.ts.player && R.ts.kind === 'img' && R.ts.img && /not played inside the page/.test(R.ts.note), JSON.stringify(R.ts));
+  ok('and nothing was fetched to preview anything', R.fetches === 0, String(R.fetches));
+  await page.close();
+}
+
+section('Timestamp dashboard on a desk: the table, the editor and the processing row at 1280, 1440 and 1920');
+{
+  for (const [width, height] of [[1280, 800], [1440, 900], [1920, 1080]]) {
+    const page = await newPage();
+    await signIn(page, 'trever', 'AdminPassword1x');
+    await page.setViewportSize({ width, height });
+    await page.waitForTimeout(200);
+    await vstRun(page, `
+      window.__restoreVp9 = useVp9();
+      const files = [];
+      for (const n of [1, 2, 3, 4, 5, 6]) files.push(await metaClip('DESK_CLIP_000' + n + '.MOV', 8 + n, 1790000000600 + n));
+      files.push(await metaClip('A_VERY_LONG_CAMERA_FILE_NAME_WITHOUT_ANY_BREAKS_00007.MOV', 9, 1790000000607));
+      vqOpen('');
+      vqAdd(files, { caseNo: '' });
+      await qWait(() => VQ.items.every(x => x.analysis === 'done'));
+      qClick('vqEdit', VQ.items[2].qid);
+    `);
+    const M = await page.evaluate(() => {
+      const box = el => { const r = el.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height }; };
+      const vis = el => el && el.getBoundingClientRect().width > 0 && getComputedStyle(el).display !== 'none';
+      const head = [...document.querySelectorAll('.vqd-thead > span')].filter(vis).map(e => e.textContent.trim());
+      const row = document.querySelector('.vqd-row.is-sel');
+      const plain = document.querySelector('.vqd-row:not(.is-sel)');
+      const ed = document.getElementById('vq_edit');
+      const inputs = [...ed.querySelectorAll('input, select, button')].filter(vis).map(e => Math.round(e.getBoundingClientRect().height));
+      const drop = document.querySelector('.vqd-drop');
+      const dr = box(drop);
+      const hit = document.elementFromPoint(dr.l + dr.w / 2, dr.t + dr.h / 2);
+      const cells = [...row.querySelectorAll('.vqd-c')].filter(vis);
+      const over = cells.some((c, i) => i && box(c).l < box(cells[i - 1]).r - 0.5);
+      return { head, sel: row && row.dataset.qid, selBg: getComputedStyle(row).backgroundColor, plainBg: getComputedStyle(plain).backgroundColor,
+               selBorder: getComputedStyle(row).borderTopColor, edVisible: vis(ed), edSel: ed.dataset.qid,
+               small: inputs.filter(h => h < 44).length, pageOver: document.documentElement.scrollWidth - innerWidth,
+               bodyOver: (b => b.scrollWidth - b.clientWidth)(document.getElementById('vq_body')),
+               dropUsable: dr.w > 300 && dr.h >= 120 && !!hit && (hit === drop || drop.contains(hit)), cellsOverlap: over,
+               ed: box(ed) };
+    });
+    ok(`${width}: the queue is the table, with the approved columns`,
+       M.head.join('|') === (width >= 1440 ? '#|Thumbnail|Filename|Size|Format|Detected start time|Edit time|Status|Actions'
+                                            : '#|Thumbnail|Filename|Format|Detected start time|Edit time|Status|Actions'), M.head.join('|'));
+    ok(`${width}: nothing scrolls sideways, and no cell runs into the next`, M.pageOver <= 0 && M.bodyOver <= 0 && !M.cellsOverlap,
+       JSON.stringify([M.pageOver, M.bodyOver, M.cellsOverlap]));
+    ok(`${width}: the selected row is obvious and the editor beside it is that video’s`,
+       M.sel && M.edSel === M.sel && M.edVisible && M.selBg !== M.plainBg, JSON.stringify([M.sel, M.edSel, M.selBg, M.plainBg]));
+    ok(`${width}: every field and button in the editor is at least 44px`, M.small === 0, String(M.small));
+    ok(`${width}: the drop target is on screen, large, and uncovered`, M.dropUsable, JSON.stringify(M));
+    await vstRun(page, `qClick('vqGo', VQ.items[0].qid); await qWait(() => VQ.items[0].stage === 'decoding' || VQ.items[0].out, 20000);`);
+    const P = await page.evaluate(() => {
+      const r = el => el.getBoundingClientRect();
+      const run = document.getElementById('vq_run'), ed = document.getElementById('vq_edit');
+      const a = r(run), b = r(ed);
+      const overlap = !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top);
+      const stop = run.querySelector('[data-act="vstAbort"]');
+      return { overlap, onScreen: a.top < innerHeight && a.bottom > 0, stop: !!stop || !!(VQ.items[0].out) };
+    });
+    ok(`${width}: the processing panel never overlaps the editor, and is brought into view`,
+       !P.overlap && P.onScreen && P.stop, JSON.stringify(P));
+    await vstRun(page, `await qWait(() => VQ.items[0].out || VQ.items[0].fault, 30000); if (window.__restoreVp9) window.__restoreVp9(); vstClose();`);
     await page.close();
   }
 }
