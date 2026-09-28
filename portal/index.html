@@ -96,6 +96,16 @@
     --art-field:#152738;   /* dark navy / slate  — Active Surveillance */
     --art-photo:#1d4e7a;   /* blue / charcoal    — Timestamp Photo */
     --art-video:#33307d;   /* deep blue / indigo — Timestamp Video */
+    /* TIMESTAMP VIDEO'S DASHBOARD (owner, approved mockup, 2026-09-28): near-black
+       navy, restrained gold, cream headings. Each ink measured on the ground it
+       sits on — cream 14.3:1 and ink 14.5 on the panel, muted 8.1, gold 8.2,
+       every status ink 8.2 to 10.5 on its own tint. */
+    --vqd-bg:#08111d; --vqd-panel:#0e1a2b; --vqd-panel-2:#122236; --vqd-line:#22385a;
+    --vqd-line-2:#2f4c70; --vqd-ink:#e3ebf5; --vqd-cream:#f3e7cc; --vqd-muted:#9fb3c8;
+    --vqd-gold:#d9aa55; --vqd-gold-hi:#e0b862; --vqd-gold-ink:#1d1405; --vqd-sel:#e1b765;
+    --vqd-ok-bg:#10351f; --vqd-ok:#86dba5; --vqd-run-bg:#102a52; --vqd-run:#a8c6ff;
+    --vqd-warn-bg:#3a2b0c; --vqd-warn:#f0c774; --vqd-bad-bg:#3b1515; --vqd-bad:#ffaaa4;
+    --vqd-done-bg:#16301f; --vqd-done:#bfe7cb; --vqd-wait-bg:#1a2636; --vqd-wait:#b7c6d6;
   }
   *{margin:0;padding:0;box-sizing:border-box;}
   body{font-family:'Segoe UI',system-ui,-apple-system,Arial,sans-serif;background:var(--paper);color:var(--ink);line-height:1.6;-webkit-text-size-adjust:100%;}
@@ -1511,6 +1521,7 @@
   .vst-k:last-child{border-bottom:0;}
   .vst-k span:first-child{color:var(--field-muted);}
   .vst-k span:last-child{text-align:right;word-break:break-word;min-width:0;}
+  .vst-hash{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.74rem;overflow-wrap:anywhere;}
   /* The date and time parts. `minmax(0,1fr)` so a narrow phone shrinks the
      boxes instead of pushing the row off the side — no horizontal overflow at
      390px is a requirement, not a preference. */
@@ -1550,38 +1561,350 @@
   .vst-note{font-size:.8rem;color:var(--field-muted);line-height:1.55;margin:8px 0 0;}
   .vst-err{font-size:.85rem;color:#ffb3b3;line-height:1.5;margin:8px 0 0;}
   .vst-ok{font-size:.85rem;color:#9fe0b0;line-height:1.5;margin:8px 0 0;}
-  /* THE QUEUE (Timestamp Video V2): one card per video, its status as a WORD
-     (the colour only repeats it), the two actions that matter within reach and
-     the rest behind More — so a phone shows a list of videos, not a list of
-     toolbars. Every colour is one this screen already used, each measured on
-     the card: teal 5.0:1, the muted grey 6.9:1, the rest well above. */
-  .vq-list{list-style:none;margin:0 auto;padding:0;}
-  .vq-row{margin-bottom:10px;}
-  .vq-head{display:flex;gap:8px;align-items:flex-start;}
-  .vq-n{flex:none;min-width:26px;height:26px;border-radius:13px;background:var(--navy-2);
-    color:#fff;display:inline-flex;align-items:center;justify-content:center;
-    font-size:.8rem;font-weight:700;}
-  .vq-name{flex:1;min-width:0;overflow-wrap:anywhere;color:#fff;font-size:.95rem;
-    line-height:1.35;padding-top:2px;}
-  .vq-st{flex:none;font-size:.7rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;
-    border:1px solid currentColor;border-radius:999px;padding:3px 8px;line-height:1.2;margin-top:2px;}
-  .vq-st-ready{color:var(--teal-2);}
-  .vq-st-complete{color:#9fe0b0;}
-  .vq-st-needs{color:#ffd9a0;}
-  .vq-st-failed{color:#ffb3b3;}
-  .vq-st-processing, .vq-st-compat{color:var(--field-ink-2);}
-  .vq-st-analyzing, .vq-st-stopped{color:var(--field-muted);}
-  .vq-when{margin-top:8px;font-weight:700;color:var(--field-ink);font-size:.92rem;}
-  .vq-sub{font-size:.78rem;color:var(--field-muted);margin-top:2px;overflow-wrap:anywhere;line-height:1.45;}
-  .vq-why{font-size:.8rem;color:var(--field-ink-2);margin:6px 0 0;line-height:1.5;overflow-wrap:anywhere;}
-  .vq-acts, .vq-two{display:grid;grid-template-columns:repeat(auto-fit, minmax(128px, 1fr));gap:0 8px;}
-  .vq-acts .vst-btn, .vq-two .vst-btn{min-height:48px;line-height:1.25;padding:6px 10px;}
-  .vq-more{margin-top:8px;border-top:1px solid var(--field-line-2);}
-  .vq-more .vq-fp{margin:0 0 6px;}
-  .vq-more summary{min-height:44px;display:flex;align-items:center;cursor:pointer;
-    color:var(--field-label);font-size:.85rem;font-weight:700;overflow-wrap:anywhere;}
-  .vq-sum{font-weight:700;color:#fff;margin:0 0 6px;font-size:.92rem;}
-  .vq-confirm{border-color:#e0b671;}
+  /* THE TIMESTAMP VIDEO DASHBOARD (owner, approved mockup, 2026-09-28).
+
+     ONE DOM, TWO SHAPES. At 1240px and wider the queue is a table beside the
+     editor, with the processing row held at the foot of the screen — the
+     approved desktop layout. Narrower, each row is a card and the editor and
+     the processing view each take the whole screen in turn (`data-focus` on
+     the root), because a desk's table shrunk onto a phone is a table nobody
+     can read. The controls are the same elements with the same acts at every
+     width; what a width does not show is `display:none`, out of the
+     accessibility tree, never a second copy.
+
+     1240, NOT 1180: below it the table's columns cannot sit beside the editor
+     without the page scrolling sideways, so an iPad in landscape gets the
+     cards — which is the layout built for a touch screen anyway.
+
+     Every colour is a --vqd token, each pair measured on its own ground:
+     cream on the panel 14.3:1, body ink 14.5, muted 8.1, gold 8.2, dark ink
+     on the gold button 7.1 and more, every status pair 8.2 to 10.5. */
+  .vqd{position:fixed;inset:0;z-index:125;display:flex;flex-direction:column;
+    background:var(--vqd-bg);color:var(--vqd-ink);}
+  .vqd svg{width:1.15em;height:1.15em;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;
+    stroke-linecap:round;stroke-linejoin:round;}
+  .vqd h2, .vqd h3, .vqd h4{margin:0;color:var(--vqd-cream);font-weight:600;letter-spacing:.01em;}
+  .vqd h2, .vqd h3{font-family:Georgia,"Times New Roman",serif;}
+  .vqd [tabindex="-1"]:focus{outline:none;}
+  .vqd-head{padding:10px 12px;padding-top:max(10px, env(safe-area-inset-top));
+    border-bottom:1px solid var(--vqd-line);background:var(--vqd-panel);}
+  .vqd-brand{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;}
+  .vqd-logo{color:var(--vqd-gold);font-size:1.7rem;display:inline-flex;}
+  .vqd-title{flex:1 1 140px;min-width:0;}
+  .vqd-title h2{font-size:1.3rem;line-height:1.2;}
+  .vqd-lede{display:none;margin:4px 0 0;font-size:.88rem;color:var(--vqd-muted);line-height:1.45;}
+  .vqd-hadd{flex:1 1 100%;}
+  .vqd-hfold{display:none;}
+  .vqd[data-has="1"] .vqd-hfold{display:inline-flex;flex:1 1 100%;}
+  .vqd-trust{list-style:none;margin:8px 0 0;padding:0;display:grid;grid-template-columns:repeat(2, minmax(0,1fr));gap:5px;}
+  .vqd-trust li{display:flex;align-items:center;gap:5px;font-size:.72rem;line-height:1.25;min-width:0;
+    border:1px solid var(--vqd-line);border-radius:10px;padding:4px 8px 4px 7px;color:var(--vqd-ink);}
+  .vqd-trust li svg{color:var(--vqd-gold);}
+  .vqd-trust br{display:none;}
+  .vqd-body{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:12px;
+    padding-bottom:max(18px, env(safe-area-inset-bottom));}
+  .vqd-left, .vqd-main{display:flex;flex-direction:column;gap:12px;min-width:0;}
+  .vqd-left{max-width:760px;margin:0 auto;}
+  .vqd-note{font-size:.82rem;color:var(--vqd-muted);line-height:1.5;margin:8px 0 0;}
+  .vqd-msg{font-size:.86rem;color:var(--vqd-ok);line-height:1.5;margin:0 0 8px;}
+  .vqd-err{font-size:.86rem;color:var(--vqd-bad);line-height:1.5;margin:8px 0 0;}
+  .vqd-ok{font-size:.86rem;color:var(--vqd-ok);line-height:1.5;margin:8px 0 0;}
+  /* Buttons. Every control is 44px or taller, one-handed on a phone. */
+  .vqd-b, .vqd-x{display:inline-flex;align-items:center;justify-content:center;gap:6px;
+    min-height:44px;padding:0 14px;border-radius:10px;border:1px solid var(--vqd-line-2);
+    background:var(--vqd-panel-2);color:var(--vqd-ink);font:inherit;font-size:.9rem;font-weight:700;
+    cursor:pointer;text-align:center;line-height:1.2;}
+  .vqd-b[disabled], .vqd-tmb[disabled]{opacity:.5;cursor:default;}
+  .vqd-gold, .vqd-cta{background:linear-gradient(180deg, var(--vqd-gold-hi), var(--gold));
+    border-color:var(--vqd-gold);color:var(--vqd-gold-ink);}
+  .vqd-wide{display:flex;width:100%;min-height:50px;font-size:1rem;margin-top:10px;}
+  .vqd-link{background:transparent;border-color:transparent;color:var(--vqd-muted);font-weight:600;}
+  .vqd-back{margin-bottom:8px;}
+  .vqd-stop{display:flex;width:100%;margin-top:12px;border-color:var(--vqd-bad);color:var(--vqd-bad);
+    background:var(--vqd-bad-bg);}
+  .vqd button:focus-visible, .vqd summary:focus-visible, .vqd input:focus-visible,
+  .vqd select:focus-visible{outline:3px solid var(--vqd-sel);outline-offset:2px;}
+  /* Add videos: the drop zone IS the button, so a tap, a click, Enter and a
+     drop all arrive at the same door; the gold "+ Add videos" is its label,
+     not a second control inside it. */
+  .vqd-add{display:grid;gap:12px;}
+  .vqd-drop{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
+    width:100%;min-height:150px;padding:16px;border:2px dashed var(--vqd-line-2);border-radius:14px;
+    background:var(--vqd-panel);color:var(--vqd-ink);font:inherit;cursor:pointer;text-align:center;}
+  .vqd-dropicon{color:var(--vqd-cream);font-size:2.2rem;display:inline-flex;}
+  .vqd-drop-t{font-size:1.05rem;color:var(--vqd-cream);}
+  .vqd-drop-r{display:none;font-size:1.05rem;color:var(--vqd-gold);}
+  .vqd-drop-s{font-size:.86rem;color:var(--vqd-muted);}
+  .vqd-coarse{display:none;}
+  @media(pointer:coarse){ .vqd-fine{display:none;} .vqd-coarse{display:inline;} }
+  .vqd-cta{display:inline-flex;align-items:center;min-height:44px;padding:0 24px;border-radius:10px;
+    border:1px solid;font-weight:800;margin-top:4px;}
+  .vqd[data-drag="1"] .vqd-drop{border-color:var(--vqd-gold);background:var(--vqd-panel-2);}
+  .vqd[data-drag="1"] .vqd-drop-t{display:none;}
+  .vqd[data-drag="1"] .vqd-drop-r{display:block;}
+  .vqd-formats{border:1px solid var(--vqd-line);border-radius:14px;background:var(--vqd-panel);padding:12px 14px;}
+  .vqd-formats h3{font-size:1.05rem;}
+  .vqd-formats p{margin:6px 0 0;font-size:.86rem;color:var(--vqd-muted);line-height:1.45;}
+  .vqd-formats .vqd-b{margin-top:10px;}
+  /* The queue. */
+  .vqd-queue{border:1px solid var(--vqd-line);border-radius:14px;background:var(--vqd-panel);padding:12px;min-width:0;}
+  .vqd-qhead{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 10px;}
+  .vqd-qhead h3{font-size:1.25rem;}
+  .vqd-qhead h3 small{font-size:.9rem;color:var(--vqd-muted);font-family:inherit;}
+  .vqd-qacts{display:flex;flex-wrap:wrap;gap:8px;}
+  .vqd-pills{list-style:none;margin:10px 0;padding:0;display:flex;flex-wrap:wrap;gap:6px;}
+  .vqd-pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:5px 12px;
+    font-size:.8rem;border:1px solid var(--vqd-line-2);background:var(--vqd-panel-2);color:var(--vqd-ink);}
+  .vqd-pill b{font-size:.92rem;}
+  /* A status is a WORD first; the colour only repeats it. */
+  .vqd-badge{display:inline-flex;align-items:center;gap:5px;border-radius:12px;padding:3px 9px;
+    font-size:.74rem;font-weight:800;border:1px solid currentColor;line-height:1.3;}
+  .vqd-badge i{font-style:normal;}
+  .b-ready, .p-ready{background:var(--vqd-ok-bg);color:var(--vqd-ok);}
+  .b-run, .p-run{background:var(--vqd-run-bg);color:var(--vqd-run);}
+  .b-needs, .p-needs{background:var(--vqd-warn-bg);color:var(--vqd-warn);}
+  .b-fail, .p-fail{background:var(--vqd-bad-bg);color:var(--vqd-bad);}
+  .b-done, .p-done{background:var(--vqd-done-bg);color:var(--vqd-done);}
+  .b-wait, .p-wait{background:var(--vqd-wait-bg);color:var(--vqd-wait);}
+  .p-ready, .p-run, .p-needs, .p-fail, .p-done, .p-wait{border-color:currentColor;}
+  .vqd-rowpc{font-size:.8rem;color:var(--vqd-run);}
+  .vqd-empty{margin:14px 0 4px;color:var(--vqd-muted);font-size:.9rem;text-align:center;}
+  .vqd-thead{display:none;}
+  .vqd-list{list-style:none;margin:0;padding:0;}
+  /* A card on a phone: the picture and the name, then the status and the two
+     things to do with it. The time is words here and the editor is one tap. */
+  .vqd-row{display:grid;grid-template-columns:22px 64px minmax(0,1fr) auto;
+    grid-template-areas:"n th nm nm" "n st st ac";gap:6px 8px;align-items:center;
+    padding:10px;border:1px solid var(--vqd-line);border-radius:12px;background:var(--vqd-panel-2);
+    margin-bottom:8px;cursor:pointer;}
+  .vqd-row.is-sel{border-color:var(--vqd-sel);box-shadow:inset 0 0 0 1px var(--vqd-sel);}
+  .vqd-c{min-width:0;}
+  .vqd-n{grid-area:n;align-self:start;font-weight:700;color:var(--vqd-muted);padding-top:2px;}
+  .vqd-th{grid-area:th;align-self:start;}
+  .vqd-img, .vqd-ph{display:flex;align-items:center;justify-content:center;width:64px;height:40px;
+    border-radius:6px;object-fit:cover;background:var(--vqd-bg);border:1px solid var(--vqd-line);
+    color:var(--vqd-muted);}
+  .vqd-nm{grid-area:nm;display:flex;flex-direction:column;gap:2px;}
+  .vqd-name{font-weight:700;color:var(--vqd-ink);overflow-wrap:anywhere;line-height:1.3;}
+  .vqd-nm small{font-size:.78rem;color:var(--vqd-muted);overflow-wrap:anywhere;line-height:1.35;}
+  .vqd-nm .vqd-whenm{color:var(--vqd-ink);font-weight:600;}
+  .vqd-why{color:var(--vqd-warn);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+  .vqd-row[data-status="failed"] .vqd-why{color:var(--vqd-bad);}
+  .vqd-row[data-status="complete"] .vqd-why, .vqd-row[data-status="analyzing"] .vqd-why,
+  .vqd-row[data-status="stopped"] .vqd-why{color:var(--vqd-muted);}
+  .vqd-sz, .vqd-fm, .vqd-dt, .vqd-tm{display:none;}
+  .vqd-st{grid-area:st;}
+  .vqd-ac{grid-area:ac;display:flex;gap:6px;align-items:center;justify-content:flex-end;}
+  .vqd-ac .vqd-go{display:none;}
+  /* The row's other actions, behind ⋮ — Details, Generate, Move, Remove. */
+  .vqd-menu{position:relative;}
+  .vqd-menu>summary{list-style:none;display:inline-flex;align-items:center;justify-content:center;
+    min-width:44px;min-height:44px;border-radius:10px;border:1px solid var(--vqd-line-2);
+    background:var(--vqd-panel-2);color:var(--vqd-ink);cursor:pointer;font-size:1.15rem;font-weight:800;}
+  .vqd-menu>summary::-webkit-details-marker{display:none;}
+  .vqd-pop{position:absolute;right:0;top:calc(100% + 4px);z-index:6;width:236px;max-width:calc(100vw - 40px);
+    padding:6px;border:1px solid var(--vqd-line-2);border-radius:12px;background:var(--vqd-panel);
+    box-shadow:0 12px 28px rgba(0,0,0,.55);display:flex;flex-direction:column;gap:2px;cursor:default;}
+  .vqd-mi{justify-content:flex-start;text-align:left;background:transparent;border-color:transparent;width:100%;}
+  .vqd-fp{margin:4px 8px 6px;font-size:.8rem;color:var(--vqd-muted);}
+  .vqd-qfoot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:10px;font-size:.86rem;}
+  .vqd-qfoot>span{flex:1 1 180px;color:var(--vqd-muted);}
+  .vqd-qfoot b{color:var(--vqd-ink);}
+  /* The editor for ONE video. */
+  .vqd-edit{display:none;border:1px solid var(--vqd-line);border-radius:14px;background:var(--vqd-panel);
+    padding:14px;min-width:0;}
+  .vqd-ehead{display:flex;gap:10px;align-items:center;margin-bottom:10px;}
+  .vqd-eicon{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;
+    border-radius:10px;background:var(--vqd-gold);color:var(--vqd-gold-ink);font-size:1.2rem;flex:none;}
+  .vqd-ehead>div{min-width:0;}
+  .vqd-ehead h3{font-size:1.2rem;}
+  .vqd-ehead p{margin:2px 0 0;color:var(--vqd-ink);font-size:.9rem;overflow-wrap:anywhere;}
+  .vqd-pos{color:var(--vqd-muted);}
+  .vqd-pv{position:relative;border-radius:10px;overflow:hidden;background:var(--vqd-bg);
+    border:1px solid var(--vqd-line);aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;}
+  .vqd-pv video, .vqd-pv img{width:100%;height:100%;object-fit:contain;display:block;background:var(--vqd-bg);}
+  .vqd-pv .vqd-ph{width:100%;height:100%;border:0;font-size:2.2rem;border-radius:0;}
+  /* WHERE THE TIME GOES, not the burn itself: the burn is in the copy's
+     pixels, made by the same function whatever this preview shows. It sits
+     above the player's own controls so both stay usable. */
+  .vqd-stamp{position:absolute;right:6px;top:6px;padding:2px 6px;background:rgba(0,0,0,.72);color:#fff;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.76rem;border-radius:4px;
+    pointer-events:none;white-space:nowrap;max-width:calc(100% - 12px);overflow:hidden;}
+  .vqd-stamp:empty{display:none;}
+  .vqd-pvnote, .vqd-srcnote{font-size:.76rem;color:var(--vqd-muted);margin:6px 0 0;line-height:1.45;}
+  .vqd-lbl{display:block;font-size:.8rem;color:var(--vqd-muted);margin:12px 0 4px;}
+  .vqd-ro{display:flex;align-items:center;gap:8px;min-height:44px;padding:0 12px;border:1px solid var(--vqd-line);
+    border-radius:10px;background:var(--vqd-bg);color:var(--vqd-ink);font-weight:700;font-size:.92rem;overflow-wrap:anywhere;}
+  .vqd-ro svg{color:var(--vqd-muted);}
+  .vqd-sub{font-size:1rem;margin:14px 0 2px;}
+  .vqd-dtrow{display:grid;grid-template-columns:58px minmax(0,1fr);align-items:center;gap:8px;margin-top:8px;}
+  .vqd-dtrow>.vqd-lbl{margin:0;}
+  .vqd-parts{display:flex;flex-wrap:wrap;align-items:center;gap:3px;min-width:0;}
+  .vqd-parts>span{color:var(--vqd-muted);}
+  .vqd-in, .vqd-parts select, .vqd-mcard input{min-height:46px;min-width:0;border:1px solid var(--vqd-line-2);
+    border-radius:9px;background:var(--vqd-bg);color:var(--vqd-ink);font:inherit;font-size:1rem;}
+  .vqd-in{width:2.6em;padding:0 2px;text-align:center;}
+  .vqd-in.w4{width:4.1em;}
+  .vqd-parts select{width:3.8em;padding:0 2px;}
+  .vqd-in[disabled], .vqd-parts select[disabled]{opacity:.6;}
+  .vqd-tz{display:flex;flex-direction:column;justify-content:center;min-height:46px;padding:0 12px;
+    border:1px solid var(--vqd-line);border-radius:9px;background:var(--vqd-bg);}
+  .vqd-tz small{font-size:.74rem;color:var(--vqd-muted);}
+  .vqd-burn{margin:12px 0 0;font-size:.86rem;color:var(--vqd-muted);}
+  .vqd-burn b{color:var(--vqd-cream);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:.9rem;overflow-wrap:anywhere;}
+  .vqd-ask{margin-top:12px;padding:10px 12px;border:1px solid var(--vqd-warn);border-radius:10px;
+    background:var(--vqd-warn-bg);display:flex;flex-wrap:wrap;gap:6px;}
+  .vqd-ask p{flex:1 1 100%;margin:0;color:var(--vqd-warn);font-size:.88rem;line-height:1.45;}
+  .vqd-nav{display:grid;grid-template-columns:repeat(3, minmax(0,1fr));gap:8px;margin-top:14px;}
+  .vqd-nav .vqd-b{padding:0 4px;font-size:.86rem;}
+  /* The processing row: the run, then what comes next. */
+  .vqd-runrow{display:none;}
+  .vqd-run, .vqd-next{border:1px solid var(--vqd-line);border-radius:14px;background:var(--vqd-panel);
+    padding:12px 14px;min-width:0;}
+  .vqd-run h3, .vqd-next h3{font-size:1.1rem;margin-bottom:8px;}
+  .vqd-rungrid{display:grid;grid-template-columns:96px minmax(0,1fr);gap:10px 12px;align-items:start;}
+  .vqd-runthumb .vqd-img, .vqd-runthumb .vqd-ph{width:96px;height:54px;}
+  .vqd-runinfo{min-width:0;display:flex;flex-direction:column;gap:2px;}
+  .vqd-runinfo b{color:var(--vqd-ink);overflow-wrap:anywhere;}
+  .vqd-runinfo p, .vqd-runinfo small{margin:0;font-size:.82rem;color:var(--vqd-muted);overflow-wrap:anywhere;
+    line-height:1.4;}
+  .vqd-runbody{grid-column:1 / -1;min-width:0;}
+  .vqd-progwrap{display:flex;align-items:center;gap:10px;}
+  .vqd-prog{flex:1;height:10px;border-radius:6px;background:var(--vqd-bg);overflow:hidden;
+    border:1px solid var(--vqd-line);}
+  .vqd-prog i{display:block;height:100%;background:var(--vqd-run);transition:width .2s;}
+  .vqd-status{margin:8px 0 0;font-size:.84rem;}
+  .vqd-steps, .vqd-checks{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:3px 14px;}
+  .vqd-steps li, .vqd-checks li{font-size:.82rem;color:var(--vqd-muted);display:flex;gap:6px;line-height:1.4;}
+  .vqd-steps li i, .vqd-checks li i{font-style:normal;flex:none;width:1.1em;text-align:center;}
+  .vqd-steps li.is-done{color:var(--vqd-ink);}
+  .vqd-steps li.is-done i, .vqd-checks li i{color:var(--vqd-ok);}
+  .vqd-steps li.is-now{color:var(--vqd-run);font-weight:700;}
+  .vqd-steps li.is-fail{color:var(--vqd-bad);}
+  .vqd-checks li{color:var(--vqd-ink);}
+  .vqd-runacts{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
+  .only-m{display:contents;}
+  /* Confirmations and the case chooser: a card over the screen, so it is on
+     screen whichever region the operator was in when it was owed. */
+  .vqd-modal{position:fixed;inset:0;z-index:8;display:flex;align-items:center;justify-content:center;
+    padding:16px;background:rgba(2,6,12,.72);}
+  .vqd-mcard{width:100%;max-width:520px;max-height:100%;overflow:auto;border:1px solid var(--vqd-gold);
+    border-radius:14px;background:var(--vqd-panel);padding:16px;}
+  .vqd-mcard h4{font-size:1.05rem;margin-bottom:6px;}
+  .vqd-mcard .vqd-b{display:flex;width:100%;margin-top:8px;}
+  .vqd-mcard input{width:100%;padding:0 10px;}
+  /* A video's full details — the finished copy, saving it, filing it — open
+     over the dashboard: the whole screen on a phone, a drawer at the side on
+     a desk, with the dashboard dimmed behind it and one tap from it. */
+  .vst-dim{display:none;}
+  /* ---- phone and tablet: one region at a time ---- */
+  @media(max-width:759px){
+    .vqd[data-has="1"] .vqd-trust{display:none;}
+    .vqd-pill.is-zero{display:none;}
+    .vqd-qacts .vqd-b{padding:0 10px;font-size:.84rem;}
+    .vqd-hadd{flex:1 1 auto;}
+    .vqd[data-has="1"] .vqd-hfold{flex:0 1 auto;}
+  }
+  @media(max-width:1239px){
+    .vqd[data-has="1"] .vqd-add{display:none;}
+    .vqd[data-focus="edit"] .vqd-edit{display:block;position:fixed;inset:0;z-index:4;overflow:auto;
+      overscroll-behavior:contain;border:0;border-radius:0;background:var(--vqd-bg);padding:12px;
+      padding-top:max(12px, env(safe-area-inset-top));padding-bottom:max(20px, env(safe-area-inset-bottom));}
+    .vqd[data-focus="edit"] .vqd-edit>*{max-width:560px;margin-left:auto;margin-right:auto;}
+    .vqd[data-focus="run"] .vqd-runrow{display:block;}
+    .vqd[data-focus="run"] .vqd-run{position:fixed;inset:0;z-index:4;overflow:auto;overscroll-behavior:contain;
+      border:0;border-radius:0;background:var(--vqd-bg);padding:12px;
+      padding-top:max(12px, env(safe-area-inset-top));padding-bottom:max(20px, env(safe-area-inset-bottom));}
+    .vqd[data-focus="run"] .vqd-run>*{max-width:560px;margin-left:auto;margin-right:auto;}
+    .vqd-next{display:none;}
+  }
+  @media(min-width:520px){
+    .vqd-lede{display:block;}
+    .vqd-img, .vqd-ph{width:76px;height:46px;}
+    .vqd-row{grid-template-columns:22px 76px minmax(0,1fr) auto;}
+  }
+  @media(min-width:760px){
+    .vqd-add{grid-template-columns:minmax(0,1fr) 290px;}
+    .vqd-steps, .vqd-checks{grid-template-columns:repeat(2, minmax(0,1fr));}
+    .vqd-hadd, .vqd[data-has="1"] .vqd-hfold{flex:0 0 auto;}
+  }
+  /* ---- a desk: the approved layout ---- */
+  @media(min-width:1240px){
+    .vqd-head{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;align-items:center;
+      gap:0 18px;padding:12px 22px;}
+    .vqd-brand{display:contents;}
+    .vqd-logo{grid-column:1;grid-row:1;font-size:2.8rem;}
+    .vqd-title{grid-column:2;grid-row:1;}
+    .vqd-title h2{font-size:1.9rem;}
+    .vqd-trust{grid-column:3;grid-row:1;margin:0;display:flex;flex-wrap:nowrap;gap:0;border:1px solid var(--vqd-line);
+      border-radius:12px;}
+    .vqd-x{grid-column:4;grid-row:1;}
+    .vqd-hadd, .vqd[data-has="1"] .vqd-hfold{display:none;}
+    .vqd-trust li{flex-direction:column;gap:4px;border:0;border-radius:0;padding:8px 14px;text-align:center;
+      font-size:.78rem;}
+    .vqd-trust li+li{border-left:1px solid var(--vqd-line);}
+    .vqd-trust li svg{font-size:1.5rem;}
+    .vqd-trust br{display:inline;}
+    .vqd-body{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px;align-items:start;
+      padding:16px 20px 0;}
+    .vqd-left{max-width:none;margin:0;}
+    .vqd-edit{display:block;position:sticky;top:0;max-height:calc(100vh - 150px);max-height:calc(100dvh - 150px);
+      overflow:auto;overscroll-behavior:contain;margin-bottom:16px;}
+    .vqd-back, .only-m{display:none;}
+    .vqd-runrow{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(0,1fr);gap:12px;align-items:start;
+      padding:0 0 16px;}
+    .vqd[data-has="0"] .vqd-runrow{display:none;}
+    .vqd-run .vqd-rungrid{grid-template-columns:140px minmax(0,1fr);}
+    .vqd-run .vqd-runthumb{grid-row:1 / span 2;}
+    .vqd-run .vqd-runthumb .vqd-img, .vqd-run .vqd-runthumb .vqd-ph{width:140px;height:79px;}
+    .vqd-run .vqd-runbody{grid-column:2;}
+    .vqd-run .vqd-keep{display:none;}
+    .vqd-run .vqd-stop{display:inline-flex;width:auto;}
+    .vqd-run .vqd-steps{display:flex;flex-wrap:wrap;gap:2px 16px;}
+    .vqd-run{scroll-margin-bottom:16px;}
+    .vqd-thead{display:grid;padding:0 10px 6px;font-size:.76rem;color:var(--vqd-muted);
+      border-bottom:1px solid var(--vqd-line);align-items:end;}
+    .vqd-thead, .vqd-row{grid-template-columns:24px 60px minmax(110px,1.4fr) 62px minmax(92px,1fr)
+      minmax(124px,1.05fr) 118px 156px;gap:8px;}
+    .vqd-th-sz{display:none;}
+    .vqd-row{grid-template-areas:none;align-items:center;margin:0;padding:8px 10px;border:0;border-radius:0;
+      border-bottom:1px solid var(--vqd-line);background:transparent;}
+    .vqd-row.is-sel{border-radius:10px;background:var(--vqd-panel-2);}
+    .vqd-n, .vqd-th, .vqd-nm, .vqd-st, .vqd-ac{grid-area:auto;align-self:center;}
+    .vqd-n{padding-top:0;}
+    .vqd-img, .vqd-ph{width:60px;height:36px;}
+    .vqd-fm, .vqd-dt, .vqd-tm{display:block;font-size:.84rem;line-height:1.35;}
+    .vqd-fm small, .vqd-dt small{color:var(--vqd-muted);font-size:.76rem;}
+    .vqd-tmb{display:flex;align-items:center;justify-content:space-between;gap:6px;min-height:44px;width:100%;
+      padding:4px 8px;border:1px solid var(--vqd-line-2);border-radius:9px;background:var(--vqd-bg);
+      color:var(--vqd-ink);font:inherit;font-size:.82rem;line-height:1.3;text-align:left;cursor:pointer;}
+    .vqd-tmb svg{color:var(--vqd-muted);}
+    .vqd-nm .vqd-whenm, .vqd-mfm{display:none;}
+    .vqd-ac .vqd-go{display:inline-flex;min-width:44px;padding:0;}
+  }
+  @media(min-width:1440px){
+    .vqd-body{grid-template-columns:minmax(0,1fr) 380px;padding:18px 24px 0;}
+    .vqd-thead, .vqd-row{grid-template-columns:26px 76px minmax(120px,1.4fr) 66px 66px minmax(96px,1fr)
+      minmax(128px,1.05fr) 122px 160px;}
+    .vqd-th-sz{display:block;}
+    .vqd-sz{display:block;font-size:.84rem;}
+    .vqd-nm .vqd-mini{display:none;}
+    .vqd-img, .vqd-ph{width:76px;height:44px;}
+  }
+  @media(min-width:1240px){
+    .vst.vst-drawer{left:auto;width:min(620px, 100vw);border-left:1px solid var(--vqd-line);
+      box-shadow:-18px 0 40px rgba(0,0,0,.45);}
+    .vst-dim{display:block;position:fixed;inset:0;z-index:125;border:0;padding:0;margin:0;
+      background:rgba(2,6,12,.6);cursor:pointer;}
+  }
+  /* THE PROCESSING ROW STAYS IN VIEW only where the screen is tall enough to
+     hold it and a useful piece of the list together. On a shorter desk it sits
+     under the queue, and starting a run brings it into view. */
+  @media(min-width:1240px) and (min-height:1000px){
+    .vqd-runrow{position:sticky;bottom:0;z-index:2;background:var(--vqd-bg);padding-top:10px;}
+  }
+  @media(prefers-reduced-motion:reduce){ .vqd-prog i{transition:none;} }
   /* The record list, shown in the case's Evidence tab. */
   .vsrow{border:1px solid var(--line);border-radius:10px;padding:8px 10px;
     margin-bottom:8px;}
@@ -14369,9 +14692,13 @@ const vstPlural = (n, w) => `${vstNum(n)} ${w}${n === 1 ? "" : "s"}`;
 /* One run of the generator. Stop, Close and choosing another file all end it,
    and every loop below reads this between frames — so Stop stops the WORK, not
    just the screen that showed it (before, the decode went on to the end of the
-   file behind a closed tool). No run at all, as the suites call it, is live. */
+   file behind a closed tool). No run at all, as the suites call it, is live.
+   A queued video's run belongs to the queue, not to whatever is on screen: the
+   dashboard shows it in place, and it lives exactly as long as the video is
+   still in the queue and nobody has pressed Stop or Close. */
 function vstRunLive(run){
-  return !run || (!run.cancelled && (!run.owner || VST === run.owner));
+  return !run || (!run.cancelled && (!run.owner || VST === run.owner
+    || !!(VQ && run.owner.qid && VQ.items.includes(run.owner))));
 }
 function vstCodecClose(codec){
   try{ if(codec && codec.state !== "closed") codec.close(); }catch{}
@@ -15530,16 +15857,16 @@ function vstNotVideo(f){
   return true;
 }
 
-/* Opening the generator. The files never leave the device: they are read
-   straight from the picker, one at a time, and nothing is copied anywhere.
+/* Choosing files. The files never leave the device: they are read straight
+   from the picker, one at a time, and nothing is copied anywhere.
 
    MANY AT ONCE (owner, 2026-09-28, Timestamp Video V2): "I should NOT have to
-   select each video from the device one at a time." The door opens the
-   device's own picker with multiple selection; what is chosen joins the queue
-   (see `vqAdd`), which is a list of REFERENCES to the operator's files — not
+   select each video from the device one at a time." This opens the device's
+   own picker with multiple selection; what is chosen joins the queue (see
+   `vqAdd`), which is a list of REFERENCES to the operator's files — not
    copies of them — for as long as this tab has the tool open. `folder` asks
    for a whole folder where the browser offers that (desktop), and is never
-   required. */
+   required. The tool's own door is `vqOpen`, which opens the dashboard. */
 function vstOpen(caseNo, folder){
   const inp = document.createElement("input");
   inp.type = "file";
@@ -15565,15 +15892,17 @@ function vstOpen(caseNo, folder){
 
    EACH VIDEO IS ITS OWN RECORD. A queue entry is exactly the object this tool
    has always worked on for one video — its file, its start time, its checks,
-   its run, its copy — so every screen that already existed (the time, the
-   details, the run, the finished copy) works on whichever entry is open, and
-   nothing one entry holds can reach another: editing video 2 edits video 2's
-   object. `VST` is the entry on screen; null means the queue itself.
+   its run, its copy — so the details screen that already existed works on
+   whichever entry is opened, and nothing one entry holds can reach another:
+   editing video 2 edits video 2's object. `VQ.sel` is the entry in the editor;
+   `VST` is the entry whose details are open over the dashboard (the drawer),
+   and null means none is.
 
    ONE HEAVY THING AT A TIME. Choosing twenty files reads none of them whole:
    each is analysed in turn — its structure, what this device's decoders say,
-   its fingerprint — and only one analysis or one run is ever in flight. A run
-   pauses the analysis of the rest and it resumes when the run ends.
+   one frame for its thumbnail, its fingerprint — and only one analysis or one
+   run is ever in flight. A run pauses the analysis of the rest and it resumes
+   when the run ends.
 
    ONE FINISHED COPY IN MEMORY. A copy is the size of the video, and a phone
    holding several of them is a phone that closes the tab. Starting a new copy
@@ -15587,7 +15916,7 @@ function vstOpen(caseNo, folder){
 let VQ = null;
 const VQ_MAX = 100;
 
-const vqById = id => VQ ? VQ.items.find(x => String(x.qid) === String(id)) || null : null;
+const vqById = id => VQ && id != null ? VQ.items.find(x => String(x.qid) === String(id)) || null : null;
 const vqGone = v => !VQ || !VQ.items.includes(v);
 /* The entry's place in the queue, 1-based — the "3" in "Processing 3 of 12"
    and the NNN of its copy's name. A lone video (no queue) is 1. */
@@ -15596,6 +15925,32 @@ function vqPos(v){
   return i >= 0 ? i + 1 : 1;
 }
 const vqRunning = () => !!(VQ && (VQ.busy || VQ.items.some(x => x.run)));
+const vqSel = () => VQ ? vqById(VQ.sel) : null;
+/* THE TWO SHAPES of the dashboard, read off the same breakpoint the CSS uses:
+   a desk sees every region at once, a phone one region at a time. */
+function vqNarrow(){
+  try{ return matchMedia("(max-width:1239px)").matches; }catch{ return false; }
+}
+
+function vqNew(caseNo){
+  return {items: [], caseNo: caseNo || "", seq: 0, msg: "", err: "", confirm: null, view: "list",
+          q: "", cases: null, caseErr: "", busy: null, analyzing: null,
+          /* The dashboard's own state: which video the editor holds, which
+             region a phone is showing, which video the processing panel is
+             about, and a move held while the editor asks about unsaved work. */
+          sel: null, focus: "list", runId: null, editAsk: null, dragDepth: 0,
+          focusTo: null, pv: null};
+}
+
+/* THE DOOR OPENS THE DASHBOARD, not the picker (owner, approved mockup,
+   2026-09-28): the queue is where videos are dropped, so it has to be on
+   screen before any are chosen. Nothing is read until a file is chosen or
+   dropped, and an empty queue holds nothing at all. */
+function vqOpen(caseNo){
+  if(!VQ) VQ = vqNew(caseNo);
+  VST = null;
+  paintVStamp();
+}
 
 /* A folder holds more than video — an AVCHD card has index, clip-info and
    playlist files beside its streams — so a file from a folder must POSITIVELY
@@ -15607,12 +15962,17 @@ function vqLooksVideo(f){
   const dot = name.lastIndexOf(".");
   return type.startsWith("video/") || (dot > 0 && VST_VIDEO_EXT.has(name.slice(dot + 1)));
 }
+/* A file dropped from inside a folder carries its path only on the entry it
+   came from, so the path is remembered beside the file — never on it — for
+   the sort below. */
+const VQ_PATH = new WeakMap();
 /* SELECTION ORDER IS NOT RELIABLE ACROSS DEVICES (an iPhone and a desktop
    hand the same selection back differently), so each batch is sorted by name,
    numbers compared as numbers — which for camera files is the order they were
    recorded: 00029 before 00030 before 00100. Move up and Move down change it. */
 function vqNameCmp(a, b){
-  const an = String(a.webkitRelativePath || a.name || ""), bn = String(b.webkitRelativePath || b.name || "");
+  const an = String(VQ_PATH.get(a) || a.webkitRelativePath || a.name || "");
+  const bn = String(VQ_PATH.get(b) || b.webkitRelativePath || b.name || "");
   return an.localeCompare(bn, undefined, {numeric: true, sensitivity: "base"});
 }
 
@@ -15636,59 +15996,128 @@ function vqItem(f){
     decodeOk: null, compatOk: null,
     lane: VST_PRIMARY_FAILED.has(vstFileKey(f)) ? "compat" : "auto",
     fault: null, phase: "", run: null, analysis: "waiting",
+    draft: null, thumb: "", seen: null, pvFailed: false,
   };
 }
 
+const vqNames = list => list.slice(0, 3).join(", ") + (list.length > 3 ? ", …" : "");
+
 /* ADDING. Files that are not video are left out and named; a file already in
    the queue is not added twice; past VQ_MAX the rest are left out and the
-   screen says how many. Nothing is decoded here — adding is only listing. */
+   screen says how many. Nothing is decoded here and nothing starts — adding
+   is only listing, whichever way the files arrived. */
 function vqAdd(files, o){
-  const fresh = !VQ;
-  if(fresh){
-    VQ = {items: [], caseNo: (o && o.caseNo) || "", seq: 0, msg: "", err: "", confirm: null,
-          view: "list", q: "", cases: null, caseErr: "", busy: null, analyzing: null};
-  }
+  if(!VQ) VQ = vqNew((o && o.caseNo) || "");
+  const strict = f => !!(o && (o.folder || (o.fromDir && o.fromDir.has(f))));
   const skipped = [], dup = [];
   let list = files.filter(f => {
     const nm = String(f.name || "");
     if(nm.startsWith(".")) return false;       // hidden files and "._" resource forks
-    if(o && o.folder ? !vqLooksVideo(f) : vstNotVideo(f)){ skipped.push(nm); return false; }
+    if(strict(f) ? !vqLooksVideo(f) : vstNotVideo(f)){ skipped.push(nm); return false; }
     return true;
   });
   list.sort(vqNameCmp);
-  let added = 0, over = 0;
+  let added = 0, over = 0, first = null;
   for(const f of list){
     if(VQ.items.some(x => x.key === vstFileKey(f))){ dup.push(f.name); continue; }
     if(VQ.items.length >= VQ_MAX){ over++; continue; }
-    VQ.items.push(vqItem(f));
+    const it = vqItem(f);
+    VQ.items.push(it);
+    if(!first) first = it;
     added++;
-  }
-  /* NOTHING USABLE, AND NOTHING QUEUED BEFORE: the refusal the single picker
-     always gave, naming the file that was chosen, with a way on. */
-  if(fresh && !added){
-    const caseNo = VQ.caseNo;
-    VQ = null;
-    VST = {step: "reject", caseNo, name: skipped[0] || (dup[0] || ""), why: "Video files only"};
-    return paintVStamp();
   }
   const bits = [];
   if(added) bits.push(`${vstPlural(added, "video")} added`);
   if(dup.length) bits.push(`${vstPlural(dup.length, "video")} already in the queue`);
-  if(skipped.length) bits.push(`${vstPlural(skipped.length, "file")} left out — not video (${
-    skipped.slice(0, 3).join(", ")}${skipped.length > 3 ? ", …" : ""})`);
+  if(skipped.length) bits.push(`${vstPlural(skipped.length, "file")} left out — not video (${vqNames(skipped)})`);
+  if(o && o.capped) bits.push(`only the first ${VQ_WALK_MAX} files in the folder were read`);
   if(over) bits.push(`${vstPlural(over, "video")} left out — the queue holds ${VQ_MAX} at most`);
-  VQ.msg = bits.join(" · ") + ".";
+  /* NOTHING USABLE is the refusal the single picker always gave — "Video files
+     only", naming what was chosen — and it leaves whatever was already queued
+     exactly as it was. */
+  if(!added && !dup.length){
+    VQ.msg = "";
+    VQ.err = skipped.length
+      ? `Video files only — ${vqNames(skipped)} ${skipped.length === 1 ? "is not a video" : "are not videos"}, so nothing was added. Choose the clips themselves, straight from the camera or the phone.`
+      : over ? `The queue holds ${VQ_MAX} videos at most, so nothing more was added.` : "";
+  } else {
+    VQ.err = "";
+    VQ.msg = bits.join(" · ") + ".";
+  }
+  if(!vqSel()) VQ.sel = first ? first.qid : VQ.items[0] ? VQ.items[0].qid : null;
   VST = null;
   paintVStamp();
   vqPump();
 }
 
+/* ---- DRAG AND DROP (owner, approved mockup: "true desktop drag-and-drop") ----
+
+   The whole dashboard is the target, and it says "Release to add videos"
+   while something is held over it. A drop is ADDING — the same `vqAdd` the
+   picker uses, so the same checks, the same messages, and nothing starts.
+   Dragging is never the only way in: the drop zone is itself the button. */
+const VQ_WALK_MAX = 500;
+function vqDragFiles(ev){
+  const dt = ev.dataTransfer;
+  return !!(dt && Array.from(dt.types || []).includes("Files"));
+}
+/* The highlight is an attribute on the dashboard's root, set in place: a
+   repaint on every dragover would rebuild the page under the pointer. */
+function vqDragPaint(){
+  const root = document.querySelector(".vqd");
+  if(root) root.setAttribute("data-drag", VQ && VQ.dragDepth ? "1" : "0");
+}
+/* THE ENTRIES ARE TAKEN IN THE DROP'S OWN TASK. A DataTransfer is emptied the
+   moment the event returns, so anything read from it later reads nothing;
+   folders are then walked from the entries, which outlive the event. */
+function vqDropFiles(dt){
+  if(!VQ || !dt) return;
+  const items = Array.from(dt.items || []).filter(it => it.kind === "file");
+  const entries = items.map(it => (typeof it.webkitGetAsEntry === "function" ? it.webkitGetAsEntry() : null));
+  const loose = Array.from(dt.files || []);
+  if(!entries.some(e => e && e.isDirectory)){
+    if(loose.length) vqAdd(loose, {caseNo: VQ.caseNo});
+    return;
+  }
+  VQ.msg = "Reading the folder…"; VQ.err = "";
+  paintVStamp();
+  vqWalk(entries).then(r => { if(VQ) vqAdd(r.files, {caseNo: VQ.caseNo, fromDir: r.fromDir, capped: r.capped}); });
+}
+/* A FOLDER IS READ AS A LIST OF NAMES, never as bytes: each entry is turned
+   into a File reference and nothing is opened. Bounded in depth and count, so
+   a dropped drive cannot keep this walking. */
+async function vqWalk(entries){
+  const files = [], fromDir = new Set();
+  let capped = false;
+  const fileOf = entry => new Promise(res => { try{ entry.file(res, () => res(null)); }catch{ res(null); } });
+  const walk = async (entry, depth, inDir) => {
+    if(!entry || capped) return;
+    if(files.length >= VQ_WALK_MAX){ capped = true; return; }
+    if(entry.isFile){
+      const f = await fileOf(entry);
+      if(f){ files.push(f); if(inDir) fromDir.add(f); if(entry.fullPath) VQ_PATH.set(f, entry.fullPath); }
+      return;
+    }
+    if(!entry.isDirectory || depth > 6) return;
+    let reader = null;
+    try{ reader = entry.createReader(); }catch{ return; }
+    for(let guard = 0; guard < 200; guard++){
+      const batch = await new Promise(res => { try{ reader.readEntries(res, () => res([])); }catch{ res([]); } });
+      if(!batch.length) break;
+      for(const e of batch){ await walk(e, depth + 1, true); if(capped) return; }
+    }
+  };
+  for(const e of entries) await walk(e, 0, false);
+  return {files, fromDir, capped};
+}
+
 /* ---- ANALYSIS, ONE ENTRY AT A TIME ----
    What the single picker did the moment a file was chosen, done for each
    entry in turn: read its structure, anchor the start to its own capture
-   metadata when it has some, ask this device's decoders about it, and
-   fingerprint the original. Results are written into THAT entry and nowhere
-   else. An entry removed mid-analysis is simply abandoned. */
+   metadata when it has some, ask this device's decoders about it, draw one
+   frame for its thumbnail, and fingerprint the original. Results are written
+   into THAT entry and nowhere else. An entry removed mid-analysis is simply
+   abandoned. */
 async function vqAnalyze(v){
   v.analysis = "reading";
   paintVStamp();
@@ -15701,13 +16130,14 @@ async function vqAnalyze(v){
     v.detected = {ms: p.capture.ms, from: p.capture.trusted ? "capture" : "creation", note: p.capture.source};
     /* A correction the operator already typed outranks anything read from the
        file — the rule the single picker always kept. */
-    if(v.guessed && !v.confirmed){
+    if(v.guessed && !v.confirmed && !v.draft){
       const c = vstParts(p.capture.ms);
       v.mo = c.month; v.da = c.day; v.yr = c.year;
       v.hr = c.hour; v.mi = c.minute; v.se = c.second;
       v.ap = c.dayPeriod === "AM" ? "AM" : "PM";
       v.startFrom = p.capture.trusted ? "capture" : "creation";
       v.captureNote = p.capture.source;
+      if(VQ && String(VQ.sel) === String(v.qid)) v.skipCapture = true;
     }
   }
   if(vstCanPipeline() && p && p.video && (vstFrames(p) || vstTsReady(p))){
@@ -15737,6 +16167,10 @@ async function vqAnalyze(v){
     if(!v.codec) v.codec = await vstBoxCodec(v.file);
     if(vqGone(v)) return;
   }
+  if(vstPath(v) === "pipeline"){
+    try{ await vqThumb(v); }catch{}
+    if(vqGone(v)) return;
+  }
   vstSlim(v);
   paintVStamp();
   /* THE ORIGINAL'S FINGERPRINT, last because it is the heaviest read, taken
@@ -15748,6 +16182,82 @@ async function vqAnalyze(v){
   v.hash = h;
   v.analysis = "done";
   paintVStamp();
+}
+
+/* ---- A THUMBNAIL IS ONE FRAME (owner, approved mockup: "lightweight local
+   thumbnails … do not decode the entire video merely to make a thumbnail").
+
+   The first keyframe is read — one sample of an MP4/MOV, one access unit of a
+   transport stream, by `file.slice` — decoded by one decoder made for it and
+   closed at once, drawn small, and kept as a JPEG in this tab's memory only.
+   It is decoration: a file this cannot draw keeps a placeholder, and its
+   analysis, its status and its copy are exactly what they would have been. */
+const VQ_THUMB_W = 160;
+async function vqThumb(v){
+  const p = v.parsed;
+  if(!p || !p.video) return;
+  let chunk = null, cfg = null;
+  if(vstIsTs(p)){
+    let au = null;
+    await vstTsScan(v.file, p.layout, null, a => {
+      if(vqGone(v)) return false;
+      if(a.sync && !a.badNal){ au = a; return false; }
+      return true;
+    }, {to: Math.min(v.file.size, (p.layout.start || 0) + 8 * 1048576), sps: p.video.sliceSyntax});
+    if(!au || vqGone(v)) return;
+    chunk = {type: "key", timestamp: 0, data: au.data};
+    cfg = {codec: p.video.codecString, codedWidth: p.video.width, codedHeight: p.video.height};
+    /* The same decoder a copy would start on: the device's own when it takes
+       the stream, this browser's software decoder when only that does. */
+    if(v.decodeOk !== true) cfg.hardwareAcceleration = "prefer-software";
+  } else {
+    const V = p.video;
+    const sm = V.samples && V.samples.find(s => s.sync);
+    if(!sm) return;
+    const buf = await v.file.slice(sm.offset, sm.offset + sm.size).arrayBuffer();
+    if(vqGone(v)) return;
+    chunk = {type: "key", timestamp: 0, data: buf};
+    cfg = {codec: V.codecString, description: V.description || undefined, codedWidth: V.width, codedHeight: V.height};
+  }
+  const frame = await vqDecodeOne(cfg, chunk, 4000);
+  if(!frame) return;
+  try{
+    if(vqGone(v)) return;
+    const rot = (((p.rotation || 0) % 360) + 360) % 360;
+    const fw = frame.displayWidth, fh = frame.displayHeight;
+    const sw = rot % 180 ? fh : fw, sh = rot % 180 ? fw : fh;
+    const k = Math.min(1, VQ_THUMB_W / Math.max(1, sw));
+    const cw = Math.max(1, Math.round(sw * k)), ch = Math.max(1, Math.round(sh * k));
+    const cv = document.createElement("canvas");
+    cv.width = cw; cv.height = ch;
+    const cx = cv.getContext("2d");
+    cx.translate(cw / 2, ch / 2);
+    cx.rotate(rot * Math.PI / 180);
+    const dw = Math.round(fw * k), dh = Math.round(fh * k);
+    cx.drawImage(frame, -dw / 2, -dh / 2, dw, dh);
+    const blob = await new Promise(res => { try{ cv.toBlob(res, "image/jpeg", 0.72); }catch{ res(null); } });
+    if(blob && !vqGone(v)) v.thumb = URL.createObjectURL(blob);
+  }finally{ try{ frame.close(); }catch{} }
+}
+/* One chunk in, at most one frame out, and the decoder closed whatever
+   happened — a decoder that errors, or never answers, costs a placeholder. */
+async function vqDecodeOne(cfg, c, ms){
+  let dec = null, got = null;
+  try{
+    await new Promise(resolve => {
+      const t = setTimeout(resolve, ms);
+      const done = () => { clearTimeout(t); resolve(); };
+      dec = new VideoDecoder({
+        output: f => { if(!got) got = f; else f.close(); },
+        error: done,
+      });
+      dec.configure(cfg);
+      dec.decode(new EncodedVideoChunk(c));
+      dec.flush().then(done, done);
+    });
+  }catch{}
+  finally{ try{ if(dec && dec.state !== "closed") dec.close(); }catch{} }
+  return got;
 }
 
 async function vqPump(){
@@ -15784,10 +16294,11 @@ function vqAfterRun(){
    the badge cannot disagree with the entry it labels. READY needs a start
    time the operator can stand behind: the camera's own capture metadata, or
    one they saved. A time taken from the file's modified date, or from a
-   creation time with no zone, is the tool's guess and the tool says so. */
+   creation time with no zone, is the tool's guess — NEEDS REVIEW. */
 const VQ_STATUS = {
-  analyzing: "Analyzing", ready: "Ready", needs: "Needs date/time", processing: "Processing",
-  compat: "Trying compatibility mode", complete: "Complete", failed: "Failed", stopped: "Stopped",
+  analyzing: "Analyzing", ready: "Ready", needs: "Needs review", processing: "Processing",
+  compat: "Trying compatibility mode", verifying: "Verifying", complete: "Complete",
+  failed: "Failed", stopped: "Stopped",
 };
 function vqTimeOk(v){
   return vstStart(v).ok && (v.confirmed || v.startFrom === "capture");
@@ -15797,7 +16308,9 @@ function vqStale(v){
   return !!(v.out && v.out.startMs != null && s.ok && s.ms !== v.out.startMs);
 }
 function vqStatus(v){
-  if(v.run) return v.phase === "compat" ? "compat" : "processing";
+  if(v.run || (VQ && VQ.busy === v)){
+    return v.phase === "compat" ? "compat" : v.phase === "verifying" ? "verifying" : "processing";
+  }
   if(v.fault || v.outcome === "failed") return "failed";
   if(v.out && !vqStale(v)) return "complete";
   if(v.stopped) return "stopped";
@@ -15807,15 +16320,32 @@ function vqStatus(v){
   if(route === "checking") return "analyzing";
   return vqTimeOk(v) ? "ready" : "needs";
 }
+const vqBusy = st => st === "processing" || st === "compat" || st === "verifying";
+/* WHETHER THIS VIDEO MAY BE GENERATED NOW — the one reader every Generate
+   button asks, so a button is never drawn live over a run that would refuse. */
+function vqCanGo(v){
+  if(!v || vqRunning() || v.fault) return false;
+  const st = vqStatus(v);
+  return (st === "ready" || st === "stopped") && vqTimeOk(v) && vstPath(v) === "pipeline";
+}
 
 /* ---- GENERATE, ONE AT A TIME ---- */
 async function vqGo(id){
   const v = vqById(id);
   if(!v || vqRunning() || v.fault) return;
+  /* A CORRECTION NOT YET SAVED is not the time this copy would carry. The
+     button is withdrawn while one is open, and this refuses it anyway. */
+  vqTakeDraft(v);
+  if(vqDraftDiff(v)){
+    v.err = "Save or undo the change to this video's time first — the copy uses the saved time.";
+    VQ.sel = v.qid;
+    return paintVStamp();
+  }
   if(!vqTimeOk(v)){
     // The start time is the tool's guess — ask for it first, never assume it.
-    v.step = "when"; v.err = "Confirm or correct the start time before this copy is made.";
-    VST = v;
+    v.err = "Confirm or correct the start time before this copy is made.";
+    VST = null;
+    VQ.sel = v.qid; VQ.focus = "edit"; VQ.focusTo = "vq_ehead";
     return paintVStamp();
   }
   /* ONE FINISHED COPY IN MEMORY: a saved one is let go; an unsaved one only
@@ -15827,17 +16357,21 @@ async function vqGo(id){
     return paintVStamp();
   }
   if(held) vstRelease(held, true);
-  VQ.confirm = null; VQ.msg = "";
+  VQ.confirm = null; VQ.msg = ""; VQ.err = "";
   VQ.busy = v;
+  /* The processing panel follows the video being made; on a phone it takes
+     the screen, on a desk it is the row under the queue. */
+  VQ.runId = v.qid; VQ.focus = "run"; VQ.scrollTo = "vq_run";
   /* Filing follows the queue's case at the moment the copy is made — a copy
      already made keeps the case it was recorded against. */
   if(!v.out && !v.recId) v.caseNo = VQ.caseNo;
-  VST = v;
+  v.err = ""; v.saveMsg = ""; v.seen = new Set();
+  VST = null;
   if(VQ.analyzing && VQ.analyzing !== v){
     v.step = "working"; v.stage = "waiting"; v.phase = "processing"; v.pct = 0;
     paintVStamp();
     await vqIdle();
-    if(vqGone(v) || VST !== v){ vqAfterRun(); return; }
+    if(vqGone(v) || v.stopped || VQ.busy !== v){ vqAfterRun(); return; }
   }
   v.fault = null; v.outcome = null; v.stopped = false;
   /* However the run ends — or if it never starts, refused for a reason the
@@ -15857,9 +16391,10 @@ function vqNextReady(from){
   return order.find(x => vqStatus(x) === "ready") || null;
 }
 function vqProcessNext(){
-  const next = vqNextReady(VST);
+  if(!VQ || vqRunning()) return;
+  const next = vqNextReady(vqById(VQ.runId) || VST);
   if(!next){
-    VQ.msg = "No other video is ready. Videos that need their date and time checked are marked in the queue.";
+    VQ.msg = "No other video is ready. Videos that need their date and time checked are marked Needs review.";
     VST = null;
     return paintVStamp();
   }
@@ -15867,13 +16402,14 @@ function vqProcessNext(){
 }
 
 /* STOP STOPS THIS VIDEO AND KEEPS THE QUEUE. The run is ended where it stands
-   (decode, compatibility mode, encode, finishing — all of it reads this), no
-   file is kept from it, and the entry goes back to the list marked Stopped. */
+   (decode, compatibility mode, encode, finishing, the clean check — all of it
+   reads this), no file is kept from it, and the entry is marked Stopped. */
 function vqStop(v){
+  if(!v) return;
   if(v.run) v.run.cancelled = true;
   v.run = null; v.stopped = true; v.outcome = "stopped";
   v.step = "preview"; v.stage = ""; v.phase = ""; v.pct = 0;
-  if(VQ) VQ.busy = null;
+  if(VQ && VQ.busy === v) VQ.busy = null;
   VST = null;
   paintVStamp();
   vqAfterRun();
@@ -15881,12 +16417,36 @@ function vqStop(v){
 
 function vqMove(id, by){
   const v = vqById(id);
-  if(!v || v.run) return;
+  if(!v || v.run || VQ.busy === v) return;
   const i = VQ.items.indexOf(v), j = i + by;
   if(j < 0 || j >= VQ.items.length) return;
   VQ.items.splice(i, 1);
   VQ.items.splice(j, 0, v);
+  /* The moved row keeps the keyboard where it was, so Move up can be pressed
+     again without hunting for it. */
+  VQ.focusTo = `.vqd-row[data-qid="${v.qid}"] .vqd-menu summary`;
   paintVStamp();
+}
+
+/* What one entry holds in this tab beyond its copy — its thumbnail, and the
+   preview when it is the one playing. Let go of when the entry leaves. */
+function vqForget(v){
+  if(!v) return;
+  if(VQ && VQ.pv && String(VQ.pv.qid) === String(v.qid)) vqDropPreview();
+  try{ if(v.thumb) URL.revokeObjectURL(v.thumb); }catch{}
+  v.thumb = "";
+}
+/* When the entry the editor or the processing panel is about leaves, they
+   move to its neighbour rather than to nothing. */
+function vqAfterLeave(gone, at){
+  if(!VQ) return;
+  if(gone.some(x => String(x.qid) === String(VQ.sel))){
+    const n = VQ.items[Math.min(at, VQ.items.length - 1)];
+    VQ.sel = n ? n.qid : null;
+    VQ.editAsk = null;
+  }
+  if(gone.some(x => String(x.qid) === String(VQ.runId))) VQ.runId = null;
+  if(!VQ.items.length) VQ.focus = "list";
 }
 
 /* REMOVING TAKES AN ENTRY OUT OF THE LIST AND NOTHING ELSE. It does not touch
@@ -15894,10 +16454,14 @@ function vqMove(id, by){
    touch a copy already saved. */
 function vqRemove(id){
   const v = vqById(id);
-  if(!v || v.run || (v.out && !vqStale(v))) return;
+  if(!v || v.run || VQ.busy === v || (v.out && !vqStale(v))) return;
+  const i = VQ.items.indexOf(v);
   vstRelease(v, true);
-  VQ.items.splice(VQ.items.indexOf(v), 1);
+  vqForget(v);
+  VQ.items.splice(i, 1);
+  vqAfterLeave([v], i);
   VQ.msg = `${v.name} was taken out of the queue. The file on your device is untouched.`;
+  VQ.err = "";
   paintVStamp();
   vqPump();
 }
@@ -15907,26 +16471,30 @@ function vqClear(kind, sure){
   if(!VQ || vqRunning()) return;
   const going = kind === "done" ? VQ.items.filter(x => vqStatus(x) === "complete") : VQ.items.slice();
   if(!going.length) return;
-  /* ASKED ONLY WHEN SOMETHING WOULD BE LOST: a copy made and never saved, or
-     start times the operator typed into videos not yet made. */
-  const edited = kind === "all" && going.some(x => x.confirmed && !x.out);
+  /* ASKED ONLY WHEN SOMETHING WOULD BE LOST: a copy made and never saved,
+     start times the operator saved for videos not yet made, or a change to a
+     time that has not been saved at all. */
+  const edited = kind === "all" && going.some(x => (x.confirmed && !x.out) || vqDraftDiff(x));
   if(!sure && (vqUnsaved(going).length || edited)){
     VQ.confirm = {kind: kind === "done" ? "cleardone" : "clearall"};
     return paintVStamp();
   }
-  for(const v of going) vstRelease(v, true);
+  const at = Math.max(0, VQ.items.findIndex(x => going.includes(x)));
+  for(const v of going){ vstRelease(v, true); vqForget(v); }
   VQ.items = VQ.items.filter(x => !going.includes(x));
-  VQ.confirm = null;
+  vqAfterLeave(going, at);
+  VQ.confirm = null; VQ.err = "";
   VQ.msg = kind === "done"
     ? `${vstPlural(going.length, "finished video")} cleared from the queue. Your originals and any saved copies are untouched.`
     : "The queue was cleared. Your originals and any saved copies are untouched.";
   paintVStamp();
 }
 
-/* Close from the queue. Asked first only when a copy exists that was never
-   saved — closing is otherwise just letting go of references. */
+/* Close from the dashboard. Asked first only when something would be lost —
+   closing is otherwise just letting go of references. */
 function vqClose(sure){
-  if(VQ && !sure && vqUnsaved(VQ.items).length){
+  if(VQ && !sure && (vqUnsaved(VQ.items).length
+      || VQ.items.some(x => (x.confirmed && !x.out) || vqDraftDiff(x)))){
     VQ.confirm = {kind: "close"};
     VST = null;
     return paintVStamp();
@@ -15934,57 +16502,130 @@ function vqClose(sure){
   vstClose();
 }
 
-/* THE EDITOR'S DRAFT. The inputs are drawn from `draft` while there is one,
-   so a correction survives a repaint and is only written into the entry by
-   Save — never by moving to another video, and never into another entry. */
-function vqEditRead(){
+/* ---- THE EDITOR'S DRAFT ----
+   The inputs are drawn from `draft` while there is one, so a correction
+   survives a repaint and is only written into the entry by Save — never by
+   moving to another video, and never into another entry. The fields carry
+   the id of the video they belong to (`#vq_fields`), so a read can never take
+   one video's inputs for another's. */
+const VQ_TIME_KEYS = ["mo", "da", "yr", "hr", "mi", "se", "ap"];
+function vqEditRead(v){
+  const box = $("vq_fields");
+  if(!box || !v || String(box.dataset.qid) !== String(v.qid)) return {};
   const d = {};
   for(const k of ["mo", "da", "yr", "hr", "mi", "se"]){ const el = $("vst_" + k); if(el) d[k] = el.value; }
   const ap = $("vst_ap");
   if(ap) d.ap = ap.value;
   return d;
 }
-function vqEditDirty(v){
-  const d = Object.assign({}, v.draft || {}, vqEditRead());
-  return ["mo", "da", "yr", "hr", "mi", "se", "ap"].some(k => d[k] != null && String(d[k]) !== String(v[k] == null ? "" : v[k]));
+function vqDraftDiff(v){
+  if(!v || !v.draft) return false;
+  return VQ_TIME_KEYS.some(k => v.draft[k] != null && String(v.draft[k]) !== String(v[k] == null ? "" : v[k]));
 }
-function vqSaveTime(){
-  const v = VST;
+function vqTakeDraft(v){
+  if(!v || v.run || (VQ && VQ.busy === v)) return;
+  const d = vqEditRead(v);
+  if(!Object.keys(d).length) return;
+  v.draft = Object.assign({}, v.draft || {}, d);
+  if(!vqDraftDiff(v)) v.draft = null;
+}
+function vqEditDirty(v){
+  vqTakeDraft(v);
+  return vqDraftDiff(v);
+}
+
+/* TYPING NEVER REPAINTS. What depends on the time — the burned-in label, the
+   preview's stamp, EST or EDT, whether Generate can be pressed — is updated in
+   place, so the box being typed in is never rebuilt under the caret. */
+function vqTimeLive(){
+  const v = vqSel();
   if(!v) return;
-  const d = Object.assign({}, v.draft || {}, vqEditRead());
-  const trial = Object.assign({}, v, d);
-  const s = vstStart(trial);
-  if(!s.ok){ v.draft = d; v.err = s.why; v.saveMsg = ""; return paintVStamp(); }
+  vqTakeDraft(v);
+  const s = vstStart(Object.assign({}, v, v.draft || {}));
+  const res = $("vst_res");
+  if(res) res.textContent = s.ok ? vstLabel(s.ms, v.tz) : "—";
+  const stamp = $("vq_stamp");
+  if(stamp) stamp.textContent = vqStampText(v);
+  const tz = $("vq_tz");
+  if(tz) tz.innerHTML = vqZoneHtml(v);
+  const dirty = vqDraftDiff(v);
+  const note = $("vq_dirty");
+  if(note) note.textContent = dirty ? "Not saved yet — Save writes this time to this video only." : "";
+  const go = $("vq_go");
+  if(go) go.disabled = dirty || !vqCanGo(v);
+  const why = $("vq_gowhy");
+  if(why) why.textContent = vqGoWhy(v);
+}
+
+function vqSaveTime(v){
+  v = v || vqSel();
+  if(!v || v.run || (VQ && VQ.busy === v)) return false;
+  vqTakeDraft(v);
+  const d = Object.assign({}, v.draft || {});
+  const s = vstStart(Object.assign({}, v, d));
+  if(!s.ok){ v.err = s.why; v.saveMsg = ""; paintVStamp(); return false; }
   Object.assign(v, d);
   v.draft = null; v.err = ""; v.guessed = false; v.confirmed = true; v.startMs = s.ms;
   v.saveMsg = `Saved — this video starts ${vstLabel(s.ms, v.tz)}.`;
   v.skipCapture = true;
   paintVStamp();
+  return true;
 }
 function vqUndoTime(){
-  const v = VST;
+  const v = vqSel();
   if(!v) return;
   v.draft = null; v.err = ""; v.saveMsg = "";
   v.skipCapture = true;          // the form is reset from the entry, not re-captured
+  if(VQ.editAsk) VQ.editAsk = null;
   paintVStamp();
 }
-function vqEditStep(by){
-  const v = VST;
-  if(!v || !VQ) return;
-  if(vqEditDirty(v)){
-    v.draft = Object.assign({}, v.draft || {}, vqEditRead());
-    v.err = "This video's time has changes that are not saved. Save them, or undo them, before moving on.";
+
+/* ---- MOVING OFF A VIDEO NEVER KEEPS OR DROPS A CORRECTION SILENTLY ----
+   With an unsaved change open, the move is held and the editor asks: save it
+   and go on, discard it and go on, or stay. `to` is where the operator was
+   going — another video, or back to the list. */
+function vqNavigate(to){
+  const cur = vqSel();
+  const same = to.sel != null && cur && String(to.sel) === String(cur.qid);
+  if(cur && !same && vqEditDirty(cur)){
+    VQ.editAsk = {from: cur.qid, to};
+    if(vqNarrow()) VQ.focus = "edit";
+    VQ.focusTo = "vq_ask";
     return paintVStamp();
   }
-  const i = VQ.items.indexOf(v);
-  let j = i + by;
-  while(j >= 0 && j < VQ.items.length && ["complete", "processing", "compat"].includes(vqStatus(VQ.items[j]))) j += by;
-  if(j < 0 || j >= VQ.items.length) return;
-  v.err = ""; v.saveMsg = "";
-  const n = VQ.items[j];
-  n.step = "when"; n.err = ""; n.saveMsg = "";
-  VST = n;
+  VQ.editAsk = null;
+  vqGoTo(to);
+}
+function vqGoTo(to){
+  const cur = vqSel();
+  if(cur && !(to.sel != null && String(to.sel) === String(cur.qid))){ cur.err = ""; cur.saveMsg = ""; }
+  if(to.back){
+    VQ.focus = "list";
+    if(cur) VQ.focusTo = `.vqd-row[data-qid="${cur.qid}"] [data-act="vqEdit"]`;
+  } else if(to.sel != null && vqById(to.sel)){
+    VQ.sel = vqById(to.sel).qid;
+    if(to.focus) VQ.focus = to.focus;
+    if(to.head) VQ.focusTo = "vq_ehead";
+  }
   paintVStamp();
+}
+function vqAskAnswer(kind){
+  const a = VQ && VQ.editAsk;
+  if(!a) return;
+  const v = vqById(a.from);
+  if(kind === "stay"){ VQ.editAsk = null; VQ.focusTo = "vq_ehead"; return paintVStamp(); }
+  if(kind === "save"){
+    VQ.editAsk = null;
+    if(!v || !vqSaveTime(v)) return;          // an unreadable time stays on screen with its reason
+    v.saveMsg = "";
+  } else if(v){ v.draft = null; v.err = ""; v.skipCapture = true; VQ.editAsk = null; }
+  vqGoTo(a.to);
+}
+function vqEditStep(by){
+  const v = vqSel();
+  if(!v || !VQ) return;
+  const n = VQ.items[VQ.items.indexOf(v) + by];
+  if(n) vqNavigate({sel: n.qid, head: true});
 }
 
 async function vqLoadCases(){
@@ -15995,6 +16636,73 @@ async function vqLoadCases(){
     const d = await api("/submissions?limit=200");
     if(VQ) VQ.cases = (d.submissions || []).filter(live);
   }catch(e){ if(VQ) VQ.caseErr = e.message; }
+  paintVStamp();
+}
+
+/* CHOOSE THIS VIDEO AGAIN — for an entry whose original stopped being
+   readable (a card pulled out, a drive gone to sleep). The new pick takes the
+   same place in the queue; a start time the operator saved for it stays with
+   it, because it was THIS video's time. */
+function vqRepick(id){
+  const v = vqById(id);
+  if(!v || v.run) return;
+  const inp = document.createElement("input");
+  inp.type = "file";
+  inp.accept = "video/*,.mts,.m2ts,.ts";
+  inp.onchange = () => {
+    const f = inp.files && inp.files[0];
+    if(!f || vqGone(v)) return;
+    const i = VQ.items.indexOf(v);
+    vstRelease(v, true);
+    vqForget(v);
+    const n = vqItem(f);
+    if(v.confirmed){
+      for(const k of VQ_TIME_KEYS) n[k] = v[k];
+      n.confirmed = true; n.guessed = false; n.startFrom = v.startFrom;
+    }
+    VQ.items[i] = n;
+    if(String(VQ.sel) === String(v.qid)) VQ.sel = n.qid;
+    if(String(VQ.runId) === String(v.qid)) VQ.runId = null;
+    VQ.msg = `${f.name} was chosen again for place ${i + 1} in the queue.`;
+    VQ.err = "";
+    VST = null;
+    paintVStamp();
+    vqPump();
+  };
+  inp.click();
+}
+
+/* ONLY WHERE THE BROWSER OFFERS IT: a desktop with a folder picker. An iPhone
+   and iPad ignore the request and show the ordinary picker, so the button is
+   not drawn there at all — ordinary multi-select is the feature, the folder a
+   convenience on top. */
+function vqFolderOk(){
+  try{
+    return ("webkitdirectory" in HTMLInputElement.prototype) && !vstIsIOS()
+      && !!(window.matchMedia && matchMedia("(pointer: fine)").matches);
+  }catch{ return false; }
+}
+
+/* The cases this caller may choose from — THEIR OWN LIST, from the route that
+   already scopes it. An investigator is offered only cases assigned to them
+   because that is what `/submissions` returns them, and choosing one still has
+   to pass `caseFor` in the Worker when the record is written. Nothing about
+   reaching the utility from outside a case widens what it can touch. */
+async function vstLoadCases(){
+  /* An archived or deleted case refuses every write, so offering one would be
+     offering a refusal. Filtered here rather than relying on which lens the
+     Cases tab happens to be showing. */
+  const live = c => !c.archived_at && !c.deleted_at;
+  VST.caseErr = "";
+  if(Array.isArray(CASES) && CASES.length){ VST.cases = CASES.filter(live); return paintVStamp(); }
+  try{
+    const d = await api("/submissions?limit=200");
+    if(VST) VST.cases = (d.submissions || []).filter(live);
+  }catch(e){
+    /* A failed read is NOT an empty case list — `cases` is deliberately left
+       unset so nothing can draw "you have no cases" over a server problem. */
+    if(VST) VST.caseErr = e.message;
+  }
   paintVStamp();
 }
 
@@ -16028,7 +16736,7 @@ function vqReceiptLines(v, n){
   const burned = v.out && v.out.startMs != null ? v.out.startMs : s.ok ? s.ms : null;
   L.push(`   Start burned in: ${burned != null ? vstLabel(burned, v.tz) + ` (${v.tz})` : "not set"}`);
   if(v.out){
-    L.push(`   Processed: ${vqWhen(v.out.madeAt || Date.now())}`);
+    L.push(`   Processed: ${v.out.madeAt ? vqWhen(v.out.madeAt) : "not recorded"}`);
     L.push(`   Decoder: ${v.out.lane === "compat" ? "compatibility mode (this browser's software decoder)" : "this device's decoder"}`);
     L.push(`   Copy: ${v.out.name} · ${bytes(v.out.size)} · SHA-256 ${v.out.sha256 || "not taken"}`);
     const c = v.out.clean;
@@ -16073,69 +16781,6 @@ function vqReceiptSave(){
   if(VQ){ VQ.msg = `The receipt was handed to your browser as ${name}.`; paintVStamp(); }
 }
 
-/* CHOOSE THIS VIDEO AGAIN — for an entry whose original stopped being
-   readable (a card pulled out, a drive gone to sleep). The new pick takes the
-   same place in the queue; a start time the operator saved for it stays with
-   it, because it was THIS video's time. */
-function vqRepick(id){
-  const v = vqById(id);
-  if(!v || v.run) return;
-  const inp = document.createElement("input");
-  inp.type = "file";
-  inp.accept = "video/*,.mts,.m2ts,.ts";
-  inp.onchange = () => {
-    const f = inp.files && inp.files[0];
-    if(!f || vqGone(v)) return;
-    const i = VQ.items.indexOf(v);
-    vstRelease(v, true);
-    const n = vqItem(f);
-    if(v.confirmed){
-      for(const k of ["mo", "da", "yr", "hr", "mi", "se", "ap"]) n[k] = v[k];
-      n.confirmed = true; n.guessed = false; n.startFrom = v.startFrom;
-    }
-    VQ.items[i] = n;
-    VQ.msg = `${f.name} was chosen again for place ${i + 1} in the queue.`;
-    VST = null;
-    paintVStamp();
-    vqPump();
-  };
-  inp.click();
-}
-
-/* ONLY WHERE THE BROWSER OFFERS IT: a desktop with a folder picker. An iPhone
-   and iPad ignore the request and show the ordinary picker, so the button is
-   not drawn there at all — ordinary multi-select is the feature, the folder a
-   convenience on top. */
-function vqFolderOk(){
-  try{
-    return ("webkitdirectory" in HTMLInputElement.prototype) && !vstIsIOS()
-      && !!(window.matchMedia && matchMedia("(pointer: fine)").matches);
-  }catch{ return false; }
-}
-
-/* The cases this caller may choose from — THEIR OWN LIST, from the route that
-   already scopes it. An investigator is offered only cases assigned to them
-   because that is what `/submissions` returns them, and choosing one still has
-   to pass `caseFor` in the Worker when the record is written. Nothing about
-   reaching the utility from outside a case widens what it can touch. */
-async function vstLoadCases(){
-  /* An archived or deleted case refuses every write, so offering one would be
-     offering a refusal. Filtered here rather than relying on which lens the
-     Cases tab happens to be showing. */
-  const live = c => !c.archived_at && !c.deleted_at;
-  VST.caseErr = "";
-  if(Array.isArray(CASES) && CASES.length){ VST.cases = CASES.filter(live); return paintVStamp(); }
-  try{
-    const d = await api("/submissions?limit=200");
-    if(VST) VST.cases = (d.submissions || []).filter(live);
-  }catch(e){
-    /* A failed read is NOT an empty case list — `cases` is deliberately left
-       unset so nothing can draw "you have no cases" over a server problem. */
-    if(VST) VST.caseErr = e.message;
-  }
-  paintVStamp();
-}
-
 function vstClose(){
   /* Closing the tool closes ALL of it: every video in the queue, not just the
      one on screen. Closing ends the run too — the pipeline reads this between
@@ -16143,7 +16788,8 @@ function vstClose(){
      closed screen. */
   const all = VQ ? VQ.items.slice() : [];
   if(VST && !all.includes(VST)) all.push(VST);
-  for(const v of all) vstRelease(v, true);
+  vqDropPreview();
+  for(const v of all){ vstRelease(v, true); vqForget(v); }
   if(VQ) VQ.closed = true;
   VQ = null;
   VST = null;
@@ -16213,7 +16859,9 @@ async function vstGenerate(v = VST){
   if(v.hash == null && v.hashP){
     v.stage = "fingerprinting"; paintVStamp();
     const h = await v.hashP;
-    if(VST !== v) return;
+    /* Still this video's turn? A queued video can be stopped, removed or
+       closed while it waits; a lone one is over when its screen is. */
+    if(v.qid ? (vqGone(v) || v.stopped || VQ.busy !== v) : VST !== v) return;
     if(v.hash == null) v.hash = h;
     v.stage = "";
   }
@@ -16252,12 +16900,15 @@ async function vstGenerate(v = VST){
       if(!vstRunLive(run)) return;
       const moved = v.stage !== stage;
       v.stage = stage; v.pct = Math.min(99, Math.max(0, Math.round(pct || 0)));
+      /* Which steps this run has actually reached — what the processing
+         panel ticks, and the only thing it ticks. */
+      (v.seen || (v.seen = new Set())).add(stage);
       if(stage === "compat-start" || stage === "compat"){
         v.phase = "compat";
         if(info) v.primaryNote = info;
       } else if(stage === "checking") v.phase = "checking";
       else if(stage === "verifying" || stage === "clean" || stage === "hashing") v.phase = "verifying";
-      if(moved) paintVStamp(); else vstProgress();
+      if(moved) paintVStamp(); else vstProgress(v);
     }, run);
     if(!vstRunLive(run)) return;
     v.out = {blob: r.blob, url: URL.createObjectURL(r.blob),
@@ -16400,9 +17051,10 @@ async function vstDropboxSave(){
   paintVStamp();
 }
 
-async function vstSave(){
-  const v = VST;
-  if(!v || !v.out) return;
+/* The copy saved is the video's own — the drawer's, or a row's on the
+   dashboard, which passes it — never whichever video happens to be open. */
+async function vstSave(v = VST){
+  if(!v || !v.out || !v.out.blob) return;
   v.err = ""; v.saveMsg = "";
   if(typeof window.showSaveFilePicker === "function"){
     try{
@@ -16416,7 +17068,7 @@ async function vstSave(){
       v.savedHere = true;
       v.saveMsg = "Saved to your device.";
       paintVStamp();
-      return vstMarkSaved();
+      return vstMarkSaved(v);
     }catch(e){
       if(e && e.name === "AbortError"){ v.saveMsg = "Save cancelled — the copy is still here."; return paintVStamp(); }
       // Anything else: fall through and let the browser's own download try.
@@ -16438,7 +17090,7 @@ async function vstSave(){
         v.savedHere = true;
         v.saveMsg = "Saved from the share sheet.";
         paintVStamp();
-        return vstMarkSaved();
+        return vstMarkSaved(v);
       }
     }catch(e){
       if(e && e.name === "AbortError"){
@@ -16455,17 +17107,15 @@ async function vstSave(){
   paintVStamp();
 }
 
-async function vstConfirmSaved(){
-  const v = VST;
+async function vstConfirmSaved(v = VST){
   if(!v) return;
   v.savedHere = true; v.saveMsg = "Recorded as saved to your device.";
   paintVStamp();
-  await vstMarkSaved();
+  await vstMarkSaved(v);
   paintVStamp();
 }
 
-async function vstMarkSaved(){
-  const v = VST;
+async function vstMarkSaved(v = VST){
   if(!v || !v.recId) return;
   try{
     const res = await fetch(
@@ -16474,7 +17124,7 @@ async function vstMarkSaved(){
     const d = await res.json().catch(() => ({}));
     if(!res.ok) throw new Error(d.error || ("Could not record the save (" + res.status + ")."));
     if(WS && d.stamps) WS.video_stamps = d.stamps;
-  }catch(e){ if(VST) VST.err = (e && e.message) || String(e); }
+  }catch(e){ v.err = (e && e.message) || String(e); }
 }
 
 /* WHAT THIS DEVICE ACTUALLY ANSWERED — the owner's own iPhone or iPad reporting
@@ -16593,11 +17243,25 @@ async function vstDiagnose(){
 /* Only the progress bar, not the screen. A render draws a frame at a time and
    rebuilding the whole panel on each one would fight the encoder for the main
    thread — and reset the operator's scroll position while it did. */
-function vstProgress(){
+function vstProgress(v = VST){
+  const pct = v ? v.pct || 0 : 0;
+  let hit = false;
+  /* The lone screen's bar, when it is this video's. */
   const bar = $("vst_bar"), pc = $("vst_pc");
-  if(!bar || !pc){ return paintVStamp(); }
-  bar.style.width = (VST ? VST.pct : 0) + "%";
-  pc.textContent = (VST ? VST.pct : 0) + "%";
+  if(bar && pc && VST === v){ bar.style.width = pct + "%"; pc.textContent = pct + "%"; hit = true; }
+  /* The dashboard's: the processing panel, its step line and the row's own
+     figure — each only when it is about this video. */
+  const qb = $("vq_bar");
+  if(v && qb && String(qb.dataset.qid) === String(v.qid)){
+    qb.style.width = pct + "%";
+    const qp = $("vq_pc"); if(qp) qp.textContent = pct + "%";
+    const sp = $("vq_steppc"); if(sp) sp.textContent = pct + "%";
+    const pg = $("vq_prog"); if(pg) pg.setAttribute("aria-valuenow", String(pct));
+    hit = true;
+  }
+  const rp = v && v.qid ? $("vq_rowpc_" + v.qid) : null;
+  if(rp){ rp.textContent = pct + "%"; hit = true; }
+  if(!hit) paintVStamp();
 }
 
 /* ============================================================ Timestamp Photo
@@ -17350,44 +18014,85 @@ function pstHtml(){
 
 function paintVStamp(){
   const el = $("vstamp");
-  /* The open video's screen when there is one; otherwise the queue itself.
+  /* The dashboard while the tool is open, with one video's details over it
+     when they are open (the drawer) — or, with no queue, the single-video
+     screen on its own.
 
      A QUEUE REPAINTS WHILE SOMEBODY IS USING IT: each video finishes being
      checked on its own schedule, and every one of those repaints rebuilds the
-     screen. So what the person is in the middle of survives a repaint of the
-     SAME screen — where the list was scrolled to, a More that was open, the
-     field with the caret in it, and a half-typed correction in the editor,
-     which is held as the entry's draft (never written into it: only Save does
-     that). A different screen starts fresh, as it should. */
+     screen. So what the person is in the middle of survives — where the list
+     and the editor were scrolled to, a ⋮ menu that was open, the field with
+     the caret in it and a half-typed correction (held as that video's draft,
+     never written into it: only Save does that), the control that had the
+     keyboard, and a preview that was playing. The drawer keeps its own place
+     only while it shows the same screen; a different screen starts fresh. */
   if(el){
     const was = el.dataset.screen || "";
-    const now = VST ? "v" + (VST.qid || "") + ":" + VST.step : VQ ? "q:" + VQ.view : "";
-    const body = el.querySelector(".vst-body");
-    const scroll = body ? body.scrollTop : 0;
+    const now = VST ? "v" + (VST.qid || "") + ":" + VST.step : "";
+    const vb = el.querySelector(".vst-body");
+    const vstScroll = vb ? vb.scrollTop : 0;
+    const root0 = el.querySelector(".vqd");
+    const qb = $("vq_body"), qe = $("vq_edit"), qr = $("vq_run");
+    const keep = {body: qb ? qb.scrollTop : 0, edit: qe ? [qe.dataset.qid || "", qe.scrollTop] : null,
+                  run: qr ? qr.scrollTop : 0, focus: root0 ? root0.dataset.focus : ""};
     const act = document.activeElement;
-    const focusId = act && act.id && el.contains(act) ? act.id : "";
+    const inside = !!(act && act !== document.body && el.contains(act));
+    const focusId = inside && act.id ? act.id : "";
+    const focusAct = inside && !act.id && act.dataset && act.dataset.act
+      ? `[data-act="${act.dataset.act}"]` + (act.dataset.id ? `[data-id="${act.dataset.id}"]` : "") : "";
     const caret = focusId && typeof act.selectionStart === "number" ? act.selectionStart : null;
-    const open = [...el.querySelectorAll(".vq-row details[open]")].map(d => d.closest(".vq-row").dataset.qid);
-    if(VST && VST.qid && VST.step === "when" && was === now && !VST.skipCapture && $("vst_mo") && vqEditDirty(VST)){
-      VST.draft = Object.assign({}, VST.draft || {}, vqEditRead());
-    }
-    if(VST) VST.skipCapture = false;
-    el.innerHTML = VST ? vstHtml() : VQ ? vqHtml() : "";
+    const open = [...el.querySelectorAll(".vqd-menu[open]")].map(d => d.dataset.qid);
+    const selV = vqSel();
+    if(selV){ if(!selV.skipCapture) vqTakeDraft(selV); selV.skipCapture = false; }
+    const pv = VQ && VQ.pv ? VQ.pv.el : null;
+    el.innerHTML = (VQ ? vqHtml() : "") + (VST ? vstHtml() : "");
     el.dataset.screen = now;
-    if(now && now === was){
-      const b2 = el.querySelector(".vst-body");
-      if(b2) b2.scrollTop = scroll;
-      for(const id of open){
-        const d = el.querySelector(`.vq-row[data-qid="${id}"] details`);
-        if(d) d.open = true;
-      }
-      const f = focusId ? document.getElementById(focusId) : null;
-      if(f){
-        try{ f.focus({preventScroll: true}); }catch{}
-        if(caret != null && f.setSelectionRange){ try{ f.setSelectionRange(caret, caret); }catch{} }
-      }
+    /* The playing preview is moved into the new editor inside this same task,
+       so a repaint does not pause it. */
+    const host = $("vq_pvhost");
+    if(pv && host && VQ && VQ.pv && String(host.dataset.qid) === String(VQ.pv.qid) && host.dataset.kind === "video"){
+      host.prepend(pv);
+    }
+    const root = el.querySelector(".vqd");
+    const sameFocus = !!(root && root.dataset.focus === keep.focus);
+    const qb2 = $("vq_body");
+    if(qb2) qb2.scrollTop = keep.body;
+    const qe2 = $("vq_edit");
+    if(qe2 && keep.edit && keep.edit[0] === (qe2.dataset.qid || "") && sameFocus) qe2.scrollTop = keep.edit[1];
+    const qr2 = $("vq_run");
+    if(qr2 && sameFocus) qr2.scrollTop = keep.run;
+    if(now && now === was){ const b2 = el.querySelector(".vst-body"); if(b2) b2.scrollTop = vstScroll; }
+    for(const id of open){
+      const d = el.querySelector(`.vqd-menu[data-qid="${id}"]`);
+      if(d) d.open = true;
+    }
+    /* WHERE THE KEYBOARD GOES: an explicit destination first (a region just
+       opened, a question just asked), else back to what had it before the
+       repaint. A heading, never a text field, is what an arrival focuses, so
+       no screen opens the on-screen keyboard by being arrived at. */
+    const to = VQ && VQ.focusTo;
+    if(VQ) VQ.focusTo = null;
+    let f = null;
+    if(to) f = /^[\w-]+$/.test(to) ? document.getElementById(to) : el.querySelector(to);
+    else if(VST && now !== was) f = el.querySelector(".vst .vst-x");
+    else if(!VST || now === was) f = focusId ? document.getElementById(focusId) : focusAct ? el.querySelector(focusAct) : null;
+    if(f && f !== document.activeElement){
+      try{ f.focus({preventScroll: true}); }catch{}
+      if(caret != null && f.id === focusId && f.setSelectionRange){ try{ f.setSelectionRange(caret, caret); }catch{} }
+    }
+    /* A run just started or was asked for: on a desk, where the processing
+       row sits under the queue, it is brought into view — only as far as it
+       takes to see it. */
+    const sc = VQ && VQ.scrollTo;
+    if(VQ) VQ.scrollTo = null;
+    if(sc && !vqNarrow()){ const t = document.getElementById(sc); if(t){ try{ t.scrollIntoView({block: "nearest"}); }catch{} } }
+    const card = el.querySelector(".vqd-mcard");
+    if(card && !card.contains(document.activeElement)){
+      const h = card.querySelector("#vq_mh");
+      if(h){ try{ h.focus({preventScroll: true}); }catch{} }
     }
   }
+  vqMountPreview();
   document.body.classList.toggle("vstopen", !!(VST || VQ));
   /* Wired here rather than as an inline attribute, the way everything else on
      this page is wired. A preview that will not play must not read as a failed
@@ -17503,6 +18208,8 @@ function vstHtml(){
      list rather than closing the tool; alone, each screen is what it always
      was. */
   const inQ = !!(VQ && v.qid && VQ.items.includes(v));
+  /* A queued video's time is edited on the dashboard, never in the drawer. */
+  if(inQ && v.step === "when") v.step = v.out && !vqStale(v) ? "done" : "preview";
   const pos = inQ ? vqPos(v) : 1, total = inQ ? VQ.items.length : 1;
   const backBtn = inQ ? `<button class="vst-btn" data-act="vqBack">Back to queue</button>`
                       : `<button class="vst-btn" data-act="vstClose">Cancel</button>`;
@@ -17552,7 +18259,6 @@ function vstHtml(){
           <button class="vst-btn" data-act="vstSkipCase">Make the copy without a case for now</button>
           ${backBtn}`}
         </div>`
-    : v.step === "when" && inQ ? vqEditorHtml(v, pos, total, mb)
     : v.step === "when" ? `
         <div class="vst-card">
           <h4>When does this footage start?</h4>
@@ -17598,9 +18304,10 @@ function vstHtml(){
             : v.stopped ? "Stopped &mdash; no copy was made" : "Ready to make the timestamped copy"}</h4>
           <div class="vst-k"><span>Original</span><span>${esc(v.name)}</span></div>
           <div class="vst-k"><span>Starts at</span><span>${esc(preview)}</span></div>
+          ${inQ ? `<div class="vst-k"><span>Detected start</span><span>${esc(vqDetectedText(v))}</span></div>` : ""}
           <div class="vst-k"><span>Stamp position</span><span>Bottom right</span></div>
-          <div class="vst-k"><span>Fingerprint</span><span>${v.hash
-            ? esc(v.hash.slice(0, 16)) + "…"
+          <div class="vst-k"><span>Original&rsquo;s fingerprint</span><span class="vst-hash">${v.hash
+            ? "SHA-256 " + esc(v.hash)
             : v.size > VST_HASH_MAX ? esc(vstOrigHashWhy(v))
             : v.hashP ? "being taken&hellip;" : "not taken"}</span></div>
           ${vstContainer(v) ? `<div class="vst-k"><span>Container</span><span>${
@@ -17720,15 +18427,16 @@ function vstHtml(){
           <div class="vst-k" style="margin-top:8px"><span>File</span><span>${esc(v.out ? v.out.name : "")}</span></div>
           <div class="vst-k"><span>Size</span><span>${v.out ? mb(v.out.size) : ""}</span></div>
           <div class="vst-k"><span>Starts at</span><span>${esc(vstLabel(v.startMs, v.tz))}</span></div>
+          ${inQ ? `<div class="vst-k"><span>Detected start</span><span>${esc(vqDetectedText(v))}</span></div>` : ""}
           ${v.out && v.out.check ? `<div class="vst-k"><span>Status</span><span>Complete</span></div>
           <div class="vst-k"><span>Decoder</span><span>${v.out.lane === "compat"
             ? "Compatibility mode &mdash; this browser&rsquo;s software decoder" : "This device&rsquo;s decoder"}</span></div>
           <div class="vst-k"><span>Checked</span><span>${esc(vstCheckText(v.out.check))}</span></div>` : ""}
-          <div class="vst-k"><span>Original&rsquo;s fingerprint</span><span>${v.hash
-            ? esc(v.hash.slice(0, 16)) + "&hellip; (SHA-256, of the original)"
+          <div class="vst-k"><span>Original&rsquo;s fingerprint</span><span class="vst-hash">${v.hash
+            ? "SHA-256 " + esc(v.hash) + " (of the original)"
             : esc(vstOrigHashWhy(v))}</span></div>
-          ${v.out ? `<div class="vst-k"><span>Copy&rsquo;s fingerprint</span><span>${v.out.sha256
-            ? esc(v.out.sha256.slice(0, 16)) + "&hellip; (SHA-256, of this copy)" : "not taken"}</span></div>` : ""}
+          ${v.out ? `<div class="vst-k"><span>Copy&rsquo;s fingerprint</span><span class="vst-hash">${v.out.sha256
+            ? "SHA-256 " + esc(v.out.sha256) + " (of this copy)" : "not taken"}</span></div>` : ""}
           ${v.out && v.out.clean && v.out.clean.ok ? `<div class="vst-k"><span>Metadata</span><span>Checked clean
             &mdash; nothing from the original&rsquo;s metadata is in this copy</span></div>` : ""}
           ${v.out && v.out.clean && v.out.clean.ok && v.out.clean.source && v.out.clean.source.length
@@ -17778,7 +18486,12 @@ function vstHtml(){
           <button class="vst-btn" data-act="vstEditTime">Correct the time and make it again</button>
           ${inQ ? "" : `<button class="vst-btn" data-act="vstClose">Close</button>`}
         </div>`;
-  return `<div class="vst" role="dialog" aria-modal="true" aria-label="Video timestamp">
+  /* IN A QUEUE THE DETAILS ARE A DRAWER over the dashboard: a panel at the
+     side on a desk with the dashboard dimmed behind it (the dim is one more
+     way back), the whole screen on a phone. */
+  return `${inQ ? `<button class="vst-dim" data-act="vqBack" tabindex="-1" aria-label="Back to queue"></button>` : ""}
+  <div class="vst${inQ ? " vst-drawer" : ""}" role="dialog" aria-modal="true" aria-label="${inQ
+      ? `Details of ${esc(v.name)}` : "Video timestamp"}">
     <div class="vst-bar">
       <b>${inQ ? `Video ${pos} of ${total}` : "Video timestamp"}${v.caseNo ? " &middot; " + esc(v.caseNo) : ""}</b>
       ${v.step === "working" ? "" : inQ ? `<button class="vst-x" data-act="vqBack">Back to queue</button>`
@@ -17788,58 +18501,7 @@ function vstHtml(){
   </div>`;
 }
 
-/* ---- THE QUEUE'S SCREENS ---- */
-
-/* The editor: THIS video's start, and nothing else. Its inputs are drawn from
-   the draft while there is one, so a correction that has not been saved is
-   still on screen after a repaint — and is still NOT in the entry. Previous
-   and Next move between videos and change nothing on the way. */
-function vqEditorHtml(v, pos, total, mb){
-  const d = Object.assign({}, v, v.draft || {});
-  const s = vstStart(d);
-  const i = VQ.items.indexOf(v);
-  const editable = x => !["complete", "processing", "compat"].includes(vqStatus(x));
-  const hasPrev = VQ.items.slice(0, i).some(editable);
-  const hasNext = VQ.items.slice(i + 1).some(editable);
-  const f = (k, label, max) => `<label class="vst-f"><span>${label}</span><input id="vst_${k}"
-      inputmode="numeric" maxlength="${max}" value="${esc(d[k] == null ? "" : d[k])}"></label>`;
-  const src = v.detected
-    ? `${esc(vstLabel(v.detected.ms, v.tz))} &mdash; ${v.detected.from === "capture"
-        ? "the video&rsquo;s own capture metadata: when it was recorded"
-        : v.detected.from === "creation" ? "the video&rsquo;s creation time, which <b>carries no time zone</b> &mdash; check it"
-        : "the file&rsquo;s modified date &mdash; when the file was written, <b>not</b> when it was recorded"}`
-    : "nothing &mdash; the file carries no date";
-  return `
-        <div class="vst-card">
-          <h4>Video ${pos} of ${total} &mdash; when does it start?</h4>
-          <div class="vst-k"><span>File</span><span>${esc(v.name)}</span></div>
-          <div class="vst-k"><span>Size</span><span>${mb(v.size)}</span></div>
-          <p class="vst-note"><b>Found on the file:</b> ${src}.</p>
-          <p class="vst-note">What you save here is burned into <b>this video only</b>. Each video in the
-            queue keeps its own start; none is worked out from another.</p>
-        </div>
-        <div class="vst-card">
-          <h4>Start date</h4>
-          <div class="vst-when">${f("mo", "Month", 2)}${f("da", "Day", 2)}${f("yr", "Year", 4)}</div>
-          <h4 style="margin-top:12px">Start time</h4>
-          <div class="vst-when">${f("hr", "Hour", 2)}${f("mi", "Minute", 2)}${f("se", "Second", 2)}
-            <label class="vst-f"><span>AM / PM</span><select id="vst_ap">
-              <option value="AM" ${d.ap === "AM" ? "selected" : ""}>AM</option>
-              <option value="PM" ${d.ap === "PM" ? "selected" : ""}>PM</option></select></label>
-          </div>
-          <div class="vst-res" id="vst_res">${esc(s.ok ? vstLabel(s.ms, v.tz) : "—")}
-            <small>Eastern Time, resolved from the date you chose</small></div>
-          ${v.err ? `<p class="vst-err">${esc(v.err)}</p>` : ""}
-          ${v.saveMsg ? `<p class="vst-ok">${esc(v.saveMsg)}</p>` : ""}
-          <button class="vst-btn go" data-act="vqSaveTime">Save this video&rsquo;s time</button>
-          <button class="vst-btn" data-act="vqUndoTime">Undo changes</button>
-          <div class="vq-two">
-            <button class="vst-btn" data-act="vqEditPrev" ${hasPrev ? "" : "disabled"}>&lsaquo; Previous video</button>
-            <button class="vst-btn" data-act="vqEditNext" ${hasNext ? "" : "disabled"}>Next video &rsaquo;</button>
-          </div>
-          <button class="vst-btn" data-act="vqBack">Back to queue</button>
-        </div>`;
-}
+/* ---- THE DRAWER'S QUEUE SCREENS ---- */
 
 /* A finished copy this tab no longer holds — let go of when another copy
    started, because one finished copy at a time is what a phone can carry. */
@@ -17849,8 +18511,8 @@ function vqReleasedHtml(v, inQ, pos, total){
           <h4>${inQ ? `Video ${pos} of ${total} &middot; ` : ""}Complete &#10003;</h4>
           <div class="vst-k"><span>Copy</span><span>${esc(v.out.name)}</span></div>
           <div class="vst-k"><span>Starts at</span><span>${esc(vstLabel(v.out.startMs != null ? v.out.startMs : v.startMs, v.tz))}</span></div>
-          <div class="vst-k"><span>Copy&rsquo;s fingerprint</span><span>${v.out.sha256
-            ? esc(v.out.sha256.slice(0, 16)) + "&hellip; (SHA-256, of this copy)" : "not taken"}</span></div>
+          <div class="vst-k"><span>Copy&rsquo;s fingerprint</span><span class="vst-hash">${v.out.sha256
+            ? "SHA-256 " + esc(v.out.sha256) + " (of this copy)" : "not taken"}</span></div>
           <div class="vst-k"><span>On this device</span><span>${v.savedHere ? "Saved" : "Not saved"}</span></div>
           <p class="vst-note">${v.savedHere
             ? "The copy is saved on your device. This tab has let go of its own copy, so the next video had the memory."
@@ -17874,90 +18536,484 @@ function vqDoneNav(v){
     + `<button class="vst-btn" data-act="vqBack">Back to queue</button>`;
 }
 
-/* One row of the queue: what it is, when it starts, where that time came
-   from, its status in a word, and the two actions that matter — with the
-   rest behind More so a phone shows twelve videos, not twelve toolbars. */
-function vqRowHtml(v, n, mb){
+/* ================= THE DASHBOARD (owner, approved mockup, 2026-09-28) =================
+
+   ONE SCREEN FOR THE WHOLE QUEUE: the header and its four promises, the way
+   in (drop zone, picker, folder), the queue, the editor for the selected
+   video and the processing row. A desk shows them together; a phone shows the
+   list, and the editor or the processing view each take the screen in turn
+   (`data-focus`). The controls are the same elements with the same acts at
+   every width.
+
+   A video's full details — the finished copy, saving it, filing it to a
+   case, what went wrong and what this device can do — open over the
+   dashboard as the drawer, which is the single-video screen this tool always
+   had (`vstHtml`). Nothing those screens say was rewritten to move them. */
+
+/* Line icons, drawn in the text colour. Decoration: every one sits beside
+   words that say the same thing, so each is aria-hidden. */
+const VQD_SVG = body => `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${body}</svg>`;
+const VQD_I = {
+  cam: VQD_SVG('<rect x="2.5" y="6.5" width="13" height="11" rx="2"/><path d="M15.5 10.5l6-3.5v10l-6-3.5z"/>'),
+  shield: VQD_SVG('<path d="M12 2.8l7.5 3v5.6c0 4.6-3.2 8.3-7.5 9.8-4.3-1.5-7.5-5.2-7.5-9.8V5.8z"/><path d="M8.6 12.2l2.4 2.4 4.6-4.8"/>'),
+  doc: VQD_SVG('<path d="M6 2.8h8.5L19 7.3v13.9H6z"/><path d="M14.5 2.8v4.5H19"/><path d="M8.8 11.5h7.4M8.8 14.6h7.4M8.8 17.7h5"/>'),
+  print: VQD_SVG('<path d="M5.6 9.8a7 7 0 0112.8 0"/><path d="M8.3 20.6c1.1-1.9 1.8-4.2 1.8-6.8a1.9 1.9 0 013.8 0c0 3.3-.7 6.1-2 8.3"/><path d="M5.2 14.4c.4-1.4.6-2.8.6-4.2"/><path d="M16.9 20.2c.7-2 1.1-4.2 1.1-6.6"/><path d="M12 13.6c0 3.1-.9 5.8-2.5 8"/>'),
+  lock: VQD_SVG('<rect x="4.5" y="10.5" width="15" height="10.5" rx="2"/><path d="M8 10.5V7.5a4 4 0 018 0v3"/><path d="M12 14.5v3"/>'),
+  cloud: VQD_SVG('<path d="M7 18.5h10.5a4 4 0 00.6-7.95A6 6 0 006.4 9.6 4.5 4.5 0 007 18.5z"/><path d="M12 16v-6M9.5 12.4L12 10l2.5 2.4"/>'),
+  folder: VQD_SVG('<path d="M3 6.5h6l2 2.2h10V19H3z"/>'),
+  cal: VQD_SVG('<rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 9.5h17M8 3v4M16 3v4"/>'),
+  film: VQD_SVG('<rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M7 4.5v15M17 4.5v15M3 9h4M3 15h4M17 9h4M17 15h4"/>'),
+};
+
+const vqdMb = b => b >= 1073741824 ? (b / 1073741824).toFixed(1) + " GB"
+  : b >= 10485760 ? Math.round(b / 1048576) + " MB"
+  : b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(b / 1024)) + " KB";
+/* THE TABLE'S DATE AND TIME, in two lines — the label the stamp burns, split
+   where it has a space, so the table and the copy cannot say different
+   things. */
+function vqdSplit(ms, tz){
+  const label = vstLabel(ms, tz);            // 09/26/2026 06:11:02 AM EDT
+  const p = label.split(" ");
+  return {date: p[0], time: p.slice(1, 3).join(" "), zone: p[3] || "", label};
+}
+/* The format as the operator knows it: the file's own extension, which is a
+   label (the container is measured separately, and the details say which). */
+function vqdExt(v){
+  const m = /\.(\w{2,5})$/.exec(String((v && v.name) || ""));
+  return m ? m[1].toUpperCase() : (vstContainer(v) || "");
+}
+const vqdCodec = v => v && v.codec && v.codec.name ? String(v.codec.name).split(" / ")[0] : "";
+
+/* EST OR EDT, from the date being set — the zone the burn will use. No zone
+   picker exists because none is needed: Eastern Time follows the date, and a
+   hard-coded offset is the mistake this tool already refuses. */
+function vqZoneHtml(v){
+  const s = vstStart(Object.assign({}, v, v.draft || {}));
+  const ms = s.ok ? s.ms : v.detected ? v.detected.ms : null;
+  if(ms == null) return `<b>Eastern Time</b><small>EST or EDT follows the date</small>`;
+  let abbr = "", off = 0;
+  try{ abbr = vstLabel(ms, v.tz).split(" ").pop(); off = vstOffsetMs(ms, v.tz); }catch{}
+  const h = off / 3600000;
+  const hs = Number.isInteger(h) ? String(Math.abs(h)) : Math.abs(h).toFixed(1);
+  return `<b>${esc(abbr)} (UTC${h < 0 ? "&minus;" : "+"}${hs})</b><small>Eastern Time &mdash; EST or EDT follows the date</small>`;
+}
+
+/* THE PREVIEW'S STAMP: the label the burn would draw at this moment of the
+   footage — the start being set, plus how far the preview has played. */
+function vqStampText(v){
+  const s = vstStart(Object.assign({}, v, v.draft || {}));
+  if(!s.ok) return "";
+  const pv = VQ && VQ.pv && String(VQ.pv.qid) === String(v.qid) ? VQ.pv.el : null;
+  const t = pv ? Math.max(0, Math.floor(pv.currentTime || 0)) : 0;
+  return vstLabel(s.ms + t * 1000, v.tz);
+}
+
+/* ---- THE PREVIEW: ONE, OF THE SELECTED VIDEO, PLAYED BY THIS DEVICE ----
+   A local object URL of the original, handed to a media element — nothing is
+   uploaded or copied, and only the selected video ever has one. A preview is
+   not a verdict: a file this device will not PLAY in the page is still made
+   into a copy frame by frame, and the editor says so rather than implying
+   otherwise. A transport stream is never played here at all; it shows its
+   first frame. */
+function vqPreviewKind(v, locked){
+  if(!v) return "none";
+  if(locked || vstIsTs(v.parsed) || v.pvFailed || v.analysis !== "done") return v.thumb ? "img" : "none";
+  return "video";
+}
+function vqDropPreview(){
+  const pv = VQ && VQ.pv;
+  if(!pv) return;
+  VQ.pv = null;
+  try{ pv.el.pause(); pv.el.removeAttribute("src"); pv.el.load(); }catch{}
+  try{ pv.el.remove(); }catch{}
+  try{ URL.revokeObjectURL(pv.url); }catch{}
+}
+/* Called after every paint. The same element is moved into the new editor
+   inside the paint's own task, so a repaint does not pause what is playing;
+   a hidden editor (a phone showing the list) lets the preview go. */
+function vqMountPreview(){
+  if(!VQ) return;
+  const host = $("vq_pvhost");
+  const v = vqSel();
+  const want = !!(host && v && host.dataset.kind === "video" && String(host.dataset.qid) === String(v.qid)
+    && host.getClientRects().length);
+  if(!want){ vqDropPreview(); return; }
+  if(VQ.pv && String(VQ.pv.qid) === String(v.qid)){
+    if(VQ.pv.el.parentNode !== host) host.prepend(VQ.pv.el);
+    return;
+  }
+  vqDropPreview();
+  const el = document.createElement("video");
+  el.id = "vq_pv";
+  el.muted = true; el.controls = true; el.playsInline = true; el.preload = "metadata";
+  el.setAttribute("playsinline", "");
+  el.setAttribute("aria-label", "Preview of " + v.name);
+  if(v.thumb) el.poster = v.thumb;
+  const url = URL.createObjectURL(v.file);
+  el.addEventListener("timeupdate", () => {
+    const s = $("vq_stamp");
+    if(s && VQ && VQ.pv && VQ.pv.el === el) s.textContent = vqStampText(v);
+  });
+  el.addEventListener("error", () => {
+    if(!VQ || !VQ.pv || VQ.pv.el !== el) return;
+    v.pvFailed = true;
+    vqDropPreview();
+    paintVStamp();
+  });
+  el.src = url;
+  VQ.pv = {qid: v.qid, url, el};
+  host.prepend(el);
+}
+function vqPvNote(v, kind, locked){
+  if(locked) return "This video is being processed.";
+  if(kind === "video") return "A preview of your original, played on this device. The stamp shows the time that will be burned in at that moment of the footage.";
+  if(vstIsTs(v.parsed)) return v.thumb
+    ? "This format is not played inside the page, so its first frame is shown. The copy is still made here, frame by frame."
+    : "This format is not played inside the page. The copy is still made here, frame by frame.";
+  if(v.pvFailed) return "This device will not play this file inside the page — that does not affect making the copy.";
+  if(v.analysis !== "done") return "The preview appears once this video has been checked.";
+  return "No preview of this file on this device.";
+}
+function vqSrcNote(v){
+  const d = v.detected;
+  if(!d) return "The file carries no date. Enter when the recording began.";
+  return d.from === "capture" ? "From the video&rsquo;s own capture metadata &mdash; when it was recorded."
+    : d.from === "creation" ? "From the video&rsquo;s creation time, which <b>carries no time zone</b> &mdash; check it."
+    : "The file&rsquo;s modified date &mdash; when the file was written, <b>not</b> when it was recorded. Check it.";
+}
+function vqGoWhy(v){
   const st = vqStatus(v);
+  if(vqBusy(st) || st === "complete" || st === "failed") return "";
+  if(vqDraftDiff(v)) return "Save or undo the change to the time first — the copy uses the saved time.";
+  if(st === "needs") return "Check the date and time and press Save first.";
+  if(st === "analyzing") return "Still checking this video…";
+  if(vqRunning()) return "Another video is being processed — videos are made one at a time.";
+  return "";
+}
+
+const VQD_BADGE = {ready: "b-ready", needs: "b-needs", processing: "b-run", compat: "b-run",
+  verifying: "b-run", complete: "b-done", failed: "b-fail", stopped: "b-wait", analyzing: "b-wait"};
+const VQD_MARK = {ready: "&#10003;", complete: "&#10003;", needs: "!", failed: "&#10005;",
+  stopped: "&#9632;", processing: "&#8635;", compat: "&#8635;", verifying: "&#8635;", analyzing: "&#8230;"};
+const vqdBadge = st => `<span class="vqd-badge ${VQD_BADGE[st] || "b-wait"}"><i aria-hidden="true">${
+  VQD_MARK[st] || ""}</i>${VQ_STATUS[st] || esc(st)}</span>`;
+const vqdThumbHtml = v => v && v.thumb ? `<img class="vqd-img" src="${esc(v.thumb)}" alt="">`
+  : `<span class="vqd-ph" aria-hidden="true">${VQD_I.film}</span>`;
+
+/* The one line under a row's name saying why it stands where it stands. */
+function vqdWhy(v, st){
   const s = vstStart(v);
-  const label = VQ_STATUS[st];
-  const kind = [vstContainer(v), v.codec && v.codec.name].filter(Boolean).join(" · ");
-  const when = s.ok ? vstLabel(s.ms, v.tz) : "";
-  /* WHERE THE START CAME FROM, and — once the operator has set it — what the
-     file itself said, so the time found and the time burned in are both on
-     the row whenever they differ. */
-  const found = v.detected ? vstLabel(v.detected.ms, v.tz) : "";
-  const whence = v.confirmed
-      ? "Set by you" + (found && found !== when ? ` &mdash; the file said ${esc(found)}` : "")
-    : v.startFrom === "capture" ? "From the camera&rsquo;s own recording time"
-    : v.startFrom === "creation" ? "From the video&rsquo;s creation time, no time zone &mdash; check it"
-    : v.startFrom === "modified" ? "From the file&rsquo;s modified date, not the recording &mdash; check it"
-    : "";
-  const why = st === "needs" ? (s.ok ? "Check the start time and save it before this video is processed."
-                                     : "Enter when this recording began.")
-    : st === "failed" ? esc(v.fault ? v.fault.head + (v.fault.label ? " " + v.fault.label : "")
-                                    : vstCompatText(v) || v.err || "No copy was made.")
-    : st === "stopped" ? "Stopped before the copy was finished. Nothing was kept from that run."
-    : st === "analyzing" ? (v.analysis === "waiting" ? "Waiting its turn to be checked." : "Reading the file&hellip;")
-    : st === "complete" ? (v.out.released ? (v.savedHere ? "Saved on your device." : "Released from memory before it was saved.")
-                          : v.savedHere ? "Copy made and saved." : "Copy made &mdash; not saved yet.")
-    : vqStale(v) ? "The start time was changed after the last copy was made." : "";
-  const id = v.qid;
-  const name = esc(v.name);
-  const primary =
-      st === "ready" || st === "stopped" ? `
-        <button class="vst-btn" data-act="vqEdit" data-id="${id}">Edit date &amp; time</button>
-        <button class="vst-btn go" data-act="vqGo" data-id="${id}">Generate timestamped copy</button>`
-    : st === "needs" ? `
-        <button class="vst-btn go" data-act="vqEdit" data-id="${id}">Edit date &amp; time</button>`
-    : st === "analyzing" ? `
-        <button class="vst-btn" data-act="vqEdit" data-id="${id}">Edit date &amp; time</button>
-        <button class="vst-btn" disabled>Checking&hellip;</button>`
-    : st === "complete" ? `
-        <button class="vst-btn${v.out.blob && !v.savedHere ? " go" : ""}" data-act="vqDetails" data-id="${id}">${
-          v.out.blob && !v.savedHere ? "Save the copy" : "Open"}</button>`
-    : st === "failed" ? `
-        <button class="vst-btn" data-act="vqDetails" data-id="${id}">What happened</button>
-        ${v.fault && v.fault.retry === "reselect" ? `<button class="vst-btn go" data-act="vqRepick" data-id="${id}">Choose this video again</button>` : ""}`
-    : `<button class="vst-btn" disabled>Processing&hellip;</button>`;
-  const canMove = !v.run;
-  const canRemove = !v.run && st !== "complete";
-  return `<li class="vst-card vq-row" data-qid="${id}" data-status="${st}">
-      <div class="vq-head"><span class="vq-n">${n}</span><b class="vq-name">${name}</b>
-        <span class="vq-st vq-st-${st}">${label}</span></div>
-      <div class="vq-when">${when ? `Starts ${esc(when)}` : "Start time not set"}</div>
-      ${whence ? `<div class="vq-sub">${whence}</div>` : ""}
-      <div class="vq-sub">${mb(v.size)}${kind ? " &middot; " + esc(kind) : ""}</div>
-      ${why ? `<p class="vq-why">${why}</p>` : ""}
-      <div class="vq-acts">${primary}</div>
-      <details class="vq-more"><summary>More for ${name}</summary>
-        ${v.analysis === "done" ? `<p class="vq-sub vq-fp">${v.hash ? "Original fingerprint recorded &#10003;"
+  if(st === "needs") return !s.ok ? "Enter when this recording began."
+    : v.startFrom === "modified" ? "The time is the file’s modified date, not the recording — check it and Save."
+    : v.startFrom === "creation" ? "The creation time carries no time zone — check it and Save."
+    : "Check the start time and Save it.";
+  if(st === "failed") return v.fault ? v.fault.state : "Cannot be processed on this device.";
+  if(st === "stopped") return "Stopped — nothing was kept from that run.";
+  if(st === "analyzing") return v.analysis === "waiting" ? "Waiting its turn to be checked." : "Checking the file…";
+  if(st === "complete") return v.out.released ? (v.savedHere ? "Saved on your device." : "Released from memory before it was saved.")
+    : v.savedHere ? "Copy made and saved." : "Copy made — not saved yet.";
+  if(vqStale(v)) return "The time was changed after the last copy was made.";
+  return "";
+}
+
+function vqdRowHtml(v, n){
+  const q = VQ;
+  const st = vqStatus(v);
+  const id = v.qid, name = esc(v.name);
+  const s = vstStart(v);
+  const cur = s.ok ? vqdSplit(s.ms, v.tz) : null;
+  const det = v.detected ? vqdSplit(v.detected.ms, v.tz) : null;
+  const ext = esc(vqdExt(v)), codec = esc(vqdCodec(v));
+  const busy = vqBusy(st);
+  const locked = busy || !!v.run;
+  const why = vqdWhy(v, st);
+  const go = vqCanGo(v);
+  const primary = busy
+    ? `<button class="vqd-b" data-act="vqView" data-id="${id}" aria-label="View progress of ${name}">View</button>`
+    : st === "complete"
+    ? `<button class="vqd-b" data-act="vqDetails" data-id="${id}" aria-label="View ${name}">View</button>`
+    : `<button class="vqd-b" data-act="vqEdit" data-id="${id}" aria-label="Edit ${name}">Edit</button>`;
+  const menu = busy ? "" : `<details class="vqd-menu" data-qid="${id}"><summary aria-label="More for ${name}">&#8942;</summary>
+      <div class="vqd-pop">
+        ${v.analysis === "done" ? `<p class="vqd-fp">${v.hash ? "Original fingerprint recorded &#10003;"
           : "Original fingerprint " + esc(vstOrigHashWhy(v))}</p>` : ""}
-        <div class="vq-acts">
-          <button class="vst-btn" data-act="vqDetails" data-id="${id}">Details</button>
-          ${canMove ? `<button class="vst-btn" data-act="vqUp" data-id="${id}" aria-label="Move ${name} up" ${n === 1 ? "disabled" : ""}>Move up</button>
-          <button class="vst-btn" data-act="vqDown" data-id="${id}" aria-label="Move ${name} down" ${n === VQ.items.length ? "disabled" : ""}>Move down</button>` : ""}
-          ${canRemove ? `<button class="vst-btn" data-act="vqRemove" data-id="${id}">Remove from queue</button>` : ""}
-        </div>
-      </details>
+        <button class="vqd-b vqd-mi" data-act="vqDetails" data-id="${id}">${st === "failed" ? "What happened" : "Details"}</button>
+        ${st === "complete" && v.out && v.out.blob && !v.savedHere
+          ? `<button class="vqd-b vqd-mi" data-act="vqSaveCopy" data-id="${id}">Save copy</button>` : ""}
+        ${st === "ready" || st === "stopped" ? `<button class="vqd-b vqd-mi" data-act="vqGo" data-id="${id}"${go ? "" : " disabled"}>Generate timestamped copy</button>` : ""}
+        ${v.fault && v.fault.retry === "reselect" ? `<button class="vqd-b vqd-mi" data-act="vqRepick" data-id="${id}">Choose this video again</button>` : ""}
+        <button class="vqd-b vqd-mi" data-act="vqUp" data-id="${id}" aria-label="Move ${name} up"${n === 1 ? " disabled" : ""}>Move up</button>
+        <button class="vqd-b vqd-mi" data-act="vqDown" data-id="${id}" aria-label="Move ${name} down"${n === q.items.length ? " disabled" : ""}>Move down</button>
+        ${st !== "complete" ? `<button class="vqd-b vqd-mi" data-act="vqRemove" data-id="${id}">Remove from queue</button>` : ""}
+      </div></details>`;
+  return `<li class="vqd-row${String(q.sel) === String(id) ? " is-sel" : ""}" data-qid="${id}" data-status="${st}" data-act="vqPick" data-id="${id}">
+      <span class="vqd-c vqd-n">${n}</span>
+      <span class="vqd-c vqd-th">${vqdThumbHtml(v)}</span>
+      <span class="vqd-c vqd-nm"><b class="vqd-name">${name}</b>
+        <small class="vqd-mini"><span>${vqdMb(v.size)}</span><span class="vqd-mfm">${ext ? " &middot; " + ext : ""}</span></small>
+        <small class="vqd-whenm">${cur ? esc(cur.label) : "Start time not set"}</small>
+        ${why ? `<small class="vqd-why">${esc(why)}</small>` : ""}</span>
+      <span class="vqd-c vqd-sz">${vqdMb(v.size)}</span>
+      <span class="vqd-c vqd-fm">${ext}${codec ? `<br><small>${codec}</small>` : ""}</span>
+      <span class="vqd-c vqd-dt">${det ? `${esc(det.date)}<br>${esc(det.time)}${det && v.detected.from !== "capture"
+        ? `<br><small>${v.detected.from === "modified" ? "file date" : "no time zone"}</small>` : ""}` : "Not found"}</span>
+      <span class="vqd-c vqd-tm"><button class="vqd-tmb" data-act="vqEdit" data-id="${id}"
+          aria-label="Edit the start time of ${name}"${locked ? " disabled" : ""}><span>${cur
+          ? `${esc(cur.date)}<br>${esc(cur.time)}` : "Set date &amp; time"}</span>${VQD_I.cal}</button></span>
+      <span class="vqd-c vqd-st">${vqdBadge(st)}${busy ? ` <b class="vqd-rowpc" id="vq_rowpc_${id}">${v.pct || 0}%</b>` : ""}</span>
+      <span class="vqd-c vqd-ac">${primary}${go ? `<button class="vqd-b vqd-go" data-act="vqGo" data-id="${id}"
+          aria-label="Generate timestamped copy of ${name}" title="Generate timestamped copy">&#9654;</button>` : ""}${menu}</span>
     </li>`;
 }
 
-/* The confirmation, when one is owed — only where something would be lost. */
+/* The editor: THIS video's start, and nothing else. Its inputs are drawn from
+   the draft while there is one, so a correction that has not been saved is
+   still on screen after a repaint — and is still NOT in the entry. */
+function vqdEditHtml(){
+  const q = VQ;
+  const v = vqSel();
+  const head = sub => `<div class="vqd-ehead"><span class="vqd-eicon" aria-hidden="true">${VQD_I.cal}</span>
+      <div><h3 id="vq_ehead" tabindex="-1">Edit date &amp; time</h3><p>${sub}</p></div></div>`;
+  const back = `<button class="vqd-b vqd-back" data-act="vqListBack">&larr; Back to queue</button>`;
+  if(!v) return `<aside class="vqd-edit" id="vq_edit" aria-label="Edit date and time">${back}
+      ${head("No video selected")}
+      <p class="vqd-note">${q.items.length ? "Select a video in the queue to set its date and time."
+        : "Add videos, then select one to set its date and time."}</p></aside>`;
+  const d = Object.assign({}, v, v.draft || {});
+  const s = vstStart(d);
+  const st = vqStatus(v);
+  const locked = !!v.run || q.busy === v;
+  const i = q.items.indexOf(v), n = q.items.length;
+  const dirty = vqDraftDiff(v);
+  const kind = vqPreviewKind(v, locked);
+  const det = v.detected ? vqdSplit(v.detected.ms, v.tz) : null;
+  const inp = (k, label, max, wide) => `<input id="vst_${k}" class="vqd-in${wide ? " w4" : ""}" inputmode="numeric"
+      maxlength="${max}" autocomplete="off" aria-label="${label}" data-act-input="vqTime"
+      value="${esc(d[k] == null ? "" : d[k])}"${locked ? " disabled" : ""}>`;
+  const ask = q.editAsk && String(q.editAsk.from) === String(v.qid) ? `
+      <div class="vqd-ask" role="alert">
+        <p id="vq_ask" tabindex="-1">This video&rsquo;s date and time have changes that are not saved.</p>
+        <button class="vqd-b vqd-gold" data-act="vqAskSave">Save and continue</button>
+        <button class="vqd-b" data-act="vqAskDiscard">Discard changes</button>
+        <button class="vqd-b vqd-link" data-act="vqAskStay">Stay here</button>
+      </div>` : "";
+  const goBtn = st === "complete"
+      ? `<button class="vqd-b vqd-wide" data-act="vqDetails" data-id="${v.qid}">View the timestamped copy</button>`
+    : locked ? `<button class="vqd-b vqd-wide" data-act="vqView" data-id="${v.qid}">View progress</button>`
+    : st === "failed" ? `<button class="vqd-b vqd-wide" data-act="vqDetails" data-id="${v.qid}">What happened</button>`
+    : `<button class="vqd-b vqd-gold vqd-wide" id="vq_go" data-act="vqGo" data-id="${v.qid}"${
+        dirty || !vqCanGo(v) ? " disabled" : ""}>${vstLaneFor(v) === "compat"
+        ? "Generate timestamped copy (compatibility mode)" : "Generate timestamped copy"}</button>`;
+  return `<aside class="vqd-edit" id="vq_edit" aria-label="Edit date and time" data-qid="${v.qid}">${back}
+    ${head(`${esc(v.name)} <span class="vqd-pos">&middot; video ${i + 1} of ${n}</span>`)}
+    <div class="vqd-pv" id="vq_pvhost" data-qid="${v.qid}" data-kind="${kind}">${
+      kind === "img" ? `<img src="${esc(v.thumb)}" alt="">`
+      : kind === "none" ? `<span class="vqd-ph" aria-hidden="true">${VQD_I.film}</span>` : ""}
+      <span class="vqd-stamp" id="vq_stamp" aria-hidden="true">${esc(vqStampText(v))}</span></div>
+    <p class="vqd-pvnote">${esc(vqPvNote(v, kind, locked))}</p>
+    <span class="vqd-lbl">Detected source time</span>
+    <div class="vqd-ro">${VQD_I.cal}<span>${det ? esc(det.label) : "Not found on the file"}</span></div>
+    <p class="vqd-srcnote">${vqSrcNote(v)}</p>
+    <h4 class="vqd-sub">Set timestamp for this video</h4>
+    <div id="vq_fields" data-qid="${v.qid}">
+      <div class="vqd-dtrow"><span class="vqd-lbl" id="vq_dl">Date</span>
+        <div class="vqd-parts" role="group" aria-labelledby="vq_dl">${inp("mo", "Month", 2)}<span aria-hidden="true">/</span>${
+          inp("da", "Day", 2)}<span aria-hidden="true">/</span>${inp("yr", "Year", 4, true)}</div></div>
+      <div class="vqd-dtrow"><span class="vqd-lbl" id="vq_tl">Time</span>
+        <div class="vqd-parts" role="group" aria-labelledby="vq_tl">${inp("hr", "Hour", 2)}<span aria-hidden="true">:</span>${
+          inp("mi", "Minute", 2)}<span aria-hidden="true">:</span>${inp("se", "Second", 2)}
+          <select id="vst_ap" aria-label="AM or PM" data-act-input="vqTime"${locked ? " disabled" : ""}>
+            <option value="AM"${d.ap === "AM" ? " selected" : ""}>AM</option>
+            <option value="PM"${d.ap === "PM" ? " selected" : ""}>PM</option></select></div></div>
+      <div class="vqd-dtrow"><span class="vqd-lbl">Timezone</span><div class="vqd-tz" id="vq_tz">${vqZoneHtml(v)}</div></div>
+    </div>
+    <p class="vqd-burn">Burned into the copy: <b id="vst_res">${esc(s.ok ? vstLabel(s.ms, v.tz) : "—")}</b></p>
+    <p class="vqd-note">What you save here is burned into this video only. Each video in the queue keeps its own
+      start; none is worked out from another.</p>
+    ${locked ? `<p class="vqd-note">This video is being processed &mdash; its time is locked until the run ends.</p>` : ""}
+    ${ask}
+    ${v.err ? `<p class="vqd-err" role="alert">${esc(v.err)}</p>` : ""}
+    ${v.saveMsg ? `<p class="vqd-ok">${esc(v.saveMsg)}</p>` : ""}
+    <p class="vqd-note" id="vq_dirty" aria-live="polite">${dirty ? "Not saved yet — Save writes this time to this video only." : ""}</p>
+    <div class="vqd-nav">
+      <button class="vqd-b" data-act="vqEditPrev"${i > 0 ? "" : " disabled"}>&larr; Previous</button>
+      <button class="vqd-b vqd-gold" data-act="vqSaveTime"${locked ? " disabled" : ""}>Save</button>
+      <button class="vqd-b" data-act="vqEditNext"${i < n - 1 ? "" : " disabled"}>Next &rarr;</button>
+    </div>
+    <button class="vqd-b vqd-link" data-act="vqUndoTime"${locked ? " disabled" : ""}>Undo changes</button>
+    ${goBtn}
+    <p class="vqd-note" id="vq_gowhy">${esc(vqGoWhy(v))}</p>
+    <button class="vqd-b vqd-link" data-act="vqDetails" data-id="${v.qid}"${locked ? " disabled" : ""}>Details and device checks</button>
+  </aside>`;
+}
+
+/* ---- THE PROCESSING PANEL ----
+   The owner's list of steps, each ticked only when the pipeline has actually
+   moved past it. Decode, stamp and encode happen together, a frame at a
+   time, so those rows advance together and carry the real frame percentage;
+   the rest are marked as the run reaches them. Rows for compatibility mode
+   and the damage read appear only when this run needed them. */
+const VQ_STEP_WORDS = {
+  read: "Reading source file", compat: "Trying compatibility mode", overlay: "Applying timestamp overlay",
+  encode: "Encoding video", check: "Checking the file for damage", final: "Finalizing file",
+  clean: "Verifying clean metadata", output: "Creating output file",
+};
+function vqStepKey(stage, seen){
+  switch(stage){
+    case "decoding": case "compat-start": case "compat": return "encode";
+    case "checking": return "check";
+    case "finishing": return "final";
+    case "verifying": return seen && seen.has("clean") ? "output" : "final";
+    case "clean": return "clean";
+    case "hashing": return "output";
+    default: return "read";
+  }
+}
+function vqdStepsHtml(v){
+  const seen = v.seen || new Set();
+  const compat = seen.has("compat-start") || seen.has("compat") || !!(v.run && v.run.lane === "compat");
+  const order = ["read", ...(compat ? ["compat"] : []), "overlay", "encode",
+                 ...(seen.has("checking") ? ["check"] : []), "final", "clean", "output"];
+  const cur = vqStepKey(v.stage, seen);
+  const at = order.indexOf(cur);
+  return `<ul class="vqd-steps" aria-label="Steps">${order.map((k, i) => {
+    let state = i < at ? "done" : i === at ? "now" : "todo";
+    if(cur === "encode" && (k === "overlay" || k === "compat")) state = "now";
+    if(cur === "check" && (k === "overlay" || k === "encode" || k === "compat")) state = "fail";
+    const label = k === "encode" && compat ? "Encoding video (compatibility mode)" : VQ_STEP_WORDS[k];
+    const mark = {done: "&#10003;", now: "&#9679;", fail: "&#10005;", todo: "&#9675;"}[state];
+    const said = {done: "done", now: "in progress", fail: "stopped", todo: "not started"}[state];
+    return `<li class="is-${state}"><i aria-hidden="true">${mark}</i><span>${label}${
+      k === "encode" && state === "now" ? ` &mdash; <b id="vq_steppc">${v.pct || 0}%</b>` : ""}<span class="vh"> (${said})</span></span></li>`;
+  }).join("")}</ul>`;
+}
+const vqStepWord = v => VST_STEP_WORDS[v.stage] || VST_STEP_WORDS.decoding;
+function vqdRunHtml(){
+  const q = VQ;
+  const v = vqById(q.runId);
+  const total = q.items.length;
+  const back = `<button class="vqd-b vqd-link vqd-back" data-act="vqRunBack">&larr; Back to queue</button>`;
+  const idle = `<section class="vqd-run" id="vq_run" aria-labelledby="vq_runh">${back}
+      <h3 id="vq_runh" tabindex="-1">Processing</h3>
+      <p class="vqd-note">Nothing is being processed. Videos are processed one at a time, and only when you press
+        Generate or Process next.</p></section>`;
+  if(!v) return idle;
+  const shell = (h, info, body) => `<section class="vqd-run" id="vq_run" aria-labelledby="vq_runh">${back}
+      <h3 id="vq_runh" tabindex="-1">${h}</h3>
+      <div class="vqd-rungrid"><div class="vqd-runthumb">${vqdThumbHtml(v)}</div>
+        <div class="vqd-runinfo">${info}</div><div class="vqd-runbody">${body}</div></div></section>`;
+  const st = vqStatus(v), pos = vqPos(v);
+  const name = esc(v.name);
+  const next = vqNextReady(v);
+  const nextBtn = next ? `<span class="only-m"><button class="vqd-b" data-act="vqProcessNext"${vqRunning() ? " disabled" : ""}
+      aria-label="Process next: ${esc(next.name)}">&#9654; Process next</button></span>` : "";
+  if(vqBusy(st)){
+    return shell(`Processing: ${pos} of ${total}`,
+      `<b>${name}</b><p>${v.stage === "waiting" ? "Waiting for the file check in progress to finish&hellip;"
+        : v.phase === "checking" ? "No decoder on this device finished the stream &mdash; reading the file once more for damage, without decoding."
+        : "Applying timestamp and creating clean copy&hellip;"}</p>`,
+      `<div class="vqd-progwrap"><div class="vqd-prog" id="vq_prog" role="progressbar" aria-label="Progress of ${name}"
+          aria-valuemin="0" aria-valuemax="100" aria-valuenow="${v.pct || 0}"><i id="vq_bar" data-qid="${v.qid}"
+          style="width:${v.pct || 0}%"></i></div><b id="vq_pc">${v.pct || 0}%</b></div>
+      <p class="vqd-status">Status: <span class="vqd-badge b-run">${VQ_STATUS[st]} &mdash; ${esc(vqStepWord(v))}</span></p>
+      ${vqdStepsHtml(v)}
+      ${v.phase === "compat" ? `<p class="vqd-note">${esc(vstDecoderLine(VST_PRIMARY_WHO, v.primaryNote)
+          || "This device's decoder did not finish.")} Nothing from that attempt is kept; this browser&rsquo;s
+          software decoder is decoding the stream again from its first keyframe &mdash; slower, and still
+          entirely on this device.</p>` : ""}
+      <p class="vqd-note vqd-keep">Keep this screen open. Nothing is uploaded, and no file exists until the copy is complete
+        and checked.</p>
+      <button class="vqd-b vqd-stop" data-act="vstAbort" data-id="${v.qid}">&#9632; Stop processing</button>`);
+  }
+  if(v.out){
+    const o = v.out;
+    const checks = [o.clean && o.clean.ok ? "Clean derivative verified" : "",
+                    o.sha256 ? "Derivative fingerprint recorded" : "",
+                    v.hash ? "Original fingerprint recorded" : ""].filter(Boolean);
+    return shell(`Complete &#10003; &mdash; video ${pos} of ${total}`,
+      `<b>${esc(o.name)}</b><small>${vqdMb(o.size)} &middot; MP4 &middot; picture only</small><small>Made from ${name}</small>`,
+      `<ul class="vqd-checks">${checks.map(t => `<li><i aria-hidden="true">&#10003;</i>${t} &#10003;</li>`).join("")}${
+        v.hash ? "" : `<li><i aria-hidden="true">&#8211;</i>Original fingerprint ${esc(vstOrigHashWhy(v))}</li>`}</ul>
+      ${o.lane === "compat" ? `<p class="vqd-ok">Compatibility mode was used for this AVCHD/MTS file. Processing
+        remained on this device.</p>` : ""}
+      <p class="vqd-note">The copy is picture only${o.sourceAudio ? ` &mdash; the original&rsquo;s audio
+        (${esc(o.sourceAudio)}) is still on your original, untouched` : ""}.</p>
+      ${vqStale(v) ? `<p class="vqd-note">This video&rsquo;s start time was changed after this copy was made. The copy
+        carries the time it was made with; generate again for one with the new time.</p>` : ""}
+      ${o.released ? `<p class="vqd-note">${v.savedHere ? "The copy is saved on your device. This tab has let go of its own copy, so the next video had the memory."
+        : "This copy was released from memory before it was saved, when you chose to start another. Make it again to get a new one &mdash; the original is unchanged."}</p>` : ""}
+      ${v.err ? `<p class="vqd-err">${esc(v.err)}</p>` : ""}
+      ${v.saveMsg ? `<p class="vqd-ok">${esc(v.saveMsg)}</p>` : ""}
+      ${v.started && !v.savedHere ? `<p class="vqd-note">The download has started. This page cannot see where your
+        browser put it, so it will not claim the file is saved &mdash; check it landed, then confirm.</p>
+        <button class="vqd-b" data-act="vqSavedMark" data-id="${v.qid}">I have got the file &mdash; mark it saved</button>` : ""}
+      <div class="vqd-runacts">
+        ${o.released ? "" : v.savedHere ? `<span class="vqd-ok">Saved to this device &#10003;</span>`
+          : `<button class="vqd-b vqd-gold" data-act="vqSaveCopy" data-id="${v.qid}">Save copy</button>`}
+        <button class="vqd-b" data-act="vqDetails" data-id="${v.qid}">View</button>
+        ${nextBtn}
+      </div>`);
+  }
+  if(st === "failed"){
+    const f = v.fault;
+    return shell(`Failed &mdash; video ${pos} of ${total}`,
+      `<b>${name}</b><p>${esc(f ? f.head : (vstCompatText(v) || v.err || "No copy was made."))}</p>`,
+      `${f && f.label ? `<p class="vqd-note"><b>${esc(f.label)}</b></p>` : ""}
+      <p class="vqd-note">The rest of the queue is not affected.</p>
+      <div class="vqd-runacts">
+        <button class="vqd-b" data-act="vqDetails" data-id="${v.qid}">What happened</button>
+        ${f && f.retry === "reselect" ? `<button class="vqd-b vqd-gold" data-act="vqRepick" data-id="${v.qid}">Choose this video again</button>` : ""}
+        ${nextBtn}
+      </div>`);
+  }
+  if(st === "stopped"){
+    return shell(`Stopped &mdash; video ${pos} of ${total}`,
+      `<b>${name}</b><p>Stopped before the copy was finished. Nothing was kept from that run and your original is
+        unchanged.</p>`,
+      `<div class="vqd-runacts">
+        <button class="vqd-b vqd-gold" data-act="vqGo" data-id="${v.qid}"${vqCanGo(v) ? "" : " disabled"}>Generate again</button>
+        ${nextBtn}
+      </div>`);
+  }
+  return idle;
+}
+/* What Process Next would start — named, with its start, before it is
+   pressed. It is one video, and only because the operator presses it. */
+function vqdNextHtml(){
+  const q = VQ;
+  const next = vqNextReady(vqById(q.runId));
+  const running = vqRunning();
+  if(!next) return `<section class="vqd-next" aria-labelledby="vq_nexth"><h3 id="vq_nexth">Next in queue</h3>
+      <p class="vqd-note">${q.items.some(x => vqStatus(x) === "needs")
+        ? "No other video is ready. Videos marked Needs review need their date and time saved first."
+        : "No other video is ready to process."}</p></section>`;
+  const s = vstStart(next);
+  return `<section class="vqd-next" aria-labelledby="vq_nexth"><h3 id="vq_nexth">Next in queue</h3>
+      <div class="vqd-rungrid"><div class="vqd-runthumb">${vqdThumbHtml(next)}</div>
+        <div class="vqd-runinfo"><b>${esc(next.name)}</b><small>${vqdMb(next.size)}</small>
+          <small>${esc([vqdExt(next), vqdCodec(next)].filter(Boolean).join(" · "))}</small>
+          <small>${s.ok ? esc(vstLabel(s.ms, next.tz)) : ""}</small></div></div>
+      <button class="vqd-b vqd-gold vqd-wide" data-act="vqProcessNext" aria-label="Process next: ${esc(next.name)}"${
+        running ? " disabled" : ""}>&#9654; Process next</button>
+      <p class="vqd-note">${running ? "Waits until the video being processed is finished."
+        : "Only this video is processed &mdash; nothing else in the queue starts unless you press it."}</p></section>`;
+}
+
+/* The confirmation, when one is owed — only where something would be lost —
+   and the case chooser. Both are a card over the dashboard, so they are on
+   screen whichever region the operator was in. */
 function vqConfirmHtml(){
   const c = VQ.confirm;
   if(!c) return "";
   if(c.kind === "release"){
     const held = vqById(c.held), next = vqById(c.next);
     if(!held || !next){ VQ.confirm = null; return ""; }
-    return `<div class="vst-card vq-confirm" role="alert">
-        <h4>The copy of ${esc(held.name)} has not been saved</h4>
-        <p class="vst-note">One finished copy is kept in memory at a time, so a phone does not run out.
+    return `<h4 id="vq_mh" tabindex="-1">The copy of ${esc(held.name)} has not been saved</h4>
+        <p class="vqd-note">One finished copy is kept in memory at a time, so a phone does not run out.
           Starting ${esc(next.name)} lets go of it, and it would have to be made again.</p>
-        <button class="vst-btn go" data-act="vqSaveFirst">Save it first</button>
-        <button class="vst-btn" data-act="vqConfirmYes">Let it go and start ${esc(next.name)}</button>
-        <button class="vst-btn" data-act="vqConfirmNo">Cancel</button>
-      </div>`;
+        <button class="vqd-b vqd-gold" data-act="vqSaveFirst">Save it first</button>
+        <button class="vqd-b" data-act="vqConfirmYes">Let it go and start ${esc(next.name)}</button>
+        <button class="vqd-b" data-act="vqConfirmNo">Cancel</button>`;
   }
   const what = c.kind === "cleardone" ? "Clear the completed videos from the queue?"
     : c.kind === "clearall" ? "Clear the whole queue?" : "Close the timestamp queue?";
@@ -17968,88 +19024,134 @@ function vqConfirmHtml(){
   if(c.kind !== "cleardone"){
     const typed = VQ.items.filter(x => x.confirmed && !x.out).length;
     if(typed) lost.push(`the start times you saved for ${vstPlural(typed, "video")} not yet processed would be forgotten`);
+    const drafts = VQ.items.filter(x => vqDraftDiff(x)).length;
+    if(drafts) lost.push(`a change to ${vstPlural(drafts, "video")}'s time that was never saved would be dropped`);
   }
-  return `<div class="vst-card vq-confirm" role="alert">
-      <h4>${what}</h4>
-      <p class="vst-note">${esc(lost.join("; ") || "Nothing unsaved would be lost")}. Your original files, and any
+  return `<h4 id="vq_mh" tabindex="-1">${what}</h4>
+      <p class="vqd-note">${esc(lost.join("; ") || "Nothing unsaved would be lost")}. Your original files, and any
         copies you have saved, are not touched either way.</p>
-      <button class="vst-btn" data-act="vqConfirmYes">${c.kind === "close" ? "Close anyway" : "Clear anyway"}</button>
-      <button class="vst-btn go" data-act="vqConfirmNo">Keep them</button>
-    </div>`;
+      <button class="vqd-b" data-act="vqConfirmYes">${c.kind === "close" ? "Close anyway" : "Clear anyway"}</button>
+      <button class="vqd-b vqd-gold" data-act="vqConfirmNo">Keep them</button>`;
+}
+function vqdCaseHtml(){
+  const q = VQ;
+  const caseName = c => c.kind === "claims"
+    ? (c.carrier || c.client_name || "Claim assignment") : (c.client_name || "Private client");
+  const t = String(q.q || "").trim().toLowerCase();
+  const pickable = (q.cases || []).filter(c => !t
+    || String(c.case_no).toLowerCase().includes(t) || caseName(c).toLowerCase().includes(t));
+  return `<h4 id="vq_mh" tabindex="-1">Which case are these videos for?</h4>
+      <p class="vqd-note">Optional. A case is where the record of each copy is written; the copies themselves stay
+        on this device. Only cases you can already open are listed.</p>
+      <label class="vqd-lbl" for="vq_q">Find a case</label>
+      <input id="vq_q" data-act-input="vqSearch" autocomplete="off" placeholder="case number or name" value="${esc(q.q || "")}">
+      ${q.caseErr ? `<p class="vqd-err">${esc(q.caseErr)} &mdash; the case list could not be read, so this is not
+        "you have no cases".</p>` : ""}
+      ${q.caseErr ? "" : !q.cases ? `<p class="vqd-note">Loading your cases&hellip;</p>`
+        : pickable.length ? pickable.slice(0, 40).map(c => `<button class="vqd-b vqd-mi" data-act="vqPickCase"
+            data-case="${esc(c.case_no)}">${esc(c.case_no)} &mdash; ${esc(caseName(c))}</button>`).join("")
+        : `<p class="vqd-note">${q.cases.length ? "No case matches that." : "You have no cases to attach these to yet."}</p>`}
+      <button class="vqd-b" data-act="vqPickCase" data-case="">No case &mdash; keep the copies on this device only</button>
+      <button class="vqd-b" data-act="vqCaseBack">Back to queue</button>`;
+}
+function vqdModalHtml(){
+  const body = VQ.view === "case" ? vqdCaseHtml() : vqConfirmHtml();
+  return body ? `<div class="vqd-modal"><div class="vqd-mcard" role="alertdialog" aria-modal="true"
+      aria-labelledby="vq_mh">${body}</div></div>` : "";
 }
 
 function vqHtml(){
   const q = VQ;
-  const mb = b => b >= 1073741824 ? (b / 1073741824).toFixed(2) + " GB"
-    : b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(b / 1024)) + " KB";
-  const bar = `<div class="vst-bar"><b>Timestamp video${q.caseNo ? " &middot; " + esc(q.caseNo) : ""}</b>
-      <button class="vst-x" data-act="vqClose">Close</button></div>`;
-  if(q.view === "case"){
-    const caseName = c => c.kind === "claims"
-      ? (c.carrier || c.client_name || "Claim assignment") : (c.client_name || "Private client");
-    const t = String(q.q || "").trim().toLowerCase();
-    const pickable = (q.cases || []).filter(c => !t
-      || String(c.case_no).toLowerCase().includes(t) || caseName(c).toLowerCase().includes(t));
-    return `<div class="vst" role="dialog" aria-modal="true" aria-label="Timestamp video">${bar}
-      <div class="vst-body"><div class="vst-card">
-        <h4>Which case are these videos for?</h4>
-        <p class="vst-note">Optional. A case is where the record of each copy is written; the copies
-          themselves stay on this device. Only cases you can already open are listed.</p>
-        <label class="vst-f" style="margin-top:10px"><span>Find a case</span>
-          <input id="vq_q" data-act-input="vqSearch" style="text-align:left"
-            placeholder="case number or name" value="${esc(q.q || "")}"></label>
-        ${q.caseErr ? `<p class="vst-err">${esc(q.caseErr)} &mdash; the case list could not be read, so this
-          is not "you have no cases".</p>` : ""}
-        ${q.caseErr ? "" : !q.cases ? `<p class="vst-note">Loading your cases&hellip;</p>`
-          : pickable.length ? `<div style="margin-top:8px">${pickable.slice(0, 40).map(c =>
-              `<button class="vst-btn" style="text-align:left;margin-top:6px"
-                 data-act="vqPickCase" data-case="${esc(c.case_no)}">${esc(c.case_no)}
-                 &mdash; ${esc(caseName(c))}</button>`).join("")}</div>`
-          : `<p class="vst-note">${q.cases.length ? "No case matches that." : "You have no cases to attach these to yet."}</p>`}
-        <button class="vst-btn" data-act="vqPickCase" data-case="">No case &mdash; keep the copies on this device only</button>
-        <button class="vst-btn" data-act="vqCaseBack">Back to queue</button>
-      </div></div></div>`;
-  }
+  const narrow = vqNarrow();
+  const modal = vqdModalHtml();
+  const focus = narrow ? q.focus : "list";
+  /* On a phone the list is covered while the editor or the run has the
+     screen, so it is also out of reach of the keyboard; the same is true of
+     everything behind a confirmation. */
+  const behind = (narrow && focus !== "list") || !!modal;
+  const n = q.items.length;
   const counts = {};
   for(const v of q.items){ const st = vqStatus(v); counts[st] = (counts[st] || 0) + 1; }
-  const sum = [`${vstPlural(q.items.length, "video")} loaded`];
-  if(counts.ready) sum.push(`${counts.ready} ready`);
-  if(counts.needs) sum.push(`${counts.needs} need${counts.needs === 1 ? "s" : ""} date/time`);
-  if(counts.analyzing) sum.push(`${counts.analyzing} analyzing`);
-  if(counts.complete) sum.push(`${counts.complete} completed`);
-  if(counts.failed) sum.push(`${counts.failed} failed`);
-  if(counts.stopped) sum.push(`${counts.stopped} stopped`);
-  return `<div class="vst vq" role="dialog" aria-modal="true" aria-label="Timestamp video">${bar}
-    <div class="vst-body">
-      ${vqConfirmHtml()}
-      <div class="vst-card">
-        <h4>Timestamp video queue</h4>
-        <p class="vq-sum">${sum.join(" &middot; ")}</p>
-        <p class="vst-note">Your original files are never modified. Timestamped copies are newly
-          generated derivatives with source metadata removed. Original file fingerprints are kept
-          separate from generated-copy fingerprints.</p>
-        <p class="vst-note">Every copy is made on this device, and nothing is uploaded to make it. Videos
-          are processed one at a time, only when you press Generate. This queue lasts while this page is
-          open &mdash; it is not saved anywhere, so closing the page clears the list (never your files).</p>
-        ${q.msg ? `<p class="vst-ok" aria-live="polite">${esc(q.msg)}</p>` : ""}
-        <div class="vq-two">
-          <button class="vst-btn" data-act="vqAdd">Add videos</button>
-          ${vqFolderOk() ? `<button class="vst-btn" data-act="vqAddFolder">Add a folder</button>` : ""}
+  const busyN = (counts.processing || 0) + (counts.compat || 0) + (counts.verifying || 0);
+  const running = vqRunning();
+  const pill = (cls, num, word) => `<li class="vqd-pill ${cls}${num ? "" : " is-zero"}"><b>${num}</b> ${word}</li>`;
+  const pills = [pill("", n, "Total"), pill("p-ready", counts.ready || 0, "Ready"),
+    counts.needs ? pill("p-needs", counts.needs, "Needs review") : "",
+    counts.analyzing ? pill("p-wait", counts.analyzing, "Analyzing") : "",
+    pill("p-run", busyN, "Processing"), pill("p-done", counts.complete || 0, "Completed"),
+    pill("p-fail", counts.failed || 0, "Failed"), counts.stopped ? pill("p-wait", counts.stopped, "Stopped") : ""].join("");
+  const folder = vqFolderOk();
+  return `<div class="vqd" role="dialog" aria-modal="true" aria-label="Timestamp video" data-focus="${focus}"
+      data-has="${n ? 1 : 0}" data-drag="${q.dragDepth ? 1 : 0}"${VST ? " inert" : ""}>
+    <header class="vqd-head"${behind ? " inert" : ""}>
+      <div class="vqd-brand"><span class="vqd-logo" aria-hidden="true">${VQD_I.cam}</span>
+        <div class="vqd-title"><h2>Timestamp Video</h2>
+          <p class="vqd-lede">Drag &amp; drop multiple videos, set the date and time for each, and create clean
+            timestamped copies. Your original files are never modified.</p></div>
+        <button class="vqd-x" data-act="vqClose">Close</button>
+        <button class="vqd-b vqd-gold vqd-hadd" data-act="vqAdd">+ Add videos</button>
+        ${folder ? `<button class="vqd-b vqd-hfold" data-act="vqAddFolder">${VQD_I.folder} Select folder</button>` : ""}
+      </div>
+      <ul class="vqd-trust" aria-label="How this tool treats your files">
+        <li>${VQD_I.shield}<span>Original files<br> never modified</span></li>
+        <li>${VQD_I.doc}<span>Original metadata<br> removed from copies</span></li>
+        <li>${VQD_I.print}<span>Separate<br> fingerprints</span></li>
+        <li>${VQD_I.lock}<span>Local processing only<br> (no upload to process)</span></li>
+      </ul>
+    </header>
+    <div class="vqd-body" id="vq_body"${modal ? " inert" : ""}>
+      <div class="vqd-left">
+        <div class="vqd-main"${behind ? " inert" : ""}>
+          <section class="vqd-add" aria-label="Add videos">
+            <button type="button" class="vqd-drop" data-act="vqAdd" aria-label="Add videos: drop them here, or choose several files at once">
+              <span class="vqd-dropicon" aria-hidden="true">${VQD_I.cloud}</span>
+              <b class="vqd-drop-t">Drag &amp; drop videos here</b>
+              <b class="vqd-drop-r">Release to add videos</b>
+              <span class="vqd-drop-s"><span class="vqd-fine">or click</span><span class="vqd-coarse">or tap</span> to select multiple files</span>
+              <span class="vqd-cta" aria-hidden="true">+ Add videos</span>
+            </button>
+            <div class="vqd-formats">
+              <h3>Supported formats</h3>
+              <p>MTS, M2TS, AVCHD, MP4, MOV and others this device can decode.</p>
+              ${folder ? `<button type="button" class="vqd-b" data-act="vqAddFolder">${VQD_I.folder} Select folder</button>` : ""}
+              <p>Files stay on your device. No uploading.</p>
+            </div>
+          </section>
+          <section class="vqd-queue" aria-labelledby="vq_qh">
+            <div class="vqd-qhead">
+              <h3 id="vq_qh">Video queue <small>(${vstPlural(n, "video")})</small></h3>
+              <div class="vqd-qacts">
+                <button class="vqd-b" data-act="vqClearDone"${counts.complete && !running ? "" : " disabled"}>Clear completed</button>
+                <button class="vqd-b" data-act="vqClearAll"${n && !running ? "" : " disabled"}>Clear queue</button>
+              </div>
+            </div>
+            <ul class="vqd-pills" aria-label="Queue summary">${pills}</ul>
+            ${q.err ? `<p class="vqd-err" role="alert">${esc(q.err)}</p>` : ""}
+            ${q.msg ? `<p class="vqd-msg" aria-live="polite">${esc(q.msg)}</p>` : ""}
+            ${n ? `<div class="vqd-thead" aria-hidden="true"><span>#</span><span>Thumbnail</span><span>Filename</span>
+                <span class="vqd-th-sz">Size</span><span>Format</span><span>Detected start time</span><span>Edit time</span>
+                <span>Status</span><span>Actions</span></div>
+              <ol class="vqd-list">${q.items.map((v, i) => vqdRowHtml(v, i + 1)).join("")}</ol>`
+              : `<p class="vqd-empty">No videos yet. Drop them here, or press Add videos.</p>`}
+            <div class="vqd-qfoot">
+              <span>Case: <b>${q.caseNo ? esc(q.caseNo) : "None &mdash; copies stay on this device"}</b></span>
+              <button class="vqd-b" data-act="vqCase">${q.caseNo ? "Change the case" : "Choose a case (optional)"}</button>
+              <button class="vqd-b" data-act="vqReceipt"${n ? "" : " disabled"}>Download the receipt (.txt)</button>
+            </div>
+            <p class="vqd-note">Your original files are never modified. Timestamped copies are newly generated
+              derivatives with source metadata removed. Original file fingerprints are kept separate from
+              generated-copy fingerprints.</p>
+            <p class="vqd-note">Processing stays on this device. Videos are not uploaded to be processed, and they are
+              processed one at a time, only when you press Generate or Process next. This queue lasts while this page
+              is open &mdash; it is not saved anywhere, so closing the page clears the list (never your files).</p>
+          </section>
         </div>
-        <div class="vst-k" style="margin-top:10px"><span>Case</span><span>${q.caseNo ? esc(q.caseNo)
-          : "None &mdash; copies stay on this device"}</span></div>
-        <button class="vst-btn" data-act="vqCase">${q.caseNo ? "Change the case" : "Choose a case (optional)"}</button>
+        <div class="vqd-runrow">${vqdRunHtml()}${vqdNextHtml()}</div>
       </div>
-      <ol class="vq-list">${q.items.map((v, i) => vqRowHtml(v, i + 1, mb)).join("")}</ol>
-      <div class="vst-card">
-        <button class="vst-btn" data-act="vqReceipt">Download the receipt (.txt)</button>
-        <button class="vst-btn" data-act="vqClearDone" ${counts.complete ? "" : "disabled"}>Clear completed</button>
-        <button class="vst-btn" data-act="vqClearAll">Clear the queue</button>
-        <p class="vst-note">The receipt lists every video: its fingerprint, the time found on it, the time
-          burned in, the copy&rsquo;s name and fingerprint, and the result. Clearing takes videos out of this
-          list only &mdash; it never deletes your originals or copies you have saved.</p>
-      </div>
-    </div></div>`;
+      ${vqdEditHtml()}
+    </div>
+    ${modal}
+  </div>`;
 }
 
 /* WHAT THE SCREEN JUST SAID, SAID OUT LOUD (Unit 21). Every confirmation and
@@ -28218,9 +29320,68 @@ document.addEventListener("keydown", ev => {
   }
   if(ev.key === "Escape" && EV_VIEW){ EV_VIEW = null; paintEvView(); }
   /* Escape does NOT abandon a render in progress — a stray key must not throw
-     away a copy that has been running for minutes. Stop is a deliberate button. */
+     away a copy that has been running for minutes. Stop is a deliberate button.
+     On the dashboard it steps back one layer at a time — an open ⋮ menu, a
+     question, the drawer, a phone's editor — and never closes the queue:
+     Close is a deliberate button too. */
+  else if(ev.key === "Escape" && VQ){
+    const menu = document.querySelector(".vqd-menu[open]");
+    if(menu){ menu.open = false; const sm = menu.querySelector("summary"); if(sm) sm.focus(); return; }
+    if(VQ.confirm || VQ.view === "case"){ VQ.confirm = null; VQ.view = "list"; paintVStamp(); return; }
+    if(VQ.editAsk){ vqAskAnswer("stay"); return; }
+    if(VST){
+      const v = VST;
+      VST = null;
+      if(v.qid && VQ.items.includes(v)) VQ.focusTo = `.vqd-row[data-qid="${v.qid}"] .vqd-ac .vqd-b`;
+      paintVStamp(); return;
+    }
+    if(vqNarrow() && VQ.focus === "edit"){ vqNavigate({back: true}); return; }
+    if(vqNarrow() && VQ.focus === "run"){ VQ.focus = "list"; paintVStamp(); }
+  }
   else if(ev.key === "Escape" && VST && VST.step !== "working"){ vstClose(); }
 });
+
+/* DRAG AND DROP ONTO THE TIMESTAMP DASHBOARD. Only while the dashboard is
+   open and only for files; everywhere else the page behaves as it always did.
+   A drop is ADDING (`vqDropFiles` → `vqAdd`): nothing is read and nothing
+   starts. While a video's details are open a drop is refused rather than
+   added behind them — and it never falls through to the browser, which would
+   navigate away to the dropped file. */
+document.addEventListener("dragenter", ev => {
+  if(!VQ || !vqDragFiles(ev)) return;
+  ev.preventDefault();
+  if(VST || VQ.confirm || VQ.view === "case") return;
+  VQ.dragDepth = (VQ.dragDepth || 0) + 1;
+  vqDragPaint();
+});
+document.addEventListener("dragover", ev => {
+  if(!VQ || !vqDragFiles(ev)) return;
+  ev.preventDefault();
+  try{ ev.dataTransfer.dropEffect = VST || VQ.confirm || VQ.view === "case" ? "none" : "copy"; }catch{}
+});
+document.addEventListener("dragleave", ev => {
+  if(!VQ || !vqDragFiles(ev)) return;
+  VQ.dragDepth = Math.max(0, (VQ.dragDepth || 0) - 1);
+  if(!VQ.dragDepth) vqDragPaint();
+});
+document.addEventListener("drop", ev => {
+  if(!VQ || !vqDragFiles(ev)) return;
+  ev.preventDefault();
+  VQ.dragDepth = 0;
+  vqDragPaint();
+  if(VST || VQ.confirm || VQ.view === "case") return;
+  vqDropFiles(ev.dataTransfer);
+});
+/* THE TWO SHAPES CHANGE AT ONE WIDTH: crossing it (a window resized, an iPad
+   turned) repaints, so which regions are reachable follows what is drawn. */
+try{
+  matchMedia("(max-width:1239px)").addEventListener("change", () => { if(VQ) paintVStamp(); });
+}catch{}
+/* A ⋮ menu closes when the pointer goes elsewhere, the way a menu does. */
+document.addEventListener("pointerdown", ev => {
+  if(!VQ) return;
+  for(const m of document.querySelectorAll(".vqd-menu[open]")) if(!m.contains(ev.target)) m.open = false;
+}, true);
 
 /* ===== THE FIELD BEING TYPED INTO STAYS ON SCREEN (owner §15) =============
 
@@ -28246,6 +29407,12 @@ document.addEventListener("click", ev => {
   const el = ev.target.closest("[data-act]");
   if(!el) return;
   const act = el.dataset.act;
+  /* A choice from a ⋮ menu closes the menu — except Move up and Move down,
+     which are pressed again and again. */
+  if(VQ && act !== "vqUp" && act !== "vqDown"){
+    const m = el.closest(".vqd-pop") ? el.closest(".vqd-menu") : null;
+    if(m) m.open = false;
+  }
   if(SR_NAV_ACTS.includes(act)) SR_SCREEN = null;   // arrive, do not announce
   else srActed();
   /* ONE TAP, COUNTED FOR THIS USER'S OWN CEO BOT — the quick tools carry
@@ -28468,9 +29635,10 @@ document.addEventListener("click", ev => {
   else if(act === "vstOpen"){
     /* An explicit empty data-case means "ask" — the dashboard and navigation
        doors set it that way deliberately, and must not silently inherit
-       whichever case happens to be open behind them. */
+       whichever case happens to be open behind them. The door opens the
+       dashboard; choosing files is the dashboard's own first control. */
     const attr = el.getAttribute("data-case");
-    vstOpen(attr === null ? (WS_CASE || "") : attr);
+    vqOpen(attr === null ? (WS_CASE || "") : attr);
   }
   else if(act === "vstPickCase"){
     VST.caseNo = el.getAttribute("data-case") || "";
@@ -28489,7 +29657,15 @@ document.addEventListener("click", ev => {
     if(!s.ok){ VST.err = s.why; } else { VST.err = ""; VST.startMs = s.ms; VST.step = "preview"; }
     paintVStamp();
   }
-  else if(act === "vstEditTime"){ VST.step = "when"; VST.err = ""; paintVStamp(); }
+  else if(act === "vstEditTime"){
+    /* A queued video's time is edited on the dashboard: the drawer closes on
+       that video's editor. A lone video keeps its own time screen. */
+    const v = VST;
+    if(v && v.qid && VQ && VQ.items.includes(v)){
+      VST = null;
+      vqNavigate({sel: v.qid, focus: "edit", head: true});
+    } else if(v){ v.step = "when"; v.err = ""; paintVStamp(); }
+  }
   else if(act === "vstGo"){ vstGenerate(); }
   else if(act === "vstSave"){ vstSave(); }
   else if(act === "vstSaved"){ vstConfirmSaved(); }
@@ -28501,49 +29677,77 @@ document.addEventListener("click", ev => {
   else if(act === "vstAbort"){
     /* Stopping mid-render keeps nothing: no partial file is offered and the
        original is untouched, so there is nothing half-done to explain. In a
-       queue it stops THIS video and the queue stays (`vqStop`). */
-    if(VQ && VST && VQ.items.includes(VST)) vqStop(VST);
+       queue it stops THAT video — named by the button — and the queue stays. */
+    const v = el.dataset.id ? vqById(el.dataset.id) : VST;
+    if(VQ && v && VQ.items.includes(v)) vqStop(v);
     else vstClose();
   }
   else if(act === "vstClose"){ vstClose(); }
   /* A copy exists and the case question was asked from it: back to the copy,
      never out of the tool with the copy unsaved. */
   else if(act === "vstCaseBack"){ if(VST){ VST.step = "done"; paintVStamp(); } }
-  /* THE QUEUE. Every entry is addressed by its own data-id — nothing here acts
-     on "whichever video is open" by accident. */
+  /* THE DASHBOARD. Every entry is addressed by its own data-id — nothing here
+     acts on "whichever video is open" by accident. */
   else if(act === "vqAdd"){ vstOpen(VQ ? VQ.caseNo : "", false); }
   else if(act === "vqAddFolder"){ vstOpen(VQ ? VQ.caseNo : "", true); }
+  else if(act === "vqPick"){
+    /* A tap on the row itself selects it; its buttons and its ⋮ menu are
+       their own controls. On a phone selecting IS opening the editor. */
+    if(ev.target.closest("summary, .vqd-pop, button, input, select, a")) return;
+    const narrow = vqNarrow();
+    vqNavigate({sel: el.dataset.id, focus: narrow ? "edit" : undefined, head: narrow});
+  }
   else if(act === "vqEdit"){
     const v = vqById(el.dataset.id);
-    if(v && !v.run){ v.step = "when"; v.err = ""; v.saveMsg = ""; v.draft = null; VST = v; paintVStamp(); }
+    if(v && !v.run && VQ.busy !== v) vqNavigate({sel: v.qid, focus: "edit", head: true});
   }
+  else if(act === "vqListBack"){ if(VQ) vqNavigate({back: true}); }
   else if(act === "vqGo"){ vqGo(el.dataset.id); }
+  else if(act === "vqView"){
+    const v = vqById(el.dataset.id);
+    if(v){ VQ.runId = v.qid; VQ.focus = "run"; VQ.focusTo = "vq_runh"; VQ.scrollTo = "vq_run"; paintVStamp(); }
+  }
+  else if(act === "vqRunBack"){
+    if(VQ){
+      VQ.focus = "list";
+      const v = vqById(VQ.runId);
+      if(v) VQ.focusTo = `.vqd-row[data-qid="${v.qid}"] .vqd-ac .vqd-b`;
+      paintVStamp();
+    }
+  }
   else if(act === "vqDetails"){
     const v = vqById(el.dataset.id);
-    if(v && !v.run){ v.step = v.out && !vqStale(v) ? "done" : "preview"; v.err = ""; VST = v; paintVStamp(); }
+    if(v && !v.run && VQ.busy !== v){
+      v.step = v.out && !vqStale(v) ? "done" : "preview"; v.err = "";
+      VST = v;
+      paintVStamp();
+    }
   }
+  else if(act === "vqSaveCopy"){ const v = vqById(el.dataset.id); if(v) vstSave(v); }
+  else if(act === "vqSavedMark"){ const v = vqById(el.dataset.id); if(v) vstConfirmSaved(v); }
   else if(act === "vqUp"){ vqMove(el.dataset.id, -1); }
   else if(act === "vqDown"){ vqMove(el.dataset.id, 1); }
   else if(act === "vqRemove"){ vqRemove(el.dataset.id); }
   else if(act === "vqRepick"){ vqRepick(el.dataset.id); }
   else if(act === "vqBack"){
+    /* Out of the drawer, back to the dashboard, with the keyboard on that
+       video's row. With no drawer open this is the phone's way back to the
+       list. */
     const v = VST;
-    /* Leaving the editor never keeps or throws away a correction silently:
-       an unsaved one holds the operator here until it is saved or undone. */
-    if(v && v.step === "when" && vqEditDirty(v)){
-      v.draft = Object.assign({}, v.draft || {}, vqEditRead());
-      v.err = "This video's time has changes that are not saved. Save them, or undo them, before going back.";
-      paintVStamp();
-    } else {
-      if(v){ v.err = ""; v.saveMsg = ""; if(v.step === "when") v.step = v.out && !vqStale(v) ? "done" : "preview"; }
+    if(v){
+      v.err = ""; v.saveMsg = "";
       VST = null;
+      if(VQ && v.qid && VQ.items.includes(v)) VQ.focusTo = `.vqd-row[data-qid="${v.qid}"] .vqd-ac .vqd-b`;
       paintVStamp();
-    }
+    } else if(VQ) vqNavigate({back: true});
   }
   else if(act === "vqSaveTime"){ vqSaveTime(); }
   else if(act === "vqUndoTime"){ vqUndoTime(); }
   else if(act === "vqEditPrev"){ vqEditStep(-1); }
   else if(act === "vqEditNext"){ vqEditStep(1); }
+  else if(act === "vqAskSave"){ vqAskAnswer("save"); }
+  else if(act === "vqAskDiscard"){ vqAskAnswer("discard"); }
+  else if(act === "vqAskStay"){ vqAskAnswer("stay"); }
   else if(act === "vqProcessNext"){ vqProcessNext(); }
   else if(act === "vqCase"){ if(VQ){ VQ.view = "case"; paintVStamp(); if(!VQ.cases) vqLoadCases(); } }
   else if(act === "vqPickCase"){
@@ -29602,6 +30806,10 @@ document.addEventListener("input", ev => {
     const q = $("vst_q"); if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); } return; }
   if(din === "vqSearch" && VQ){ VQ.q = ev.target.value; paintVStamp();
     const q = $("vq_q"); if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); } return; }
+  /* The editor's date and time: held as that video's draft and reflected in
+     place — the burned-in label, the preview's stamp, EST or EDT — with no
+     repaint, so the box being typed in is never rebuilt under the caret. */
+  if(din === "vqTime" && VQ){ vqTimeLive(); return; }
   /* Typing a custom retainer counts as choosing one. No repaint — the box the
      cursor is sitting in must not be rebuilt underneath it mid-number. */
   if(din === "wizRetDirty" && SHEET_WIZ){ SHEET_WIZ.retainerTouched = true; return; }
