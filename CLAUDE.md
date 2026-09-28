@@ -2069,10 +2069,13 @@ Rate Sheet's own form is a modal and always sat at the top (117 / 84,
 unchanged); its defect was the way back.
 
 The other three were already direct and are untouched: Active Surveillance
-takes its own full screen, and both timestamp tools open the file picker itself
-— the chooser fires on the first tap, measured. **A probe once reported those
-two as doing nothing**, which was the probe swallowing the chooser with
-`setFiles([])` rather than the product; do not repeat that reading.
+takes its own full screen, and both timestamp tools open their own tool — the
+photo tool's chooser fires on the first tap, measured, and since Timestamp
+Video V2 (2026-09-28) the video card opens the queue dashboard, whose drop zone
+and *Add videos* are the chooser, rather than a bare picker. **A probe once
+reported those two as doing nothing**, which was the probe swallowing the
+chooser with `setFiles([])` rather than the product; do not repeat that
+reading.
 
 **`homeTabs()` IS PER ROLE AND RETURNS A SET, AND BOTH HALVES WERE PAID FOR.**
 The default tab is `cases`, flipped to `dashboard` only for an ADMIN — an
@@ -3664,10 +3667,12 @@ person leaves too.
 **DO NOT RUN `case-portal/test-worker.mjs` WHILE `portal/test-portal.mjs` IS
 RUNNING.** Two video-stamp assertions failed on a concurrent run — *"the
 output carries bright pixels there — 0"* — and passed on the same tree run
-alone. `vstDraw` + `MediaRecorder` encodes in REAL TIME, so CPU contention
-drops the stamped frames, and it fails in exactly the shape of a product
-regression: the burn-in test, reporting that the timestamp is not in the
-pixels. This file already said two agents must not run the portal suite at
+alone. The burn-in test then encoded in REAL TIME through `MediaRecorder`, so
+CPU contention dropped the stamped frames, and it failed in exactly the shape
+of a product regression: the timestamp reported as not in the pixels. (Since
+V2 it runs the frame-counted WebCodecs pipeline, which cannot lose a frame
+silently — but the Stop and progress sections are still timing-sensitive, and
+the rule stands.) This file already said two agents must not run the portal suite at
 once because they bind the same port; the stronger rule is that nothing
 CPU-heavy may run beside it at all.
 
@@ -3912,8 +3917,8 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 4389 checks (2026-09-28): auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 4262 checks (2026-09-28): the page against the real Worker
+node case-portal/test-worker.mjs   # 4393 checks (2026-09-28): auth, invites, roles, redaction, rates, ingest
+node portal/test-portal.mjs        # 4486 checks (2026-09-28): the page against the real Worker
 ```
 
 **WRITE A SUITE'S OUTPUT TO A FILE, NEVER A PIPE.** Every suite ends in
@@ -3929,11 +3934,11 @@ The portal tests run the real page against the real Worker against real SQLite,
 so they catch SQL and permission mistakes rather than mocking past them.
 
 **`portal/test-portal.mjs` GETS THE MACHINE TO ITSELF.** Beyond the port it
-binds, its video-stamp section encodes in real time through `MediaRecorder`,
-so anything CPU-heavy beside it — the Worker suite, another Playwright run —
-drops the stamped frames and the burn-in assertions fail as though the
-timestamp had stopped reaching the pixels. Measured 2026-09-21: two failures
-concurrent, zero on the same tree run alone.
+binds, it runs real video encodes and timing-sensitive Stop checks, so
+anything CPU-heavy beside it — the Worker suite, another Playwright run — can
+fail a section as though the product had broken. Measured 2026-09-21 on the
+old real-time recorder: two failures concurrent, zero on the same tree run
+alone.
 
 ## The client package
 
@@ -5183,7 +5188,9 @@ is the only way one can exist.
 **`video_stamp` is metadata and audit only. There is no blob column and there
 must never be one** — a test reads `schema.sql` rather than a comment about it.
 A correction does not edit a row: it inserts a new one and stamps the earlier
-one `superseded_at`, matched on the original's own filename so a caller cannot
+one `superseded_at`, matched on the original itself — its name, and (since V2)
+no disagreement on size or fingerprint where both were recorded, because a
+camcorder's `00029.MTS` on two days' cards is two files — so a caller cannot
 supersede another original by naming its id. This is the project's existing
 audit shape (`send_log`, `build_events`, `invoice_events`), not a new one.
 
@@ -5194,14 +5201,15 @@ the operator confirms it arrived. It is written once — a second tap does not
 move the moment the file reached the device. Safari cannot silently put a file
 in Photos and nothing here pretends it can.
 
-**The renderer is canvas + `MediaRecorder` (VP9/WebM), and mp4 is refused by
-construction.** A capability proof run before any feature code found WebCodecs
-**absent** in this browser, so the architecture audit's first recommendation
-could not be used or proven; the same proof took a clip through decode → canvas
-→ burn → encode → **re-decode** and found the burned marker present in the
-output with a control pixel elsewhere clean. It also found `video/mp4` reporting
-supported while its only real codec `avc1` reports **not** — recording to it
-produces a file nothing can play. `vstMime()` never offers it.
+**The renderer is the WebCodecs pipeline, and nothing else since V2
+(2026-09-28).** It began as canvas + `MediaRecorder` (a capability proof then
+found WebCodecs absent in the test browser), and that route wrote the owner's
+iPhone a file it could not read back. The pipeline — demux, `VideoDecoder`,
+burn, `VideoEncoder` (H.264), the vendored MP4 muxer — replaced it for every
+file the owner records, and V2 RETIRED the recorder outright: a real-time
+capture drops frames without a word and writes the browser's own container,
+so it can prove a copy neither whole nor clean. `vstMime`, `vstProveMime` and
+the proven-format checks went with it; a test pins that they stay gone.
 
 **The clock runs on the footage's timeline, never on this machine's.** The label
 for a frame is the operator's chosen start plus that frame's own presentation
@@ -5212,13 +5220,14 @@ they change, and the stamp must not move.
 
 Known limits, stated rather than papered over: the copy is **picture only** (no
 dependable cross-browser audio capture, and the original with its audio is
-untouched on the device), the output is **WebM**, rendering is **real time**
-because the clip is played through once, and the original's SHA-256 is taken
-only up to 128 MB and recorded as **absent** above that — never as a placeholder.
+untouched on the device), the output is an **H.264 MP4**, a long clip takes a
+while and the screen has to stay open, and the original's SHA-256 is taken only
+up to 128 MB and recorded as **absent** above that — never as a placeholder.
+The COPY's SHA-256 is taken at any size, in place (see the V2 section).
 
 `VST` and the `#vstamp` sibling root follow the evidence viewer's pattern for
-one more reason: a render runs as long as the clip does, and nothing underneath
-may be rebuilt while it goes.
+one more reason: a render runs a long time, and nothing underneath may be
+rebuilt while it goes.
 
 **Adding this table means a manual `portal-setup.yml` dispatch after merge.**
 Every read is guarded through `missingTables()` — the list degrades, the
@@ -5228,9 +5237,9 @@ workspace carries an empty array, the write returns 503 naming the workflow.
 navigation foot for both roles on every screen and as one compact `.qtools` row
 on the Dashboard; an investigator has no Dashboard, which is why the nav door is
 the real answer. Its `data-case` is empty **on purpose** so it cannot adopt
-whichever case is open behind it — opened from outside a case it asks, against
-the caller's own `/submissions` list, and the record still goes through
-`caseFor`. A copy may also be made with no case at all, and the screen then says
+whichever case is open behind it — opened from outside a case, the queue
+offers an optional case choice from the caller's own `/submissions` list, and
+the record still goes through `caseFor`. A copy may also be made with no case at all, and the screen then says
 plainly that the portal holds no record of it until it is attached.
 
 **A control that renders is not a control that can be seen.** The Timestamp Video
@@ -5384,6 +5393,208 @@ NOT count as damage) — and the injectors **refuse an index past the last
 packet**, because one that damages nothing makes a damage test pass on a clean
 file. **Every safety property was mutated in a worktree: 21 of 21 fail an
 assertion that names them.** The device decode of the owner's real file remains the owner's check.
+
+## Timestamp Video V2: a copy is clean by construction and proven clean, and many go through one queue
+
+Owner brief 2026-09-28 (40 items). Record in `case-portal/VIDEO-TIMESTAMP.md`
+(*V2*).
+
+**THE COPY STARTS CLEAN; IT IS NOT CLEANED.** Every frame is decoded, stamped
+and encoded afresh and the vendored muxer has no metadata API, so the
+original's GPS, camera, dates, MDPM and name have no path into the copy — the
+brief's preferred architecture was already this one. What the NEW writer and
+encoder add is dealt with in order: user-data SEI (4, 5) and unspecified NALs
+(24–31) are stripped from each encoded chunk before the muxer
+(`vstCleanChunk`); the writer's processing-time stamps in `mvhd`/`tkhd`/`mdhd`
+are zeroed and its `mp4-muxer-hdlr` name blanked, in place (`vstScrubMp4`); and
+then `vstCleanCheck`, which trusts neither, reads the finished bytes against a
+strict box allow-list, the zeroed fields, a NAL walk of every frame and a
+search for every string the original's metadata carried plus its file name. A
+failure is a `clean` fault: no copy, no object URL, never retried on the other
+decoder. `vstFinishCopy` is the one place both transcode paths finish.
+
+**PROCESSING TIME IS AUDIT, SO IT IS NOT IN THE FILE.** Zero is the standard's
+"not set" and what ffmpeg writes with `-map_metadata -1`; the receipt holds the
+moment instead. Scrubbing in place rather than patching the vendored library
+means a muxer update keeps working — or fails the check loudly.
+
+**THE COPY'S FINGERPRINT IS TAKEN IN PLACE** (`vstSha256`, FIPS 180-4 in JS)
+because Web Crypto copies its input and a phone holding two copies of a long
+clip closes the tab. Held to Web Crypto at every block and slice boundary. The
+ORIGINAL keeps its workflow (Web Crypto, ≤128 MB). Two files, two digests,
+never one field. Copies are named `API-Timestamped-YYYYMMDD-HHMMSS-NNN.mp4`
+from the burned start and the queue position (`vstCopyName`, the one writer).
+
+**THE CANVAS RECORDER IS RETIRED** — see *Video is device-first*. The burn-in
+pixel proof moved onto the real pipeline: this browser has VP9 encode and
+decode in WebCodecs, so `useVp9` swaps the encoder configuration and the
+muxer follows it (`vstMuxCodec`) — real decode, burn, encode, mux, clean check,
+read-back, then the copy played by the browser and its pixels looked at.
+Production encodes H.264 everywhere.
+
+**THE QUEUE IS ONE DASHBOARD, AND A VIDEO'S DETAILS ARE THE OLD SCREEN.** An
+entry is the object the single tool always worked on; `VQ.sel` is the one in
+the editor, and `VST` the one whose details are open over the dashboard — the
+drawer, which is `vstHtml`, the single-video screen, not a rewrite. Nothing one
+entry holds can reach another. The dashboard itself is the owner's approved
+mockup; its durable rules are the next subsection.
+
+- **One heavy thing at a time.** Analysis — structure, decoder questions, one
+  thumbnail frame, fingerprint — is sequential and pauses during a run;
+  Generate waits for the analysis in flight.
+- **One finished copy in memory.** Starting another lets go of a saved copy;
+  an unsaved one only after the operator agrees.
+- **An entry is light.** A checked MOV/MP4 lets its frame table go and keeps
+  the count (`vstSlim` — measured at ~85 bytes a frame, 18 MB for an hour at
+  60 fps, per entry, which a queue of long clips would otherwise hold at once).
+  Generate reads the table again from the same file and refuses one that no
+  longer reads with the frames that were checked. A transport stream never
+  held a table here.
+- **READY means a start you can stand behind** — capture metadata, or a time
+  the operator saved. A modified-date or zone-less creation time is NEEDS
+  REVIEW: the single flow always made you look at it, and Process Next must
+  not be the way round that.
+- **Nothing runs unpressed.** Process Next names the next READY video and runs
+  that one; Stop ends the run where it stands and keeps the queue.
+- **A queue repaints while somebody is using it.** `paintVStamp` keeps the
+  list's and the editor's scroll, an open ⋮ menu, focus and caret, a playing
+  preview, and a half-typed editor correction (as the entry's draft — only Save
+  writes the entry). **Found by a screenshot that would not stay scrolled** —
+  every suite was green over it, the same lesson as every other "look at it"
+  in this file.
+
+**A CAMCORDER NAME IS NOT A FILE.** `recordVideoStamp` superseded by original
+name alone, and a camcorder numbers from 00000 again after a format — so a
+queue of two days' cards would have marked day one's records superseded by day
+two's. It now supersedes only when name matches and size and fingerprint do
+not disagree where both are known.
+
+**NO TIMEZONE SELECTOR EXISTS**, so there is no "apply timezone to all" — the
+brief made it conditional on one, and adding a zone picker to make the bulk
+button possible would be the tail wagging the dog.
+
+**THE ONLY WAY A VIDEO BYTE LEAVES THE DEVICE IS A BUTTON THE OPERATOR
+PRESSES.** A finished copy that belongs to a case still offers *Also save a
+copy to the case Dropbox folder* — the owner's optional step of 2026-08-18,
+unchanged, the clean DERIVATIVE only, never an original. So the queue says
+*every copy is made on this device, and nothing is uploaded to make it*: the
+first draft said *nothing is uploaded*, full stop, which was wider than the
+product. Queueing, checking, making and fingerprinting are asserted to make no
+request at all; choosing a case reads the case list, and a copy made for a
+case writes the case record's metadata (`video_stamp` — names, sizes,
+fingerprints, the start) — never a byte of video.
+
+**A FAILED FINISH IS THE WRITER'S, ON BOTH PATHS.** The MOV/MP4 path called
+`finalize()` bare, so a writer that threw at its last step reached the screen
+with no class and the preview offered Generate over the failure — the retry
+loop the MTS unit had just removed, one path over. Found by writing the
+brief's "failed mux/finalization" test rather than by reading; both paths now
+answer `encoder` (or `memory`) and the test holds each.
+
+**ONE WRITER FOR A MISSING ORIGINAL FINGERPRINT** (`vstOrigHashWhy`). The
+screens said *too large to fingerprint in a browser* — untrue once the COPY was
+fingerprinted in the browser at any size. The limit (Web Crypto, whole file,
+≤128 MB — most camcorder MTS files are over it) is this tool's workflow, kept
+per the brief, and it is named as this tool's. Lifting it is possible now (the
+in-place hasher reads slices) but costs phone CPU on every queued original,
+so it is the owner's call, not a keystroke.
+
+### The dashboard: the approved mockup, built, and every control wired
+
+Owner brief 2026-09-28 (the second, A–AW), against an approved mockup:
+*"THIS IS NOT JUST A VISUAL MOCKUP. Build the complete working product behind
+it."* Record in `case-portal/VIDEO-TIMESTAMP.md` (*V2 §6*).
+
+**THE DOOR OPENS THE DASHBOARD, NOT THE PICKER.** The queue is where videos are
+dropped, so it is on screen before any are chosen — empty, reading nothing.
+The drop zone is itself a `<button>`, so a click, a tap, Enter and a drop all
+arrive at one door; dragging is never the only way in. A drop is ADDING (the
+same `vqAdd`, nothing starts), a dropped folder is walked by entry name and
+only its videos join, and no drop ever falls through to the browser.
+
+**ONE DOM, TWO SHAPES, AT 1240.** A desk gets the table beside a sticky editor
+and a processing row; narrower gets cards, and the editor and the run each
+take the whole screen in turn (`data-focus`), with what is behind them
+`inert`. Below 1240 the table's columns cannot sit beside the editor without a
+sideways scroll, so an iPad in landscape gets the cards.
+
+**A QUEUED RUN BELONGS TO THE QUEUE.** `vstRunLive` used to end a run the
+moment its video was not the one on screen — right for a lone screen, and it
+would have killed every dashboard run, which is shown in place with no `VST`
+at all. A queued run now lives while its video is in the queue and nobody has
+pressed Stop or Close; the lone rule is unchanged.
+
+**A TYPED TIME OUTRANKS THE FILE'S DATE, EVEN BEFORE AN INPUT EVENT.**
+`vqAnalyze` writes the capture time into an entry only when nothing is typed,
+and it now takes the editor's boxes as the draft BEFORE deciding — found by the
+existing typing test after the rewrite, where a value set without an input
+event was overwritten the moment the file's own date arrived.
+
+**THE PREVIEW IS MOVED, NOT REBUILT.** One `<video>` of the selected original,
+from a local object URL; each repaint moves that element into the new editor
+inside the same task, and the HTML spec only pauses a media element still out
+of the document once the task ends — so a repaint does not stop what is
+playing. A transport stream is never handed to the player; it shows its first
+frame and says why.
+
+**A THUMBNAIL IS ONE FRAME** — one keyframe, one decoder, closed at once, a
+160px JPEG in this tab. Asserted over twenty videos (one decoder per video at
+most, each fed one chunk, one alive at a time, no encoder); the old assertion
+"no decoder was made" was the right rule for a queue with no pictures and is
+replaced, not loosened.
+
+**THE PROCESSING ROW STICKS ONLY ON A TALL DESK.** At 1280×800 a sticky row
+covered the whole queue — measured in the first screenshot, before a test
+existed. Below 1000px high it sits under the queue, and starting a run brings
+it into view.
+
+**THREE INSTRUMENT LESSONS FROM RE-AIMING THE SUITE, NONE OF THEM THE PRODUCT.**
+A menu item inside a CLOSED `<details>` still returns a real box from
+`getBoundingClientRect` (the content is skipped, not unlaid-out), so a
+"reachable controls" check must exclude it or it reports hidden items as
+covered. A read counter that counts every `vstParse` also counts the COPY's
+read-back, which is not the original's table being read again — count by the
+file. And a source-slicing test used the comment `/* Opening the generator` as
+its end marker: renaming the comment silently widened what it scanned, so the
+wording was kept rather than the test re-pointed. (The receipt, which reads the
+clock on purpose, moved out of the range the "no clock in the opener" guard
+scans — it had been sitting inside it.)
+
+**FOUR MUTATIONS WALKED PAST THE FIRST TESTS, AND ALL FOUR WERE THE TEST.** Of
+32 dashboard mutations, 28 failed an assertion naming them on the first run.
+The other four each found a check that could pass over the defect it named:
+*"the editor is the whole screen"* measured *at least as tall as the screen*,
+which an inline editor scrolled above the top also is; *"the processing panel
+never overlaps the editor"* passed over a 30px sliver of an editor, because a
+sliver overlaps nothing — the `[].every()` vacuous truth in a geometric
+costume; a missing selected row CRASHED the desk section instead of failing
+it; and *"Process next makes only that one"* read only the final order. All
+four were strengthened rather than the mutations retired, and all six
+mutations in those sections re-ran named (`VIDEO-TIMESTAMP.md` V2 §9). **A
+mutation that FREEZES the page cannot be named from inside it** — an unbounded
+promise chain never yields to the event loop — so the realistic form of that
+defect is the one held by name, and the frozen one is recorded as a crash.
+
+**AND THE PIPE TRAP FIRED AGAIN, in a mutation runner.** The Worker mutation
+read `test-worker.mjs` through `capture_output`, the pipe was cut at 1,203 of
+~4,390 checks with no totals line, and the mutation was reported UNCAUGHT. Run
+to a file it failed three assertions by name. The rule above (*write a suite's
+output to a file, never a pipe*) applies to runners that call suites, not only
+to people.
+
+**THE FULL RUN REACHES WHAT A TARGETED RUN CANNOT.** Every timestamp section
+was green, and the first full regression still failed eight assertions — in a
+device read-out section, a Home art-card walk and a modal count, none of them
+"timestamp" sections, each still describing what V2 had deliberately changed
+(the recorder's rows, the card firing the picker, `role="dialog"` alone). A
+feature's reach is wider than the sections named after it; the targeted run is
+for speed, and the full run is the evidence.
+
+**TWO MORE TRIMMED-RUNNER ARTEFACTS, NOT DEFECTS** (beside the two "long case
+number" ones). "Timestamp video is reachable without opening a case" and
+"Timestamp Photo is reachable in the field" fail in a trimmed run on master
+too — they rely on state earlier sections build. Check any trimmed-run failure
+against master in a worktree before chasing it.
 
 ## A photograph is timestamped into the case, not onto the device
 

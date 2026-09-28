@@ -10992,6 +10992,37 @@ section('Video is device-first');
   ok('and nothing in the Worker writes video bytes to it',
      !/INSERT INTO video_stamp[\s\S]{0,400}?(blob|bytes|data)\b/i.test(
        fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8')));
+
+  /* A NAME IS NOT A FILE (Timestamp Video V2). A camcorder numbers from 00000
+     again after its card is formatted, so a queue of two days' cards can hand
+     the portal two different originals both called 00029.MTS. Each keeps its
+     own active record; a correction supersedes only the file it corrects. */
+  const day1 = { original_name: '00029.MTS', original_size: 734003200, original_hash: 'b'.repeat(64),
+    start_utc: '2026-09-26T10:11:02.000Z', tz: 'America/New_York',
+    derivative_name: 'API-Timestamped-20260926-061102-001.mp4' };
+  const day2 = { original_name: '00029.MTS', original_size: 512000000,
+    start_utc: '2026-09-27T14:02:10.000Z', tz: 'America/New_York',
+    derivative_name: 'API-Timestamped-20260927-100210-001.mp4' };
+  await post(dana, day1);
+  const both = (await jsonOf(await post(dana, day2))).stamps.filter(r => r.original_name === '00029.MTS');
+  ok('two different files sharing a camcorder name are both kept active',
+     both.length === 2 && both.every(r => r.superseded_at === null), JSON.stringify(both.map(r => r.superseded_at)));
+  const fixed = (await jsonOf(await post(dana, Object.assign({}, day1,
+    { start_utc: '2026-09-26T10:11:03.000Z' })))).stamps.filter(r => r.original_name === '00029.MTS');
+  const byStart = t => fixed.find(r => r.start_utc === t);
+  ok('a correction of one supersedes that one',
+     fixed.length === 3 && !!byStart('2026-09-26T10:11:02.000Z').superseded_at
+     && byStart('2026-09-26T10:11:03.000Z').superseded_at === null);
+  ok('and leaves the other file of the same name active',
+     byStart('2026-09-27T14:02:10.000Z').superseded_at === null);
+  /* Same size but a different fingerprint is a different file too; a record
+     that sends neither size nor fingerprint cannot tell and supersedes as it
+     always did — which is the case the correction above already covers. */
+  const other = (await jsonOf(await post(dana, Object.assign({}, day1,
+    { original_hash: 'c'.repeat(64), start_utc: '2026-09-28T08:00:00.000Z' })))).stamps
+    .filter(r => r.original_name === '00029.MTS' && r.superseded_at === null);
+  ok('the same size with a different fingerprint is kept apart',
+     other.length === 3, JSON.stringify(other.map(r => r.start_utc)));
 }
 
 /* A deleted or archived case does not participate in work, and that has to hold
@@ -21759,8 +21790,13 @@ section('The exact document that was sent, and what the client signed');
   /* ---- 4. THE DOOR CARRIES THE DOCUMENT, AND NOTHING ELSE (§3) --------- */
   ok('the intake door sent to the client carries the document reference',
      String(doc.intake_door || '').includes(`ref=${sent.doc_id}`), doc.intake_door);
+  /* The document reference itself is 128 random bits in hex, which is ALLOWED
+     to contain "540" by chance (it once read DOC-f90e4540…, failing this about
+     one run in seventy). It is taken out before looking: what is checked is
+     everything else in the URL, which is where client details could leak. */
   ok('and the URL exposes nothing about the client — no name, no amount, no case',
-     !/vanessa|Hart|2000|750|540/i.test(String(doc.intake_door || '')), doc.intake_door);
+     !/vanessa|Hart|2000|750|540/i.test(String(doc.intake_door || '').replace(/ref=DOC-[0-9a-f]{32}/, 'ref=DOC-')),
+     doc.intake_door);
   ok('the door in the record is the door in the email',
      !!client && client.text.includes(doc.intake_door), doc.intake_door);
 
