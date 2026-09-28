@@ -13939,6 +13939,28 @@ function vstProbe(url){
    where its helpers were. `readable` is INFORMATIONAL — it says what the media
    element managed, which is worth reporting and decides nothing. A file the
    pipeline cannot take is refused with the reason. */
+/* A PARSED FILE'S FRAME TABLE — or, once a queue entry has let the table go,
+   its count. "Could this be copied frame by frame?" is answered the same way
+   either side of that. */
+const vstFrames = p => !!(p && p.video && (p.video.samples || p.video.sampleCount != null));
+
+/* ONE ENTRY'S FRAME TABLE IS NOT LIGHT. A MOV/MP4 parse lists every frame —
+   measured in V8 at about 85 bytes a frame: 1.4 MB for ten minutes at 30 fps,
+   18 MB for an hour at 60 — so a queue that kept every entry's table would grow
+   with the length of every clip in it: exactly the memory the brief's item 16
+   says the queue must not hold.
+   The table is let go once the entry is checked, and read again from the same
+   file only when that entry is generated (see `vstGenerate`), where it must
+   match what was checked. A transport stream holds no table here — the queue
+   keeps only its head scan. */
+function vstSlim(v){
+  const p = v && v.parsed;
+  if(!p || vstIsTs(p)) return;
+  for(const t of [p.video, p.audio]){
+    if(t && t.samples){ t.sampleCount = t.samples.length; t.samples = null; }
+  }
+}
+
 function vstPath(v = VST){
   if(!v) return "none";
   /* A TRANSPORT STREAM HAS EXACTLY ONE ROUTE. No browser this portal runs in
@@ -13955,7 +13977,7 @@ function vstPath(v = VST){
     if(v.decodeOk === true || v.compatOk === true) return "pipeline";
     return v.decodeOk === null || (v.decodeOk === false && v.compatOk === null) ? "checking" : "none";
   }
-  const pipeReady = vstCanPipeline() && v.parsed && v.parsed.video && v.parsed.video.samples;
+  const pipeReady = vstCanPipeline() && vstFrames(v.parsed);
   if(pipeReady && v.decodeOk === true) return "pipeline";
   /* An outstanding answer is not a refusal: the decoder has not answered yet,
      or the file itself has not been read yet — a queue entry says so in
@@ -14017,7 +14039,7 @@ function vstCompatText(v = VST){
   const why = !vstCanPipeline()
       ? (plays ? "This device can play it, but this browser has no WebCodecs video decoder and encoder, which every verified copy is made with."
                : "This browser has no WebCodecs video decoder and encoder, which every verified copy is made with.")
-    : !(v.parsed && v.parsed.video && v.parsed.video.samples)
+    : !vstFrames(v.parsed)
       ? (plays ? "This device can play it, but could not decode it frame by frame here: its frames could not be read one by one from the file, so no copy could be counted as whole."
                : "This device could not decode it here: its frames could not be read one by one from the file.")
     : v.decodeOk === false
@@ -15688,7 +15710,7 @@ async function vqAnalyze(v){
       v.captureNote = p.capture.source;
     }
   }
-  if(vstCanPipeline() && p && p.video && (p.video.samples || vstTsReady(p))){
+  if(vstCanPipeline() && p && p.video && (vstFrames(p) || vstTsReady(p))){
     const r = await vstDecoderAccepts(p.video);
     if(vqGone(v)) return;
     v.decodeOk = !!(r && r.supported);
@@ -15715,6 +15737,7 @@ async function vqAnalyze(v){
     if(!v.codec) v.codec = await vstBoxCodec(v.file);
     if(vqGone(v)) return;
   }
+  vstSlim(v);
   paintVStamp();
   /* THE ORIGINAL'S FINGERPRINT, last because it is the heaviest read, taken
    from this file and kept on this entry — never computed for one entry and
@@ -16203,7 +16226,29 @@ async function vstGenerate(v = VST){
   v.run = run;
   try{
     v.stage = "preparing";
-    const r = await vstTranscode(v.file, v.parsed, v.startMs, v.tz, (stage, pct, info) => {
+    /* THE FRAME TABLE, READ AGAIN FROM THE SAME FILE when the queue let it go
+       (`vstSlim`) — and it has to be the table the entry was checked against.
+       A file that no longer reads, or reads with a different number of frames,
+       is not the file that was checked, and gets no copy. The table lives only
+       as long as this run does. */
+    let parsed = v.parsed;
+    if(parsed && !vstIsTs(parsed) && parsed.video && !parsed.video.samples && parsed.video.sampleCount != null){
+      let again = null;
+      try{ again = await vstParse(v.file); }catch{ again = null; }
+      if(!vstRunLive(run)) return;
+      if(!again || !again.video || !again.video.samples || again.video.samples.length !== parsed.video.sampleCount){
+        const text = again && again.video && again.video.samples
+          ? `it now reads with ${vstNum(again.video.samples.length)} frames where ${vstNum(parsed.video.sampleCount)} were checked`
+          : "it could not be read again";
+        throw vstFault("read", "The original could not be read again to make the copy: " + text
+          + ". No timestamped copy was created and your original is unchanged.",
+          {head: "The original could not be read again to make the copy. No timestamped copy was created and your original is unchanged.",
+           text, lines: [text.charAt(0).toUpperCase() + text.slice(1) + ".",
+             "If the file is on a camera card or an external drive, check it is still connected, then choose the video again."]});
+      }
+      parsed = again;
+    }
+    const r = await vstTranscode(v.file, parsed, v.startMs, v.tz, (stage, pct, info) => {
       if(!vstRunLive(run)) return;
       const moved = v.stage !== stage;
       v.stage = stage; v.pct = Math.min(99, Math.max(0, Math.round(pct || 0)));
@@ -16507,8 +16552,8 @@ async function vstDiagnose(){
   /* THE REAL PIPELINE'S OWN ROWS — demux and mux are this build's, not a guess
      about an API. Demux is proven by the sample table actually coming out of
      the file; mux by the vendored module loading. */
-  lines.push(row(p && vstIsTs(p) ? "TS demux" : "MP4 demux", vid && vid.samples
-    ? `yes — ${vid.samples.length} video samples`
+  lines.push(row(p && vstIsTs(p) ? "TS demux" : "MP4 demux", vstFrames(p)
+    ? `yes — ${vid.samples ? vid.samples.length : vid.sampleCount} video samples`
     : p && vstIsTs(p)
       ? (vstTsReady(p)
           ? `yes — ${vid.headFrames} access units read from the packet grid (stride ${p.layout.stride})`
@@ -16518,7 +16563,7 @@ async function vstDiagnose(){
   try{ const M = await vstMuxer(); muxOk = !!(M && M.Muxer); }catch(e){ muxOk = false; }
   lines.push(row("MP4 mux", muxOk ? "yes — same-origin module loaded" : "no — the muxer did not load"));
   lines.push(row("Pipeline available",
-    vstCanPipeline() && muxOk && (vid && vid.samples || vstTsReady(p))
+    vstCanPipeline() && muxOk && (vstFrames(p) || vstTsReady(p))
     ? "YES — this device can generate the MP4 here" : "no"));
   /* THE ROUTE THAT WILL ACTUALLY BE USED. The media element's verdict above is
      informational; this is the line that says whether Generate is offered. */
@@ -17914,7 +17959,7 @@ function vqConfirmHtml(){
         <button class="vst-btn" data-act="vqConfirmNo">Cancel</button>
       </div>`;
   }
-  const what = c.kind === "cleardone" ? "Clear the finished videos from the queue?"
+  const what = c.kind === "cleardone" ? "Clear the completed videos from the queue?"
     : c.kind === "clearall" ? "Clear the whole queue?" : "Close the timestamp queue?";
   const lost = [];
   const scope = c.kind === "cleardone" ? VQ.items.filter(x => vqStatus(x) === "complete") : VQ.items;
@@ -17983,8 +18028,8 @@ function vqHtml(){
         <p class="vst-note">Your original files are never modified. Timestamped copies are newly
           generated derivatives with source metadata removed. Original file fingerprints are kept
           separate from generated-copy fingerprints.</p>
-        <p class="vst-note">Everything happens on this device and nothing is uploaded. Videos are
-          processed one at a time, only when you press Generate. This queue lasts while this page is
+        <p class="vst-note">Every copy is made on this device, and nothing is uploaded to make it. Videos
+          are processed one at a time, only when you press Generate. This queue lasts while this page is
           open &mdash; it is not saved anywhere, so closing the page clears the list (never your files).</p>
         ${q.msg ? `<p class="vst-ok" aria-live="polite">${esc(q.msg)}</p>` : ""}
         <div class="vq-two">
@@ -17998,7 +18043,7 @@ function vqHtml(){
       <ol class="vq-list">${q.items.map((v, i) => vqRowHtml(v, i + 1, mb)).join("")}</ol>
       <div class="vst-card">
         <button class="vst-btn" data-act="vqReceipt">Download the receipt (.txt)</button>
-        <button class="vst-btn" data-act="vqClearDone" ${counts.complete ? "" : "disabled"}>Clear finished videos</button>
+        <button class="vst-btn" data-act="vqClearDone" ${counts.complete ? "" : "disabled"}>Clear completed</button>
         <button class="vst-btn" data-act="vqClearAll">Clear the queue</button>
         <p class="vst-note">The receipt lists every video: its fingerprint, the time found on it, the time
           burned in, the copy&rsquo;s name and fingerprint, and the result. Clearing takes videos out of this

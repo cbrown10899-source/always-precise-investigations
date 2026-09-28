@@ -12565,6 +12565,59 @@ section('Timestamp queue: many videos at once, sorted, and checked one at a time
   await page.close();
 }
 
+section('Timestamp queue: a checked video keeps its frame count, not its frame table');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  /* Item 16: the queue holds lightweight references. A MOV/MP4 frame table
+     grows with the clip, so a checked entry lets it go and keeps the count;
+     generating reads it again from the same file — and a file that no longer
+     reads with the frames that were checked is not the file that was checked. */
+  const R = await vstRun(page, `
+    const restore = useVp9();
+    const rp = window.vstParse;
+    try {
+      const files = [];
+      for (const n of [1, 2, 3]) files.push(await metaClip('SLIM' + n + '.mov', 8 + n, 1790000000200 + n));
+      vqAdd(files, { caseNo: '' });
+      await qWait(() => VQ.items.every(x => x.analysis === 'done'));
+      const [a, b, c] = VQ.items;
+      const slim = VQ.items.map(x => ({ table: x.parsed.video.samples, count: x.parsed.video.sampleCount }));
+      let reads = 0;
+      window.vstParse = async f => { reads++; return rp(f); };
+      qClick('vqGo', b.qid);
+      await qWait(() => b.out || b.fault);
+      const made = { out: !!b.out, frames: b.out && b.out.check && b.out.check.mp4Frames, reads,
+                     stillSlim: b.parsed.video.samples === null && b.parsed.video.sampleCount === 10,
+                     fault: b.fault && b.fault.lines };
+      qClick('vqBack');
+      window.vstParse = async f => { const p = await rp(f);
+        if (p && p.video && p.video.samples) p.video.samples = p.video.samples.slice(0, 3); return p; };
+      qClick('vqGo', c.qid);
+      if (VQ.confirm) qClick('vqConfirmYes');
+      await qWait(() => c.out || c.fault);
+      const changed = { out: !!c.out, kind: c.fault && c.fault.kind, head: c.fault && c.fault.head,
+                        lines: c.fault ? c.fault.lines : [] };
+      qClick('vqBack');
+      changed.status = vqStatus(c);
+      changed.repick = !!document.querySelector('[data-act="vqRepick"][data-id="' + c.qid + '"]');
+      changed.others = vqStatus(a);
+      return { slim, made, changed };
+    } finally { window.vstParse = rp; restore(); vstClose(); }
+  `);
+  ok('once checked, a video keeps its frame count and lets its frame table go',
+     R.slim.length === 3 && R.slim.every(x => x.table === null && x.count > 0), JSON.stringify(R.slim));
+  ok('generating it reads the table again, once, and the copy is whole',
+     R.made.out === true && R.made.reads === 1 && R.made.frames === 10, JSON.stringify(R.made));
+  ok('and the table goes again with the run', R.made.stillSlim === true);
+  ok('a file that reads back with other frames than were checked gets no copy, and says so',
+     R.changed.out === false && R.changed.kind === 'read' && /could not be read again/.test(R.changed.head || '')
+     && R.changed.lines.some(l => /now reads with 3 frames where 11 were checked/.test(l)), JSON.stringify(R.changed));
+  ok('it is offered choosing the video again, and the other videos are untouched',
+     R.changed.status === 'failed' && R.changed.repick === true && R.changed.others === 'ready', JSON.stringify(R.changed));
+  await page.close();
+}
+
 section('Timestamp queue: each video’s date and time is its own');
 {
   const page = await newPage();

@@ -1485,6 +1485,7 @@ being copied without proof.
 | Each video is its own | an entry is the same object the single tool always used; `VST` is the open one. Editing video 2 writes video 2 |
 | One heavy thing at a time | analysis (structure, decoder questions, fingerprint) is sequential and pauses during a run; Generate waits for the analysis in flight |
 | One finished copy in memory | starting another lets go of a saved copy; an unsaved one only after **Save it first / Let it go** |
+| Light entries | a checked MOV/MP4 lets its frame table go and keeps the count (`vstSlim`; measured in V8 at ~85 bytes a frame — 1.4 MB for ten minutes at 30 fps, 18 MB for an hour at 60, per entry). Generate reads the table again from the same file and refuses one that no longer reads with the frames that were checked. A transport stream never held a table in the queue |
 | READY means a start you can stand behind | capture metadata, or a time the operator saved. Modified-date and zone-less creation times are **NEEDS DATE/TIME** |
 | Nothing runs unpressed | Generate per row; **Process next: NAME** after a copy, naming the next READY video; nothing processes the rest on its own |
 | Stop | ends the run where it stands; the entry reads STOPPED and can be generated again; the queue stays |

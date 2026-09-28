@@ -5439,6 +5439,12 @@ than a rewrite, and nothing one entry holds can reach another.
   analysis in flight.
 - **One finished copy in memory.** Starting another lets go of a saved copy;
   an unsaved one only after the operator agrees.
+- **An entry is light.** A checked MOV/MP4 lets its frame table go and keeps
+  the count (`vstSlim` — measured at ~85 bytes a frame, 18 MB for an hour at
+  60 fps, per entry, which a queue of long clips would otherwise hold at once).
+  Generate reads the table again from the same file and refuses one that no
+  longer reads with the frames that were checked. A transport stream never
+  held a table here.
 - **READY means a start you can stand behind** — capture metadata, or a time
   the operator saved. A modified-date or zone-less creation time is NEEDS
   DATE/TIME: the single flow always made you look at it, and Process Next must
@@ -5460,6 +5466,32 @@ not disagree where both are known.
 **NO TIMEZONE SELECTOR EXISTS**, so there is no "apply timezone to all" — the
 brief made it conditional on one, and adding a zone picker to make the bulk
 button possible would be the tail wagging the dog.
+
+**THE ONLY WAY A VIDEO BYTE LEAVES THE DEVICE IS A BUTTON THE OPERATOR
+PRESSES.** A finished copy that belongs to a case still offers *Also save a
+copy to the case Dropbox folder* — the owner's optional step of 2026-08-18,
+unchanged, the clean DERIVATIVE only, never an original. So the queue says
+*every copy is made on this device, and nothing is uploaded to make it*: the
+first draft said *nothing is uploaded*, full stop, which was wider than the
+product. Queueing, checking, making and fingerprinting are asserted to make no
+request at all; choosing a case reads the case list, and a copy made for a
+case writes the case record's metadata (`video_stamp` — names, sizes,
+fingerprints, the start) — never a byte of video.
+
+**A FAILED FINISH IS THE WRITER'S, ON BOTH PATHS.** The MOV/MP4 path called
+`finalize()` bare, so a writer that threw at its last step reached the screen
+with no class and the preview offered Generate over the failure — the retry
+loop the MTS unit had just removed, one path over. Found by writing the
+brief's "failed mux/finalization" test rather than by reading; both paths now
+answer `encoder` (or `memory`) and the test holds each.
+
+**ONE WRITER FOR A MISSING ORIGINAL FINGERPRINT** (`vstOrigHashWhy`). The
+screens said *too large to fingerprint in a browser* — untrue once the COPY was
+fingerprinted in the browser at any size. The limit (Web Crypto, whole file,
+≤128 MB — most camcorder MTS files are over it) is this tool's workflow, kept
+per the brief, and it is named as this tool's. Lifting it is possible now (the
+in-place hasher reads slices) but costs phone CPU on every queued original,
+so it is the owner's call, not a keystroke.
 
 **TWO MORE TRIMMED-RUNNER ARTEFACTS, NOT DEFECTS** (beside the two "long case
 number" ones). "Timestamp video is reachable without opening a case" and
