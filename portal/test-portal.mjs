@@ -10489,18 +10489,29 @@ section('The device answers for itself');
   /* The row names are the owner's own §11 list, 2026-08-18 — this read-out is
      the regression test for the pipeline, so it reports STAGES rather than the
      API inventory it started as. */
+  /* 'Timestamp renderer' and 'Result readable here' were the canvas
+     recorder's rows — its format, proven by a round trip in this read-out.
+     V2 (owner, 2026-09-28) RETIRED the recorder, and a test pins that its
+     proof stays gone. What replaced both rows is the one route that renders
+     now, and the check every copy passes before it is offered. */
   for (const row of ['Device', 'Decode original', 'Container', 'Video codec',
                      'Audio codec', 'WebCodecs decode', 'Encode H.264',
-                     'Timestamp renderer', 'Result readable here', 'Share available']) {
+                     'Route for this file', 'Copy is checked', 'Share available']) {
     ok(`the read-out reports ${row}`, has(diag, row), diag.slice(0, 300));
   }
-  /* IT ACTUALLY TRIES, rather than trusting the capability strings — on iOS
+  /* IT ACTUALLY ASKS, rather than trusting the capability strings — on iOS
      `isTypeSupported` returning true has not meant the bytes are playable, and
-     that is exactly what wrote a file the owner's iPhone could not open. */
-  ok('and it really attempted a render rather than reporting a capability string',
-     /READS BACK|no —/.test(diag), diag.slice(-300));
-  ok('which on this machine produced a format it could read back',
-     /READS BACK/.test(diag), diag.slice(-300));
+     that is exactly what wrote a file the owner's iPhone could not open. The
+     decoder is asked about THIS file's own configuration, and says so. */
+  ok('and it really asked the device about this file rather than reporting a capability string',
+     /WebCodecs decode\s+(yes — accepts THIS file's configuration|no — )/.test(diag), diag.slice(-300));
+  /* THE ROUND TRIP MOVED INTO EVERY COPY: a copy is read back by the page's
+     own parser, frame for frame, and clean-checked before it is offered —
+     proven on real codecs in "The canvas recorder is retired". The read-out
+     says so, and says which route this file would take. */
+  ok('and it says every copy is counted whole and checked clean, and the route this file takes',
+     /Copy is checked\s+whole \(every frame counted\) and clean/.test(diag)
+     && /Route for this file\s+(WebCodecs|none|still deciding)/.test(diag), diag.slice(-400));
   ok('the read-out does not scroll the page sideways', await page.evaluate(() =>
      document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1));
   await page.close();
@@ -11991,19 +12002,25 @@ section('The device read-out validates the pipeline, not the API list');
   await page.locator('[data-act="vstDiag"]').first().click();
   await page.waitForTimeout(9000);
   const d = await text(page, '.vst-diag');
-  /* EVERY ROW THE OWNER LISTED IN §11. */
+  /* EVERY ROW THE OWNER LISTED IN §11 — with the canvas recorder's two rows
+     ('Timestamp renderer', 'Result readable here') replaced by what replaced
+     the recorder in V2: the one route that renders, and the check every copy
+     passes before it is offered. */
   for (const r of ['Container', 'Video codec', 'Audio codec', 'Decode original',
-                   'WebCodecs decode', 'Encode H.264', 'Timestamp renderer',
-                   'Result readable here', 'Audio in original', 'Audio in the copy',
+                   'WebCodecs decode', 'Encode H.264', 'Route for this file',
+                   'Copy is checked', 'Audio in original', 'Audio in the copy',
                    'MP4 demux', 'MP4 mux', 'Share available']) {
     ok(`the read-out reports ${r}`, has(d, r), d.slice(0, 300));
   }
   /* IT ASKS THE DECODER ABOUT THE FILE, not about itself. */
   ok('WebCodecs decode is answered about this file, not the API',
      /WebCodecs decode.*(accepts THIS file|no —)/.test(d), d.slice(0, 600));
-  /* AND IT SHOWS WHAT EACH OUTPUT FORMAT ACTUALLY DID. */
-  ok('each candidate output format is reported by what it did',
-     /READS BACK|no —/.test(d), d.slice(-500));
+  /* THERE IS ONE OUTPUT NOW — the pipeline's MP4 — so the read-out reports the
+     route that makes it and the check it passes, not a list of recorder
+     formats and what each did. */
+  ok('the one output is reported by the route that makes it and the check it passes',
+     /Route for this file\s+(WebCodecs|none|still deciding)/.test(d) && /Copy is checked\s+whole \(every frame counted\)/.test(d),
+     d.slice(-500));
   await page.close();
 }
 
@@ -17677,10 +17694,18 @@ section('Unit 21 — the keyboard reaches the work, and a dialog says what it is
   });
   ok('modals declare themselves as dialogs', dialogs.count >= 0);
   const declared = fs.readFileSync(path.join(ROOT, 'portal/index.html'), 'utf8');
-  const roleDialog = (declared.match(/role="dialog"/g) || []).length;
+  /* `alertdialog` IS a dialog — the role for one that interrupts to ask a
+     question, which the timestamp queue's confirmation does — so both count.
+     And "labelled" is now checked rather than only named: each modal's own
+     tag carries a dialog role and a non-empty label. */
+  const roleDialog = (declared.match(/role="(?:alert)?dialog"/g) || []).length;
   const modal = (declared.match(/aria-modal="true"/g) || []).length;
+  const unlabelled = [...declared.matchAll(/aria-modal="true"/g)].map(m => declared.slice(
+    declared.lastIndexOf('<', m.index), declared.indexOf('>', m.index) + 1))
+    .filter(t => !/role="(?:alert)?dialog"/.test(t) || !/aria-label(?:ledby)?="[^"]/.test(t));
   ok('and every one of them is modal and labelled',
-     roleDialog >= 7 && modal === roleDialog, JSON.stringify([roleDialog, modal]));
+     roleDialog >= 7 && modal === roleDialog && unlabelled.length === 0,
+     JSON.stringify([roleDialog, modal, unlabelled.map(t => t.slice(0, 80))]));
   await page.close();
 }
 
@@ -22513,23 +22538,54 @@ section('Every art card is a direct launcher, and Back returns to an art Home');
        svBack.tab === 'dashboard' && svBack.sv === false && svBack.art === 7,
        JSON.stringify(svBack));
 
-    /* THE TWO TIMESTAMP TOOLS OPEN THE PICKER ITSELF — one tap, no landing
-       screen. `filechooser` firing IS the assertion: it is what a direct
-       launcher does, and it is why these two were already correct. Cancelling
-       leaves the page where it was, which is an art Home. */
-    for (const [qt, label] of [['photo', 'Timestamp Photo'], ['video', 'Timestamp Video']]) {
+    /* THE PHOTO TOOL OPENS THE PICKER ITSELF — one tap, no landing screen.
+       `filechooser` firing IS the assertion: it is what a direct launcher
+       does. Cancelling leaves the page where it was, which is an art Home. */
+    {
       let fired = false;
       const onChooser = () => { fired = true; };
       page.on('filechooser', onChooser);
-      await page.evaluate(q => document.querySelector(`.qtapp[data-qt="${q}"]`).click(), qt);
+      await page.evaluate(() => document.querySelector('.qtapp[data-qt="photo"]').click());
       await page.waitForTimeout(1200);
       page.off('filechooser', onChooser);
       const after = await page.evaluate(() => ({
         tab: TAB, art: document.querySelectorAll('.qtools .qtapp.uiart').length,
       }));
-      ok(`${w}: ${label} opens its file picker directly, and cancelling leaves art Home`,
+      ok(`${w}: Timestamp Photo opens its file picker directly, and cancelling leaves art Home`,
          fired === true && after.tab === 'dashboard' && after.art === 7,
          JSON.stringify({ fired, ...after }));
+    }
+    /* TIMESTAMP VIDEO OPENS ITS QUEUE — since V2 (owner, 2026-09-28) the door
+       is the dashboard, because a dropped file needs somewhere to land: one
+       tap, its own full screen with no launcher on it and nothing chosen yet,
+       and its drop zone IS the picker. Close is the way back to art Home. */
+    {
+      let fired = false;
+      const onChooser = () => { fired = true; };
+      page.on('filechooser', onChooser);
+      await page.evaluate(() => document.querySelector('.qtapp[data-qt="video"]').click());
+      await page.waitForTimeout(1200);
+      const open = await page.evaluate(() => {
+        const d = document.querySelector('#vstamp .vqd'); const r = d && d.getBoundingClientRect();
+        return { queue: !!VQ && VQ.items.length === 0, whole: !!r && Math.round(r.top) === 0
+                   && Math.round(r.bottom) === innerHeight && Math.round(r.width) === innerWidth,
+                 strip: document.querySelectorAll('#vstamp .qtapps').length, drop: !!document.querySelector('.vqd-drop') };
+      });
+      const onTap = fired;
+      await page.locator('.vqd-drop').click();
+      await page.waitForTimeout(800);
+      page.off('filechooser', onChooser);
+      const fromDrop = fired && !onTap;
+      await page.locator('[data-act="vqClose"]').first().click();
+      await page.waitForTimeout(800);
+      const after = await page.evaluate(() => ({
+        tab: TAB, queue: !!VQ, art: document.querySelectorAll('.qtools .qtapp.uiart').length,
+      }));
+      ok(`${w}: Timestamp Video opens its queue directly — the whole screen, empty, no launcher on it`,
+         open.queue && open.whole && open.drop && open.strip === 0 && !onTap, JSON.stringify({ ...open, onTap }));
+      ok(`${w}: its drop zone opens the file picker, and Close leaves art Home`,
+         fromDrop && after.tab === 'dashboard' && !after.queue && after.art === 7,
+         JSON.stringify({ fromDrop, ...after }));
     }
     await page.close();
   }
