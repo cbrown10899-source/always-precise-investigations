@@ -1684,7 +1684,48 @@ editor — and never closes the queue.
 
 ## 8. Tests
 
-{{TESTS}}
+**21 sections of `portal/test-portal.mjs` are new or re-aimed for V2**, and
+one is retired with the thing it tested (*The output format is proven, not
+declared* — the canvas recorder's round trip):
+
+- the clean derivative: *The canvas recorder is retired: every copy is
+  decoded, counted and checked clean* (real VP9 decode → burn → encode → mux →
+  scrub → clean check → read-back → played by the browser, stamp measured in
+  the pixels); *a MOV loaded with metadata comes out carrying none of it*; *a
+  camcorder's MDPM record and an encoder's signature stay out*; *a copy that
+  fails its check is never offered*; *A writer that cannot finish the MP4
+  leaves no copy, on either path*; *The copy's fingerprint is SHA-256, taken in
+  place*;
+- the queue: many videos at once (twenty, one thumbnail frame each, one
+  decoder alive at a time); a checked video keeps its count, not its table;
+  each video's date and time is its own; one at a time in the operator's
+  order; one failed MTS stops nothing else; Stop; removing and clearing; Add
+  videos and Add a folder; the receipt and the case record; a check finishing
+  does not disturb the video being edited; the phone at 390 and 320;
+- the dashboard: drag and drop; five videos with the fourth made first and a
+  copy that fails its check staying failed; the editor's local preview with the
+  stamp where it will burn; the desk at 1280, 1440 and 1920.
+
+**The first full regression found eight failures the targeted runs could not
+reach** — all in sections outside the timestamp work, each describing what V2
+deliberately changed: two device read-out sections still listing the canvas
+recorder's rows and its round trip; the Home art-card walk expecting the video
+card to fire the picker on the tap (it opens the queue, whose drop zone is the
+picker); and a modal count that read only `role="dialog"` while the queue's
+confirmation is an `alertdialog`. Each was re-aimed at the V2 behaviour, the
+modal check was made stricter on the way (it now checks every modal is
+labelled, which it had only named), and the four sections re-ran green.
+
+**Final regression, each suite alone, output to a file:**
+
+| suite | result |
+| --- | --- |
+| `portal/test-portal.mjs` | {{PORTAL_TOTAL}} |
+| `case-portal/test-worker.mjs` | **4393 passed, 0 failed** |
+| `.github/test-deploy.mjs` | **127 passed, 0 failed** |
+| `portal/test-ceo-gate.mjs` | **43 PASS, 0 WARN, 0 FAIL** — the CEO Bot's recorded summary still agrees |
+
+`intake/` and `visitor-alerts/` are untouched and were not re-run.
 
 ## 9. Every safety property, mutated
 

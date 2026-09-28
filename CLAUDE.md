@@ -3917,7 +3917,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 4389 checks (2026-09-28): auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 4393 checks (2026-09-28): auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 4262 checks (2026-09-28): the page against the real Worker
 ```
 
@@ -5581,6 +5581,14 @@ read `test-worker.mjs` through `capture_output`, the pipe was cut at 1,203 of
 to a file it failed three assertions by name. The rule above (*write a suite's
 output to a file, never a pipe*) applies to runners that call suites, not only
 to people.
+
+**THE FULL RUN REACHES WHAT A TARGETED RUN CANNOT.** Every timestamp section
+was green, and the first full regression still failed eight assertions — in a
+device read-out section, a Home art-card walk and a modal count, none of them
+"timestamp" sections, each still describing what V2 had deliberately changed
+(the recorder's rows, the card firing the picker, `role="dialog"` alone). A
+feature's reach is wider than the sections named after it; the targeted run is
+for speed, and the full run is the evidence.
 
 **TWO MORE TRIMMED-RUNNER ARTEFACTS, NOT DEFECTS** (beside the two "long case
 number" ones). "Timestamp video is reachable without opening a case" and
