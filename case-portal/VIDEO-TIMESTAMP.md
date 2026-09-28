@@ -1693,7 +1693,68 @@ sections that hold that property were run alone, and the mutation counts only
 when an assertion **naming it** failed — a crash or an unrelated failure does
 not count.
 
-{{MUTATIONS}}
+**46 mutations in three batches, and every one now fails an assertion that
+names it** — though not every one did on the first run, and the ones that did
+not are the most useful part of this section.
+
+**The clean derivative (12, all named on the first run):** the SEI strip off;
+the scrub off; a clean check that always passes; no search for the original's
+strings; no box allow-list; no check of the zeroed times; no fingerprint of
+the copy; a SHA-256 of the wrong length; the original's metadata strings not
+collected; the copy named from the original; the muxer always told `avc`;
+analysis run in parallel.
+
+**The queue and the dashboard (32).** 28 were named on the first run: the
+MOV writer's failure unclassified, the burn removed, the fingerprint line, the
+hundred-video cap, the slim entry, the re-read unchecked, Next without asking,
+Discard keeping the draft, Save writing the wrong video, a run started with no
+press, Stop that does not stop, Generate offered on a failed video, Remove on
+a finished one, Clear without asking, a thumbnail decoded twice or left open
+or missing, a drop the browser is let open, a drop onto the drawer, a folder
+walk that lets anything in, no *Release to add videos*, a typed time
+overwritten, the list's scroll lost, a stamp that does not follow the typing,
+the preview rebuilt, a transport stream handed to the player, the table on a
+phone, and a queued run killed for not being on screen.
+
+**Four were not named, and each was the TEST's fault:**
+
+- **A phone editor left inline in the list** passed *"the editor is the whole
+  screen"*: the check was *at least as tall as the screen*, which an inline
+  editor taller than the screen and starting above it also is. It failed only
+  the scroll-restore check beside it. The editor is now held to its top at the
+  top and its bottom at the bottom.
+- **A zero-width editor column on a desk** passed *"the processing panel never
+  overlaps the editor"* — a 30px sliver overlaps nothing — and *"the editor is
+  visible"*. A new assertion requires the editor beside the table at its full
+  width, inside the screen, and the overlap check requires an editor worth not
+  overlapping.
+- **No selected row** crashed the desk section on `null.querySelectorAll`
+  instead of failing it. Every read now survives the absence, so *"the
+  selected row is obvious"* fails by name at all three widths.
+- **Process Next that carries on to the rest of the queue** froze the page: an
+  unbounded chain of promise callbacks, each stopping at the release question
+  and calling the next, never yielding to the event loop. The run failed — as a
+  crash, which nothing inside a frozen page can name. The assertion itself only
+  read the final order, so it now also checks, after a settle, that nothing
+  else started or asked; and the mutation was restated as the realistic defect
+  (after the run, go on to the next one) — which fails *"and makes only that
+  one"* with `asking: true`.
+
+The six mutations in those three sections were re-run against the
+strengthened tests: all six named. The unmutated sections were run first as a
+baseline (154 passed; the two failures are the trimmed-runner "long case
+number" artefacts recorded in `CLAUDE.md`).
+
+**Two more (2, both named):** the transport stream's writer failure
+unclassified, and the Worker's supersede matched on the original's name alone —
+which fails the three camcorder-name assertions.
+
+**And the Worker mutation's first run reported nothing caught**, because the
+runner read the suite through a pipe and the pipe was cut off at 1,203 of about
+4,390 checks, with no totals line. That is the exact trap `CLAUDE.md` records
+from 2026-09-24. Run to a file: `4390 passed, 3 failed`, all three by name. Every
+portal mutation's output was checked for its totals line after that; all have
+one.
 
 ## 10. Proven here, and what is left for the device
 

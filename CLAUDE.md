@@ -5560,6 +5560,28 @@ wording was kept rather than the test re-pointed. (The receipt, which reads the
 clock on purpose, moved out of the range the "no clock in the opener" guard
 scans — it had been sitting inside it.)
 
+**FOUR MUTATIONS WALKED PAST THE FIRST TESTS, AND ALL FOUR WERE THE TEST.** Of
+32 dashboard mutations, 28 failed an assertion naming them on the first run.
+The other four each found a check that could pass over the defect it named:
+*"the editor is the whole screen"* measured *at least as tall as the screen*,
+which an inline editor scrolled above the top also is; *"the processing panel
+never overlaps the editor"* passed over a 30px sliver of an editor, because a
+sliver overlaps nothing — the `[].every()` vacuous truth in a geometric
+costume; a missing selected row CRASHED the desk section instead of failing
+it; and *"Process next makes only that one"* read only the final order. All
+four were strengthened rather than the mutations retired, and all six
+mutations in those sections re-ran named (`VIDEO-TIMESTAMP.md` V2 §9). **A
+mutation that FREEZES the page cannot be named from inside it** — an unbounded
+promise chain never yields to the event loop — so the realistic form of that
+defect is the one held by name, and the frozen one is recorded as a crash.
+
+**AND THE PIPE TRAP FIRED AGAIN, in a mutation runner.** The Worker mutation
+read `test-worker.mjs` through `capture_output`, the pipe was cut at 1,203 of
+~4,390 checks with no totals line, and the mutation was reported UNCAUGHT. Run
+to a file it failed three assertions by name. The rule above (*write a suite's
+output to a file, never a pipe*) applies to runners that call suites, not only
+to people.
+
 **TWO MORE TRIMMED-RUNNER ARTEFACTS, NOT DEFECTS** (beside the two "long case
 number" ones). "Timestamp video is reachable without opening a case" and
 "Timestamp Photo is reachable in the field" fail in a trimmed run on master
