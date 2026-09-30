@@ -3918,8 +3918,20 @@ Tests:
 
 ```bash
 node case-portal/test-worker.mjs   # 4393 checks (2026-09-28): auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 4794 checks (2026-09-28): the page against the real Worker
+node portal/test-portal.mjs        # 4871 checks (2026-09-30): the page against the real Worker
 ```
+
+**A FULL RUN'S TOTAL MOVES WITH THE CLOCK, BY A CHECK OR TWO.** *A surveillance
+date is the date where the investigator is standing* asserts once for every
+time zone that is on a different calendar date from UTC at the moment it runs,
+so the same tree counts 6 or 7 there depending on the hour. Compare totals
+section by section before calling a changed count a changed product.
+
+**AND A FULL RUN OUTLASTS THE SESSION'S BACKGROUND TIME LIMIT.** At about 35
+minutes it is stopped part-way when launched as an ordinary background command
+(2026-09-30: killed at 4,012 passed, 0 failed, with a crash line that was only
+the browser closing). Start it detached — `nohup setsid … &` — and watch the
+output file.
 
 **WRITE A SUITE'S OUTPUT TO A FILE, NEVER A PIPE.** Every suite ends in
 `process.exit()`, which drops whatever a pipe had not yet drained — so
@@ -5811,6 +5823,69 @@ the photo beyond the skipped one. *Escape closing the queue* crashed the
 section on the probe's next line instead of failing it; the Escape walk now
 runs last and every step survives the queue having gone. Both then failed by
 name. Numbers in `PHOTO-TIMESTAMP.md` V2 §12.
+
+### A READY photo is made from its own card — the live iPhone defect
+
+Owner, 2026-09-28, on a real iPhone, the day V2 shipped: a photo loaded, showed
+READY with its time detected and *Case: None — copies stay on this device*, and
+the only obvious control under the queue was **Choose a case (optional)** —
+which therefore read as the required next step. Record in
+`case-portal/PHOTO-TIMESTAMP.md` (*V2.1*).
+
+**THE CAUSE WAS ONE SHARED RULE.** `.vqd-ac .vqd-go{display:none}` hides the
+row's ▶ on every width below the desk's 1240px, where the desk rule shows it
+again. On a photo card that left Edit and ⋮: Generate lived inside the closed
+menu and at the far end of the full-screen editor. Reproduced on master at 390,
+320, 768 and 1024 before anything changed — three Generate controls in the
+page, none of them one a person could reach.
+
+**AND THE TEST NAMED FOR IT HAD PASSED OVER IT.** The phone section's *"Edit,
+Generate and Add photos are not covered by anything"* hit-tested only the
+controls it could reach, so a Generate that was never drawn could never fail it
+— the `[].every()` vacuous truth, in a hit-test. The guard that replaces it
+starts from the STATE: every READY row must yield a Generate a person can press
+— drawn, not in the closed ⋮, not inert, 44px, uncovered at its centre and four
+corners, named for what it does, and on the card screens in words and gold;
+disabled only while another photo is being made, with the reason on the row. It
+is named `NEVER READY WITHOUT GENERATE` and runs at 320, 390, 768, 1024, 1280,
+1440 and 1920. **Write a presence check from the state that promises the
+control, never from the controls that happen to be there.**
+
+**PHOTO ONLY, AND THE DESK DID NOT MOVE.** Each READY card carries *Generate
+timestamped copy* on a row of its own (`.pqd-gocell`, below 1240 only); the desk
+keeps its ▶ and the editor's labelled button. Every new rule is under `.pqd`, so
+the video dashboard's CSS and markup are untouched, and its sections were
+re-run.
+
+**THE EDITOR'S GENERATE SAVES A VALID CHANGE, AND SAYS SO BEFORE IT IS
+PRESSED.** `pqGoPlan` is the one writer of that button's label, state and
+reason: nothing changed → *Generate timestamped copy*; a valid unsaved change →
+*Save & generate timestamped copy*, which saves exactly as Save does and makes
+the copy with it; an invalid one → disabled with Save's own reason, the change
+kept. Generate pressed anywhere else with a change pending is refused by name —
+and on a phone the editor OPENS, because a refusal written into a screen hidden
+behind the list is a silent failure. A needs-review photo with nothing changed
+still waits for Save, and still has no Generate on its card: that press is the
+look.
+
+**THE CASE IS OPTIONAL AND LOOKS IT.** *Optional case filing*, the unchanged case
+line, and *Choose a case (optional)* as a quiet underlined link — still 44px.
+**The finished screen** reads *Timestamped copy complete ✓*, *Metadata clean
+verification: PASS*, then **Save to device** first and gold (*Save copy* on the
+desk — the owner's word for each surface, one button), Process next, and *Save
+to Dropbox · CASE* only when a case was chosen: filing to a case IS saving to
+its Dropbox folder in this portal, so that is one button, and with Case = None
+the screen says nothing about a case at all.
+
+**TWENTY-THREE MUTATIONS, AND THE TWO THAT WALKED PAST CRASHED ON A WAIT.**
+Each was applied in a worktree and run against the sections that hold its
+property. On the first run 21 failed by name; *Process next needs a case* and
+*Save to device needs a case* each made the next step do nothing, the flow
+crashed WAITING for it, and a crash names nothing. Every press and wait in the
+new sections goes through `phPress`/`phUntil` now — they record a named failure
+and stop that flow only — and re-run, all 23 fail by name with no crash. **A
+presence check fails by name or it is not a check.** Numbers in
+`PHOTO-TIMESTAMP.md` V2.1 §3.
 
 ## Active Surveillance Mode
 

@@ -458,8 +458,8 @@ as it was.
 position, from the one writer the video uses. The details drawer shows both
 fingerprints, both formats, the detected and selected times, the corner, the
 verification, when it was made, and what the original carried (*"location
-(GPS), camera … — none of it goes into the copy"*). **Save copy** uses the
-browser's save dialog where it has one, the share sheet on an iPhone or iPad
+(GPS), camera … — none of it goes into the copy"*). **Save copy** (*Save to
+device* on a phone, since V2.1) uses the browser's save dialog where it has one, the share sheet on an iPhone or iPad
 (which resolves only when the operator completes it, so it may honestly be
 called a save), and otherwise a download — which the page does not call saved
 until the operator says the file arrived. **Save to Dropbox** is the unchanged
@@ -588,3 +588,165 @@ owner's device:** HEIC decoding (Chromium decodes none, so the HEIC reader is
 proven on built bytes and the decode is Safari's); the iPhone Photo Library's
 multiple selection and share-sheet save; real camera files with their own maker
 data; and memory on a 48-megapixel photo.
+
+---
+
+# V2.1 — A READY PHOTO IS MADE FROM ITS OWN CARD — 2026-09-28 (a live iPhone defect)
+
+Owner, the day V2 shipped, on a real iPhone: *"photo loads successfully, photo
+shows READY, timestamp is detected, queue works, Edit exists, Case correctly
+says 'None — copies stay on this device' … BUT there is NO visible primary
+action to simply GENERATE TIMESTAMPED COPY → SAVE TO THIS DEVICE. The only
+obvious action below the queue is 'Choose a case (optional)'. This makes the
+optional case workflow appear mandatory."* A small, photo-only unit: no
+redesign, no video change, and the clean-derivative logic, the fingerprints and
+case filing untouched.
+
+## 1. Why a READY card had no Generate
+
+`.vqd-ac .vqd-go{display:none}` — a SHARED dashboard rule — hides the row's ▶
+below the desk's 1240px line, where the desk rule shows it again. On a photo
+card that left **Edit** and **⋮**: Generate was inside the closed menu, and at
+the far end of the full-screen editor, below the preview, the fields, the four
+corners, Previous / Save / Next and Undo. Under the card the only full-width
+control was the case chooser, so it read as the next step. **Reproduced on
+master before anything changed**, at 390, 320, 768 and 1024 — every card width —
+with one READY JPEG and Case = None: three Generate controls in the page, and
+none of them one a person could reach.
+
+**The test named for it had passed over it.** *"Edit, Generate and Add photos
+are not covered by anything"* hit-tested only the controls it could reach, so a
+Generate that was never drawn could never fail it — the `[].every()` vacuous
+truth, in a hit-test. The guard that replaces it (§3) starts from the STATE:
+every READY row, then its Generate.
+
+## 2. What changed
+
+| Where | Before | After |
+| --- | --- | --- |
+| A READY card, below 1240 | Edit · ⋮ (Generate inside ⋮) | Edit · ⋮, then **Generate timestamped copy** in words, gold, full width, on a row of its own |
+| A READY row on the desk | ▶ only while it could be made now | ▶ always; disabled while another photo is being made |
+| A READY row while another is made | lost its Generate | keeps it, disabled, and the row says *Waits its turn — photos are made one at a time* |
+| The case area | *Case: None…* beside a full button, *Choose a case (optional)* | headed **Optional case filing**, the same case line, the same words as a quiet underlined link — still 44px |
+| Editor, nothing changed | Generate timestamped copy | unchanged |
+| Editor, a valid unsaved change | Generate disabled — *Save or undo the changes first* | **Save & generate timestamped copy**: saves exactly as Save does, then makes the copy with it |
+| Editor, an invalid unsaved change | disabled — *Save or undo…* | disabled with Save's own reason (*The month is 1 to 12.*), and the change kept |
+| Generate pressed elsewhere with a change pending | refused into an editor that, on a phone, was behind the list | refused by name, and on a phone the editor opens so the reason is on screen |
+| The finished screen | *Complete ✓ — photo 1 of 1*, the checks, then Save copy · View · Process next | **Timestamped copy complete ✓**, **Metadata clean verification: PASS**, then **Save to device** (gold, first) · Process next · *Save to Dropbox · CASE* only when a case is chosen · View, then the checks |
+| The keyboard after Generate on a phone | lost behind the run screen | on the run's heading, as View already did |
+
+**`pqGoPlan` is the one writer of the editor's Generate** — its label, whether it
+can be pressed, and the reason when it cannot — for the button drawn and the
+button updated in place while somebody types. **A NEEDS REVIEW photo with
+nothing changed still waits for Save**, and still has no Generate on its card:
+that press is the look the READY rule exists to require.
+
+**Save to device is the phone's word, and Save copy the desk's** — the owner used
+each for its own surface — so it is one button with two spans, each shown on
+its own side of the 1240 line. **Filing to a case IS saving to that case's
+Dropbox folder in this portal**, so the brief's *Save to Dropbox* and *Add to
+case* are one button, drawn only when a case has been chosen; it opens the
+existing confirmation, and nothing is uploaded until that is pressed there.
+Save to device is the unchanged `pstSaveDevice` — the share sheet on an iPhone,
+the save dialog where there is one, a download otherwise — and needs no case.
+
+**What did not move:** the video dashboard (every new rule is under `.pqd`, the
+video's markup is untouched, and its sections were re-run), the clean
+derivative and its check, both fingerprints, the six phases, one copy in memory
+and its release question, the case route and its confirmation.
+
+## 3. Tests, and the two mutations that found the test's own gap
+
+**Six new sections of `portal/test-portal.mjs`**, and one existing assertion
+re-aimed at the owner's word for it (the phone's finished screen offers *Save to
+device*, where it offered *Save copy*):
+
+- **`NEVER READY WITHOUT GENERATE`**, at 320, 390, 768, 1024, 1280, 1440 and
+  1920. Every READY row must yield a Generate a person can press: drawn, not in
+  the closed ⋮, not inert, 44px, uncovered at its centre and four corners, named
+  for what it does, and on the card screens in words and gold. A NEEDS REVIEW
+  row yields none. While another photo is being made the rest keep theirs,
+  disabled, with *Waits its turn* on the row.
+- **The live scenario, Case = None, at 390 and 320.** One camera JPEG with its
+  own zoned time, READY on arrival; Generate pressed on the card; *Timestamped
+  copy complete ✓* and *Metadata clean verification: PASS*; Save to device first
+  and gold, through a stubbed iPhone share sheet that receives the copy's own
+  bytes under its clean name; nothing about a case on the screen; the keyboard
+  on the run's heading; no request, beacon or download; and the original's
+  bytes and fingerprint unchanged.
+- **Five photos.** Generate the first, Save to device, Process next (named for
+  the second), save, Process next again: each copy with its own time and name,
+  no case chosen, asked for or needed, and the two not yet made still carrying
+  Generate.
+- **The editor's Generate.** Straight away with nothing changed; *Save &
+  generate* for a valid unsaved change, which saves it and makes the copy with
+  it; an impossible date disabled with Save's own reason, the change kept
+  through a repaint and nothing made; leaving with a change still asks; and a
+  change pending when the card's Generate is pressed — reached the one real way
+  it can be, an iPad turned from landscape to portrait — refused by name in the
+  opened editor, then saved and made through *Save & generate*.
+- **The desk at 1280, Case = None.** The ▶ and the editor's labelled button,
+  *Save copy* writing the copy itself through the save dialog, then Process
+  next.
+- **A chosen case.** *Save to Dropbox · CASE* offered after Save to device,
+  never gold, opening the existing confirmation; the offer uploads nothing.
+
+**Every press and wait in them fails BY NAME** (`phPress`, `phUntil`): a
+regression that removes a control records which one and stops that flow, rather
+than crashing on a locator timeout and taking every later section with it.
+
+**Twenty-three mutations, in a worktree, each run against the sections that
+hold its property.** On the first run 21 failed an assertion naming them and
+**two walked past** — *Process next needs a case* and *Save to device needs a
+case*. Each made the next step do nothing, the suite crashed WAITING for that
+step, and a crash names nothing. That is the gap `phPress`/`phUntil` close, and
+it was found by the mutations rather than by reading. Re-run against them,
+**all 23 fail by name and none crashes**:
+
+| mutation | named failures |
+| --- | --- |
+| No Generate on the card (master's behaviour) | 20 |
+| Card Generate hidden by CSS | 20 |
+| Card Generate a bare ▶ | 14 |
+| Card Generate not the gold primary | 14 |
+| Generate vanishes while another photo is made | 4 |
+| Disabled with no reason on the row | 7 |
+| The case control a full button again | 2 |
+| The case area not headed as optional | 2 |
+| Save & generate drops the change | 2 |
+| Save & generate never offered | 2 |
+| An invalid change saved anyway | 1 |
+| The card's Generate discards a pending change | 3 |
+| The refusal left behind the list on a phone | 2 |
+| No Save to device on the finished screen | 5 |
+| Save to Dropbox offered with Case = None | 2 |
+| Process next needs a case | 1 |
+| Save to device needs a case | 2 |
+| Focus left behind the run screen | 2 |
+| Save to device not first | 2 |
+| The old finished heading | 3 |
+| No PASS line | 3 |
+| The case offer gold | 1 |
+| The desk row loses its ▶ | 11 |
+
+**Targeted runs**, each alone and written to a file: the six new sections 175
+passed; every photo section 591; the video sections and the two Home launcher
+walks 418 — each beside the two "long case number" failures a trimmed run
+always carries.
+
+**The final regression**, each suite alone and written to a file:
+
+| suite | result |
+| --- | --- |
+| `portal/test-portal.mjs` | **4871 passed, 0 failed** (4794 at V2: 78 new, and one fewer elsewhere — below) |
+| `.github/test-deploy.mjs` | **127 passed, 0 failed** |
+| `portal/test-ceo-gate.mjs` | **43 PASS, 0 WARN, 0 FAIL** — its recorded summary still agrees |
+
+No Worker change, so `case-portal/test-worker.mjs` was not re-run. **The one
+fewer is the clock, not the change.** *A surveillance date is the date where
+the investigator is standing* asserts that a zone *genuinely disagreed with UTC*
+once for every zone that does at the moment the suite runs, so its count moves
+with the hour — 7 at V2, 6 here, in a section this unit does not touch. **And
+the first attempt at the full run was stopped by the session's own background
+time limit**, at 4,012 passed and 0 failed; it was run again detached from that
+limit, and the table is the complete run.
