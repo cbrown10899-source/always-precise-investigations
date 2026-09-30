@@ -3918,8 +3918,20 @@ Tests:
 
 ```bash
 node case-portal/test-worker.mjs   # 4393 checks (2026-09-28): auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 4794 checks (2026-09-28): the page against the real Worker
+node portal/test-portal.mjs        # 4871 checks (2026-09-30): the page against the real Worker
 ```
+
+**A FULL RUN'S TOTAL MOVES WITH THE CLOCK, BY A CHECK OR TWO.** *A surveillance
+date is the date where the investigator is standing* asserts once for every
+time zone that is on a different calendar date from UTC at the moment it runs,
+so the same tree counts 6 or 7 there depending on the hour. Compare totals
+section by section before calling a changed count a changed product.
+
+**AND A FULL RUN OUTLASTS THE SESSION'S BACKGROUND TIME LIMIT.** At about 35
+minutes it is stopped part-way when launched as an ordinary background command
+(2026-09-30: killed at 4,012 passed, 0 failed, with a crash line that was only
+the browser closing). Start it detached — `nohup setsid … &` — and watch the
+output file.
 
 **WRITE A SUITE'S OUTPUT TO A FILE, NEVER A PIPE.** Every suite ends in
 `process.exit()`, which drops whatever a pipe had not yet drained — so
@@ -5864,6 +5876,16 @@ desk — the owner's word for each surface, one button), Process next, and *Save
 to Dropbox · CASE* only when a case was chosen: filing to a case IS saving to
 its Dropbox folder in this portal, so that is one button, and with Case = None
 the screen says nothing about a case at all.
+
+**TWENTY-THREE MUTATIONS, AND THE TWO THAT WALKED PAST CRASHED ON A WAIT.**
+Each was applied in a worktree and run against the sections that hold its
+property. On the first run 21 failed by name; *Process next needs a case* and
+*Save to device needs a case* each made the next step do nothing, the flow
+crashed WAITING for it, and a crash names nothing. Every press and wait in the
+new sections goes through `phPress`/`phUntil` now — they record a named failure
+and stop that flow only — and re-run, all 23 fail by name with no crash. **A
+presence check fails by name or it is not a check.** Numbers in
+`PHOTO-TIMESTAMP.md` V2.1 §3.
 
 ## Active Surveillance Mode
 

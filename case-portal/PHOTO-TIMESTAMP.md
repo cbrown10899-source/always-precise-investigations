@@ -654,3 +654,99 @@ the save dialog where there is one, a download otherwise — and needs no case.
 video's markup is untouched, and its sections were re-run), the clean
 derivative and its check, both fingerprints, the six phases, one copy in memory
 and its release question, the case route and its confirmation.
+
+## 3. Tests, and the two mutations that found the test's own gap
+
+**Six new sections of `portal/test-portal.mjs`**, and one existing assertion
+re-aimed at the owner's word for it (the phone's finished screen offers *Save to
+device*, where it offered *Save copy*):
+
+- **`NEVER READY WITHOUT GENERATE`**, at 320, 390, 768, 1024, 1280, 1440 and
+  1920. Every READY row must yield a Generate a person can press: drawn, not in
+  the closed ⋮, not inert, 44px, uncovered at its centre and four corners, named
+  for what it does, and on the card screens in words and gold. A NEEDS REVIEW
+  row yields none. While another photo is being made the rest keep theirs,
+  disabled, with *Waits its turn* on the row.
+- **The live scenario, Case = None, at 390 and 320.** One camera JPEG with its
+  own zoned time, READY on arrival; Generate pressed on the card; *Timestamped
+  copy complete ✓* and *Metadata clean verification: PASS*; Save to device first
+  and gold, through a stubbed iPhone share sheet that receives the copy's own
+  bytes under its clean name; nothing about a case on the screen; the keyboard
+  on the run's heading; no request, beacon or download; and the original's
+  bytes and fingerprint unchanged.
+- **Five photos.** Generate the first, Save to device, Process next (named for
+  the second), save, Process next again: each copy with its own time and name,
+  no case chosen, asked for or needed, and the two not yet made still carrying
+  Generate.
+- **The editor's Generate.** Straight away with nothing changed; *Save &
+  generate* for a valid unsaved change, which saves it and makes the copy with
+  it; an impossible date disabled with Save's own reason, the change kept
+  through a repaint and nothing made; leaving with a change still asks; and a
+  change pending when the card's Generate is pressed — reached the one real way
+  it can be, an iPad turned from landscape to portrait — refused by name in the
+  opened editor, then saved and made through *Save & generate*.
+- **The desk at 1280, Case = None.** The ▶ and the editor's labelled button,
+  *Save copy* writing the copy itself through the save dialog, then Process
+  next.
+- **A chosen case.** *Save to Dropbox · CASE* offered after Save to device,
+  never gold, opening the existing confirmation; the offer uploads nothing.
+
+**Every press and wait in them fails BY NAME** (`phPress`, `phUntil`): a
+regression that removes a control records which one and stops that flow, rather
+than crashing on a locator timeout and taking every later section with it.
+
+**Twenty-three mutations, in a worktree, each run against the sections that
+hold its property.** On the first run 21 failed an assertion naming them and
+**two walked past** — *Process next needs a case* and *Save to device needs a
+case*. Each made the next step do nothing, the suite crashed WAITING for that
+step, and a crash names nothing. That is the gap `phPress`/`phUntil` close, and
+it was found by the mutations rather than by reading. Re-run against them,
+**all 23 fail by name and none crashes**:
+
+| mutation | named failures |
+| --- | --- |
+| No Generate on the card (master's behaviour) | 20 |
+| Card Generate hidden by CSS | 20 |
+| Card Generate a bare ▶ | 14 |
+| Card Generate not the gold primary | 14 |
+| Generate vanishes while another photo is made | 4 |
+| Disabled with no reason on the row | 7 |
+| The case control a full button again | 2 |
+| The case area not headed as optional | 2 |
+| Save & generate drops the change | 2 |
+| Save & generate never offered | 2 |
+| An invalid change saved anyway | 1 |
+| The card's Generate discards a pending change | 3 |
+| The refusal left behind the list on a phone | 2 |
+| No Save to device on the finished screen | 5 |
+| Save to Dropbox offered with Case = None | 2 |
+| Process next needs a case | 1 |
+| Save to device needs a case | 2 |
+| Focus left behind the run screen | 2 |
+| Save to device not first | 2 |
+| The old finished heading | 3 |
+| No PASS line | 3 |
+| The case offer gold | 1 |
+| The desk row loses its ▶ | 11 |
+
+**Targeted runs**, each alone and written to a file: the six new sections 175
+passed; every photo section 591; the video sections and the two Home launcher
+walks 418 — each beside the two "long case number" failures a trimmed run
+always carries.
+
+**The final regression**, each suite alone and written to a file:
+
+| suite | result |
+| --- | --- |
+| `portal/test-portal.mjs` | **4871 passed, 0 failed** (4794 at V2: 78 new, and one fewer elsewhere — below) |
+| `.github/test-deploy.mjs` | **127 passed, 0 failed** |
+| `portal/test-ceo-gate.mjs` | **43 PASS, 0 WARN, 0 FAIL** — its recorded summary still agrees |
+
+No Worker change, so `case-portal/test-worker.mjs` was not re-run. **The one
+fewer is the clock, not the change.** *A surveillance date is the date where
+the investigator is standing* asserts that a zone *genuinely disagreed with UTC*
+once for every zone that does at the moment the suite runs, so its count moves
+with the hour — 7 at V2, 6 here, in a section this unit does not touch. **And
+the first attempt at the full run was stopped by the session's own background
+time limit**, at 4,012 passed and 0 failed; it was run again detached from that
+limit, and the table is the complete run.
