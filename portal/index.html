@@ -1724,13 +1724,20 @@
     border:1px solid var(--vqd-line);aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;}
   .vqd-pv video, .vqd-pv img{width:100%;height:100%;object-fit:contain;display:block;background:var(--vqd-bg);}
   .vqd-pv .vqd-ph{width:100%;height:100%;border:0;font-size:2.2rem;border-radius:0;}
-  /* WHERE THE TIME GOES, not the burn itself: the burn is in the copy's
-     pixels, made by the same function whatever this preview shows. It sits
-     above the player's own controls so both stay usable. */
-  .vqd-stamp{position:absolute;right:6px;top:6px;padding:2px 6px;background:rgba(0,0,0,.72);color:#fff;
-    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.76rem;border-radius:4px;
-    pointer-events:none;white-space:nowrap;max-width:calc(100% - 12px);overflow:hidden;}
-  .vqd-stamp:empty{display:none;}
+  /* THE VIDEO EDITOR'S PREVIEW (2026-10-02) has the picture's own shape —
+     `--pv-ar`, the copy's display aspect — and is held to a height so a
+     portrait clip cannot push the date and time fields down the screen; the
+     width follows. The stamp is a canvas over the whole box, drawn by the burn
+     itself (`vstDraw`) in the corner the copy puts it, and it takes no taps:
+     the player's own controls under it stay usable. `.vqd-vpv` is the video
+     editor's alone — the photo tool's box is untouched. */
+  .vqd-pv.vqd-vpv{aspect-ratio:var(--pv-ar,16/9);--pv-maxh:min(52vh,520px);
+    width:min(100%,calc(var(--pv-maxh) * var(--pv-ar,1.7778)));margin-inline:auto;}
+  .vqd-pv.vqd-vpv canvas.vqd-stampcv{position:absolute;inset:0;width:100%;height:100%;
+    background:transparent;pointer-events:none;object-fit:fill;}
+  /* Where the editor takes the whole screen (below the desk's 1240), the
+     preview gets less of it, so the fields stay close under the picture. */
+  @media(max-width:1239px){ .vqd-pv.vqd-vpv{--pv-maxh:min(36vh,400px);} }
   .vqd-pvnote, .vqd-srcnote{font-size:.76rem;color:var(--vqd-muted);margin:6px 0 0;line-height:1.45;}
   .vqd-lbl{display:block;font-size:.8rem;color:var(--vqd-muted);margin:12px 0 4px;}
   .vqd-ro{display:flex;align-items:center;gap:8px;min-height:44px;padding:0 12px;border:1px solid var(--vqd-line);
@@ -12842,6 +12849,30 @@ function vstDraw(cx, W, H, text, pos = "br"){
   cx.restore();
 }
 
+/* THE VIDEO'S BURN IS UPRIGHT IN THE PICTURE THE VIEWER SEES (owner,
+   2026-10-02 — found by building a preview that has to match the copy). An
+   iPhone stores a portrait clip as landscape pixels and a ROTATION in its
+   header; the copy keeps the pixels and the rotation exactly as the original
+   does. V2 drew the stamp straight onto the stored pixels, so on a portrait
+   clip the player turned the stamp with the picture and it ran sideways down
+   an edge. Here the canvas is turned first: the stamp is drawn in the
+   picture's DISPLAY coordinates — bottom right, reading left to right, sized
+   from the displayed width by the same `vstDraw` — and lands on the stored
+   pixels wherever that is. `rotation` is the header's clockwise turn; with
+   none, this is `vstDraw` and nothing else. */
+function vstBurn(cx, W, H, text, rotation){
+  const r = ((Math.round(rotation || 0) % 360) + 360) % 360;
+  if(r !== 90 && r !== 180 && r !== 270) return vstDraw(cx, W, H, text);
+  cx.save();
+  /* display (x, y) -> stored: 90 (y, H - x); 180 (W - x, H - y); 270 (W - y, x) */
+  if(r === 90) cx.setTransform(0, -1, 1, 0, 0, H);
+  else if(r === 180) cx.setTransform(-1, 0, 0, -1, W, H);
+  else cx.setTransform(0, 1, -1, 0, W, 0);
+  if(r === 180) vstDraw(cx, W, H, text);
+  else vstDraw(cx, H, W, text);
+  cx.restore();
+}
+
 /* THE CANVAS-RECORDER ROUTE IS RETIRED (owner brief 2026-09-28, Timestamp
    Video V2). It played the clip through a <video> element in real time,
    painted each frame onto a canvas and let MediaRecorder encode whatever it
@@ -13408,6 +13439,9 @@ function vstBits(u8){
    block rows) and crops eight away, so a parser that ignores `frame_cropping`
    reports 1088 and every frame drawn from it is stretched. */
 const VST_H264_HIGH = new Set([100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135]);
+/* H.264 Table E-1: aspect_ratio_idc → the pixel's width : height. */
+const VST_SAR = {1: [1, 1], 2: [12, 11], 3: [10, 11], 4: [16, 11], 5: [40, 33], 6: [24, 11], 7: [20, 11],
+  8: [32, 11], 9: [80, 33], 10: [18, 11], 11: [15, 11], 12: [64, 33], 13: [160, 99], 14: [4, 3], 15: [3, 2], 16: [2, 1]};
 
 function vstSkipScaling(br, count){
   for(let i = 0; i < count; i++){
@@ -13464,7 +13498,33 @@ function vstSps(nal){
     const width = wMbs * 16 - unitX * (cl + cr);
     const height = (2 - frameMbsOnly) * hUnits * 16 - unitY * (ct + cb);
     if(!(width > 0 && height > 0)) return null;
-    return {profile, compat, level, width, height,
+    /* THE SHAPE OF ONE PIXEL, from the VUI (Timestamp Video quality, owner
+       2026-10-02). An AVCHD camcorder's long-recording modes code 1440 x 1080
+       and say so here — aspect_ratio_idc 14, pixels 4:3 wide — so the picture
+       a player shows is 1920 x 1080. A copy that ignored it came out squeezed
+       to 4:3. Read on its own terms: a VUI this reader cannot follow costs the
+       aspect and the timing, never the stream. */
+    let sar = null, timing = null;
+    try{
+      if(br.u1()){                                  // vui_parameters_present_flag
+        if(br.u1()){                                // aspect_ratio_info_present_flag
+          const idc = br.u(8);
+          if(idc === 255){ const sw = br.u(16), sh = br.u(16); if(sw > 0 && sh > 0) sar = {w: sw, h: sh}; }
+          else if(VST_SAR[idc]) sar = {w: VST_SAR[idc][0], h: VST_SAR[idc][1]};
+        }
+        if(br.u1()) br.u1();                        // overscan_info → overscan_appropriate
+        if(br.u1()){                                // video_signal_type_present
+          br.u(3); br.u1();                         // video_format, video_full_range
+          if(br.u1()){ br.u(8); br.u(8); br.u(8); } // colour primaries, transfer, matrix
+        }
+        if(br.u1()){ br.ue(); br.ue(); }            // chroma sample location
+        if(br.u1()){                                // timing_info_present
+          const tick = br.u(32), scale = br.u(32);
+          if(tick > 0 && scale > 0) timing = {tick, scale, fixed: br.u1() === 1};
+        }
+      }
+    }catch{ /* what was read stands */ }
+    return {profile, compat, level, width, height, sar, timing,
             interlaced: !frameMbsOnly, chroma,
             frameNumBits, frameMbsOnly: frameMbsOnly === 1, separate: separate === 1,
             codecString: "avc1." + [profile, compat, level]
@@ -13845,9 +13905,14 @@ async function vstTsParse(file, layout){
   let sps = null, pps = null, minPts = null, maxPts = null, maxPics = 0, mdpm = 0, seiUser = 0;
   const deltas = [];
   let prevDts = null, frames = 0;
+  /* The first few units' bytes, kept only until the SPS says how to read a
+     slice header — they answer whether each unit is a whole frame or a single
+     field (see `fieldUnits` below). */
+  const firstAus = [];
 
   const head = await vstTsScan(file, layout, null, au => {
     frames++;
+    if(firstAus.length < 6) firstAus.push(au.data);
     mdpm += au.mdpm || 0; seiUser += au.seiUser || 0;
     if(au.pictures > maxPics) maxPics = au.pictures;
     if(!sps && au.sps) sps = au.sps;
@@ -13886,9 +13951,20 @@ async function vstTsParse(file, layout){
      is a real answer and the refusal should say so; only H.264 goes further,
      because only H.264's parameter sets are read here. */
   const ps = head.videoType === 0x1b && sps ? vstSps(sps) : null;
-  const fps = deltas.length
-    ? Math.round(VST_TS_HZ / deltas.slice().sort((a, b) => a - b)[Math.floor(deltas.length / 2)])
-    : null;
+  const median = deltas.length ? deltas.slice().sort((a, b) => a - b)[Math.floor(deltas.length / 2)] : null;
+  const fps = median ? Math.round(VST_TS_HZ / median) : null;
+  /* THE EXACT RATE, NOT THE ROUNDED ONE: AVCHD runs at 30000/1001 — 29.97 —
+     and the encoder is told that, not 30. And when each unit is ONE FIELD (a
+     1080i stream that carries every field in its own packet), the decode
+     clock ticks per field, so the copy's frame rate — one frame per field
+     pair — is half of it. */
+  const unitRate = median ? VST_TS_HZ / median : null;
+  const syntax = ps ? {frameNumBits: ps.frameNumBits, frameMbsOnly: ps.frameMbsOnly, separate: ps.separate} : null;
+  const fieldUnits = !!(syntax && !syntax.frameMbsOnly && firstAus.length && firstAus.every(d => {
+    const s = vstAuScan(d, syntax, false);
+    return s.pics.length === 1 && s.pics[0].field === true;
+  }));
+  const frameRate = unitRate ? (fieldUnits ? unitRate / 2 : unitRate) : null;
 
   /* AN INTERLACED FRAME IS TWO PICTURES AND STILL ONE MOMENT. A field-coded
      stream puts both fields of a frame in one PES under one PTS, and each
@@ -13900,7 +13976,7 @@ async function vstTsParse(file, layout){
   /* THE LAST PTS, from a tail window aligned to the packet grid — the stream's
      own clock rather than an estimate from the file size. A tail that yields
      nothing leaves the duration UNKNOWN, never zero. */
-  let tailMax = null;
+  let tailMax = null, tailVideo = 0, tailBytes = 0;
   {
     /* A file smaller than the window is simply scanned whole — the head scan
        stops early once it has its timing sample, so ITS maximum is not the
@@ -13908,17 +13984,26 @@ async function vstTsParse(file, layout){
     const raw = Math.max(layout.start, file.size - VST_TS_TAIL);
     const from = layout.start + Math.floor((raw - layout.start) / layout.stride) * layout.stride;
     try{
-      await vstTsScan(file, layout, {videoPid: head.videoPid, videoType: head.videoType,
-                                     pmtPid: head.pmtPid}, au => {
+      const tail = await vstTsScan(file, layout, {videoPid: head.videoPid, videoType: head.videoType,
+                                                  pmtPid: head.pmtPid}, au => {
         if(au.pts != null && (tailMax == null || au.pts > tailMax)) tailMax = au.pts;
+        tailVideo += au.data ? au.data.length : 0;
         return true;
       }, {from});
-    }catch{ tailMax = null; }
+      tailBytes = tail && tail.packets ? tail.packets * layout.stride : 0;
+    }catch{ tailMax = null; tailVideo = 0; tailBytes = 0; }
   }
   const lastPts = tailMax != null ? tailMax : maxPts;
   const span = (lastPts != null && minPts != null && lastPts > minPts) ? lastPts - minPts : null;
   const seconds = span != null
     ? +((span + (fps ? VST_TS_HZ / fps : 0)) / VST_TS_HZ).toFixed(2) : null;
+  /* THE SOURCE'S OWN VIDEO BITRATE, measured rather than assumed: the share of
+     the tail window's bytes that is picture data, over the whole file, over
+     the stream's own running time. Audio, packet headers and padding are not
+     counted — the copy carries none of them. Unknown is null, never a guess. */
+  const share = tailBytes > 0 ? tailVideo / tailBytes : 0;
+  const srcBitrate = seconds > 0 && share > 0 && share <= 1
+    ? Math.round(file.size * share * 8 / seconds) : null;
 
   out.video = {
     cc: vt.cc || ("ts" + head.videoType.toString(16)),
@@ -13926,9 +14011,11 @@ async function vstTsParse(file, layout){
     streamType: head.videoType, pid: head.videoPid,
     width: ps ? ps.width : 0,
     height: ps ? ps.height : 0,
+    sar: ps ? ps.sar : null,
     interlaced: ps ? ps.interlaced : null,
     profile: ps ? ps.profile : null, level: ps ? ps.level : null,
     timescale: VST_TS_HZ, duration: span, seconds, fps,
+    frameRate, fieldUnits, srcBitrate,
     codecString: ps ? ps.codecString : null,
     /* ANNEX B, AND THAT IS WHY THERE IS NO `description`. WebCodecs takes a
        length-prefixed bitstream when a codec description is supplied and a
@@ -14048,12 +14135,25 @@ async function vstParse(file){
 
       if(kind === "vide"){
         // Inside a visual sample entry: 78 bytes then the codec config box.
-        let cfg = null, cfgType = null;
+        let cfg = null, cfgType = null, sar = null;
         for(const c of vstKids(body, {start: entry.start, size: entry.size, head: 8 + 78})){
-          if(c.type === "avcC" || c.type === "hvcC" || c.type === "vpcC"){
+          if(!cfg && (c.type === "avcC" || c.type === "hvcC" || c.type === "vpcC")){
             cfg = body.subarray(c.start + c.head, c.start + c.size);
-            cfgType = c.type; break;
+            cfgType = c.type;
           }
+          /* THE PIXEL'S SHAPE, as the container states it (`pasp`: horizontal
+             and vertical spacing). Square on every iPhone; not always
+             elsewhere. */
+          if(c.type === "pasp" && c.size >= c.head + 8){
+            const hs = dv.getUint32(c.start + c.head), vs = dv.getUint32(c.start + c.head + 4);
+            if(hs > 0 && vs > 0) sar = {w: hs, h: vs};
+          }
+        }
+        /* With no `pasp`, the stream's own SPS says it (VUI aspect_ratio_info). */
+        if(!sar && cfgType === "avcC" && cfg && cfg.length > 8 && (cfg[5] & 0x1f) > 0){
+          const len = (cfg[6] << 8) | cfg[7];
+          const s = len > 0 && 8 + len <= cfg.length ? vstSps(cfg.subarray(8, 8 + len)) : null;
+          if(s && s.sar) sar = s.sar;
         }
         out.video = {
           cc: entry.type,
@@ -14069,7 +14169,18 @@ async function vstParse(file){
           /* WHERE EVERY FRAME IS — offsets and times only, never the media
              bytes. The pipeline reads one sample at a time from these. */
           samples: vstSampleTable(body, stbl),
+          sar,
         };
+        /* THE SOURCE'S OWN VIDEO BITRATE AND FRAME RATE, exact: every frame's
+           size is in the table, and so is the running time. Kept as numbers,
+           so they outlive the table when a queue entry lets it go. */
+        {
+          const sm = out.video.samples || [];
+          const secs = timescale && duration ? duration / timescale : 0;
+          out.video.bytes = sm.reduce((t, x) => t + (x.size || 0), 0);
+          out.video.srcBitrate = secs > 0 && out.video.bytes > 0 ? Math.round(out.video.bytes * 8 / secs) : null;
+          out.video.frameRate = secs > 0 && sm.length ? sm.length / secs : null;
+        }
         /* iOS records upright pixels and stores the ROTATION IN THE MATRIX, so
            a derivative that ignores it comes out sideways. `tkhd`'s matrix is
            16.16 fixed point at offset 40 (v0) / 52 (v1). */
@@ -14274,16 +14385,18 @@ async function vstDecoderAccepts(v){
   }catch(e){ return {supported: false, codec: v.codecString, why: (e && e.name) + ": " + (e && e.message) }; }
 }
 
-async function vstEncoderAccepts(w, h){
+/* Does this device's H.264 encoder take the configuration a copy of THIS file
+   would actually ask for? The same writer the copy uses, so the read-out and
+   the copy cannot ask different questions. */
+async function vstEncoderAccepts(vid){
   if(typeof VideoEncoder === "undefined") return {supported: false, why: "no WebCodecs encoder on this device"};
-  for(const codec of ["avc1.42002A", "avc1.42E01E", "avc1.4d002a"]){
-    try{
-      const r = await VideoEncoder.isConfigSupported({codec, width: w || 1920, height: h || 1080,
-        bitrate: 8000000, framerate: 30});
-      if(r && r.supported) return {supported: true, codec};
-    }catch{}
-  }
-  return {supported: false, why: "no H.264 encoder configuration was accepted"};
+  if(!vid || !vid.width || !vid.height) return {supported: false, why: "the picture size could not be read"};
+  const sz = vstOutSize(vid);
+  const cfg = await vstEncoderConfig(sz.w, sz.h, vid.frameRate || vid.fps || 30,
+    {srcBitrate: vid.srcBitrate, seconds: vid.seconds, srcCodec: vid.cc});
+  if(!cfg) return {supported: false, why: "no H.264 encoder configuration was accepted"};
+  return {supported: true, codec: cfg.codec, text: `${cfg.codec} (${vstH264Name(cfg.codec) || "H.264"}) at ${
+    vstMbps(cfg.bitrate)} for ${sz.w}x${sz.h}`};
 }
 
 /* Does this browser decode it? Asked when the file is CHOSEN, not when Generate
@@ -14486,17 +14599,159 @@ function vstCanPipeline(){
     && typeof VideoFrame !== "undefined" && typeof EncodedVideoChunk !== "undefined";
 }
 
-/* The encoder config, from the source's own shape. H.264 High at the level the
-   source used is the safe target on Apple hardware; the fallbacks step down
-   rather than failing outright. */
-async function vstEncoderConfig(w, h, fps){
-  const bitrate = Math.min(24000000, Math.max(3000000, Math.round(w * h * (fps || 30) * 0.08)));
+/* ================= THE COPY'S PICTURE AND ITS ENCODING =================
+
+   Owner, 2026-10-02: real copies were "visibly softer/lower quality than the
+   originals". Traced, not guessed — the pipeline decodes the ORIGINAL once,
+   draws each frame at the source's full size, burns the stamp into that
+   full-size frame and encodes once; no preview, thumbnail or display size is
+   anywhere in that path, and nothing is encoded twice. What made the copy
+   soft was the BITRATE: V2 asked the encoder for 0.08 bits per pixel per
+   frame — 4.98 Mbps for 1080p at 30 frames — of footage the camera had
+   recorded at 14 Mbps (the owner's iPhone baseline, IMG_0440.mov) to 24 Mbps
+   (AVCHD), so the re-encode threw most of the detail away. Three smaller
+   faults sat beside it: the level was fixed at 4.0, which is not a valid
+   level for 1080p60 or anything 4K; a camcorder's 1440 x 1080 stream with
+   4:3-wide pixels came out squeezed to 4:3; and the frame rate was rounded
+   to a whole number (29.97 asked for as 30). */
+
+/* THE COPY'S PICTURE SIZE: the source's own, in square pixels. A source whose
+   pixels are square — every iPhone, most cameras — keeps its exact size; it is
+   never scaled, up or down. A stream that says its pixels are NOT square
+   (`sar`) is drawn at its display shape, which is the resample every player
+   performs when it shows the original — done once here so the copy has the
+   right shape in every player. The axis the pixel was stretched along is the
+   one that grows, so no source row or column is ever dropped. */
+function vstOutSize(V){
+  const W = V && V.width, H = V && V.height;
+  const sar = V && V.sar && V.sar.w > 0 && V.sar.h > 0 ? V.sar : null;
+  const k = sar ? sar.w / sar.h : 1;
+  if(!sar || k === 1 || k > 4 || k < 0.25) return {w: W, h: H, normalized: false};
+  const even = n => Math.max(2, Math.round(n / 2) * 2);
+  return k > 1 ? {w: even(W * k), h: H, normalized: true, sar}
+               : {w: W, h: even(H / k), normalized: true, sar};
+}
+
+/* ---- HOW MANY BITS A COPY IS GIVEN — one formula, every term stated ----
+
+   bits per pixel per frame (bpp) = bitrate / (width x height x frame rate)
+
+     FLOOR    0.15 bpp — a high-quality floor for a hardware H.264 encoder:
+              1080p30 is 9.3 Mbps, 1080p60 18.7, 720p30 4.1, 4K30 37.3.
+     SOURCE   the original's OWN video bitrate, measured from its sample table
+              (MOV/MP4) or its packets (MTS), times what H.264 needs to match a
+              more efficient source codec (HEVC 1.5x). A copy is not encoded
+              at substantially fewer bits than the camera spent on the same
+              pictures — that gap is generation loss.
+     TARGET   the larger of FLOOR and SOURCE, then held under three limits:
+       CEILING  0.40 bpp, whatever the source spent — the guard against an
+                absurd file (a 1080p30 copy is never given more than 24.9 Mbps);
+       MEMORY   the whole copy is held in this tab's memory until it is saved
+                (the MP4 is written moov-first so an iPhone can open it), so
+                its expected size is kept under a budget: 768 MB on a computer,
+                256 MB on a phone or a small-memory device;
+       V2       and never fewer bits than V2 gave the same source — a limit can
+                only ever leave a copy as good as it was, never worse.
+
+   Nothing here is a visual score: the numbers are a rate and its reasons, and
+   the finished screen prints them. */
+const VST_BPP_FLOOR = 0.15;
+const VST_BPP_CEIL = 0.40;
+const VST_BPP_V2 = 0.08;
+const VST_SRC_GAIN = {hvc1: 1.5, hev1: 1.5, vp09: 1.4, av01: 1.6};
+const VST_BUDGET_DESK = 768 * 1048576;
+const VST_BUDGET_PHONE = 256 * 1048576;
+const vstMbps = b => b > 0 ? (b / 1e6).toFixed(b >= 1e7 ? 1 : 2) + " Mbps" : "unknown";
+function vstCopyBudget(){
+  const ua = navigator.userAgent || "";
+  const small = vstIsIOS() || /Android/i.test(ua)
+    || (typeof navigator.deviceMemory === "number" && navigator.deviceMemory <= 4);
+  return small ? VST_BUDGET_PHONE : VST_BUDGET_DESK;
+}
+function vstEncodePlan(o){
+  const w = o.w, h = o.h, fps = o.fps > 0 ? o.fps : 30;
+  const px = w * h * fps;
+  /* V2's own number, from V2's own inputs: its whole-number frame rate (a
+     1080i stream carried one field per packet counted fields there). */
+  const v2Fps = o.v2Fps > 0 ? o.v2Fps : Math.round(fps) || 30;
+  const v2 = Math.min(24000000, Math.max(3000000, Math.round(w * h * v2Fps * VST_BPP_V2)));
+  const floor = Math.round(px * VST_BPP_FLOOR);
+  const gain = VST_SRC_GAIN[o.srcCodec] || 1;
+  const source = o.srcBitrate > 0 ? Math.round(o.srcBitrate * gain) : null;
+  const ceiling = Math.round(px * VST_BPP_CEIL);
+  const budget = o.budget > 0 ? o.budget : vstCopyBudget();
+  const memory = o.seconds > 0 ? Math.floor(budget * 8 / o.seconds) : null;
+  let bitrate = Math.max(floor, source || 0), by = source != null && source > floor ? "source" : "floor";
+  if(bitrate > ceiling){ bitrate = ceiling; by = "ceiling"; }
+  if(memory != null && bitrate > memory){ bitrate = memory; by = "memory"; }
+  if(bitrate < v2){ bitrate = v2; by = "v2"; }
+  return {bitrate, by, fps, floor, source, gain, ceiling, memory, budget, v2, v2Fps,
+          bpp: +(bitrate / px).toFixed(3)};
+}
+
+/* ---- H.264 LEVELS (Table A-1) — chosen from the picture, never fixed ----
+   [level_idc, MaxMBPS, MaxFS, MaxBR in 1000 bit/s for Baseline/Main; High
+   allows 1.25x]. The lowest level that holds the copy's macroblocks per frame,
+   per second and its bitrate is asked for first. V2 asked every picture for
+   level 4.0, which holds neither 1080p60 nor 4K. */
+const VST_H264_LEVELS = [[21, 19800, 792, 4000], [22, 20250, 1620, 4000], [30, 40500, 1620, 10000],
+  [31, 108000, 3600, 14000], [32, 216000, 5120, 20000], [40, 245760, 8192, 20000], [41, 245760, 8192, 50000],
+  [42, 522240, 8704, 50000], [50, 589824, 22080, 135000], [51, 983040, 36864, 240000], [52, 2073600, 36864, 240000]];
+/* High first — its 8x8 transform and CABAC give the most picture per bit —
+   then Main, then Constrained Baseline for an encoder that offers nothing
+   else. */
+const VST_H264_PROFILES = [{name: "High", hex: "6400", br: 1.25}, {name: "Main", hex: "4d00", br: 1},
+                           {name: "Constrained Baseline", hex: "42e0", br: 1}];
+function vstH264Levels(w, h, fps, bitrate, brFactor){
+  const mw = Math.ceil(w / 16), mh = Math.ceil(h / 16), mbs = mw * mh;
+  return VST_H264_LEVELS.filter(([, mbps, fs, br]) => mbs <= fs && Math.max(mw, mh) <= Math.sqrt(8 * fs)
+    && mbs * fps <= mbps && bitrate <= br * 1000 * brFactor).map(x => x[0]);
+}
+/* What a codec string says, in words: "High, level 4.0". */
+function vstH264Name(codec){
+  const m = /^avc1\.([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(codec || ""));
+  if(!m) return null;
+  const p = parseInt(m[1], 16), lv = parseInt(m[3], 16);
+  const name = p === 100 ? "High" : p === 77 ? "Main" : p === 66 ? ((parseInt(m[2], 16) & 0x40) ? "Constrained Baseline" : "Baseline") : "profile " + p;
+  return `${name}, level ${Math.floor(lv / 10)}.${lv % 10}`;
+}
+
+/* THE ENCODER CONFIGURATION, asked of THIS device, best first:
+     1. the plan's bitrate — High, then Main, then Constrained Baseline, each
+        at the lowest level that holds the picture and two above it;
+     2. the same at V2's bitrate, for an encoder that refuses the higher rate;
+     3. V2's exact configurations, last, so a device that made a copy before
+        this change still makes one.
+   Variable bitrate (the encoder spends where the picture needs it), latency
+   "quality" (not real-time), a keyframe every two seconds (set per frame by
+   the caller), no hardware preference (the device's own encoder when it has
+   one, this browser's software encoder otherwise) — every one of them a
+   WebCodecs default, written down so the configuration says what it is.
+   `o` carries what the plan needs: the source's bitrate, codec and running
+   time. The answer carries its plan as `vstPlan` (not part of the
+   configuration the encoder reads). */
+async function vstEncoderConfig(w, h, fps, o){
+  const plan = vstEncodePlan(Object.assign({}, o || {}, {w, h, fps}));
+  const rate = plan.fps;
+  const tries = [], seen = new Set();
+  const push = (cfg, step) => { const k = JSON.stringify(cfg); if(!seen.has(k)){ seen.add(k); tries.push({cfg, step}); } };
+  for(const [bitrate, step] of plan.bitrate > plan.v2 ? [[plan.bitrate, "plan"], [plan.v2, "v2-rate"]] : [[plan.bitrate, "plan"]]){
+    for(const p of VST_H264_PROFILES){
+      for(const lv of vstH264Levels(w, h, rate, bitrate, p.br).slice(0, 3)){
+        push({codec: "avc1." + p.hex + lv.toString(16).padStart(2, "0"), width: w, height: h, bitrate,
+              bitrateMode: "variable", framerate: rate, latencyMode: "quality", avc: {format: "avc"}}, step);
+      }
+    }
+  }
   for(const codec of ["avc1.640028", "avc1.64002a", "avc1.4d0028", "avc1.42E01E"]){
-    const cfg = {codec, width: w, height: h, bitrate, framerate: fps || 30,
-                 avc: {format: "avc"}};
+    push({codec, width: w, height: h, bitrate: plan.v2, framerate: plan.v2Fps, avc: {format: "avc"}}, "v2");
+  }
+  for(let i = 0; i < tries.length; i++){
+    const {cfg, step} = tries[i];
     try{
       const r = await VideoEncoder.isConfigSupported(cfg);
-      if(r && r.supported) return cfg;
+      if(r && r.supported) return Object.defineProperty(cfg, "vstPlan",
+        {value: Object.assign({}, plan, {step, asked: i + 1}), enumerable: false});
     }catch{}
   }
   return null;
@@ -14535,8 +14790,16 @@ async function vstTranscode(file, parsed, startMs, tz, onStage, run){
   if(!V || !V.samples || !V.samples.length) throw new Error("The video track's sample table could not be read, so nothing was generated. Your original is unchanged.");
   if(!V.description && V.configBox !== "vpcC") throw new Error("The file carries no codec configuration record, so the decoder cannot be set up. Your original is unchanged.");
 
+  /* THE STORED PICTURE (what the decoder returns) and THE COPY'S PICTURE (the
+     same, in square pixels — see `vstOutSize`). Every frame is drawn at the
+     copy's full size; nothing about a preview or a screen enters here. */
   const W = V.width, H = V.height;
+  const size = vstOutSize(V), OW = size.w, OH = size.h;
   const fps = V.samples.length && V.seconds ? Math.round(V.samples.length / V.seconds) : 30;
+  /* The exact rate — 29.97 is asked for as 29.97. Each frame keeps its own
+     time from the original's table either way; this is what the encoder's
+     rate control and the keyframe spacing are told. */
+  const rate = V.frameRate > 0 ? V.frameRate : fps;
 
   /* AUDIO IS STRIPPED BY DESIGN (owner requirement change, 2026-08-18): the
      timestamped copy is burned-in picture and no audio track at all.
@@ -14552,39 +14815,43 @@ async function vstTranscode(file, parsed, startMs, tz, onStage, run){
   const sourceAudio = A ? `${A.name || A.cc}${A.channels ? ", " + A.channels + "ch" : ""}`
                         : null;
 
-  const encCfg = await vstEncoderConfig(W, H, fps);
+  const encCfg = await vstEncoderConfig(OW, OH, rate,
+    {srcBitrate: V.srcBitrate, seconds: V.seconds, srcCodec: V.cc, v2Fps: fps});
   if(!encCfg) throw new Error("This device would not accept any H.264 encoder configuration for "
-    + `${W}x${H}, so no MP4 could be written. Your original is unchanged.`);
+    + `${OW}x${OH}, so no MP4 could be written. Your original is unchanged.`);
 
   /* The box the muxer writes follows the encoder actually configured — H.264
      on every device this ships to; `vstMuxCodec` is the one reader. */
   const codec = vstMuxCodec(encCfg.codec);
   const strip = {codec, lenSize: 4, removed: 0};
-  const muxer = new M.Muxer({
+  let muxer = new M.Muxer({
     target: new M.ArrayBufferTarget(),
     /* THE ROTATION TRAVELS AS METADATA, exactly as the original carries it, so
        the copy is upright wherever the original was and no pixels are turned,
        stretched or cropped to achieve it. A display matrix is playback
        information, not a fact about the camera — the one piece of the
        original's container a clean copy still needs. */
-    video: {codec, width: W, height: H, rotation: (parsed.rotation || 0)},
+    video: {codec, width: OW, height: OH, rotation: (parsed.rotation || 0)},
     // No `audio` track is declared, so the file is written without one.
     fastStart: "in-memory",       // moov first: iOS opens it without seeking to the end
     firstTimestampBehavior: "offset",
   });
 
   const cv = document.createElement("canvas");
-  cv.width = W; cv.height = H;
+  cv.width = OW; cv.height = OH;
   const cx = cv.getContext("2d", {alpha: false});
+  cx.imageSmoothingQuality = "high";
+  const keyEvery = Math.max(1, Math.round(rate * 2));
 
-  let encoded = 0, decoded = 0, muxed = 0, fed = 0, encErr = null, muxErr = null;
+  let encoded = 0, decoded = 0, muxed = 0, fed = 0, outBytes = 0, encErr = null, muxErr = null;
   const fail = e => { if(!encErr) encErr = e; };
   const encoder = new VideoEncoder({
     output: (chunk, meta) => {
       encoded++;
       /* What the device's encoder signed the frame with is taken out before
          the muxer sees it — see `vstCleanChunk`. */
-      try{ muxer.addVideoChunk(vstCleanChunk(chunk, meta, strip), meta); muxed++; }catch(e){ if(!muxErr) muxErr = e; }
+      try{ const c = vstCleanChunk(chunk, meta, strip); outBytes += c.byteLength || 0;
+           muxer.addVideoChunk(c, meta); muxed++; }catch(e){ if(!muxErr) muxErr = e; }
     },
     error: fail,
   });
@@ -14598,11 +14865,11 @@ async function vstTranscode(file, parsed, startMs, tz, onStage, run){
            of this machine's clock — the frame carries its timestamp in
            microseconds and that is what advances the label. */
         const tSec = frame.timestamp / 1e6;
-        cx.drawImage(frame, 0, 0, W, H);
-        vstDraw(cx, W, H, vstLabel(startMs + Math.floor(tSec) * 1000, tz));
+        cx.drawImage(frame, 0, 0, OW, OH);
+        vstBurn(cx, OW, OH, vstLabel(startMs + Math.floor(tSec) * 1000, tz), parsed.rotation);
         const out = new VideoFrame(cv, {timestamp: frame.timestamp,
                                         duration: frame.duration || undefined});
-        if(encoder.state === "configured") encoder.encode(out, {keyFrame: decoded % (fps * 2) === 0});
+        if(encoder.state === "configured") encoder.encode(out, {keyFrame: decoded % keyEvery === 0});
         out.close();
       } finally { frame.close(); decoded++; }
     },
@@ -14674,10 +14941,16 @@ async function vstTranscode(file, parsed, startMs, tz, onStage, run){
     throw vstFault("encoder", "The MP4 could not be finished (" + vstErrText(e)
       + "). No timestamped copy was created and your original is unchanged.", {text: vstErrText(e)});
   }
+  /* THE MUXER IS LET GO THE MOMENT ITS FILE EXISTS. It still holds the buffer
+     it grew the file in — up to twice the copy — and nothing else needs it,
+     so the copy's own bytes are the only large thing left alive while it is
+     checked, fingerprinted and handed over. */
+  const written = muxer.target.buffer;
+  muxer = null;
   /* CLEAN, PROVEN CLEAN, FINGERPRINTED — before a Blob exists to be saved. */
   let fin;
   try{
-    fin = await vstFinishCopy(muxer.target.buffer, {codec, strip, parsed, name: file.name, run, onStage});
+    fin = await vstFinishCopy(written, {codec, strip, parsed, name: file.name, run, onStage});
   }catch(e){
     if(e && e.vstKind) throw e;
     if(e instanceof RangeError) throw vstFault("memory", "This device ran out of memory while finishing the copy. "
@@ -14686,13 +14959,45 @@ async function vstTranscode(file, parsed, startMs, tz, onStage, run){
   }
   const blob = fin.blob;
   if(onStage) onStage("verifying", 99);
-  const back = await vstReadBack(blob, W, H, muxed, null, fps);
+  const back = await vstReadBack(blob, OW, OH, muxed, null, fps);
   if(back.problem) throw vstFault("verify", VST_INCOMPLETE + " The finished MP4 did not check out: " + back.problem + ".",
                                   {text: "the finished MP4 did not check out: " + back.problem, problems: [back.problem]});
+  const span = vstSampleSpan(V);
   return {blob, mime: "video/mp4", frames: encoded,
           audio: "stripped", sourceAudio, sha256: fin.sha256, clean: fin.clean, lane: "primary",
+          quality: vstQuality(parsed, size, rate, encCfg, back, outBytes),
           check: {lane: "primary", frames: encoded, expected: total, mp4Frames: back.frames,
-                  seconds: back.seconds, sourceSeconds: V.seconds, skipped: 0, skippedSeconds: 0}};
+                  seconds: back.seconds, sourceSeconds: span != null ? span : V.seconds, skipped: 0, skippedSeconds: 0}};
+}
+
+/* The original's own running time from its frames — first frame's start to
+   last frame's end — which is exactly what the copy's frames carry. */
+function vstSampleSpan(V){
+  const sm = V && V.samples;
+  if(!sm || !sm.length || !V.timescale) return null;
+  let a = Infinity, b = -Infinity;
+  for(const s of sm){ if(s.cts < a) a = s.cts; if(s.cts + (s.duration || 0) > b) b = s.cts + (s.duration || 0); }
+  return b > a ? +((b - a) / V.timescale).toFixed(3) : null;
+}
+
+/* WHAT THE COPY IS, BESIDE WHAT THE ORIGINAL WAS — the facts the finished
+   screen and the receipt print. Every number is measured or configured, none
+   is a score: the original's picture, rate and bitrate from its own file; the
+   copy's from the encoder this device accepted and the MP4 as read back. */
+function vstQuality(parsed, size, rate, encCfg, back, outBytes){
+  const V = parsed.video, plan = encCfg && encCfg.vstPlan;
+  const secs = back && back.seconds > 0 ? back.seconds : null;
+  return {
+    src: {w: V.width, h: V.height, sar: V.sar || null, fps: rate, interlaced: !!V.interlaced,
+          fieldUnits: !!V.fieldUnits, codec: V.name || V.cc, bitrate: V.srcBitrate || null,
+          rotation: parsed.rotation || 0},
+    out: {w: size.w, h: size.h, normalized: !!size.normalized, fps: back && back.frames && secs ? back.frames / secs : null,
+          codec: encCfg ? encCfg.codec : null, profile: encCfg ? vstH264Name(encCfg.codec) : null,
+          bitrate: encCfg ? encCfg.bitrate : null, mode: encCfg && encCfg.bitrateMode || null,
+          written: outBytes > 0 && secs ? Math.round(outBytes * 8 / secs) : null},
+    plan: plan ? {by: plan.by, step: plan.step, bpp: plan.bpp, floor: plan.floor, source: plan.source,
+                  ceiling: plan.ceiling, memory: plan.memory, v2: plan.v2} : null,
+  };
 }
 
 /* ---- THE TRANSPORT-STREAM TRANSCODE — two local decoders, one verdict ----
@@ -14846,26 +15151,38 @@ function vstStreamFault(dmg, extra){
 async function vstTsAttempt(file, parsed, startMs, tz, lane, run, onStage){
   const M = await vstMuxer();
   const V = parsed.video;
+  /* W x H is what the decoder is configured for (the coded picture); OW x OH
+     is the copy's picture — the same, unless the stream says its pixels are
+     not square (`vstOutSize`). */
   const W = V.width, H = V.height, fps = V.fps || 30;
-  const encCfg = await vstEncoderConfig(W, H, fps);
+  const size = vstOutSize(V), OW = size.w, OH = size.h;
+  /* One frame per field pair: `frameRate` is the copy's rate, exact (29.97,
+     never 30). `fps` stays the decode clock's own spacing, which is what the
+     timing checks below are measured against. */
+  const rate = V.frameRate > 0 ? V.frameRate : fps;
+  const encCfg = await vstEncoderConfig(OW, OH, rate,
+    {srcBitrate: V.srcBitrate, seconds: V.seconds, srcCodec: V.cc, v2Fps: fps});
   if(!encCfg) throw vstFault("setup", "This device would not accept any H.264 encoder configuration for "
-    + `${W}x${H}, so no MP4 could be written. Your original is unchanged.`);
+    + `${OW}x${OH}, so no MP4 could be written. Your original is unchanged.`);
   if(!vstRunLive(run)) throw vstFault("cancel", "Stopped.");
 
   const codec = vstMuxCodec(encCfg.codec);
   const strip = {codec, lenSize: 4, removed: 0};
-  const muxer = new M.Muxer({
+  let muxer = new M.Muxer({
     target: new M.ArrayBufferTarget(),
     /* A transport stream carries no rotation matrix — there is no `tkhd` to
        hold one — so nothing is claimed about orientation and no pixels are
        turned. A camcorder writes the picture the way it is shot. */
-    video: {codec, width: W, height: H, rotation: 0},
+    video: {codec, width: OW, height: OH, rotation: 0},
     fastStart: "in-memory",
     firstTimestampBehavior: "offset",
   });
   const cv = document.createElement("canvas");
-  cv.width = W; cv.height = H;
+  cv.width = OW; cv.height = OH;
   const cx = cv.getContext("2d", {alpha: false});
+  cx.imageSmoothingQuality = "high";
+  const keyEvery = Math.max(1, Math.round(rate * 2));
+  let outBytes = 0;
 
   /* THE LEDGER the copy is checked against. `expected` is the frames the
      stream HOLDS (two fields make one), counted from the slice headers as the
@@ -14881,7 +15198,8 @@ async function vstTsAttempt(file, parsed, startMs, tz, lane, run, onStage){
   const encoder = new VideoEncoder({
     output: (chunk, meta) => {
       t.encoded++;
-      try{ muxer.addVideoChunk(vstCleanChunk(chunk, meta, strip), meta); t.muxed++; }
+      try{ const c = vstCleanChunk(chunk, meta, strip); outBytes += c.byteLength || 0;
+           muxer.addVideoChunk(c, meta); t.muxed++; }
       catch(e){ if(!muxErr) muxErr = e; }
     },
     error: failEnc,
@@ -14904,12 +15222,12 @@ async function vstTsAttempt(file, parsed, startMs, tz, lane, run, onStage){
         /* THE STAMP IS A FUNCTION OF THE FRAME'S OWN PRESENTATION TIME, never
            of this machine's clock. */
         const tSec = Math.max(0, ts / 1e6);
-        cx.drawImage(frame, 0, 0, W, H);
-        vstDraw(cx, W, H, vstLabel(startMs + Math.floor(tSec) * 1000, tz));
+        cx.drawImage(frame, 0, 0, OW, OH);
+        vstBurn(cx, OW, OH, vstLabel(startMs + Math.floor(tSec) * 1000, tz), 0);
         t.drawn++;
         if(encoder.state === "configured"){
           const out = new VideoFrame(cv, {timestamp: ts, duration: frame.duration || undefined});
-          try{ encoder.encode(out, {keyFrame: (t.drawn - 1) % (fps * 2) === 0}); t.encIn++; }
+          try{ encoder.encode(out, {keyFrame: (t.drawn - 1) % keyEvery === 0}); t.encIn++; }
           finally{ out.close(); }
         }
       }catch(e){ if(!frameErr) frameErr = e; }
@@ -15107,11 +15425,14 @@ async function vstTsAttempt(file, parsed, startMs, tz, lane, run, onStage){
     throw vstFault("encoder", "The MP4 could not be finished (" + vstErrText(e)
       + "). No timestamped copy was created and your original is unchanged.", Object.assign({text: vstErrText(e)}, detail));
   }
+  /* Let go of the muxer and the buffer it grew the file in — see the MP4 path. */
+  const written = muxer.target.buffer;
+  muxer = null;
   /* CLEAN, PROVEN CLEAN, FINGERPRINTED — before a Blob exists to be saved. A
      copy that fails this is a "clean" fault, which is never retried on the
      other decoder: the pictures were whole, the file around them was not. */
   try{
-    fin = await vstFinishCopy(muxer.target.buffer, {codec, strip, parsed, name: file.name, run, onStage});
+    fin = await vstFinishCopy(written, {codec, strip, parsed, name: file.name, run, onStage});
     blob = fin.blob;
   }catch(e){
     if(e && e.vstKind){
@@ -15123,7 +15444,7 @@ async function vstTsAttempt(file, parsed, startMs, tz, lane, run, onStage){
     throw e;
   }
   if(onStage && vstRunLive(run)) onStage("verifying", 99);
-  const back = await vstReadBack(blob, W, H, t.muxed, copySpan, fps);
+  const back = await vstReadBack(blob, OW, OH, t.muxed, copySpan, fps);
   if(back.problem) throw vstFault("encoder", "The finished MP4 did not check out: " + back.problem
     + ". No timestamped copy was created and your original is unchanged.",
     Object.assign({text: back.problem, lines: ["The finished MP4 did not check out: " + back.problem + "."],
@@ -15133,6 +15454,7 @@ async function vstTsAttempt(file, parsed, startMs, tz, lane, run, onStage){
   return {blob, mime: "video/mp4", frames: t.encoded, audio: "stripped",
           sourceAudio: parsed.audio ? parsed.audio.name : null,
           sha256: fin.sha256, clean: fin.clean,
+          quality: vstQuality(parsed, size, rate, encCfg, back, outBytes),
           skippedLeading: t.skipped, lane,
           check: {lane, frames: t.encoded, expected: t.expected, mp4Frames: back.frames,
                   seconds: back.seconds, sourceSeconds: srcSeconds,
@@ -16331,6 +16653,17 @@ async function vqPump(){
   try{
     for(;;){
       if(VQ !== q || vqRunning()) break;
+      /* THE SELECTED VIDEO'S PREVIEW FRAME GOES FIRST — the operator is looking
+         at its editor — but it takes the same single turn an analysis takes,
+         so there is still one decode at a time, and none during a run. */
+      const pv = vqPvWanted();
+      if(pv){
+        q.analyzing = pv;
+        try{ await vqPvFrame(pv); }
+        catch(e){ if(!vqGone(pv) && (!pv.pvf || pv.pvf.state === "busy")) pv.pvf = {state: "none", why: vstErrText(e)}; }
+        q.analyzing = null;
+        continue;
+      }
       const next = q.items.find(x => x.analysis === "waiting");
       if(!next) break;
       q.analyzing = next;
@@ -16438,7 +16771,10 @@ async function vqGo(id){
   if(!v.out && !v.recId) v.caseNo = VQ.caseNo;
   v.err = ""; v.saveMsg = ""; v.seen = new Set();
   VST = null;
-  if(VQ.analyzing && VQ.analyzing !== v){
+  /* An analysis of another video — or this video's own preview frame, which
+     stops itself the moment a run is asked for — finishes first: one decode
+     at a time. */
+  if(VQ.analyzing && (VQ.analyzing !== v || (v.pvf && v.pvf.state === "busy"))){
     v.step = "working"; v.stage = "waiting"; v.phase = "processing"; v.pct = 0;
     paintVStamp();
     await vqIdle();
@@ -16506,6 +16842,8 @@ function vqForget(v){
   if(VQ && VQ.pv && String(VQ.pv.qid) === String(v.qid)) vqDropPreview();
   try{ if(v.thumb) URL.revokeObjectURL(v.thumb); }catch{}
   v.thumb = "";
+  try{ if(v.pvf && v.pvf.url) URL.revokeObjectURL(v.pvf.url); }catch{}
+  v.pvf = null;
 }
 /* When the entry the editor or the processing panel is about leaves, they
    move to its neighbour rather than to nothing. */
@@ -16615,8 +16953,9 @@ function vqTimeLive(){
   const s = vstStart(Object.assign({}, v, v.draft || {}));
   const res = $("vst_res");
   if(res) res.textContent = s.ok ? vstLabel(s.ms, v.tz) : "—";
-  const stamp = $("vq_stamp");
-  if(stamp) stamp.textContent = vqStampText(v);
+  /* The stamp over the preview is redrawn in place with the draft — Save is
+     still what keeps it. */
+  vqDrawStamp();
   const tz = $("vq_tz");
   if(tz) tz.innerHTML = vqZoneHtml(v);
   const dirty = vqDraftDiff(v);
@@ -16812,6 +17151,10 @@ function vqReceiptLines(v, n){
     L.push(`   Processed: ${v.out.madeAt ? vqWhen(v.out.madeAt) : "not recorded"}`);
     L.push(`   Decoder: ${v.out.lane === "compat" ? "compatibility mode (this browser's software decoder)" : "this device's decoder"}`);
     L.push(`   Copy: ${v.out.name} · ${bytes(v.out.size)} · SHA-256 ${v.out.sha256 || "not taken"}`);
+    if(v.out.quality){
+      L.push(`   Copy picture: ${vstPictureText(v.out.quality)}`);
+      L.push(`   Copy encoding: ${vstEncodingText(v.out.quality)}`);
+    }
     const c = v.out.clean;
     L.push(`   Metadata-clean verification: ${c && c.ok ? "PASS" : "not recorded"}`
       + (c && c.ok ? ` — found on the original: ${c.source && c.source.length
@@ -16993,6 +17336,7 @@ async function vstGenerate(v = VST){
                 audio is still on it — the row existed and was never fed. */
              sourceAudio: r.sourceAudio || null,
              lane: r.lane || null, check: r.check || null, primary: r.primary || null,
+             quality: r.quality || null,
              /* The copy's own fingerprint and its metadata check, kept apart
                 from the original's — two files, two digests, never one field. */
              sha256: r.sha256 || null, clean: r.clean || null, madeAt: Date.now(),
@@ -17269,8 +17613,8 @@ async function vstDiagnose(){
       ? "yes — this browser's software decoder accepts it" : "no — " + (soft.why || "declined")));
     if(VST) VST.compatOk = !!soft.supported;
   }
-  const enc = await vstEncoderAccepts(vid && vid.width, vid && vid.height);
-  lines.push(row("Encode H.264", enc.supported ? "yes — " + enc.codec : "no — " + (enc.why || "declined")));
+  const enc = await vstEncoderAccepts(vid);
+  lines.push(row("Encode H.264", enc.supported ? "yes — " + enc.text : "no — " + (enc.why || "declined")));
 
   /* THE REAL PIPELINE'S OWN ROWS — demux and mux are this build's, not a guess
      about an API. Demux is proven by the sample table actually coming out of
@@ -20617,6 +20961,33 @@ function vstCompatModeText(v){
     : "checking&hellip;";
 }
 
+/* THE COPY'S PICTURE AND ENCODING, in the operator's words (see
+   `vstQuality`). A frame rate is printed the way a camera states it — 29.97,
+   not 30 — and every rate says whether it was asked for or measured. */
+const vstFps = f => !(f > 0) ? "unknown" : Math.abs(f - Math.round(f)) < 0.005 ? String(Math.round(f)) : f.toFixed(2);
+function vstPictureText(q){
+  const s = q.src, o = q.out;
+  const pix = s.sar && s.sar.w !== s.sar.h ? `${s.sar.w}:${s.sar.h}` : "";
+  return `${o.w} × ${o.h} at ${vstFps(s.fps)} fps — ` + (o.normalized
+    ? `the original's ${s.w} × ${s.h} picture, whose pixels are ${pix} wide, at the shape it is shown`
+    : `the original's own size and frame rate`);
+}
+function vstEncodingText(q){
+  const o = q.out, p = q.plan || {};
+  const src = q.src.bitrate ? `the original's video: ${vstMbps(q.src.bitrate)}` : "the original's bitrate could not be measured";
+  return `${o.profile ? "H.264 " + o.profile : o.codec || "unknown"} · ${vstMbps(o.bitrate)} asked for`
+    + (o.written ? `, ${vstMbps(o.written)} written` : "") + ` (${src})`
+    + (p.by === "memory" ? " — held to this device's memory budget for a copy this long" : "")
+    + (p.step === "v2" ? " — this device's encoder took only the earlier configuration" : "");
+}
+function vstQualityRows(q){
+  if(!q || !q.out) return "";
+  return `<div class="vst-k"><span>Picture</span><span>${esc(vstPictureText(q))}</span></div>
+          <div class="vst-k"><span>Encoding</span><span>${esc(vstEncodingText(q))}</span></div>${q.src.interlaced
+    ? `<div class="vst-k"><span>Interlaced original</span><span>Both fields of every frame are kept as the camera
+        recorded them &mdash; woven, not deinterlaced</span></div>` : ""}`;
+}
+
 /* What the check proved, in one line on the finished screen. */
 function vstCheckText(c){
   return `All ${vstPlural(c.frames, "frame")} decoded, stamped and re-encoded; the finished MP4 reads back`
@@ -20855,6 +21226,7 @@ function vstHtml(){
           <div class="vst-k"><span>Decoder</span><span>${v.out.lane === "compat"
             ? "Compatibility mode &mdash; this browser&rsquo;s software decoder" : "This device&rsquo;s decoder"}</span></div>
           <div class="vst-k"><span>Checked</span><span>${esc(vstCheckText(v.out.check))}</span></div>` : ""}
+          ${v.out && v.out.quality ? vstQualityRows(v.out.quality) : ""}
           <div class="vst-k"><span>Original&rsquo;s fingerprint</span><span class="vst-hash">${v.hash
             ? "SHA-256 " + esc(v.hash) + " (of the original)"
             : esc(vstOrigHashWhy(v))}</span></div>
@@ -21022,27 +21394,59 @@ function vqZoneHtml(v){
 }
 
 /* THE PREVIEW'S STAMP: the label the burn would draw at this moment of the
-   footage — the start being set, plus how far the preview has played. */
+   footage — the start being set (saved or not yet saved: the preview shows a
+   draft, Save is what keeps it), plus how far into the footage the preview
+   stands. A decoded frame stands at its own moment; a playing original at
+   wherever it has played to. */
 function vqStampText(v){
   const s = vstStart(Object.assign({}, v, v.draft || {}));
   if(!s.ok) return "";
   const pv = VQ && VQ.pv && String(VQ.pv.qid) === String(v.qid) ? VQ.pv.el : null;
-  const t = pv ? Math.max(0, Math.floor(pv.currentTime || 0)) : 0;
+  const t = pv ? Math.max(0, Math.floor(pv.currentTime || 0))
+    : v.pvf && v.pvf.state === "done" ? Math.max(0, Math.floor(v.pvf.t || 0)) : 0;
   return vstLabel(s.ms + t * 1000, v.tz);
 }
 
-/* ---- THE PREVIEW: ONE, OF THE SELECTED VIDEO, PLAYED BY THIS DEVICE ----
-   A local object URL of the original, handed to a media element — nothing is
-   uploaded or copied, and only the selected video ever has one. A preview is
-   not a verdict: a file this device will not PLAY in the page is still made
-   into a copy frame by frame, and the editor says so rather than implying
-   otherwise. A transport stream is never played here at all; it shows its
-   first frame. */
+/* ---- THE PREVIEW: OF THE SELECTED VIDEO, ON THIS DEVICE, NEVER THE COPY ----
+   Owner, 2026-10-02, on a real MTS: the editor's preview "is effectively
+   black/unhelpful", and the time being typed has to be SEEN on the picture.
+
+   Three kinds, and nothing is uploaded for any of them:
+     video  the original, played by this device from a local object URL — an
+            MP4 or MOV this device plays;
+     img    a frame DECODED from the original's first seconds by the same local
+            decoder a copy uses — a transport stream (no browser plays MPEG-TS
+            in a page, and none is claimed to), or a file this device would not
+            play — or the thumbnail while that frame is being decoded;
+     none   nothing to show yet, or the frame could not be decoded: "Preview
+            unavailable for this file." — which is never a verdict on the copy.
+
+   THE PREVIEW NEVER BECOMES THE COPY. Its frame is drawn small (1280 on the
+   long side at most) into its own image, kept on its own entry, and the copy
+   is made — always — by decoding the ORIGINAL file again at its full size; no
+   line of the transcode can reach the preview. */
 function vqPreviewKind(v, locked){
   if(!v) return "none";
-  if(locked || vstIsTs(v.parsed) || v.pvFailed || v.analysis !== "done") return v.thumb ? "img" : "none";
-  return "video";
+  if(v.analysis !== "done") return v.thumb ? "img" : "none";
+  if(!locked && !vstIsTs(v.parsed) && !v.pvFailed) return "video";
+  if(v.pvf && v.pvf.state === "done") return "img";
+  if(v.pvf && v.pvf.state === "none") return "none";
+  return v.thumb ? "img" : "none";
 }
+const vqPvSrc = v => v.pvf && v.pvf.state === "done" ? v.pvf.url : v.thumb;
+
+/* THE PREVIEW BOX HAS THE PICTURE'S OWN SHAPE — the copy's display shape,
+   turned as the header turns it — so no picture sits in a slab of black, and
+   the stamp drawn over the box lands where it lands on the picture. */
+function vqPvAspect(v){
+  const V = v && v.parsed && v.parsed.video;
+  if(!V || !V.width || !V.height) return 1.7778;
+  const sz = vstOutSize(V);
+  const r = (((v.parsed.rotation || 0) % 360) + 360) % 360;
+  const a = r % 180 ? sz.h / sz.w : sz.w / sz.h;
+  return a > 0.2 && a < 5 ? +a.toFixed(4) : 1.7778;
+}
+
 function vqDropPreview(){
   const pv = VQ && VQ.pv;
   if(!pv) return;
@@ -21053,48 +21457,245 @@ function vqDropPreview(){
 }
 /* Called after every paint. The same element is moved into the new editor
    inside the paint's own task, so a repaint does not pause what is playing;
-   a hidden editor (a phone showing the list) lets the preview go. */
+   a hidden editor (a phone showing the list) lets the preview go. Then the
+   stamp is drawn over whatever the box shows, and a frame still to be
+   decoded is handed to the queue's one worker. */
+let VQ_PV_RO = null;
 function vqMountPreview(){
   if(!VQ) return;
   const host = $("vq_pvhost");
   const v = vqSel();
   const want = !!(host && v && host.dataset.kind === "video" && String(host.dataset.qid) === String(v.qid)
     && host.getClientRects().length);
-  if(!want){ vqDropPreview(); return; }
-  if(VQ.pv && String(VQ.pv.qid) === String(v.qid)){
+  if(!want) vqDropPreview();
+  else if(VQ.pv && String(VQ.pv.qid) === String(v.qid)){
     if(VQ.pv.el.parentNode !== host) host.prepend(VQ.pv.el);
+  } else {
+    vqDropPreview();
+    const el = document.createElement("video");
+    el.id = "vq_pv";
+    el.muted = true; el.controls = true; el.playsInline = true; el.preload = "metadata";
+    el.setAttribute("playsinline", "");
+    el.setAttribute("aria-label", "Preview of " + v.name);
+    if(v.thumb) el.poster = v.thumb;
+    const url = URL.createObjectURL(v.file);
+    for(const ev of ["timeupdate", "seeked", "loadedmetadata"]){
+      el.addEventListener(ev, () => { if(VQ && VQ.pv && VQ.pv.el === el) vqDrawStamp(); });
+    }
+    el.addEventListener("error", () => {
+      if(!VQ || !VQ.pv || VQ.pv.el !== el) return;
+      v.pvFailed = true;
+      vqDropPreview();
+      paintVStamp();
+    });
+    el.src = url;
+    VQ.pv = {qid: v.qid, url, el};
+    host.prepend(el);
+  }
+  /* The box can change size without a paint (a rotated phone, a resized
+     window), and the stamp is drawn in its pixels — so it is redrawn then too. */
+  if(typeof ResizeObserver === "function"){
+    if(!VQ_PV_RO) VQ_PV_RO = new ResizeObserver(() => vqDrawStamp());
+    VQ_PV_RO.disconnect();
+    if(host) VQ_PV_RO.observe(host);
+  }
+  vqDrawStamp();
+  if(vqPvWanted() && !VQ.pumping) setTimeout(vqPump, 0);
+}
+
+/* THE STAMP, DRAWN BY THE BURN ITSELF — `vstDraw`, the one writer, sized from
+   the box's own width exactly as the copy's stamp is sized from the copy's
+   width, in the corner the copy puts it, in the copy's face and outline. It is
+   a canvas over the picture rather than words in a chip, so what the preview
+   shows is what the copy will carry, only smaller. `data-label` holds the
+   words it last drew. Typing redraws it (`vqTimeLive`), playing redraws it,
+   resizing redraws it; nothing about it is ever written to the entry. */
+function vqDrawStamp(){
+  const host = $("vq_pvhost"), cv = $("vq_stamp");
+  const v = vqSel();
+  if(!host || !cv || !v || String(host.dataset.qid) !== String(v.qid)) return;
+  const label = vqStampText(v);
+  const r = host.getBoundingClientRect();
+  const dpr = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
+  const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+  if(cv.width !== w) cv.width = w;
+  if(cv.height !== h) cv.height = h;
+  const cx = cv.getContext("2d");
+  if(!cx) return;
+  cx.clearRect(0, 0, w, h);
+  cv.dataset.label = label;
+  if(label && r.width > 0 && r.height > 0) vstDraw(cx, w, h, label);
+}
+
+/* ---- A FRAME WORTH LOOKING AT, from the first seconds ----
+   The literal first frame of a camcorder file is often black — the camera
+   opening its shutter — so the first frame that is neither near-black nor
+   flat is taken, looking no further than VQ_PV_SECONDS of footage after the
+   first keyframe, VQ_PV_FRAMES frames and VQ_PV_BYTES of the file. When none
+   of them qualifies the brightest is shown, and the note says the opening is
+   dark. Nothing beyond that window is decoded for a preview. */
+const VQ_PV_W = 1280;
+const VQ_PV_SECONDS = 2.5;
+const VQ_PV_FRAMES = 150;
+const VQ_PV_BYTES = 32 * 1048576;
+const VQ_PV_MS = 15000;
+const VQ_PV_DARK = 0.07;     // mean luma (0..1) below this: near-black
+const VQ_PV_FLAT = 0.015;    // luma spread below this: a flat, transitional frame
+let VQ_LOOK = null;
+function vqFrameLook(f){
+  try{
+    if(!VQ_LOOK){
+      const c = document.createElement("canvas"); c.width = 48; c.height = 27;
+      VQ_LOOK = c.getContext("2d", {willReadFrequently: true});
+    }
+    VQ_LOOK.drawImage(f, 0, 0, 48, 27);
+    const d = VQ_LOOK.getImageData(0, 0, 48, 27).data;
+    let s = 0, s2 = 0;
+    const n = d.length / 4;
+    for(let i = 0; i < d.length; i += 4){
+      const y = (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255;
+      s += y; s2 += y * y;
+    }
+    const mean = s / n;
+    return {mean, sd: Math.sqrt(Math.max(0, s2 / n - mean * mean))};
+  }catch{ return null; }
+}
+/* Which entry, if any, needs its preview frame decoded now: the selected one,
+   checked, with an editor actually on screen to show it. */
+function vqPvWanted(){
+  if(!VQ || vqRunning()) return null;
+  const v = vqSel();
+  if(!v || v.analysis !== "done" || v.pvf || v.run || VQ.busy === v) return null;
+  if(!vstIsTs(v.parsed) && !v.pvFailed) return null;
+  if(!v.parsed || !v.parsed.video || !vstCanPipeline()) return null;
+  if(vstIsTs(v.parsed) ? !vstTsReady(v.parsed) : !vstFrames(v.parsed)) return null;
+  const host = $("vq_pvhost");
+  if(!host || String(host.dataset.qid) !== String(v.qid) || !host.getClientRects().length) return null;
+  return v;
+}
+async function vqPvFrame(v){
+  v.pvf = {state: "busy"};
+  paintVStamp();
+  const p = v.parsed, V = p.video, ts = vstIsTs(p);
+  let dec = null, chosen = null, best = null, bestScore = -1, err = null;
+  const t0 = Date.now();
+  const over = () => !!chosen || !!err || vqGone(v) || vqRunning() || Date.now() - t0 > VQ_PV_MS;
+  const take = f => {
+    if(chosen || vqGone(v)){ f.close(); return; }
+    const s = vqFrameLook(f);
+    if(s && s.mean >= VQ_PV_DARK && s.sd >= VQ_PV_FLAT){
+      chosen = f;
+      if(best){ best.close(); best = null; }
+      return;
+    }
+    const score = s ? s.mean + 2 * s.sd : -1;
+    if(!best || score > bestScore){ if(best) best.close(); best = f; bestScore = score; }
+    else f.close();
+  };
+  const settle = () => new Promise(r => setTimeout(r, 6));
+  try{
+    dec = new VideoDecoder({output: take, error: e => { if(!err) err = e; }});
+    if(ts){
+      /* The decoder a copy of this file would start on — the device's own
+         when it takes the stream, this browser's software decoder otherwise. */
+      const cfg = {codec: V.codecString, codedWidth: V.width, codedHeight: V.height};
+      if(v.decodeOk !== true) cfg.hardwareAcceleration = "prefer-software";
+      dec.configure(cfg);
+      /* The same clock the burn reads: microseconds after the stream's
+         earliest presentation stamp. */
+      const base = V.firstPts != null ? V.firstPts : 0;
+      let started = false, first = null, fed = 0;
+      await vstTsScan(v.file, p.layout, null, async au => {
+        if(over()) return false;
+        if(!started){ if(!au.sync || au.badNal) return true; started = true; }
+        const raw = au.pts != null ? au.pts : au.dts;
+        if(raw == null) return true;
+        const us = Math.round((raw - base) * (1e6 / VST_TS_HZ));
+        if(first == null) first = us;
+        if(us - first > VQ_PV_SECONDS * 1e6 || fed >= VQ_PV_FRAMES) return false;
+        dec.decode(new EncodedVideoChunk({type: au.sync ? "key" : "delta", timestamp: us, data: au.data}));
+        fed++;
+        while(dec.decodeQueueSize > 6 && !over()) await settle();
+        return !over();
+      }, {to: Math.min(v.file.size, (p.layout.start || 0) + VQ_PV_BYTES)});
+    } else {
+      /* A checked entry has let its frame table go (`vstSlim`); it is read
+         again for this and dropped after — the entry stays light. */
+      let sm = V.samples;
+      if(!sm){ const again = await vstParse(v.file); sm = again && again.video && again.video.samples; }
+      const k = sm ? sm.findIndex(s => s.sync) : -1;
+      if(k < 0) throw new Error("no keyframe in the frame table");
+      dec.configure({codec: V.codecString, description: V.description || undefined,
+                     codedWidth: V.width, codedHeight: V.height});
+      const vTs = V.timescale || 1000, from = sm[k].dts != null ? sm[k].dts : sm[k].cts;
+      let bytes = 0;
+      for(let i = k; i < sm.length && i - k < VQ_PV_FRAMES && !over(); i++){
+        const s = sm[i];
+        if(((s.dts != null ? s.dts : s.cts) - from) / vTs > VQ_PV_SECONDS || bytes > VQ_PV_BYTES) break;
+        const buf = await v.file.slice(s.offset, s.offset + s.size).arrayBuffer();
+        bytes += s.size;
+        if(over()) break;
+        dec.decode(new EncodedVideoChunk({type: s.sync ? "key" : "delta",
+          timestamp: Math.round(s.cts / vTs * 1e6), duration: Math.round((s.duration || 0) / vTs * 1e6), data: buf}));
+        while(dec.decodeQueueSize > 6 && !over()) await settle();
+      }
+    }
+    /* What is still inside the decoder (pictures held back for reordering)
+       is let out, unless a frame has already been chosen. */
+    if(!chosen && !err && dec.state === "configured"){
+      await Promise.race([dec.flush().catch(() => {}), new Promise(r => setTimeout(r, 4000))]);
+    }
+  }catch(e){ if(!err) err = e; }
+  finally{ vstCodecClose(dec); }
+  const f = chosen || best;
+  if(!f || vqGone(v)){
+    if(f) f.close();
+    if(!vqGone(v)){ v.pvf = {state: "none", why: err ? vstErrText(err) : "no frame came out of the decoder"}; paintVStamp(); }
     return;
   }
-  vqDropPreview();
-  const el = document.createElement("video");
-  el.id = "vq_pv";
-  el.muted = true; el.controls = true; el.playsInline = true; el.preload = "metadata";
-  el.setAttribute("playsinline", "");
-  el.setAttribute("aria-label", "Preview of " + v.name);
-  if(v.thumb) el.poster = v.thumb;
-  const url = URL.createObjectURL(v.file);
-  el.addEventListener("timeupdate", () => {
-    const s = $("vq_stamp");
-    if(s && VQ && VQ.pv && VQ.pv.el === el) s.textContent = vqStampText(v);
-  });
-  el.addEventListener("error", () => {
-    if(!VQ || !VQ.pv || VQ.pv.el !== el) return;
-    v.pvFailed = true;
-    vqDropPreview();
-    paintVStamp();
-  });
-  el.src = url;
-  VQ.pv = {qid: v.qid, url, el};
-  host.prepend(el);
+  try{
+    /* Upright and at the copy's display shape, small: the longer side 1280 at
+       most. A rotated original is turned here exactly as a player turns it. */
+    const rot = (((p.rotation || 0) % 360) + 360) % 360;
+    const sz = vstOutSize(V);
+    let dw = sz.w, dh = sz.h;
+    if(rot % 180){ const x = dw; dw = dh; dh = x; }
+    const k = Math.min(1, VQ_PV_W / Math.max(dw, dh));
+    const cw = Math.max(1, Math.round(dw * k)), ch = Math.max(1, Math.round(dh * k));
+    const cv = document.createElement("canvas");
+    cv.width = cw; cv.height = ch;
+    const cx = cv.getContext("2d");
+    cx.imageSmoothingQuality = "high";
+    cx.translate(cw / 2, ch / 2);
+    cx.rotate(rot * Math.PI / 180);
+    const fw = rot % 180 ? ch : cw, fh = rot % 180 ? cw : ch;
+    cx.drawImage(f, -fw / 2, -fh / 2, fw, fh);
+    const blob = await new Promise(res => { try{ cv.toBlob(res, "image/jpeg", 0.85); }catch{ res(null); } });
+    if(vqGone(v)) return;
+    v.pvf = blob ? {state: "done", url: URL.createObjectURL(blob), w: cw, h: ch,
+                    t: Math.max(0, f.timestamp / 1e6), dark: !chosen}
+                 : {state: "none", why: "the frame could not be drawn"};
+  }catch(e){
+    if(!vqGone(v)) v.pvf = {state: "none", why: vstErrText(e)};
+  }finally{ try{ f.close(); }catch{} }
+  paintVStamp();
 }
+
 function vqPvNote(v, kind, locked){
   if(locked) return "This video is being processed.";
-  if(kind === "video") return "A preview of your original, played on this device. The stamp shows the time that will be burned in at that moment of the footage.";
-  if(vstIsTs(v.parsed)) return v.thumb
-    ? "This format is not played inside the page, so its first frame is shown. The copy is still made here, frame by frame."
-    : "This format is not played inside the page. The copy is still made here, frame by frame.";
-  if(v.pvFailed) return "This device will not play this file inside the page — that does not affect making the copy.";
+  if(kind === "video") return "A preview of your original, played on this device. The stamp is drawn where it will be burned, with the time it will show at that moment of the footage.";
+  const pf = v.pvf;
+  if(pf && pf.state === "none") return "Preview unavailable for this file.";
+  if(pf && pf.state === "done"){
+    const at = `${pf.t.toFixed(1)} s into the footage`;
+    const why = vstIsTs(v.parsed) ? "This format is not played inside the page, so a frame decoded from it is shown"
+      : "This device will not play this file inside the page, so a frame decoded from it is shown";
+    return `${why} (${at})${pf.dark ? " — the opening seconds are dark, so the brightest of them" : ""}, with the stamp where it will be burned. The copy is still made here, frame by frame, from the original.`;
+  }
   if(v.analysis !== "done") return "The preview appears once this video has been checked.";
+  if(vstIsTs(v.parsed) || v.pvFailed) return vqRunning()
+    ? "The preview frame is decoded once the video being processed has finished."
+    : "Decoding a frame from this file to preview…";
   return "No preview of this file on this device.";
 }
 function vqSrcNote(v){
@@ -21229,10 +21830,11 @@ function vqdEditHtml(){
         ? "Generate timestamped copy (compatibility mode)" : "Generate timestamped copy"}</button>`;
   return `<aside class="vqd-edit" id="vq_edit" aria-label="Edit date and time" data-qid="${v.qid}">${back}
     ${head(`${esc(v.name)} <span class="vqd-pos">&middot; video ${i + 1} of ${n}</span>`)}
-    <div class="vqd-pv" id="vq_pvhost" data-qid="${v.qid}" data-kind="${kind}">${
-      kind === "img" ? `<img src="${esc(v.thumb)}" alt="">`
+    <div class="vqd-pv vqd-vpv" id="vq_pvhost" data-qid="${v.qid}" data-kind="${kind}"
+      style="--pv-ar:${vqPvAspect(v)}">${
+      kind === "img" ? `<img src="${esc(vqPvSrc(v))}" alt="">`
       : kind === "none" ? `<span class="vqd-ph" aria-hidden="true">${VQD_I.film}</span>` : ""}
-      <span class="vqd-stamp" id="vq_stamp" aria-hidden="true">${esc(vqStampText(v))}</span></div>
+      <canvas class="vqd-stampcv" id="vq_stamp" aria-hidden="true" data-label=""></canvas></div>
     <p class="vqd-pvnote">${esc(vqPvNote(v, kind, locked))}</p>
     <span class="vqd-lbl">Detected source time</span>
     <div class="vqd-ro">${VQD_I.cal}<span>${det ? esc(det.label) : "Not found on the file"}</span></div>

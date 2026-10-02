@@ -1818,3 +1818,316 @@ check's own words, and nothing in between is possible.
 **The copy is picture only** (unchanged): the original's audio stays on the
 original. The brief's "audio remains aligned where applicable" does not apply
 to a copy with no audio track, and nothing claims otherwise.
+
+---
+
+# OUTPUT QUALITY + A LIVE TIMESTAMP PREVIEW — 2026-10-02
+
+Owner, after V2 met real footage: the saved copies were *"visibly
+softer/lower quality than the originals"*, and the editor's preview *"is
+effectively black/unhelpful"* — the time being typed has to be SEEN on the
+picture. The brief's own limits: do not redesign the tool, do not touch
+Timestamp Photo, do not regress the MTS/M2TS/AVCHD path; fix only (A) the
+saved copy's quality and (B) the editor's preview. *"Do NOT blindly increase
+bitrate. First trace the complete production encoding path and compare SOURCE
+vs OUTPUT."*
+
+## 1. The encode path, traced — source against output
+
+The shape of a copy, unchanged by this unit:
+
+```
+original File (read-only)
+  -> ONE decode of the ORIGINAL, frame by frame (WebCodecs VideoDecoder;
+     an MTS through its two lanes)
+  -> a canvas -> the burn (vstDraw)
+  -> ONE encode (WebCodecs VideoEncoder, H.264, avc) -> vendored mp4-muxer
+  -> scrub -> clean check -> fingerprint -> read-back
+```
+
+**Ruled out by reading every line of it, not assumed:** no preview, thumbnail
+or display size reaches that path; the original is decoded once and the copy
+encoded once — nothing is encoded twice and no preview is ever re-encoded; the
+canvas was the source's own size (with one exception, the pixel shape, below).
+
+**What V2 asked the encoder for**, measured on master before anything changed
+(a probe of the real `vstEncoderConfig` against stub encoders that accept
+anything and that check levels the way a real one does):
+
+| source | V2 asked | the source spent |
+| --- | --- | --- |
+| iPhone 1080p30 H.264 (the owner's `IMG_0440.mov`, 84.7 MB over 48.12 s) | 4.98 Mbps at "30", level 4.0 | about 14.0 Mbps of video |
+| AVCHD 1080i, FH / FX | 4.98 Mbps at "30", level 4.0 | about 17 / 24 Mbps |
+| AVCHD 1440 x 1080, pixels 4:3 wide | 1440 x 1080 as SQUARE pixels, 3.73 Mbps | shown by every player at 1920 x 1080 |
+| AVCHD 1080i carried one field per packet | 9.95 Mbps at "60" — fields counted as frames | — |
+| iPhone 1080p60 | 9.95 Mbps, level 4.0, which does not hold 1080p60 | — |
+| iPhone 4K30 | level 4.0 — **a level-checking encoder refused all four V2 configurations: no copy at all** | — |
+| 720p30 | 3.0 Mbps, V2's minimum | — |
+
+**The softness was the bitrate.** V2 asked for 0.08 bits per pixel per frame:
+about 35% of what the iPhone had spent on the same pictures and 21–29% of
+AVCHD, so the re-encode threw most of the detail away. Three smaller faults
+sat beside it: the level was fixed at 4.0; the frame rate was rounded (29.97
+asked for as 30, and a field-per-packet stream as 60); and a stream whose
+pixels are not square came out at its stored shape — a 16:9 picture squeezed
+to 4:3.
+
+## 2. What a copy is given now — one formula, every term stated
+
+`vstEncodePlan`. **bpp** = bitrate / (width x height x frame rate).
+
+- **FLOOR, 0.15 bpp** — 1080p29.97 is 9.3 Mbps, 1080p60 18.7, 720p30 4.1,
+  4K30 37.3.
+- **SOURCE** — the original's own video bitrate: an MP4/MOV's from its frame
+  table (every sample's size over its running time); an MTS's from its packets
+  (the picture stream's share of the packets the tail scan read, applied to
+  the file over its duration). Times what H.264 needs to match a more
+  efficient codec: HEVC 1.5x, VP9 1.4x, AV1 1.6x.
+- **TARGET** = the larger of FLOOR and SOURCE, then held under three limits:
+  - **CEILING, 0.40 bpp**, whatever the source spent (1080p29.97: 24.9 Mbps);
+  - **MEMORY** — the copy is built whole in this tab's memory before it can
+    be saved (written moov-first, so the iPhone opens it), so its expected size
+    is kept under **768 MB on a computer and 256 MB on a phone** or any device
+    reporting 4 GB of memory or less;
+  - **V2** — and never fewer bits than V2 gave the same source. A limit can
+    leave a copy as good as it was; it can never make one worse.
+
+| source | asked for now | decided by |
+| --- | --- | --- |
+| iPhone 1080p30 (`IMG_0440.mov`) | **13.99 Mbps** (2.8x V2) | source |
+| AVCHD FH 1080i, 1 min | **16.8 Mbps** (3.4x) | source |
+| AVCHD FX 1080i, 1 min | **23.5 Mbps** (4.7x) | source |
+| AVCHD 1440 x 1080, 4:3 pixels → 1920 x 1080 | 9.32 Mbps | floor |
+| iPhone 1080p60 HEVC at 15 Mbps | 22.5 Mbps | source x 1.5 |
+| iPhone 4K30 HEVC at 40 Mbps, 1 min | 60 Mbps on a computer, 35.8 on a phone | source / memory |
+| 720p30 at 3 Mbps | 4.15 Mbps | floor |
+
+**THE MEMORY LIMIT IS REAL, AND IT IS STATED RATHER THAN HIDDEN.** Building
+the copy in memory is V2's design and this brief forbids redesigning it. So on
+a phone a 1080p30 clip keeps its source's bitrate to about **2½ minutes**, a
+falling share of it after that, and V2's 4.98 Mbps from about **7 minutes**
+on; on a computer the same steps fall at about 7½ and 21½ minutes. The
+finished screen says when the budget decided. Lifting it needs a streaming
+writer — an MP4 written to storage as it is made — which is a design change
+for the owner, not a keystroke.
+
+## 3. The configuration — chosen from the picture, asked of the device
+
+`vstEncoderConfig`, best first, the first the device accepts:
+
+1. **the plan's bitrate**: H.264 High, then Main, then Constrained Baseline,
+   each at the lowest level in Table A-1 that holds the copy's macroblocks per
+   frame, per second and its bitrate, and the two above it;
+2. **the same at V2's bitrate**, for an encoder that refuses the higher rate;
+3. **V2's exact four configurations, last** — a device that made a copy before
+   this change still makes one.
+
+Every one carries `bitrateMode: "variable"`, `latencyMode: "quality"` and the
+exact frame rate, with a keyframe every two seconds set per frame and no
+hardware preference (the device's own encoder where it has one). Measured on
+stubs that check levels: 1080p29.97 → `avc1.640028` (High 4.0); 1080p60 →
+`avc1.64002a` (High 4.2); **4K30 → `avc1.640033` (High 5.1), where V2 found
+nothing**.
+
+## 4. The copy's picture — size, shape, rate, rotation and fields
+
+- **Size** — the source's own, never scaled up or down. A 720p clip stays 720p.
+- **Shape** — square pixels. A stream stating non-square pixels — the H.264
+  VUI `aspect_ratio_info` (Table E-1, or Extended_SAR) in an MTS; `pasp`, or
+  the SPS inside its `avcC`, in an MP4 — is drawn at its display shape: 1440 x
+  1080 with 4:3-wide pixels becomes 1920 x 1080. The stretched axis grows, so no
+  source row or column is dropped; it is the one resample every player performs
+  on display, done once. `vstOutSize` is the one writer.
+- **Rate** — exact. An MTS's from its DTS spacing and, when every packet
+  carries ONE FIELD (each of the first units' slices says `field_pic_flag`),
+  per field PAIR; an MP4's from its frame count over its running time. Each
+  frame keeps its own time from the original either way; the rate is what the
+  rate control and the keyframe spacing are told.
+- **Rotation — a defect found by building the preview.** An iPhone portrait
+  clip is stored landscape with a turn in its header, and the copy keeps both —
+  unchanged. V2 drew the stamp onto the STORED pixels, so a player turned the
+  stamp with the picture and it ran sideways down an edge. `vstBurn` draws it
+  in the picture's display coordinates: bottom right, reading across, sized
+  from the width the viewer sees.
+- **Interlace — reported, not changed.** An interlaced AVCHD stream's decoder
+  returns each frame with its two fields woven together, and the copy keeps
+  them exactly so. It is **not deinterlaced**: the brief says not to invent
+  deinterlacing unless the decoded frames require it, and they decode whole.
+  What that means, said plainly: on fast motion the field lines can show in the
+  copy where a player might have deinterlaced the original on display. The
+  finished screen says *"Both fields of every frame are kept as the camera
+  recorded them — woven, not deinterlaced."* Whether the owner's camcorder
+  records 1080i or 1080p is not known here.
+
+## 5. The copy says what it is
+
+The finished screen gains two rows and the receipt two lines, numbers only —
+never a quality score: **Picture** (*1920 × 1080 at 29.97 fps — the original's
+own size and frame rate*, or *the original's 1440 × 1080 picture, whose pixels
+are 4:3 wide, at the shape it is shown*) and **Encoding** (*H.264 High, level
+4.0 · 16.8 Mbps asked for, N written (the original's video: 16.8 Mbps)*, plus
+the reason when the memory budget or an old encoder decided).
+
+**The muxer is let go the moment its file exists.** It still held the buffer
+it grew the file in — up to twice the copy — while the copy was checked,
+fingerprinted and handed over; at three times V2's bitrate that mattered.
+
+## 6. The preview — the original, on this device, with the stamp the copy will carry
+
+Three kinds, and nothing is uploaded for any of them:
+
+- an **MP4 or MOV this device plays**: the original itself, from a local
+  object URL, muted, with controls;
+- an **MTS** (no browser plays MPEG-TS in a page, and none is claimed to) — or
+  a file the player refused — **a frame DECODED from it** by the same local
+  decoder a copy uses;
+- otherwise **"Preview unavailable for this file."** — never a verdict on the
+  copy: the video stays READY and Generate is offered.
+
+**A FRAME WORTH LOOKING AT.** A camcorder's first frames are often black — the
+shutter opening. The first frame within 2.5 s of the first keyframe that is
+neither near-black (mean luma under 0.07) nor flat (luma spread under 0.015) is
+taken; with none, the brightest, and the note says the opening is dark.
+Bounded four ways — 2.5 s of footage, 150 frames, 32 MB of the file, 15 s of
+time — so the whole video is never decoded for a preview. The frame is drawn
+upright at the display shape, its longer side at most 1280, into a JPEG kept
+on its own entry.
+
+**THE STAMP IS THE BURN'S OWN WRITER.** A canvas over the picture, drawn by
+`vstDraw` — the function that burns the copy — sized from the box's width
+exactly as the copy's stamp is sized from the copy's width, in the corner the
+copy puts it, in the copy's face and outline. It shows the time the copy would
+carry at that moment of the footage: a decoded frame at its own moment; a
+playing original at wherever it has played to.
+
+**IT FOLLOWS EVERY KEYSTROKE AND SAVES NOTHING.** Typing redraws it in place
+with the DRAFT (`vqTimeLive`), so the box being typed in is never rebuilt;
+Save is still what keeps a time, Undo puts the saved one back on the picture
+too, and leaving with a change open still asks.
+
+**ONE HEAVY THING AT A TIME.** The frame is decoded by the queue's one worker,
+in the same single turn an analysis takes — never two decodes at once, and
+none while a copy is being made: a video selected during a run says *"The
+preview frame is decoded once the video being processed has finished."* and
+gets it after.
+
+**THE PREVIEW NEVER BECOMES THE COPY.** The copy is always made by decoding
+the ORIGINAL again at its full size; the preview's small frame sits on its own
+entry and no line of the transcode can reach it. Asserted: an MTS previewed at
+1280 x 720 makes a 1920 x 1080 copy, burned only into 1920 x 1080 frames.
+
+**THE BOX HAS THE PICTURE'S SHAPE** (`aspect-ratio` from the display shape),
+so a portrait clip gets a portrait box and no picture sits in a slab of black.
+Phones (390, 320): the preview is in view, at most 40% of the screen's height,
+with the date and time fields on the same screen, the stamp's glyphs at least
+6 px, Save and Generate 44 px. Desks (1280, 1440, 1920): **the layout is
+unchanged**, so the preview fills the editor's column — 292 px of content at
+1280, 352 above it. Nothing scrolls sideways at any width.
+
+## 7. Tests
+
+Five new portal sections and one re-aimed:
+
+- **Timestamp Video quality: the copy keeps the source's size, frame rate and
+  shape, and its bitrate comes from the source** — six transport streams
+  through the whole pipeline (stub codecs; canvas, burn, muxer, clean check
+  and read-back real): 1080p29.97 at about 16.8 Mbps, an anamorphic 1440 x
+  1080i whose VUI says 4:3 pixels, a 1440 x 1080 that says nothing, 1080i
+  carried one field per packet, 1080p60, and 720p30. MP4/MOV parsing of
+  `pasp`, of the SPS inside `avcC`, of square and unstated pixels, and the
+  exact rate and bitrate from the frame table. A 1920 x 1080 MP4 at 13.9 Mbps
+  through the H.264 path. The plan and the configuration against stub encoders
+  that check levels the way a real one does: 4K30, a device that knows only
+  V2's configurations, one that refuses the plan's rate, one that takes
+  nothing, both memory budgets and which device gets which, the ceiling, an
+  HEVC source, an unmeasurable one, and the owner's `IMG_0440.mov`.
+- **… on real codecs** — VP9 decode and encode here: an MP4, a portrait MOV
+  (stored 640 x 360, turned 90 degrees) and a 320 x 180 clip keep their size;
+  the stamp is found in the PLAYED copy's pixels, upright, bottom right.
+- **Timestamp Video editor: an MTS whose first frames are black …** — A, a
+  black opening skipped for the first real picture; B–E, date, h/m/s, AM/PM and
+  EST/EDT on the picture the moment they are typed; F, Undo and Discard leave
+  the saved time exactly as it was; the copy 1920 x 1080 from a 1280 x 720
+  preview; nothing fetched; *"Preview unavailable for this file."* with
+  Generate still offered; a clip dark end to end decoded for 2.5 s (76 of its
+  300 frames) and no further; no preview decode while a copy is being made.
+- **… an MP4 plays …** — the playing original with the stamp following the
+  footage; a portrait clip's portrait box; a clip the player refuses previewed
+  by a frame decoded from it, upright.
+- **… on a phone (390, 320) and a desk (1280, 1440, 1920)** — a 16:9
+  picture in view at its shape, the stamp's glyphs at least 6 px, Save and
+  Generate 44 px, nothing sideways; and on phones a PORTRAIT picture as well:
+  a portrait box, held to 40% of the screen's height, the fields and Save and
+  Generate still on the screen (its stamp's size is the known limit in §9).
+- Re-aimed, not loosened: *Timestamp dashboard: the editor previews the
+  original…* — its stamp is a canvas now (read through `data-label`), and its
+  transport stream shows a decoded frame rather than the thumbnail.
+
+**The record, 2026-10-02:** the six sections hold 123 assertions (117 new).
+The one full portal regression, run alone after every targeted run was green:
+**4,988 passed, 0 failed**. `.github/test-deploy.mjs` 127 passed, 0 failed; the
+CEO release gate 43 PASS, 0 WARN, 0 FAIL. The Worker suite was not needed: the
+Worker and the schema did not change.
+
+## 8. Every property, mutated
+
+43 mutations, each applied in a git worktree, each run against the sections
+that hold its property, counted only when an assertion NAMING it failed —
+25 on the copy (the plan's terms, the configuration, rate, shape, bitrate, the
+copy's size on both paths, the rotation) and 18 on the preview (position,
+draft, keystrokes, footage time, black skip, decoded frame shown, the MTS
+frame decoded at all, the queue's single turn, Generate kept, the window, the
+dark note, the box's shape and turn, the decoded frame turned upright, its
+size, the player kept across repaints, the phone's height cap, typing without
+a repaint).
+
+**42 were named on the first run, by 118 assertions, with no crash.** The 43rd
+walked past, and it was the test's fault:
+
+- **The phone preview's height cap could be removed with nothing failing**,
+  because the phone checks used a 16:9 picture — and a 16:9 frame on a phone
+  is held by its WIDTH long before any height cap. The rule exists for a
+  portrait picture, so the phones now check a portrait picture too; re-run,
+  the mutation fails four assertions by name.
+
+**Four of my own tests were wrong before the batch ran, and all four were the
+instrument.** The queue SORTS what is added, so a test reading `VQ.items[0]`
+as the MP4 measured the portrait MOV and reported the stamp frozen; it finds
+entries by name now. A desk check demanded a 320 px preview where the
+unchanged layout's editor is 292 px of content at 1280. A body helper named
+`u32` collided with the fixture library in `vstRun`'s single scope. And the MP4
+editor test typed the hour but not AM or PM, so the fixture's own creation time
+— the moment it was made — decided it: the test passed before noon Eastern
+and failed after. It sets AM now.
+
+And four properties had **no test at all** until writing the mutation list
+showed it: the MP4's `pasp`/`avcC` pixel shape, which device gets which memory
+budget, the preview waiting for a run, and the preview's bounded window. A
+mutation of the preview's run guard alone turned out EQUIVALENT — the queue's
+pump refuses during a run as well — so the mutation that counts is the
+realistic one: the editor decoding its own frame, bypassing the queue.
+
+## 9. Proven here, and what is left for the device
+
+Proven in this container: the copy's size, shape, rate and level on every
+fixture above; the bitrate plan on every term; the burn at full size and upright
+in a played copy on real VP9 codecs; the preview's decoded frame, its stamp,
+its live typing and its limits; the safety properties unchanged — the original
+untouched, both fingerprints, the clean check, both decoder lanes, completeness,
+fail-closed and Stop, the queue, Process Next and drag and drop, and no request
+made by previewing or by making a copy.
+
+**Not provable here, and the owner's check:** this Chromium has no H.264
+encoder, so what a real device's encoder WRITES is not measured — under
+variable bitrate it may write less than it is asked for. The finished screen
+prints both numbers, asked for and written, so the first real copy answers it.
+Whether the copy now looks as sharp as its original is the owner's eye on the
+owner's footage; no number here claims it.
+
+**A known limit, left for the owner:** a PORTRAIT clip's preview on a phone is
+narrow — about 171 px at 390, 115 at 320 — and its stamp, drawn at the copy's
+own proportion, is then about 4 px tall: there, but not legible. The exact
+text is beside it in the burned-in line. Making the picture's own stamp
+legible there means a preview taller than the 40% that keeps the fields on the
+screen, or a stamp drawn larger than the copy will carry it — either is the
+owner's call, not a quiet change.
