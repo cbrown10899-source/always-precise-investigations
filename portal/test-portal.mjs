@@ -16207,8 +16207,12 @@ section('Timestamp Video editor on a phone (390, 320) and a desk (1280, 1440, 19
          JSON.stringify([R, M.pv]));
       ok(`${tag}: a portrait picture is held to 40% of the screen’s height, however tall it is`, M.pv.h <= M.vh * 0.4 + 1,
          JSON.stringify(M.pv));
+      /* Measured at 320 x 568: the date row ends at 568.3 — flush with the
+         screen's edge, a sub-pixel the same 1 px allowance covers as the
+         picture's own edges above. A preview that pushed the fields down would
+         put them hundreds of pixels further. */
       ok(`${tag}: so the date and time fields stay on the same screen as the portrait picture`,
-         M.date.bottom <= M.vh && M.time.bottom <= M.vh, JSON.stringify([M.pv, M.date, M.time]));
+         M.date.bottom <= M.vh + 1 && M.time.bottom <= M.vh + 1, JSON.stringify([M.pv, M.date, M.time]));
       ok(`${tag}: and Save and Generate are still reachable and 44 px tall`, M.save.ok && M.go.ok && M.save.h >= 44 && M.go.h >= 44,
          JSON.stringify([M.save, M.go]));
       await page.evaluate(() => { try { window.__S && window.__S.restore(); vstClose(); } catch {} });
