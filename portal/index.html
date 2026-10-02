@@ -1773,6 +1773,27 @@
   .vqd-ask{margin-top:12px;padding:10px 12px;border:1px solid var(--vqd-warn);border-radius:10px;
     background:var(--vqd-warn-bg);display:flex;flex-wrap:wrap;gap:6px;}
   .vqd-ask p{flex:1 1 100%;margin:0;color:var(--vqd-warn);font-size:.88rem;line-height:1.45;}
+  /* VIDEO QUALITY (2026-10-02): two choices in the Generate area, each a whole
+     row to tap — the radio and its words are one label. */
+  .vqd-qual{border:0;margin:14px 0 0;padding:0;min-width:0;}
+  .vqd-qual>legend{padding:0;}
+  .vqd-qopt{display:flex;gap:6px;align-items:center;min-height:46px;padding:1px 12px 1px 2px;margin-top:6px;
+    border:1px solid var(--vqd-line);border-radius:10px;background:var(--vqd-bg);cursor:pointer;}
+  .vqd-qopt.is-on{border-color:var(--vqd-gold);}
+  .vqd-qopt:has(input:disabled){opacity:.6;cursor:default;}
+  /* The radio is a 44 px target in its own right, drawn as a ring (and a gold
+     dot when chosen) rather than the platform's 13 px control — a box that
+     is not square would be drawn as an oval by some engines. */
+  .vqd-qopt input{appearance:none;-webkit-appearance:none;flex:none;width:44px;height:44px;margin:0;border:0;
+    border-radius:50%;cursor:pointer;
+    background:radial-gradient(circle, transparent 0 8px, var(--vqd-muted) 8.5px 10px, transparent 10.5px);}
+  .vqd-qopt input:checked{background:radial-gradient(circle, var(--vqd-gold) 0 5px, transparent 5.5px 8px,
+    var(--vqd-gold) 8.5px 10px, transparent 10.5px);}
+  .vqd-qopt input:focus-visible{outline:2px solid var(--vqd-gold);outline-offset:-6px;}
+  .vqd-qopt>span{display:flex;flex-direction:column;gap:1px;min-width:0;padding:5px 0;}
+  .vqd-qopt b{font-size:.88rem;color:var(--vqd-ink);overflow-wrap:anywhere;}
+  .vqd-qopt small{font-size:.78rem;color:var(--vqd-muted);}
+  .vqd-qual .vqd-note, .vqd-qual .vqd-err{margin-top:6px;}
   .vqd-nav{display:grid;grid-template-columns:repeat(3, minmax(0,1fr));gap:8px;margin-top:14px;}
   .vqd-nav .vqd-b{padding:0 4px;font-size:.86rem;}
   /* The processing row: the run, then what comes next. */
@@ -14402,11 +14423,13 @@ async function vstEncoderAccepts(vid){
   if(typeof VideoEncoder === "undefined") return {supported: false, why: "no WebCodecs encoder on this device"};
   if(!vid || !vid.width || !vid.height) return {supported: false, why: "the picture size could not be read"};
   const sz = vstOutSize(vid);
-  const cfg = await vstEncoderConfig(sz.w, sz.h, vid.frameRate || vid.fps || 30,
-    {srcBitrate: vid.srcBitrate, seconds: vid.seconds, srcCodec: vid.cc});
+  const o = {srcBitrate: vid.srcBitrate, seconds: vid.seconds, srcCodec: vid.cc};
+  /* High Quality first, as a copy is made; Standard when High is refused. */
+  let mode = "high quality", cfg = await vstEncoderConfig(sz.w, sz.h, vid.frameRate || vid.fps || 30, Object.assign({mode: "high"}, o));
+  if(!cfg){ mode = "standard"; cfg = await vstEncoderConfig(sz.w, sz.h, vid.frameRate || vid.fps || 30, Object.assign({mode: "standard"}, o)); }
   if(!cfg) return {supported: false, why: "no H.264 encoder configuration was accepted"};
   return {supported: true, codec: cfg.codec, text: `${cfg.codec} (${vstH264Name(cfg.codec) || "H.264"}) at ${
-    vstMbps(cfg.bitrate)} for ${sz.w}x${sz.h}`};
+    vstMbps(cfg.bitrate)} for ${sz.w}x${sz.h}, ${mode}`};
 }
 
 /* Does this browser decode it? Asked when the file is CHOSEN, not when Generate
@@ -14642,7 +14665,67 @@ function vstOutSize(V){
                : {w: W, h: even(H / k), normalized: true, sar};
 }
 
-/* ---- HOW MANY BITS A COPY IS GIVEN — one formula, every term stated ----
+/* ---- HIGH QUALITY IS THE DEFAULT (owner brief 2026-10-02, "TIMESTAMP VIDEO —
+   REAL FOOTAGE STILL GRAINY/BLOTCHY") ----
+
+   A copy is a SECOND GENERATION. The camera already threw detail away once,
+   and any H.264 encoder throws more away again — worst exactly where
+   surveillance footage lives: dark areas, foliage, grain, fine edges, motion.
+   Giving the copy the original's own bitrate (what #346 shipped, and what
+   STANDARD below still does) is therefore not the same quality. Measured on a
+   noisy 1080p29.97 scene recorded at 18.7 Mbps, re-encoded by x264 at a
+   hardware-class speed, the copy's SSIM against the original:
+
+       1x the source 0.980    1.5x 0.987    2x 0.991    2.5x 0.993
+
+   — the gain flattens after twice. So HIGH QUALITY is:
+
+     2x the source's H.264-equivalent video bitrate (an HEVC source counts
+        1.5x, as STANDARD already counts it) — the top of the owner's 1.5-2x,
+        because surveillance footage is noisy footage;
+     NEVER BELOW the floor table, and NEVER ABOVE twice it (the owner's
+        "avoid absurd" — a ProRes or an over-recorded source does not buy an
+        unbounded copy);
+     and NEVER LOWERED. If this device's encoder will not take it, or the copy
+        would not fit the memory it is built in, High Quality is "not available
+        on this device for this file" — said BEFORE anything runs, with
+        STANDARD offered — never quietly made at a lower rate and still called
+        high.
+
+   THE FLOOR TABLE (Mbps). 1080p at 24/25/30 frames is 22 and at 50/60 is 34 —
+   inside the owner's 18-24 and 28-40. Other sizes scale by pixel count to the
+   power 0.75, which is what cameras themselves do (an iPhone's H.264 4K30
+   runs about 2.8x its 1080p30, not 4x):
+
+                   720p   1080p   1440p    4K
+       24-30 fps   12.0   22.0    33.9    62.2
+       48-60 fps   18.5   34.0    52.3    96.2
+
+   A CONSTRAINED BASELINE ENCODER IS GIVEN 1.2x, inside the same cap: with no
+   CABAC, no B-frames and no 8x8 transform it needed 1.2x the bits to match
+   High at this rate (SSIM 0.9920 against High's 0.9918; at 1x it was 0.9898).
+   Main was not measured and is given nothing it was not measured to need. */
+const VST_HQ_GAIN = 2;
+const VST_HQ_CAP = 2;
+const VST_HQ_1080 = {upTo30: 22000000, above30: 34000000};
+const VST_HQ_CB_GAIN = 1.2;
+function vstHqFloor(w, h, fps){
+  const base = fps > 31 ? VST_HQ_1080.above30 : VST_HQ_1080.upTo30;
+  return Math.round(base * Math.pow((w * h) / (1920 * 1080), 0.75));
+}
+/* The owner's sentence when it cannot be made — one writer for every screen. */
+const VST_HQ_NA = "High-quality encoding is not available on this device for this file.";
+/* Which mode a video will be made in. High unless the operator chose Standard. */
+const vstQualityOf = v => v && v.quality === "standard" ? "standard" : "high";
+/* Sizes as a person reads them, and why High Quality does not fit. */
+const vstSize = b => !(b > 0) ? "unknown" : b >= 1e9 ? (b / 1e9).toFixed(1) + " GB"
+  : b >= 1e6 ? Math.round(b / 1e6) + " MB" : Math.max(1, Math.round(b / 1e3)) + " KB";
+function vstHqMemoryText(plan){
+  return `A high-quality copy of this video would be about ${vstSize(plan.est)}, and this device builds the copy in`
+    + ` memory with room for about ${vstSize(plan.budget)}.`;
+}
+
+/* ---- STANDARD: HOW MANY BITS A COPY IS GIVEN — one formula, every term stated ----
 
    bits per pixel per frame (bpp) = bitrate / (width x height x frame rate)
 
@@ -14672,6 +14755,8 @@ const VST_SRC_GAIN = {hvc1: 1.5, hev1: 1.5, vp09: 1.4, av01: 1.6};
 const VST_BUDGET_DESK = 768 * 1048576;
 const VST_BUDGET_PHONE = 256 * 1048576;
 const vstMbps = b => b > 0 ? (b / 1e6).toFixed(b >= 1e7 ? 1 : 2) + " Mbps" : "unknown";
+/* The owner's format for the bitrate lines: XX.X Mbps, always one decimal. */
+const vstMbps1 = b => b > 0 ? (b / 1e6).toFixed(1) + " Mbps" : "unknown";
 function vstCopyBudget(){
   const ua = navigator.userAgent || "";
   const small = vstIsIOS() || /Android/i.test(ua)
@@ -14681,21 +14766,38 @@ function vstCopyBudget(){
 function vstEncodePlan(o){
   const w = o.w, h = o.h, fps = o.fps > 0 ? o.fps : 30;
   const px = w * h * fps;
+  const mode = o.mode === "standard" ? "standard" : "high";
   /* V2's own number, from V2's own inputs: its whole-number frame rate (a
      1080i stream carried one field per packet counted fields there). */
   const v2Fps = o.v2Fps > 0 ? o.v2Fps : Math.round(fps) || 30;
   const v2 = Math.min(24000000, Math.max(3000000, Math.round(w * h * v2Fps * VST_BPP_V2)));
-  const floor = Math.round(px * VST_BPP_FLOOR);
   const gain = VST_SRC_GAIN[o.srcCodec] || 1;
   const source = o.srcBitrate > 0 ? Math.round(o.srcBitrate * gain) : null;
-  const ceiling = Math.round(px * VST_BPP_CEIL);
   const budget = o.budget > 0 ? o.budget : vstCopyBudget();
-  const memory = o.seconds > 0 ? Math.floor(budget * 8 / o.seconds) : null;
+  const seconds = o.seconds > 0 ? o.seconds : null;
+  const memory = seconds ? Math.floor(budget * 8 / seconds) : null;
+  const est = b => seconds ? Math.round(b * seconds / 8) : null;
+  if(mode === "high"){
+    const floor = vstHqFloor(w, h, fps), ceiling = floor * VST_HQ_CAP;
+    let bitrate = floor, by = "floor";
+    if(source != null && source * VST_HQ_GAIN > floor){ bitrate = Math.round(source * VST_HQ_GAIN); by = "source"; }
+    if(bitrate > ceiling){ bitrate = ceiling; by = "ceiling"; }
+    /* NOTHING BELOW LOWERS IT. Whether the copy fits is reported, not acted on. */
+    return {mode, bitrate, by, fps, floor, source, gain, hqGain: VST_HQ_GAIN, ceiling, memory, budget, v2, v2Fps,
+            seconds, want: bitrate, reduced: false, fits: memory == null || bitrate <= memory, est: est(bitrate),
+            bpp: +(bitrate / px).toFixed(3)};
+  }
+  const floor = Math.round(px * VST_BPP_FLOOR);
+  const ceiling = Math.round(px * VST_BPP_CEIL);
   let bitrate = Math.max(floor, source || 0), by = source != null && source > floor ? "source" : "floor";
   if(bitrate > ceiling){ bitrate = ceiling; by = "ceiling"; }
+  /* What STANDARD would give with no memory limit — so a copy held to the
+     budget can be SAID to be, before it is made. */
+  const want = bitrate;
   if(memory != null && bitrate > memory){ bitrate = memory; by = "memory"; }
   if(bitrate < v2){ bitrate = v2; by = "v2"; }
-  return {bitrate, by, fps, floor, source, gain, ceiling, memory, budget, v2, v2Fps,
+  return {mode, bitrate, by, fps, floor, source, gain, ceiling, memory, budget, v2, v2Fps,
+          seconds, want, reduced: bitrate < want, fits: true, est: est(bitrate),
           bpp: +(bitrate / px).toFixed(3)};
 }
 
@@ -14726,45 +14828,125 @@ function vstH264Name(codec){
   return `${name}, level ${Math.floor(lv / 10)}.${lv % 10}`;
 }
 
-/* THE ENCODER CONFIGURATION, asked of THIS device, best first:
-     1. the plan's bitrate — High, then Main, then Constrained Baseline, each
-        at the lowest level that holds the picture and two above it;
+/* THE ENCODER CONFIGURATION, asked of THIS device, best first.
+
+   HIGH QUALITY asks for its rate and nothing less: High, then Main, then
+   Constrained Baseline (given 1.2x, see above), each at the lowest level that
+   holds the picture and two above it — variable bitrate first, constant for
+   an encoder that offers only that. No lower rate is ever asked: a device that
+   refuses every one of them is told "not available", and the operator chooses
+   STANDARD.
+   STANDARD asks as #346 did:
+     1. the plan's bitrate — High, then Main, then Constrained Baseline;
      2. the same at V2's bitrate, for an encoder that refuses the higher rate;
      3. V2's exact configurations, last, so a device that made a copy before
         this change still makes one.
-   Variable bitrate (the encoder spends where the picture needs it), latency
-   "quality" (not real-time), a keyframe every two seconds (set per frame by
-   the caller), no hardware preference (the device's own encoder when it has
-   one, this browser's software encoder otherwise) — every one of them a
-   WebCodecs default, written down so the configuration says what it is.
+   Latency "quality" — never "realtime"; a copy is not a call. A keyframe every
+   two seconds (set per frame by the caller): measured on the noisy 1080p scene
+   at the High rate, keyframes 1 s, 2 s and 5 s apart differ by 0.0003 SSIM, so
+   the copy keeps a seek point every two seconds for nothing. And NO HARDWARE
+   PREFERENCE: the browser's own choice, which on Chrome is the device's
+   hardware encoder when that takes the configuration and its software encoder
+   when it does not — and which, unlike a forced preference, falls back by
+   itself if the hardware refuses at the last moment. Which of the two the
+   device OFFERS is asked separately (`vstEncoderImpls`) and printed; neither
+   is assumed to make the better picture.
    `o` carries what the plan needs: the source's bitrate, codec and running
-   time. The answer carries its plan as `vstPlan` (not part of the
-   configuration the encoder reads). */
+   time, and the mode. The answer carries its plan as `vstPlan` (not part of
+   the configuration the encoder reads). */
 async function vstEncoderConfig(w, h, fps, o){
   const plan = vstEncodePlan(Object.assign({}, o || {}, {w, h, fps}));
   const rate = plan.fps;
+  const high = plan.mode === "high";
   const tries = [], seen = new Set();
   const push = (cfg, step) => { const k = JSON.stringify(cfg); if(!seen.has(k)){ seen.add(k); tries.push({cfg, step}); } };
-  for(const [bitrate, step] of plan.bitrate > plan.v2 ? [[plan.bitrate, "plan"], [plan.v2, "v2-rate"]] : [[plan.bitrate, "plan"]]){
+  const rates = high || !(plan.bitrate > plan.v2) ? [[plan.bitrate, "plan"]]
+    : [[plan.bitrate, "plan"], [plan.v2, "v2-rate"]];
+  for(const [bits, step] of rates){
     for(const p of VST_H264_PROFILES){
-      for(const lv of vstH264Levels(w, h, rate, bitrate, p.br).slice(0, 3)){
-        push({codec: "avc1." + p.hex + lv.toString(16).padStart(2, "0"), width: w, height: h, bitrate,
-              bitrateMode: "variable", framerate: rate, latencyMode: "quality", avc: {format: "avc"}}, step);
+      const bitrate = high && p.hex === "42e0" ? Math.min(plan.ceiling, Math.round(bits * VST_HQ_CB_GAIN)) : bits;
+      for(const bitrateMode of ["variable", "constant"]){
+        for(const lv of vstH264Levels(w, h, rate, bitrate, p.br).slice(0, 3)){
+          push({codec: "avc1." + p.hex + lv.toString(16).padStart(2, "0"), width: w, height: h, bitrate,
+                bitrateMode, framerate: rate, latencyMode: "quality", avc: {format: "avc"}}, step);
+        }
       }
     }
   }
-  for(const codec of ["avc1.640028", "avc1.64002a", "avc1.4d0028", "avc1.42E01E"]){
-    push({codec, width: w, height: h, bitrate: plan.v2, framerate: plan.v2Fps, avc: {format: "avc"}}, "v2");
+  if(!high){
+    for(const codec of ["avc1.640028", "avc1.64002a", "avc1.4d0028", "avc1.42E01E"]){
+      push({codec, width: w, height: h, bitrate: plan.v2, framerate: plan.v2Fps, avc: {format: "avc"}}, "v2");
+    }
   }
   for(let i = 0; i < tries.length; i++){
     const {cfg, step} = tries[i];
     try{
       const r = await VideoEncoder.isConfigSupported(cfg);
-      if(r && r.supported) return Object.defineProperty(cfg, "vstPlan",
-        {value: Object.assign({}, plan, {step, asked: i + 1}), enumerable: false});
+      if(r && r.supported){
+        /* High Quality's fit is the rate actually configured — a Baseline
+           encoder's 1.2x is what has to fit the memory, not the plan's. */
+        const fits = !high || plan.memory == null || cfg.bitrate <= plan.memory;
+        return Object.defineProperty(cfg, "vstPlan", {value: Object.assign({}, plan, {step, asked: i + 1, fits,
+          est: plan.seconds ? Math.round(cfg.bitrate * plan.seconds / 8) : null}), enumerable: false});
+      }
     }catch{}
   }
   return null;
+}
+
+/* WHICH ENCODERS THIS DEVICE OFFERS for a configuration — its hardware one and
+   this browser's software one, asked separately and only REPORTED. The copy is
+   made with the browser's own choice (see above); this is what lets the
+   finished screen and the device check say what that choice was choosing
+   between. `null` is "this browser would not say". */
+async function vstEncoderImpls(cfg){
+  const out = {hardware: null, software: null};
+  if(!cfg || typeof VideoEncoder === "undefined") return out;
+  for(const [k, pref] of [["hardware", "prefer-hardware"], ["software", "prefer-software"]]){
+    try{
+      const c = Object.assign({}, cfg, {hardwareAcceleration: pref});
+      const r = await VideoEncoder.isConfigSupported(c);
+      out[k] = !!(r && r.supported);
+    }catch{ out[k] = null; }
+  }
+  return out;
+}
+
+/* The copy's frame rate and V2's whole-number one, read the way each
+   transcode path reads them, so the check before a run asks this device's
+   encoder exactly what the run will. */
+function vstRateOf(p){
+  const V = p && p.video;
+  if(!V) return {rate: 30, v2Fps: 30};
+  if(vstIsTs(p)){ const fps = V.fps || 30; return {rate: V.frameRate > 0 ? V.frameRate : fps, v2Fps: fps}; }
+  const n = V.samples ? V.samples.length : V.sampleCount;
+  const fps = n && V.seconds ? Math.round(n / V.seconds) : 30;
+  return {rate: V.frameRate > 0 ? V.frameRate : fps, v2Fps: fps};
+}
+
+/* ---- BEFORE ANYTHING RUNS: CAN EACH QUALITY BE MADE HERE, FOR THIS FILE? ----
+   The owner's rule (brief 2026-10-02 §18-19): a fall in quality because of
+   this device's limits is said BEFORE generation, and a copy is never made at
+   a lower quality under a higher one's name. So both modes are asked of this
+   device's encoder for THIS file — through the same `vstEncoderConfig` the run
+   uses, with the same inputs — and the answer is kept on the entry, where the
+   Generate area reads it. */
+async function vqQualityCheck(v){
+  const p = v && v.parsed, V = p && p.video;
+  if(!V || !V.width || !V.height || typeof VideoEncoder === "undefined") return null;
+  const sz = vstOutSize(V), r = vstRateOf(p);
+  const base = {srcBitrate: V.srcBitrate, seconds: V.seconds, srcCodec: V.cc, v2Fps: r.v2Fps};
+  const out = {w: sz.w, h: sz.h, rate: r.rate, impls: null};
+  for(const mode of ["high", "standard"]){
+    const cfg = await vstEncoderConfig(sz.w, sz.h, r.rate, Object.assign({mode}, base));
+    const plan = (cfg && cfg.vstPlan) || vstEncodePlan(Object.assign({mode, w: sz.w, h: sz.h, fps: r.rate}, base));
+    out[mode] = {ok: !!cfg && plan.fits !== false, why: !cfg ? "encoder" : plan.fits === false ? "memory" : "",
+                 bitrate: cfg ? cfg.bitrate : plan.bitrate, codec: cfg ? cfg.codec : null, cfg: cfg || null,
+                 plan, est: plan.est};
+  }
+  const use = out.high.ok ? out.high : out.standard;
+  if(use.cfg) out.impls = await vstEncoderImpls(use.cfg);
+  return out;
 }
 
 /* A CODEC THAT ERRORS CLOSES ITSELF, and flushing a closed codec throws
@@ -14776,9 +14958,12 @@ async function vstEncoderConfig(w, h, fps, o){
    failure is never allowed to outrank the first recorded error, and closing
    is defensive. One writer for both transcode paths — the MOV/MP4 path had
    the identical latent defect. */
-async function vstCodecDrain(codec){
+async function vstCodecDrain(codec, settle){
   try{ if(codec.state === "configured") await codec.flush(); }
   catch{ /* the codec's error callback holds the primary fault */ }
+  /* What the flush handed out is finished BEFORE the codec is closed — the
+     frames a decoder returned are still being stamped on their chain. */
+  if(settle){ try{ await settle(); }catch{} }
   try{ if(codec.state !== "closed") codec.close(); }catch{}
 }
 
@@ -14825,10 +15010,19 @@ async function vstTranscode(file, parsed, startMs, tz, onStage, run){
   const sourceAudio = A ? `${A.name || A.cc}${A.channels ? ", " + A.channels + "ch" : ""}`
                         : null;
 
+  const quality = run && run.quality === "standard" ? "standard" : "high";
   const encCfg = await vstEncoderConfig(OW, OH, rate,
-    {srcBitrate: V.srcBitrate, seconds: V.seconds, srcCodec: V.cc, v2Fps: fps});
-  if(!encCfg) throw new Error("This device would not accept any H.264 encoder configuration for "
-    + `${OW}x${OH}, so no MP4 could be written. Your original is unchanged.`);
+    {srcBitrate: V.srcBitrate, seconds: V.seconds, srcCodec: V.cc, v2Fps: fps, mode: quality});
+  /* HIGH QUALITY IS NEVER LOWERED: no configuration at its rate is "not
+     available", with the copy not made — never a lower rate under its name. */
+  if(!encCfg) throw quality === "high"
+    ? vstFault("setup", VST_HQ_NA + " This device's encoder would not take the high-quality settings for "
+        + `${OW}x${OH}. Choose Standard to make a smaller copy. Your original is unchanged.`, {hq: "encoder"})
+    : new Error("This device would not accept any H.264 encoder configuration for "
+        + `${OW}x${OH}, so no MP4 could be written. Your original is unchanged.`);
+  if(quality === "high" && encCfg.vstPlan && encCfg.vstPlan.fits === false)
+    throw vstFault("setup", VST_HQ_NA + " " + vstHqMemoryText(encCfg.vstPlan)
+      + " Choose Standard to make a smaller copy. Your original is unchanged.", {hq: "memory"});
 
   /* The box the muxer writes follows the encoder actually configured — H.264
      on every device this ships to; `vstMuxCodec` is the one reader. */
@@ -14853,7 +15047,7 @@ async function vstTranscode(file, parsed, startMs, tz, onStage, run){
   cx.imageSmoothingQuality = "high";
   const keyEvery = Math.max(1, Math.round(rate * 2));
 
-  let encoded = 0, decoded = 0, muxed = 0, fed = 0, outBytes = 0, encErr = null, muxErr = null;
+  let encoded = 0, decoded = 0, burned = 0, muxed = 0, fed = 0, outBytes = 0, encErr = null, muxErr = null, frameErr = null;
   const fail = e => { if(!encErr) encErr = e; };
   const encoder = new VideoEncoder({
     output: (chunk, meta) => {
@@ -14861,27 +15055,35 @@ async function vstTranscode(file, parsed, startMs, tz, onStage, run){
       /* What the device's encoder signed the frame with is taken out before
          the muxer sees it — see `vstCleanChunk`. */
       try{ const c = vstCleanChunk(chunk, meta, strip); outBytes += c.byteLength || 0;
-           muxer.addVideoChunk(c, meta); muxed++; }catch(e){ if(!muxErr) muxErr = e; }
+           muxer.addVideoChunk(c, vstMetaColour(meta, codec)); muxed++; }catch(e){ if(!muxErr) muxErr = e; }
     },
     error: fail,
   });
   encoder.configure(encCfg);
 
   const vTs = V.timescale || 1000;
+  /* THE STAMP GOES INTO THE DECODED PICTURE ITSELF (see `vstStamper`), one
+     frame at a time, in order. */
+  const stamper = vstStamper(OW, OH, parsed.rotation || 0, cv, cx);
+  const serial = vstSerial();
   const decoder = new VideoDecoder({
     output: frame => {
-      try{
-        /* THE STAMP IS A FUNCTION OF THE FRAME'S OWN PRESENTATION TIME, never
-           of this machine's clock — the frame carries its timestamp in
-           microseconds and that is what advances the label. */
-        const tSec = frame.timestamp / 1e6;
-        cx.drawImage(frame, 0, 0, OW, OH);
-        vstBurn(cx, OW, OH, vstLabel(startMs + Math.floor(tSec) * 1000, tz), parsed.rotation);
-        const out = new VideoFrame(cv, {timestamp: frame.timestamp,
-                                        duration: frame.duration || undefined});
-        if(encoder.state === "configured") encoder.encode(out, {keyFrame: decoded % keyEvery === 0});
-        out.close();
-      } finally { frame.close(); decoded++; }
+      decoded++;
+      serial.add(async () => {
+        try{
+          if(frameErr || encoder.state !== "configured" || !vstRunLive(run)) return;
+          /* THE STAMP IS A FUNCTION OF THE FRAME'S OWN PRESENTATION TIME, never
+             of this machine's clock — the frame carries its timestamp in
+             microseconds and that is what advances the label. */
+          const tSec = frame.timestamp / 1e6;
+          const out = await stamper.make(frame, vstLabel(startMs + Math.floor(tSec) * 1000, tz));
+          try{
+            await vstEncodeRoom(encoder, () => vstRunLive(run));
+            if(encoder.state === "configured"){ encoder.encode(out, {keyFrame: burned % keyEvery === 0}); burned++; }
+          }finally{ out.close(); }
+        }catch(e){ if(!frameErr) frameErr = e; }
+        finally{ frame.close(); }
+      });
     },
     error: fail,
   });
@@ -14890,7 +15092,7 @@ async function vstTranscode(file, parsed, startMs, tz, onStage, run){
 
   const total = V.samples.length;
   for(let i = 0; i < total; i++){
-    if(encErr || decoder.state !== "configured" || !vstRunLive(run)) break;
+    if(encErr || frameErr || decoder.state !== "configured" || !vstRunLive(run)) break;
     const sm = V.samples[i];
     // One sample at a time — the file is never held whole.
     const buf = await file.slice(sm.offset, sm.offset + sm.size).arrayBuffer();
@@ -14903,10 +15105,11 @@ async function vstTranscode(file, parsed, startMs, tz, onStage, run){
       }));
     }catch(e){ fail(e); break; }
     fed++;
-    if(i % 12 === 0){
-      if(onStage) onStage("decoding", Math.round(i / total * 100));
-      // Let the decoder drain rather than queueing the whole film at once.
-      while(decoder.decodeQueueSize > 24 && vstRunLive(run)) await new Promise(r => setTimeout(r, 8));
+    if(i % 12 === 0 && onStage) onStage("decoding", Math.round(i / total * 100));
+    /* Let the decoder drain rather than queueing the whole film at once — and
+       let the frames it has returned be stamped before it returns more. */
+    while((decoder.decodeQueueSize > 24 || serial.pending > 8) && vstRunLive(run) && !frameErr){
+      await new Promise(r => setTimeout(r, 4));
     }
   }
   /* STOP MEANS STOP: the codecs are closed and nothing is flushed or written.
@@ -14916,13 +15119,16 @@ async function vstTranscode(file, parsed, startMs, tz, onStage, run){
     throw vstFault("cancel", "Stopped — nothing was saved and your original is unchanged.");
   }
   const closedEarly = decoder.state === "closed";
-  await vstCodecDrain(decoder);
+  await vstCodecDrain(decoder, () => serial.idle());
+  await serial.idle();
   await vstCodecDrain(encoder);
   /* An error the codec reports on the task after it is seen closed still
      belongs to this run — one turn of the event loop lets it land. */
   await new Promise(r => setTimeout(r, 0));
   if(encErr) throw new Error("The device's video codec stopped part-way: "
     + vstErrText(encErr) + ". Nothing was saved and your original is unchanged.");
+  if(frameErr) throw vstFault("encoder", "A frame could not be stamped (" + vstErrText(frameErr)
+    + "). No timestamped copy was created and your original is unchanged.", {text: vstErrText(frameErr)});
   if(!encoded) throw new Error("No frames came out of the encoder, so no file was written. Your original is unchanged.");
   /* NOT COMPLETE UNTIL COUNTED. A codec that closed without reporting why, or
      returned fewer frames than it was handed, ends here with no file — "the
@@ -14975,7 +15181,7 @@ async function vstTranscode(file, parsed, startMs, tz, onStage, run){
   const span = vstSampleSpan(V);
   return {blob, mime: "video/mp4", frames: encoded,
           audio: "stripped", sourceAudio, sha256: fin.sha256, clean: fin.clean, lane: "primary",
-          quality: vstQuality(parsed, size, rate, encCfg, back, outBytes),
+          quality: vstQuality(parsed, size, rate, encCfg, back, outBytes, stamper),
           check: {lane: "primary", frames: encoded, expected: total, mp4Frames: back.frames,
                   seconds: back.seconds, sourceSeconds: span != null ? span : V.seconds, skipped: 0, skippedSeconds: 0}};
 }
@@ -14994,7 +15200,7 @@ function vstSampleSpan(V){
    screen and the receipt print. Every number is measured or configured, none
    is a score: the original's picture, rate and bitrate from its own file; the
    copy's from the encoder this device accepted and the MP4 as read back. */
-function vstQuality(parsed, size, rate, encCfg, back, outBytes){
+function vstQuality(parsed, size, rate, encCfg, back, outBytes, stamper){
   const V = parsed.video, plan = encCfg && encCfg.vstPlan;
   const secs = back && back.seconds > 0 ? back.seconds : null;
   return {
@@ -15004,9 +15210,13 @@ function vstQuality(parsed, size, rate, encCfg, back, outBytes){
     out: {w: size.w, h: size.h, normalized: !!size.normalized, fps: back && back.frames && secs ? back.frames / secs : null,
           codec: encCfg ? encCfg.codec : null, profile: encCfg ? vstH264Name(encCfg.codec) : null,
           bitrate: encCfg ? encCfg.bitrate : null, mode: encCfg && encCfg.bitrateMode || null,
+          latency: encCfg && encCfg.latencyMode || null,
           written: outBytes > 0 && secs ? Math.round(outBytes * 8 / secs) : null},
-    plan: plan ? {by: plan.by, step: plan.step, bpp: plan.bpp, floor: plan.floor, source: plan.source,
-                  ceiling: plan.ceiling, memory: plan.memory, v2: plan.v2} : null,
+    plan: plan ? {mode: plan.mode, by: plan.by, step: plan.step, bpp: plan.bpp, floor: plan.floor, source: plan.source,
+                  ceiling: plan.ceiling, memory: plan.memory, v2: plan.v2, want: plan.want, reduced: !!plan.reduced} : null,
+    /* HOW THE STAMP MET THE PICTURE: composited into the decoded planes, or
+       drawn through the canvas — and why, when it was the canvas. */
+    burn: stamper ? {path: stamper.path, why: stamper.why || "", yuv: stamper.yuvFrames, canvas: stamper.canvasFrames} : null,
   };
 }
 
@@ -15170,10 +15380,18 @@ async function vstTsAttempt(file, parsed, startMs, tz, lane, run, onStage){
      never 30). `fps` stays the decode clock's own spacing, which is what the
      timing checks below are measured against. */
   const rate = V.frameRate > 0 ? V.frameRate : fps;
+  const quality = run && run.quality === "standard" ? "standard" : "high";
   const encCfg = await vstEncoderConfig(OW, OH, rate,
-    {srcBitrate: V.srcBitrate, seconds: V.seconds, srcCodec: V.cc, v2Fps: fps});
-  if(!encCfg) throw vstFault("setup", "This device would not accept any H.264 encoder configuration for "
-    + `${OW}x${OH}, so no MP4 could be written. Your original is unchanged.`);
+    {srcBitrate: V.srcBitrate, seconds: V.seconds, srcCodec: V.cc, v2Fps: fps, mode: quality});
+  /* HIGH QUALITY IS NEVER LOWERED — see the MP4 path. */
+  if(!encCfg) throw vstFault("setup", quality === "high"
+    ? VST_HQ_NA + " This device's encoder would not take the high-quality settings for "
+        + `${OW}x${OH}. Choose Standard to make a smaller copy. Your original is unchanged.`
+    : "This device would not accept any H.264 encoder configuration for "
+        + `${OW}x${OH}, so no MP4 could be written. Your original is unchanged.`, quality === "high" ? {hq: "encoder"} : undefined);
+  if(quality === "high" && encCfg.vstPlan && encCfg.vstPlan.fits === false)
+    throw vstFault("setup", VST_HQ_NA + " " + vstHqMemoryText(encCfg.vstPlan)
+      + " Choose Standard to make a smaller copy. Your original is unchanged.", {hq: "memory"});
   if(!vstRunLive(run)) throw vstFault("cancel", "Stopped.");
 
   const codec = vstMuxCodec(encCfg.codec);
@@ -15209,7 +15427,7 @@ async function vstTsAttempt(file, parsed, startMs, tz, lane, run, onStage){
     output: (chunk, meta) => {
       t.encoded++;
       try{ const c = vstCleanChunk(chunk, meta, strip); outBytes += c.byteLength || 0;
-           muxer.addVideoChunk(c, meta); t.muxed++; }
+           muxer.addVideoChunk(c, vstMetaColour(meta, codec)); t.muxed++; }
       catch(e){ if(!muxErr) muxErr = e; }
     },
     error: failEnc,
@@ -15218,30 +15436,38 @@ async function vstTsAttempt(file, parsed, startMs, tz, lane, run, onStage){
   catch(e){ throw vstFault("setup", "This device's H.264 encoder refused its own configuration ("
     + vstErrText(e) + "), so no MP4 could be written. Your original is unchanged."); }
 
+  /* THE STAMP GOES INTO THE DECODED PICTURE ITSELF (see `vstStamper`), one
+     frame at a time, in order; the ledger's own counts are taken as each
+     picture comes out, exactly as before. */
+  const stamper = vstStamper(OW, OH, 0, cv, cx);
+  const serial = vstSerial();
   const decoder = new VideoDecoder({
     output: frame => {
       t.decoded++;
-      try{
-        const ts = frame.timestamp;
-        if(!expectTs.has(ts)) t.stray++;            // a picture nobody fed it
-        else if(outTs.has(ts)) t.twice++;           // the same picture twice
-        outTs.add(ts);
-        if(t.firstOut == null || ts < t.firstOut) t.firstOut = ts;
-        const end = ts + (frame.duration || 0);
-        if(t.lastEnd == null || end > t.lastEnd) t.lastEnd = end;
-        /* THE STAMP IS A FUNCTION OF THE FRAME'S OWN PRESENTATION TIME, never
-           of this machine's clock. */
-        const tSec = Math.max(0, ts / 1e6);
-        cx.drawImage(frame, 0, 0, OW, OH);
-        vstBurn(cx, OW, OH, vstLabel(startMs + Math.floor(tSec) * 1000, tz), 0);
-        t.drawn++;
-        if(encoder.state === "configured"){
-          const out = new VideoFrame(cv, {timestamp: ts, duration: frame.duration || undefined});
-          try{ encoder.encode(out, {keyFrame: (t.drawn - 1) % keyEvery === 0}); t.encIn++; }
-          finally{ out.close(); }
-        }
-      }catch(e){ if(!frameErr) frameErr = e; }
-      finally{ frame.close(); }
+      const ts = frame.timestamp;
+      if(!expectTs.has(ts)) t.stray++;              // a picture nobody fed it
+      else if(outTs.has(ts)) t.twice++;             // the same picture twice
+      outTs.add(ts);
+      if(t.firstOut == null || ts < t.firstOut) t.firstOut = ts;
+      const end = ts + (frame.duration || 0);
+      if(t.lastEnd == null || end > t.lastEnd) t.lastEnd = end;
+      serial.add(async () => {
+        try{
+          if(frameErr || !vstRunLive(run)) return;
+          /* THE STAMP IS A FUNCTION OF THE FRAME'S OWN PRESENTATION TIME, never
+             of this machine's clock. */
+          const tSec = Math.max(0, ts / 1e6);
+          const out = await stamper.make(frame, vstLabel(startMs + Math.floor(tSec) * 1000, tz));
+          t.drawn++;
+          try{
+            await vstEncodeRoom(encoder, () => vstRunLive(run));
+            if(encoder.state === "configured"){
+              encoder.encode(out, {keyFrame: (t.drawn - 1) % keyEvery === 0}); t.encIn++;
+            }
+          }finally{ out.close(); }
+        }catch(e){ if(!frameErr) frameErr = e; }
+        finally{ frame.close(); }
+      });
     },
     error: failDec,
   });
@@ -15313,10 +15539,11 @@ async function vstTsAttempt(file, parsed, startMs, tz, lane, run, onStage){
       }));
     }catch(e){ failDec(e); return false; }
     t.fed++;
-    // Let the decoder drain rather than queueing the whole card at once.
+    /* Let the decoder drain rather than queueing the whole card at once — and
+       let the frames it has returned be stamped before it returns more. */
     let guard = 0;
-    while(decoder.decodeQueueSize > 24 && !halted() && guard++ < 4000){
-      await new Promise(r => setTimeout(r, 8));
+    while((decoder.decodeQueueSize > 24 || serial.pending > 8) && !halted() && guard++ < 8000){
+      await new Promise(r => setTimeout(r, 4));
     }
     return !halted();
   };
@@ -15350,7 +15577,8 @@ async function vstTsAttempt(file, parsed, startMs, tz, lane, run, onStage){
     throw vstFault("cancel", "Stopped — nothing was saved and your original is unchanged.");
   }
   const closedEarly = decoder.state === "closed";
-  await vstCodecDrain(decoder);
+  await vstCodecDrain(decoder, () => serial.idle());
+  await serial.idle();
   if(decErr || closedEarly || bad || readErr) vstCodecClose(encoder);
   else await vstCodecDrain(encoder);
   /* An error the codec reports on the task AFTER it is seen closed still
@@ -15464,7 +15692,7 @@ async function vstTsAttempt(file, parsed, startMs, tz, lane, run, onStage){
   return {blob, mime: "video/mp4", frames: t.encoded, audio: "stripped",
           sourceAudio: parsed.audio ? parsed.audio.name : null,
           sha256: fin.sha256, clean: fin.clean,
-          quality: vstQuality(parsed, size, rate, encCfg, back, outBytes),
+          quality: vstQuality(parsed, size, rate, encCfg, back, outBytes, stamper),
           skippedLeading: t.skipped, lane,
           check: {lane, frames: t.encoded, expected: t.expected, mp4Frames: back.frames,
                   seconds: back.seconds, sourceSeconds: srcSeconds,
@@ -15665,6 +15893,196 @@ function vstCleanChunk(chunk, meta, strip){
 function vstMuxCodec(codec){
   const c = String(codec || "");
   return /^vp09/.test(c) ? "vp9" : /^av01/.test(c) ? "av1" : /^(hvc1|hev1)/.test(c) ? "hevc" : "avc";
+}
+
+/* ---- THE STAMP IS COMPOSITED INTO THE DECODED PICTURE (owner brief
+   2026-10-02 §10: "Audit whether the pipeline is unnecessarily converting
+   YUV → RGB canvas → YUV for every frame … If a better full-resolution
+   compositing path is available, use it. Do NOT sacrifice the timestamp
+   overlay.")
+
+   IT WAS, AND IT COST MORE THAN THE BITRATE DID. Every frame was drawn onto a
+   canvas — Y'CbCr to RGB, chroma upsampled — and handed to the encoder as RGB,
+   which converts it back and downsamples the chroma again. Measured in this
+   browser on colour bars: the encoder converts canvas RGB with the BT.601
+   matrix while the decoder labels the copy BT.709, so the yellow bar's luma
+   fell 162 -> 157 in ONE generation and every saturated colour shifted. And
+   even on a device that labels its conversion correctly, the round trip alone
+   measured SSIM 0.909 against 0.961 at the same rate without it (x264 at a
+   hardware-class speed, compared as the viewer sees it, in RGB).
+
+   SO THE PICTURE NEVER LEAVES Y'CbCr. The decoded frame's own planes are
+   copied out, the stamp is blended into the rows it covers, and a new frame is
+   made from those planes carrying the ORIGINAL'S colour space — the encoder
+   converts nothing and the copy is labelled what the original was. Every
+   pixel outside the stamp is the decoder's, byte for byte. The stamp is the
+   same `vstBurn` drawing, rendered once per second of footage onto a
+   transparent layer and blended with its own anti-aliased alpha — blending in
+   Y'CbCr is blending in R'G'B', since one is an affine function of the other.
+
+   THE CANVAS STAYS, frame-exact as before, for what this cannot take: a
+   picture that is not 8-bit 4:2:0 (I420 or NV12), a decoder that will not
+   hand its pictures over, and a picture whose pixels are not square — that one
+   has to be resized to its display shape, which is the canvas's job. Which
+   one made the copy is recorded on it. */
+const VST_YUV_FORMATS = new Set(["I420", "NV12"]);
+function vstYuvWhyNot(frame, OW, OH){
+  if(!frame) return "no picture";
+  if(!VST_YUV_FORMATS.has(frame.format)) return frame.format
+    ? `the decoder hands out ${frame.format} pictures` : "the decoder's pictures cannot be read as planes";
+  const r = frame.visibleRect;
+  if(!r || r.width !== OW || r.height !== OH) return "the picture is resized to the shape it is shown";
+  if((OW & 1) || (OH & 1)) return "the picture has an odd size";
+  return "";
+}
+/* Y'CbCr of an R'G'B' colour for one matrix and range — only the stamp's
+   colours are ever put through this, never the footage. An unlabelled
+   picture is read the way players read one: BT.709 from 720 lines up. */
+const VST_KRB = {bt709: [0.2126, 0.0722], bt470bg: [0.299, 0.114], smpte170m: [0.299, 0.114],
+                 "bt2020-ncl": [0.2627, 0.0593]};
+function vstYcc(r, g, b, matrix, full, tall){
+  const k = VST_KRB[matrix] || (tall ? VST_KRB.bt709 : VST_KRB.smpte170m);
+  const R = r / 255, G = g / 255, B = b / 255;
+  const y = k[0] * R + (1 - k[0] - k[1]) * G + k[1] * B;
+  const cb = (B - y) / (2 * (1 - k[1])), cr = (R - y) / (2 * (1 - k[0]));
+  const c = v => Math.max(0, Math.min(255, Math.round(v)));
+  return full ? [c(255 * y), c(128 + 255 * cb), c(128 + 255 * cr)]
+              : [c(16 + 219 * y), c(128 + 224 * cb), c(128 + 224 * cr)];
+}
+/* One stamper per run. `make(frame, label)` returns the frame to encode — the
+   composited one, or the canvas's — and never closes `frame`. */
+function vstStamper(OW, OH, rotation, cv, cx){
+  const me = {path: null, why: "", yuvFrames: 0, canvasFrames: 0};
+  let layer = null, lx = null, key = null, st = null, buf = null;
+  const stamp = (text, cs) => {
+    const matrix = cs && cs.matrix, full = !!(cs && cs.fullRange);
+    const k = text + "|" + matrix + "|" + full;
+    if(k === key) return st;
+    if(!layer){ layer = document.createElement("canvas"); layer.width = OW; layer.height = OH;
+                lx = layer.getContext("2d", {willReadFrequently: true}); }
+    lx.clearRect(0, 0, OW, OH);
+    vstBurn(lx, OW, OH, text, rotation);
+    const d = lx.getImageData(0, 0, OW, OH).data;
+    let x0 = OW, y0 = OH, x1 = -1, y1 = -1;
+    for(let y = 0; y < OH; y++){
+      for(let x = 0, i = y * OW * 4 + 3; x < OW; x++, i += 4){
+        if(d[i]){ if(x < x0) x0 = x; if(x > x1) x1 = x; if(y < y0) y0 = y; if(y > y1) y1 = y; }
+      }
+    }
+    key = k;
+    if(x1 < 0){ st = null; return st; }
+    x0 &= ~1; y0 &= ~1; x1 = Math.min(OW - 1, x1 | 1); y1 = Math.min(OH - 1, y1 | 1);
+    const w = x1 - x0 + 1, h = y1 - y0 + 1, tall = OH >= 720;
+    /* Per luma pixel: coverage and the stamp's luma. Per chroma sample (2 x 2
+       luma): summed coverage and the coverage-weighted Cb and Cr. */
+    const A = new Uint8Array(w * h), L = new Uint8Array(w * h);
+    const CA = new Uint16Array((w >> 1) * (h >> 1)), CB = new Uint32Array(CA.length), CR = new Uint32Array(CA.length);
+    for(let y = 0; y < h; y++) for(let x = 0; x < w; x++){
+      const i = ((y0 + y) * OW + x0 + x) * 4, a = d[i + 3];
+      if(!a) continue;
+      const t = vstYcc(d[i], d[i + 1], d[i + 2], matrix, full, tall);
+      A[y * w + x] = a; L[y * w + x] = t[0];
+      const j = (y >> 1) * (w >> 1) + (x >> 1);
+      CA[j] += a; CB[j] += a * t[1]; CR[j] += a * t[2];
+    }
+    st = {x0, y0, w, h, A, L, CA, CB, CR};
+    return st;
+  };
+  const yuv = async (frame, text) => {
+    const cs = frame.colorSpace;
+    const s = stamp(text, cs);
+    const need = frame.allocationSize();
+    if(!buf || buf.byteLength < need) buf = new Uint8Array(need);
+    const layout = await frame.copyTo(buf);
+    if(s){
+      const {x0, y0, w, h, A, L, CA, CB, CR} = s, P = layout[0];
+      for(let y = 0; y < h; y++){
+        let o = P.offset + (y0 + y) * P.stride + x0, k = y * w;
+        for(let x = 0; x < w; x++, o++, k++){
+          const a = A[k];
+          if(a) buf[o] = (buf[o] * (255 - a) + L[k] * a + 127) / 255 | 0;
+        }
+      }
+      const nv12 = frame.format === "NV12", U = layout[1], V = layout[2], cw = w >> 1;
+      for(let y = 0; y < (h >> 1); y++){
+        for(let x = 0; x < cw; x++){
+          const j = y * cw + x, a = CA[j];
+          if(!a) continue;
+          const cy = (y0 >> 1) + y, cx2 = (x0 >> 1) + x;
+          const ou = nv12 ? U.offset + cy * U.stride + cx2 * 2 : U.offset + cy * U.stride + cx2;
+          const ov = nv12 ? ou + 1 : V.offset + cy * V.stride + cx2;
+          buf[ou] = (buf[ou] * (1020 - a) + CB[j] + 510) / 1020 | 0;
+          buf[ov] = (buf[ov] * (1020 - a) + CR[j] + 510) / 1020 | 0;
+        }
+      }
+    }
+    const init = {format: frame.format, codedWidth: OW, codedHeight: OH, timestamp: frame.timestamp,
+                  duration: frame.duration || undefined, layout};
+    const c = cs && typeof cs.toJSON === "function" ? cs.toJSON() : null;
+    if(c) init.colorSpace = c;
+    return new VideoFrame(buf, init);
+  };
+  me.make = async (frame, text) => {
+    const why = vstYuvWhyNot(frame, OW, OH);
+    if(me.path == null){ me.path = why ? "canvas" : "yuv"; me.why = why; }
+    if(me.path === "yuv" && !why){
+      try{ const f = await yuv(frame, text); me.yuvFrames++; return f; }
+      /* A decoder that will not hand its pictures over: this frame, and every
+         one after it, goes the canvas's way — and the copy says it was mixed. */
+      catch(e){ me.why = "the decoder would not copy its pictures out (" + vstErrText(e) + ")"; me.path = "canvas"; }
+    }
+    cx.drawImage(frame, 0, 0, OW, OH);
+    vstBurn(cx, OW, OH, text, rotation);
+    me.canvasFrames++;
+    return new VideoFrame(cv, {timestamp: frame.timestamp, duration: frame.duration || undefined});
+  };
+  return me;
+}
+
+/* ONE FRAME AT A TIME, IN ORDER. Copying a picture's planes out is
+   asynchronous, so the decoder's frames are handled on a chain — each one
+   after the last — and the number waiting is what the feeding loops hold
+   back on, so nothing piles up: not decoded pictures, and (see
+   `vstEncodeRoom`) not frames inside the encoder either. */
+function vstSerial(){
+  let chain = Promise.resolve(), pending = 0;
+  return {
+    add(fn){ pending++; chain = chain.then(fn).catch(() => {}).then(() => { pending--; }); },
+    get pending(){ return pending; },
+    idle(){ return chain; },
+  };
+}
+/* THE ENCODER IS NOT AN UNBOUNDED QUEUE. Each frame waiting inside it is a
+   whole picture, so a device that decodes faster than it encodes — a long 4K
+   clip on a phone — would otherwise hold seconds of footage in memory. */
+async function vstEncodeRoom(encoder, live){
+  let guard = 0;
+  while(encoder.state === "configured" && encoder.encodeQueueSize > 6 && live() && guard++ < 20000){
+    await new Promise(r => setTimeout(r, 4));
+  }
+}
+
+/* THE COPY'S COLOUR LABEL. The muxer writes a `colr` box from the colour space
+   the encoder reports, and it knows three primaries, three transfers and
+   three matrices — anything else it writes as 0, and a matrix of 0 says "the
+   samples are RGB", which a player that believes it shows green and purple.
+   So an H.264 copy carries the label only when every part of it is one the
+   muxer can write and the matrix is a real Y'CbCr one; otherwise no `colr` at
+   all, and players read the stream as they read an original with none.
+   (VP9's box needs a colour space by format, and VP9 is never shipped.) */
+const VST_COLR = {primaries: new Set(["bt709", "bt470bg", "smpte170m"]),
+                  transfer: new Set(["bt709", "smpte170m", "iec61966-2-1"]),
+                  matrix: new Set(["bt709", "bt470bg", "smpte170m"])};
+function vstColrOk(c){
+  return !!c && VST_COLR.primaries.has(c.primaries) && VST_COLR.transfer.has(c.transfer)
+    && VST_COLR.matrix.has(c.matrix) && typeof c.fullRange === "boolean";
+}
+function vstMetaColour(meta, codec){
+  const dc = meta && meta.decoderConfig;
+  if(!dc || !dc.colorSpace || codec !== "avc" || vstColrOk(dc.colorSpace)) return meta;
+  const d = Object.assign({}, dc);
+  delete d.colorSpace;
+  return Object.assign({}, meta, {decoderConfig: d});
 }
 
 /* ---- THE FINISHED FILE'S BOXES, WALKED STRICTLY ----
@@ -16566,6 +16984,10 @@ async function vqAnalyze(v){
   if(vstPath(v) === "pipeline"){
     try{ await vqThumb(v); }catch{}
     if(vqGone(v)) return;
+    /* WHETHER EACH QUALITY CAN BE MADE ON THIS DEVICE, asked now — before the
+       operator is offered Generate, never discovered after it. */
+    try{ v.qc = await vqQualityCheck(v); }catch{ v.qc = null; }
+    if(vqGone(v)) return;
   }
   vstSlim(v);
   paintVStamp();
@@ -16711,8 +17133,35 @@ function vqTimeOk(v){
   return vstStart(v).ok && (v.confirmed || v.startFrom === "capture");
 }
 function vqStale(v){
+  return !!vqStaleWhy(v);
+}
+/* What changed since the copy was made: its start time, or the quality the
+   operator now has chosen — a copy made in one mode is not the copy the other
+   would make, and a Complete badge over it would say otherwise. */
+function vqStaleWhy(v){
+  if(!v || !v.out) return "";
   const s = vstStart(v);
-  return !!(v.out && v.out.startMs != null && s.ok && s.ms !== v.out.startMs);
+  if(v.out.startMs != null && s.ok && s.ms !== v.out.startMs) return "time";
+  const made = v.out.quality && v.out.quality.plan && v.out.quality.plan.mode;
+  if(made && made !== vstQualityOf(v)) return "quality";
+  return "";
+}
+/* Whether the quality chosen for this video can be made here — unknown counts
+   as yes, because the run asks again and refuses for itself (`vstGenerate`). */
+function vqModeOk(v){
+  const c = v && v.qc && v.qc[vstQualityOf(v)];
+  return !c || !!c.ok;
+}
+/* The owner's sentence and the reason, once. */
+function vqModeRefusal(v){
+  const c = v && v.qc && v.qc[vstQualityOf(v)];
+  if(!c || c.ok) return "";
+  const std = v.qc.standard && v.qc.standard.ok;
+  return vstQualityOf(v) === "high"
+    ? VST_HQ_NA + " " + (c.why === "memory" ? vstHqMemoryText(c.plan)
+        : "This device's encoder would not take the high-quality settings for this video.")
+      + (std ? " Choose Standard to make a smaller copy." : "")
+    : "This device's encoder would not take any setting for this video, so no copy can be made here.";
 }
 function vqStatus(v){
   if(v.run || (VQ && VQ.busy === v)){
@@ -16733,7 +17182,7 @@ const vqBusy = st => st === "processing" || st === "compat" || st === "verifying
 function vqCanGo(v){
   if(!v || vqRunning() || v.fault) return false;
   const st = vqStatus(v);
-  return (st === "ready" || st === "stopped") && vqTimeOk(v) && vstPath(v) === "pipeline";
+  return (st === "ready" || st === "stopped") && vqTimeOk(v) && vstPath(v) === "pipeline" && vqModeOk(v);
 }
 
 /* ---- GENERATE, ONE AT A TIME ---- */
@@ -16760,6 +17209,15 @@ async function vqGo(id){
     v.err = "Confirm or correct the start time before this copy is made.";
     VST = null;
     VQ.sel = v.qid; VQ.focus = "edit"; VQ.focusTo = "vq_ehead";
+    return paintVStamp();
+  }
+  /* THE QUALITY CHOSEN MUST BE ONE THIS DEVICE CAN MAKE — and Process next
+     lands here too, so it stops on the video and says why rather than making
+     it at a lower quality. */
+  if(!vqModeOk(v)){
+    v.err = vqModeRefusal(v);
+    VST = null;
+    VQ.sel = v.qid; VQ.focus = "edit"; VQ.focusTo = "vq_qual";
     return paintVStamp();
   }
   /* ONE FINISHED COPY IN MEMORY: a saved one is let go; an unsaved one only
@@ -17162,15 +17620,21 @@ function vqReceiptLines(v, n){
     L.push(`   Decoder: ${v.out.lane === "compat" ? "compatibility mode (this browser's software decoder)" : "this device's decoder"}`);
     L.push(`   Copy: ${v.out.name} · ${bytes(v.out.size)} · SHA-256 ${v.out.sha256 || "not taken"}`);
     if(v.out.quality){
-      L.push(`   Copy picture: ${vstPictureText(v.out.quality)}`);
-      L.push(`   Copy encoding: ${vstEncodingText(v.out.quality)}`);
+      const q = v.out.quality;
+      L.push(`   Source video bitrate: ${q.src.bitrate ? vstMbps1(q.src.bitrate) : "could not be measured"}`);
+      L.push(`   Timestamped copy bitrate: ${vstWrittenText(q)}`);
+      L.push(`   Quality mode: ${vstModeText(q)}`);
+      L.push(`   Copy picture: ${vstPictureText(q)}`);
+      L.push(`   Copy encoding: ${vstEncodingText(q)}`);
+      L.push(`   Timestamp: ${vstBurnText(q)}`);
     }
     const c = v.out.clean;
     L.push(`   Metadata-clean verification: ${c && c.ok ? "PASS" : "not recorded"}`
       + (c && c.ok ? ` — found on the original: ${c.source && c.source.length
           ? c.source.map(k => VST_META_WORDS[k] || k).join("; ") : "none"}; carried into the copy: none` : ""));
     L.push(`   Result: COMPLETE${v.out.check ? " — " + vstCheckText(v.out.check) : ""}`
-      + (vqStale(v) ? " (the start time has been changed since; this copy has the time shown above)" : ""));
+      + (vqStaleWhy(v) === "time" ? " (the start time has been changed since; this copy has the time shown above)"
+        : vqStaleWhy(v) === "quality" ? " (the video quality has been changed since; this copy was made in the quality shown above)" : ""));
     L.push(`   Saved on this device: ${v.savedHere ? "yes" : "not confirmed"}`);
   } else if(st === "failed"){
     L.push(`   Result: FAILED — ${v.fault ? v.fault.head + (v.fault.label ? " " + v.fault.label : "")
@@ -17296,10 +17760,18 @@ async function vstGenerate(v = VST){
      straight to compatibility mode when the device's own decoder is already
      known not to take this file — declined when it was chosen, or failed on
      it earlier in this tab. */
-  const run = {owner: v, cancelled: false, lane: vstLaneFor(v)};
+  const run = {owner: v, cancelled: false, lane: vstLaneFor(v), quality: vstQualityOf(v)};
   v.run = run;
   try{
     v.stage = "preparing";
+    /* THE QUALITY IS SETTLED BEFORE A FRAME IS DECODED — asked of this device
+       again now, because the answer the entry holds may be older than this
+       press. A quality this device cannot make for this file is refused here,
+       with the reason, and nothing is made at a lower one in its place. */
+    try{ const qc = await vqQualityCheck(v); if(qc) v.qc = qc; }catch{}
+    if(!vstRunLive(run)) return;
+    if(!vqModeOk(v)) throw vstFault("setup", vqModeRefusal(v),
+      {hq: (v.qc && v.qc[run.quality] && v.qc[run.quality].why) || "encoder"});
     /* THE FRAME TABLE, READ AGAIN FROM THE SAME FILE when the queue let it go
        (`vstSlim`) — and it has to be the table the entry was checked against.
        A file that no longer reads, or reads with a different number of frames,
@@ -17346,7 +17818,9 @@ async function vstGenerate(v = VST){
                 audio is still on it — the row existed and was never fed. */
              sourceAudio: r.sourceAudio || null,
              lane: r.lane || null, check: r.check || null, primary: r.primary || null,
-             quality: r.quality || null,
+             /* What this device offered beside the encoder it used — asked
+                before the run, reported, never acted on. */
+             quality: r.quality ? Object.assign(r.quality, {impls: v.qc && v.qc.impls || null}) : null,
              /* The copy's own fingerprint and its metadata check, kept apart
                 from the original's — two files, two digests, never one field. */
              sha256: r.sha256 || null, clean: r.clean || null, madeAt: Date.now(),
@@ -17359,6 +17833,15 @@ async function vstGenerate(v = VST){
   }catch(e){
     /* Stopped or closed: whoever stopped it has already said so. */
     if(!vstRunLive(run) || (e && e.vstKind === "cancel")) return;
+    /* HIGH QUALITY REFUSED BY THE RUN ITSELF is not a broken file — it is a
+       choice this device cannot make. No fault, so nothing withdraws Generate:
+       the reason is said where the choice is, and Standard stays one tap away. */
+    if(e && e.vstDetail && e.vstDetail.hq){
+      if(v.qc && v.qc[run.quality]) v.qc[run.quality] = Object.assign({}, v.qc[run.quality], {ok: false, why: e.vstDetail.hq});
+      v.err = e.message; v.step = "preview"; v.stage = ""; v.phase = ""; v.outcome = null;
+      if(v.qid && VQ){ VQ.sel = v.qid; VQ.focus = "edit"; VQ.focusTo = "vq_qual"; }
+      return paintVStamp();
+    }
     if(VST_PRIMARY_FAILED.has(vstFileKey(v.file))) v.lane = "compat";
     v.fault = vstFaultView(e);
     v.err = v.fault ? "" : ((e && e.message) || String(e));
@@ -17625,6 +18108,18 @@ async function vstDiagnose(){
   }
   const enc = await vstEncoderAccepts(vid);
   lines.push(row("Encode H.264", enc.supported ? "yes — " + enc.text : "no — " + (enc.why || "declined")));
+  /* BOTH QUALITIES, for THIS file, and which encoders the device offers —
+     asked separately, never assumed to make the better picture. */
+  const qc = vid && VST ? await vqQualityCheck(VST).catch(() => null) : null;
+  for(const [m, label] of [["high", "High quality"], ["standard", "Standard"]]){
+    const c = qc && qc[m];
+    lines.push(row(label, !c ? "could not be asked"
+      : c.ok ? `yes — ${vstH264Name(c.codec) || c.codec} at ${vstMbps1(c.bitrate)}${c.est ? `, about ${vstSize(c.est)}` : ""}`
+        + (c.plan && c.plan.reduced ? " (held to this device's memory)" : "")
+      : "no — " + (c.why === "memory" ? vstHqMemoryText(c.plan) : "the encoder would not take it")));
+  }
+  if(qc && qc.impls) lines.push(row("Encoders offered", `hardware ${qc.impls.hardware == null ? "not said" : yn(qc.impls.hardware)},`
+    + ` software ${qc.impls.software == null ? "not said" : yn(qc.impls.software)} — the browser chooses between them`));
 
   /* THE REAL PIPELINE'S OWN ROWS — demux and mux are this build's, not a guess
      about an API. Demux is proven by the sample table actually coming out of
@@ -20987,13 +21482,49 @@ function vstEncodingText(q){
   const src = q.src.bitrate ? `the original's video: ${vstMbps(q.src.bitrate)}` : "the original's bitrate could not be measured";
   return `${o.profile ? "H.264 " + o.profile : o.codec || "unknown"} · ${vstMbps(o.bitrate)} asked for`
     + (o.written ? `, ${vstMbps(o.written)} written` : "") + ` (${src})`
+    + (o.mode ? ` · ${o.mode === "constant" ? "constant" : "variable"} bitrate` : "")
+    + (o.latency ? ` · ${o.latency === "quality" ? "quality, not real-time" : o.latency} encoding` : "")
     + (p.by === "memory" ? " — held to this device's memory budget for a copy this long" : "")
-    + (p.step === "v2" ? " — this device's encoder took only the earlier configuration" : "");
+    + (p.step === "v2" ? " — this device's encoder took only the earlier configuration" : "")
+    + (q.impls ? " · " + vstImplText(q.impls) : "");
+}
+/* THE THREE LINES THE OWNER ASKED FOR, verbatim (brief 2026-10-02 §16), in
+   numbers: what the original spent, what the copy was WRITTEN at — measured
+   from the copy itself, the asked-for rate beside it — and the mode. */
+function vstWrittenText(q){
+  const o = q.out;
+  if(!o.written) return o.bitrate ? `${vstMbps1(o.bitrate)} asked for — the written rate could not be measured` : "unknown";
+  return `${vstMbps1(o.written)} — measured from the copy (${vstMbps1(o.bitrate)} asked for)`
+    + (q.src.bitrate && o.written < q.src.bitrate ? "; the encoder's variable rate spent less than the original's" : "");
+}
+function vstModeText(q){
+  const p = q.plan || {};
+  return p.mode === "high" ? "High"
+    : p.mode === "standard" ? "Standard" + (p.reduced ? ` — held to this device's memory for a copy this long (${vstMbps1(p.want)} otherwise)` : "")
+    : "not recorded";
+}
+function vstImplText(i){
+  const yn = x => x === true ? "yes" : x === false ? "no" : "not said";
+  return `encoder: the browser's own choice — this device offers hardware ${yn(i.hardware)}, software ${yn(i.software)}`;
+}
+/* How the stamp met the picture (see `vstStamper`). */
+function vstBurnText(q){
+  const b = q.burn;
+  if(!b || !b.path) return "not recorded";
+  if(b.yuv && b.canvas) return `composited into the decoded picture for ${vstNum(b.yuv)} frames, drawn through a canvas`
+    + ` for ${vstNum(b.canvas)} — ${b.why}`;
+  if(b.path === "yuv") return "composited into the decoded picture — the footage's own colours, not converted";
+  return "drawn through a canvas — " + (b.why || "the decoded picture could not be composited directly")
+    + "; the picture passes through RGB once";
 }
 function vstQualityRows(q){
   if(!q || !q.out) return "";
-  return `<div class="vst-k"><span>Picture</span><span>${esc(vstPictureText(q))}</span></div>
-          <div class="vst-k"><span>Encoding</span><span>${esc(vstEncodingText(q))}</span></div>${q.src.interlaced
+  return `<div class="vst-k"><span>Source video bitrate</span><span>${esc(q.src.bitrate ? vstMbps1(q.src.bitrate) : "could not be measured")}</span></div>
+          <div class="vst-k"><span>Timestamped copy bitrate</span><span>${esc(vstWrittenText(q))}</span></div>
+          <div class="vst-k"><span>Quality mode</span><span>${esc(vstModeText(q))}</span></div>
+          <div class="vst-k"><span>Picture</span><span>${esc(vstPictureText(q))}</span></div>
+          <div class="vst-k"><span>Encoding</span><span>${esc(vstEncodingText(q))}</span></div>
+          <div class="vst-k"><span>Timestamp</span><span>${esc(vstBurnText(q))}</span></div>${q.src.interlaced
     ? `<div class="vst-k"><span>Interlaced original</span><span>Both fields of every frame are kept as the camera
         recorded them &mdash; woven, not deinterlaced</span></div>` : ""}`;
 }
@@ -21126,6 +21657,7 @@ function vstHtml(){
               + " &mdash; none of it goes into the copy" : "none found"}</span></div>` : ""}
           ${vstIsTs(v.parsed) && !v.fault ? `<div class="vst-k"><span>Compatibility mode</span><span>${
             vstCompatModeText(v)}</span></div>` : ""}
+          ${!v.fault && vstPath(v) === "pipeline" ? vqdQualityHtml(v, !!v.run, "vst") : ""}
           ${v.err ? `<p class="vst-err">${esc(v.err)}</p>` : ""}
           <p class="vst-note">The original is opened, read and left exactly as it is.
             The copy is made here on this device and nothing is uploaded.</p>
@@ -21170,7 +21702,7 @@ function vstHtml(){
               <button class="vst-btn" data-act="vstDiag">What can this device do?</button>
               ${v.diag ? `<pre class="vst-diag">${esc(v.diag)}</pre>` : ""}</div>`
             : `<button class="vst-btn go" data-act="${inQ ? "vqGo" : "vstGo"}" data-id="${inQ ? v.qid : ""}" ${
-                vstPath(v) === "checking" ? "disabled" : ""}>${
+                vstPath(v) === "checking" || !vqModeOk(v) ? "disabled" : ""}>${
                 vstPath(v) === "checking" ? "Checking this video&hellip;"
                   : vstLaneFor(v) === "compat" ? "Generate timestamped copy (compatibility mode)"
                   : "Generate timestamped copy"
@@ -21319,6 +21851,7 @@ function vqReleasedHtml(v, inQ, pos, total){
           <div class="vst-k"><span>Copy&rsquo;s fingerprint</span><span class="vst-hash">${v.out.sha256
             ? "SHA-256 " + esc(v.out.sha256) + " (of this copy)" : "not taken"}</span></div>
           <div class="vst-k"><span>On this device</span><span>${v.savedHere ? "Saved" : "Not saved"}</span></div>
+          ${v.out.quality ? vstQualityRows(v.out.quality) : ""}
           <p class="vst-note">${v.savedHere
             ? "The copy is saved on your device. This tab has let go of its own copy, so the next video had the memory."
             : "This copy was released from memory before it was saved, when you chose to start another. Make it again to get a new one &mdash; the original is unchanged."}</p>
@@ -21741,6 +22274,7 @@ function vqGoWhy(v){
   if(st === "needs") return "Check the date and time and press Save first.";
   if(st === "analyzing") return "Still checking this video…";
   if(vqRunning()) return "Another video is being processed — videos are made one at a time.";
+  if(!vqModeOk(v)) return vstQualityOf(v) === "high" ? VST_HQ_NA : vqModeRefusal(v);
   return "";
 }
 
@@ -21765,7 +22299,10 @@ function vqdWhy(v, st){
   if(st === "analyzing") return v.analysis === "waiting" ? "Waiting its turn to be checked." : "Checking the file…";
   if(st === "complete") return v.out.released ? (v.savedHere ? "Saved on your device." : "Released from memory before it was saved.")
     : v.savedHere ? "Copy made and saved." : "Copy made — not saved yet.";
-  if(vqStale(v)) return "The time was changed after the last copy was made.";
+  if(vqStaleWhy(v) === "time") return "The time was changed after the last copy was made.";
+  if(vqStaleWhy(v) === "quality") return "The video quality was changed after the last copy was made.";
+  if(st === "ready" && !vqModeOk(v)) return vstQualityOf(v) === "high"
+    ? "High quality is not available for this file on this device — open it to choose Standard." : vqModeRefusal(v);
   return "";
 }
 
@@ -21817,6 +22354,41 @@ function vqdRowHtml(v, n){
       <span class="vqd-c vqd-ac">${primary}${go ? `<button class="vqd-b vqd-go" data-act="vqGo" data-id="${id}"
           aria-label="Generate timestamped copy of ${name}" title="Generate timestamped copy">&#9654;</button>` : ""}${menu}</span>
     </li>`;
+}
+
+/* ---- VIDEO QUALITY, IN THE SELECTED VIDEO'S GENERATE AREA (owner brief
+   2026-10-02 §23: "Video quality / HIGH QUALITY — RECOMMENDED / Best for
+   investigative copies. Larger file. / STANDARD / Smaller file. Default High
+   Quality. Do not clutter the queue cards.")
+
+   One choice per video, High unless the operator picks Standard, and what it
+   will cost said under it: the rate and the rough size, from this device's own
+   answer for this file. When High cannot be made here the owner's sentence
+   stands where the estimate would, with the reason and Standard offered — and
+   when Standard is held to this device's memory, that is said here too,
+   before anything runs. */
+function vqdQualityHtml(v, locked, pre = "vq"){
+  const q = vstQualityOf(v), c = v.qc && v.qc[q];
+  const opt = (val, title, sub) => `<label class="vqd-qopt${q === val ? " is-on" : ""}" for="${pre}_q_${val}">
+      <input type="radio" id="${pre}_q_${val}" name="${pre}_quality" value="${val}" data-act-input="vqQuality"
+        data-id="${esc(v.qid == null ? "" : v.qid)}"${q === val ? " checked" : ""}${locked ? " disabled" : ""}>
+      <span><b>${title}</b><small>${sub}</small></span></label>`;
+  let note = "", warn = "";
+  if(!c) note = v.analysis === "done" ? "" : "Checking what this device can make of this video&hellip;";
+  else if(!c.ok) warn = esc(vqModeRefusal(v));
+  else {
+    note = `About ${esc(vstMbps1(c.bitrate))}` + (c.est ? ` &middot; about ${esc(vstSize(c.est))} for this video` : "");
+    if(q === "standard" && c.plan && c.plan.reduced) note += `. <b>Limited by this device&rsquo;s memory:</b> a copy
+      this long is built in memory, so Standard is held to ${esc(vstMbps1(c.bitrate))} here rather than
+      ${esc(vstMbps1(c.plan.want))}.`;
+  }
+  return `<fieldset class="vqd-qual" id="${pre}_qual" tabindex="-1">
+      <legend class="vqd-lbl">Video quality</legend>
+      ${opt("high", "HIGH QUALITY &mdash; RECOMMENDED", "Best for investigative copies. Larger file.")}
+      ${opt("standard", "STANDARD", "Smaller file.")}
+      ${note ? `<p class="vqd-note" id="${pre}_qnote">${note}</p>` : ""}
+      ${warn ? `<p class="vqd-err" id="${pre}_qwhy" role="alert">${warn}</p>` : ""}
+    </fieldset>`;
 }
 
 /* The editor: THIS video's start, and nothing else. Its inputs are drawn from
@@ -21895,6 +22467,7 @@ function vqdEditHtml(){
       <button class="vqd-b" data-act="vqEditNext"${i < n - 1 ? "" : " disabled"}>Next &rarr;</button>
     </div>
     <button class="vqd-b vqd-link" data-act="vqUndoTime"${locked ? " disabled" : ""}>Undo changes</button>
+    ${st !== "failed" && vstPath(v) !== "none" ? vqdQualityHtml(v, locked) : ""}
     ${goBtn}
     <p class="vqd-note" id="vq_gowhy">${esc(vqGoWhy(v))}</p>
     <button class="vqd-b vqd-link" data-act="vqDetails" data-id="${v.qid}"${locked ? " disabled" : ""}>Details and device checks</button>
@@ -21993,8 +22566,10 @@ function vqdRunHtml(){
         remained on this device.</p>` : ""}
       <p class="vqd-note">The copy is picture only${o.sourceAudio ? ` &mdash; the original&rsquo;s audio
         (${esc(o.sourceAudio)}) is still on your original, untouched` : ""}.</p>
-      ${vqStale(v) ? `<p class="vqd-note">This video&rsquo;s start time was changed after this copy was made. The copy
-        carries the time it was made with; generate again for one with the new time.</p>` : ""}
+      ${vqStaleWhy(v) === "time" ? `<p class="vqd-note">This video&rsquo;s start time was changed after this copy was made. The copy
+        carries the time it was made with; generate again for one with the new time.</p>`
+      : vqStaleWhy(v) === "quality" ? `<p class="vqd-note">This video&rsquo;s quality was changed after this copy was made. The copy
+        is the one made before; generate again for one in the quality now chosen.</p>` : ""}
       ${o.released ? `<p class="vqd-note">${v.savedHere ? "The copy is saved on your device. This tab has let go of its own copy, so the next video had the memory."
         : "This copy was released from memory before it was saved, when you chose to start another. Make it again to get a new one &mdash; the original is unchanged."}</p>` : ""}
       ${v.err ? `<p class="vqd-err">${esc(v.err)}</p>` : ""}
@@ -34001,6 +34576,18 @@ document.addEventListener("input", ev => {
      place — the burned-in label, the preview's stamp, EST or EDT — with no
      repaint, so the box being typed in is never rebuilt under the caret. */
   if(din === "vqTime" && VQ){ vqTimeLive(); return; }
+  /* The video quality: this video's own choice, never another's. A copy
+     already made in the other mode reads as changed since (`vqStaleWhy`). */
+  if(din === "vqQuality"){
+    const id = ev.target.dataset.id;
+    const v = (id && VQ && vqById(id)) || VST || (VQ ? vqSel() : null);
+    if(v && !v.run && !(VQ && VQ.busy === v)){
+      v.quality = ev.target.value === "standard" ? "standard" : "high";
+      v.err = "";
+      paintVStamp();
+    }
+    return;
+  }
   /* Typing a custom retainer counts as choosing one. No repaint — the box the
      cursor is sitting in must not be rebuilt underneath it mid-number. */
   if(din === "wizRetDirty" && SHEET_WIZ){ SHEET_WIZ.retainerTouched = true; return; }

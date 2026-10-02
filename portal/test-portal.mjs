@@ -12942,7 +12942,20 @@ const TS_LIB = String.raw`
 const VST_STUBS = String.raw`
 const stubCodecs = (plan = {}) => {
   const log = {cfgs: [], decoded: {hw: 0, soft: 0}, enc: 0, encTs: [], outTs: [], closes: 0, probes: [], stampLit: 0, stampChecked: 0,
-               encCfgs: [], encProbes: [], decoders: 0};
+               encCfgs: [], encProbes: [], decoders: 0, encFmt: [], encCs: [], peek: null};
+  /* plan.yuv ('I420' or 'NV12'): the decoder hands out PLANAR pictures at the
+     size it was configured for — what a real H.264 decoder does — so the copy
+     can be composited in Y'CbCr. A luma ramp, dark to mid, and flat chroma. */
+  const yuvFrame = (cfg, ts, dur) => {
+    const W = cfg.codedWidth, H = cfg.codedHeight, fmt = plan.yuv === 'NV12' ? 'NV12' : 'I420';
+    const ys = W * H, cs2 = (W >> 1) * (H >> 1);
+    const buf = new Uint8Array(ys + cs2 * 2);
+    for(let y = 0; y < H; y++) buf.fill(40 + ((y * 120 / H) | 0), y * W, (y + 1) * W);
+    if(fmt === 'I420'){ buf.fill(110, ys, ys + cs2); buf.fill(150, ys + cs2); }
+    else for(let i = ys; i < buf.length; i += 2){ buf[i] = 110; buf[i + 1] = 150; }
+    return new VideoFrame(buf, {format: fmt, codedWidth: W, codedHeight: H, timestamp: ts, duration: dur || undefined,
+      colorSpace: plan.yuvCs || {primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: false}});
+  };
   const tile = document.createElement('canvas'); tile.width = 64; tile.height = 36;
   const tctx = tile.getContext('2d'); tctx.fillStyle = '#202830'; tctx.fillRect(0, 0, 64, 36);
   /* A CAMCORDER'S OPENING: with plan.dark = k, each decoder's first k pictures
@@ -13007,7 +13020,7 @@ const stubCodecs = (plan = {}) => {
         if(this.state !== 'configured') return;
         log.outTs.push(ts);
         const pic = plan.dark != null ? (this.shown++ < plan.dark ? black : scene) : tile;
-        this.out(new VideoFrame(pic, {timestamp: ts, duration: dur || undefined}));
+        this.out(plan.yuv ? yuvFrame(this.cfg, ts, dur) : new VideoFrame(pic, {timestamp: ts, duration: dur || undefined}));
         const extra = this.soft ? plan.softInventAt : plan.hwInventAt;
         if(extra && n === extra) this.out(new VideoFrame(tile, {timestamp: ts + 7, duration: dur || undefined}));
       });
@@ -13046,7 +13059,10 @@ const stubCodecs = (plan = {}) => {
         const W = frame.displayWidth, H = frame.displayHeight;
         probe.width = Math.round(W * 0.45); probe.height = Math.round(H * 0.16);
         const pc = probe.getContext('2d', {willReadFrequently: true});
-        pc.drawImage(frame, W - probe.width, H - probe.height, probe.width, probe.height, 0, 0, probe.width, probe.height);
+        /* plan.stampCorner 'tr': a clip turned 90° in its header carries its
+           stamp upright in the picture as SHOWN — top right of the stored one. */
+        const py = plan.stampCorner === 'tr' ? 0 : H - probe.height;
+        pc.drawImage(frame, W - probe.width, py, probe.width, probe.height, 0, 0, probe.width, probe.height);
         const px = pc.getImageData(0, 0, probe.width, probe.height).data;
         let lit = 0;
         for(let i = 0; i < px.length; i += 4) if(px[i] > 200 && px[i + 1] > 200 && px[i + 2] > 200) lit++;
@@ -13055,6 +13071,16 @@ const stubCodecs = (plan = {}) => {
       }
       const ts = frame.timestamp, dur = frame.duration;
       log.encTs.push(ts);
+      /* WHAT THE ENCODER IS HANDED: the picture's format and its colour label —
+         and, when asked, one picture's planes, copied from a clone because the
+         caller closes the frame the moment encode() returns. */
+      if(log.encFmt.length < 400) log.encFmt.push(frame.format);
+      if(log.encCs.length < 4) log.encCs.push(frame.colorSpace && frame.colorSpace.toJSON ? frame.colorSpace.toJSON() : null);
+      if(plan.peekAt != null && k === plan.peekAt && frame.format){
+        const c = frame.clone(), fmt = c.format, w = c.visibleRect.width, h = c.visibleRect.height;
+        log.peek = (async () => { const b = new Uint8Array(c.allocationSize()); const layout = await c.copyTo(b); c.close();
+          return {b, layout, fmt, w, h}; })();
+      }
       /* WHAT A REAL ENCODER MAY SIGN ITS OUTPUT WITH: user data in an SEI
          message, or an "unspecified" NAL unit — each length-prefixed, as the
          avc format carries them. */
@@ -13064,8 +13090,12 @@ const stubCodecs = (plan = {}) => {
       if(plan.encUnspecified && k === 0) extra.push(...lp(new Uint8Array([0x19, 0x41, 0x50, 0x49])));
       const chunk = new EncodedVideoChunk({type: (k === 0 || (opts && opts.keyFrame)) ? 'key' : 'delta',
         timestamp: ts, duration: dur || 33367, data: new Uint8Array([...extra, 0, 0, 0, 2, 0x65, k & 0xff])});
-      const meta = k === 0 ? {decoderConfig: {codec: this.cfg.codec, codedWidth: this.cfg.width,
-        codedHeight: this.cfg.height, description: AVCC}} : undefined;
+      /* plan.encColour: the colour label a real encoder reports with its first
+         output — 'echo' reports the picture's own, an object reports that. */
+      const colour = plan.encColour === 'echo' ? (frame.colorSpace && frame.colorSpace.toJSON ? frame.colorSpace.toJSON() : null)
+        : plan.encColour || null;
+      const meta = k === 0 ? {decoderConfig: Object.assign({codec: this.cfg.codec, codedWidth: this.cfg.width,
+        codedHeight: this.cfg.height, description: AVCC}, colour ? {colorSpace: colour} : {})} : undefined;
       this.q = this.q.then(() => { if(this.state === 'configured'){ log.enc++; this.out(chunk, meta); } });
     }
     async flush(){
@@ -15498,10 +15528,10 @@ section('Timestamp Video quality: the copy keeps the source’s size, frame rate
        c.width === 1920 && c.height === 1080, say(r));
     ok('1080p MTS: at the source’s exact rate, 29.97 — not rounded to 30',
        near(c.framerate, NTSC, 0.001), String(c.framerate));
-    ok('1080p MTS: H.264 High at level 4.0, the lowest level that holds 1080 lines at 29.97 and this bitrate',
-       c.codec === 'avc1.640028', String(c.codec));
-    ok('1080p MTS: the bitrate is the source’s own (within 5%), more than three times what V2 asked for',
-       near(c.bitrate, src, src * 0.05) && c.bitrate > 3 * 4976640, `${c.bitrate} vs source ${src}`);
+    ok('1080p MTS: H.264 High at level 4.1, the lowest level that holds 1080 lines at 29.97 and the High Quality rate (4.0 holds 25 Mbps)',
+       c.codec === 'avc1.640029', String(c.codec));
+    ok('1080p MTS: HIGH QUALITY BY DEFAULT — twice the source’s own bitrate, more than six times what V2 asked for',
+       c.bitrate === Math.round(src * 2) && c.bitrate > 6 * 4976640, `${c.bitrate} vs source ${src}`);
     ok('1080p MTS: variable bitrate, quality latency — written down, not left to a default',
        c.bitrateMode === 'variable' && c.latencyMode === 'quality', JSON.stringify(c));
     ok('1080p MTS: the finished MP4 reads back at 1920 x 1080, 60 frames, 2.00 s',
@@ -15553,8 +15583,8 @@ section('Timestamp Video quality: the copy keeps the source’s size, frame rate
     ok('a lower-resolution source stays its own size — 1280 x 720, never scaled up',
        c.width === 1280 && c.height === 720 && r.back && r.back.w === 1280 && r.back.h === 720
          && JSON.stringify(r.burnSizes) === '["1280x720"]', say(r));
-    ok('and is given the quality floor when the source spent less (0.15 bits per pixel, 4.1 Mbps)',
-       near(c.bitrate, Math.round(1280 * 720 * 30 * 0.15), 1) && r.quality && r.quality.plan.by === 'floor', say(r));
+    ok('and is given the High Quality floor when the source spent less (12.0 Mbps at 720p30)',
+       near(c.bitrate, Math.round(22e6 * Math.pow(1280 * 720 / (1920 * 1080), 0.75)), 1) && r.quality && r.quality.plan.by === 'floor', say(r));
   }
   /* AN MP4 OR MOV STATES ITS PIXEL SHAPE TWO WAYS — a `pasp` box beside the
      codec record, or the SPS inside its avcC — and its frame rate and its
@@ -15638,12 +15668,12 @@ section('Timestamp Video quality: the copy keeps the source’s size, frame rate
     ok('and its video bitrate is every frame’s size over its running time (1.20 Mbps here)',
        MV.pasp && near(MV.pasp.br, Math.round(30 * 5000 * 8 / 1.001), 2), String(MV.pasp && MV.pasp.br));
     const m = MV.mp4 || {}, mc = m.cfg || {};
-    ok('1080p MP4: the copy is configured at 1920 x 1080, at the exact 29.97, as H.264 High 4.0',
-       mc.width === 1920 && mc.height === 1080 && near(mc.framerate, NTSC, 0.001) && mc.codec === 'avc1.640028',
+    ok('1080p MP4: the copy is configured at 1920 x 1080, at the exact 29.97, as H.264 High 4.1',
+       mc.width === 1920 && mc.height === 1080 && near(mc.framerate, NTSC, 0.001) && mc.codec === 'avc1.640029',
        JSON.stringify(m).slice(0, 600));
-    ok('1080p MP4: at the source’s own 13.9 Mbps — not V2’s 4.98',
-       near(mc.bitrate, m.src, m.src * 0.01) && near(m.src, Math.round(60 * 58000 * 8 / (60 * 1001 / 30000)), 2)
-         && m.q && m.q.plan && m.q.plan.by === 'source', JSON.stringify([mc.bitrate, m.src, m.q && m.q.plan]));
+    ok('1080p MP4: HIGH QUALITY BY DEFAULT — twice the source’s own 13.9 Mbps, 27.8 — not V2’s 4.98',
+       near(mc.bitrate, 2 * m.src, 2) && near(m.src, Math.round(60 * 58000 * 8 / (60 * 1001 / 30000)), 2)
+         && m.q && m.q.plan && m.q.plan.by === 'source' && m.q.plan.mode === 'high', JSON.stringify([mc.bitrate, m.src, m.q && m.q.plan]));
     ok('1080p MP4: every frame decoded, stamped and written; the copy reads back at 1920 x 1080 with 60 frames',
        m.frames === 60 && m.back && m.back.w === 1920 && m.back.h === 1080 && m.back.n === 60, JSON.stringify([m.frames, m.back, m.crash]));
     ok('1080p MP4: the stamp is burned into the 1920 x 1080 picture, in the corner it belongs in',
@@ -15676,10 +15706,12 @@ section('Timestamp Video quality: the copy keeps the source’s size, frame rate
     out.k4 = await ask(strict, 3840, 2160, 30, { srcBitrate: 45e6, seconds: 30, budget: 768 * 1048576 });
     out.k4v2 = V2.some(codec => strict({ codec, width: 3840, height: 2160, framerate: 30, bitrate: 19906560 }));
     out.v2only = await ask(c => V2.includes(c.codec) && !c.bitrateMode, 1920, 1080, 30000 / 1001,
-                           { srcBitrate: 14e6, seconds: 48, v2Fps: 30, budget: 768 * 1048576 });
-    out.capped = await ask(c => c.bitrate <= 20e6, 1920, 1080, 30000 / 1001, { srcBitrate: 24e6, seconds: 60, budget: 768 * 1048576 });
+                           { srcBitrate: 14e6, seconds: 48, v2Fps: 30, budget: 768 * 1048576, mode: 'standard' });
+    out.capped = await ask(c => c.bitrate <= 20e6, 1920, 1080, 30000 / 1001, { srcBitrate: 24e6, seconds: 60, budget: 768 * 1048576, mode: 'standard' });
     out.none = await ask(() => false, 1920, 1080, 30, {});
-    const plan = o => vstEncodePlan(Object.assign({ w: 1920, h: 1080, fps: 30000 / 1001, budget: 768 * 1048576 }, o));
+    /* STANDARD — #346's plan, which the operator can still choose, held to it
+       exactly; High Quality's own plan is asserted in its own section. */
+    const plan = o => vstEncodePlan(Object.assign({ w: 1920, h: 1080, fps: 30000 / 1001, budget: 768 * 1048576, mode: 'standard' }, o));
     out.long = plan({ srcBitrate: 24e6, seconds: 3600 });
     out.mid = plan({ srcBitrate: 24e6, seconds: 600 });
     out.phone = plan({ srcBitrate: 14e6, seconds: 300, budget: 256 * 1048576 });
@@ -15707,30 +15739,30 @@ section('Timestamp Video quality: the copy keeps the source’s size, frame rate
   });
   ok('4K30 on a device that checks levels: High 5.1 is found — V2 found NO configuration it would take',
      P.k4 && P.k4.codec === 'avc1.640033' && P.k4.width === 3840 && P.k4v2 === false, JSON.stringify(P.k4));
-  ok('a device that knows only V2’s configurations still makes a copy, with V2’s exact configuration',
+  ok('STANDARD: a device that knows only V2’s configurations still makes a copy, with V2’s exact configuration',
      P.v2only && P.v2only.codec === 'avc1.640028' && P.v2only.bitrate === 4976640 && P.v2only.framerate === 30
        && !P.v2only.bitrateMode && P.v2only.plan.step === 'v2', JSON.stringify(P.v2only));
-  ok('an encoder that refuses the plan’s rate is asked again at V2’s rate before anything older',
+  ok('STANDARD: an encoder that refuses the plan’s rate is asked again at V2’s rate before anything older',
      P.capped && P.capped.bitrate === P.capped.plan.v2 && P.capped.plan.step === 'v2-rate' && P.capped.bitrateMode === 'variable',
      JSON.stringify(P.capped));
   ok('and a device that takes nothing gets no configuration — the copy is refused with the reason, as before',
      P.none === null, JSON.stringify(P.none));
-  ok('the memory budget: an hour of 1080p never gets fewer bits than V2 gave it (4.98 Mbps)',
+  ok('STANDARD’s memory budget: an hour of 1080p never gets fewer bits than V2 gave it (4.98 Mbps)',
      P.long.bitrate === P.long.v2 && P.long.by === 'v2', JSON.stringify(P.long));
-  ok('the memory budget: ten minutes is held so the copy stays within 768 MB, and still above V2',
+  ok('STANDARD’s memory budget: ten minutes is held so the copy stays within 768 MB, and still above V2',
      P.mid.by === 'memory' && P.mid.bitrate * 600 / 8 <= 768 * 1048576 && P.mid.bitrate > P.mid.v2, JSON.stringify(P.mid));
   ok('on a phone the budget is 256 MB', P.phone.by === 'memory' && P.phone.bitrate * 300 / 8 <= 256 * 1048576
      && JSON.stringify(P.budgets) === JSON.stringify([768 * 1048576, 256 * 1048576]), JSON.stringify(P.phone));
   ok('which budget: a desk computer gets 768 MB; an iPhone, an Android phone or a 4 GB machine gets 256 MB',
      P.devices && P.devices.desk === 768 * 1048576 && P.devices.iphone === 256 * 1048576
        && P.devices.android === 256 * 1048576 && P.devices.small === 256 * 1048576, JSON.stringify(P.devices));
-  ok('a source that spent absurdly much is held to the 0.40 bpp ceiling (24.9 Mbps at 1080p 29.97)',
+  ok('STANDARD: a source that spent absurdly much is held to the 0.40 bpp ceiling (24.9 Mbps at 1080p 29.97)',
      P.wild.by === 'ceiling' && P.wild.bitrate === Math.round(1920 * 1080 * (30000 / 1001) * 0.4), JSON.stringify(P.wild));
-  ok('an HEVC source is matched at what H.264 needs for the same pictures (8 Mbps of HEVC → 12 of H.264)',
+  ok('STANDARD: an HEVC source is matched at what H.264 needs for the same pictures (8 Mbps of HEVC → 12 of H.264)',
      P.hevc.by === 'source' && P.hevc.bitrate === 12e6, JSON.stringify(P.hevc));
-  ok('a source whose bitrate cannot be measured gets the floor, 0.15 bpp — not a guess',
+  ok('STANDARD: a source whose bitrate cannot be measured gets the floor, 0.15 bpp — not a guess',
      P.unknown.by === 'floor' && P.unknown.bitrate === Math.round(1920 * 1080 * (30000 / 1001) * 0.15), JSON.stringify(P.unknown));
-  ok('the owner’s IMG_0440.mov (84.7 MB over 48.12 s): about 14 Mbps of video is asked for where V2 asked 4.98',
+  ok('STANDARD: the owner’s IMG_0440.mov (84.7 MB over 48.12 s): about 14 Mbps of video is asked for where V2 asked 4.98',
      P.iphone.by === 'source' && P.iphone.bitrate > 13.5e6 && P.iphone.bitrate < 14.5e6, JSON.stringify(P.iphone));
   await page.close();
 }
@@ -15852,6 +15884,758 @@ section('Timestamp Video quality on real codecs: an MP4, a portrait iPhone MOV a
    black/unhelpful", and the time being typed must be SEEN on the picture —
    date, time, AM/PM and zone, the moment they change, before anything is
    saved or generated. */
+section('Timestamp Video HIGH QUALITY: twice the source, never under the floor table, never above twice it — and never lowered under its own name');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  const P = await page.evaluate(async () => {
+    const NTSC = 30000 / 1001, DESK = 768 * 1048576, PHONE = 256 * 1048576;
+    const hq = o => vstEncodePlan(Object.assign({w: 1920, h: 1080, fps: NTSC, budget: DESK, seconds: 60}, o));
+    const st = o => vstEncodePlan(Object.assign({w: 1920, h: 1080, fps: NTSC, budget: DESK, seconds: 60, mode: 'standard'}, o));
+    const out = {};
+    /* THE FLOOR TABLE, at the sizes and rates the owner named. */
+    const fl = (w, h, fps) => vstEncodePlan({w, h, fps, srcBitrate: null, seconds: 10, budget: DESK});
+    out.floors = {p720_30: fl(1280, 720, 30), p720_60: fl(1280, 720, 60), p1080_24: fl(1920, 1080, 24), p1080_25: fl(1920, 1080, 25),
+                  p1080_30: fl(1920, 1080, NTSC), p1080_50: fl(1920, 1080, 50), p1080_60: fl(1920, 1080, 60),
+                  p1440_30: fl(2560, 1440, 30), p1440_60: fl(2560, 1440, 60), k4_30: fl(3840, 2160, 30), k4_60: fl(3840, 2160, 60)};
+    out.dflt = vstEncodePlan({w: 1920, h: 1080, fps: NTSC, srcBitrate: 14e6, seconds: 60, budget: DESK});
+    out.ex14 = hq({srcBitrate: 14e6}); out.ex17 = hq({srcBitrate: 17e6}); out.ex24 = hq({srcBitrate: 24e6});
+    out.low = hq({srcBitrate: 5e6}); out.unknown = hq({srcBitrate: null});
+    out.hevc = hq({srcBitrate: 8e6, srcCodec: 'hvc1'});
+    out.prores = hq({srcBitrate: 147e6});
+    out.p60 = vstEncodePlan({w: 1920, h: 1080, fps: 60, srcBitrate: 28e6, seconds: 30, budget: DESK});
+    /* NEVER LOWERED: an hour of 1080p on a phone is far over the budget —
+       the rate stands and the plan says it does not fit. */
+    out.long = hq({srcBitrate: 14e6, seconds: 3600, budget: PHONE});
+    out.stdLong = st({srcBitrate: 14e6, seconds: 3600, budget: PHONE});
+    out.stdMid = st({srcBitrate: 14e6, seconds: 300, budget: PHONE});
+    out.std = st({srcBitrate: 14e6});
+    return out;
+  });
+  const near = (a, b, tol) => typeof a === 'number' && Math.abs(a - b) <= tol;
+  const mb = x => x && x.bitrate / 1e6;
+  const F = P.floors;
+  ok('the floor table: 1080p at 24, 25 and 29.97 frames is 22 Mbps — inside the owner’s 18–24',
+     [F.p1080_24, F.p1080_25, F.p1080_30].every(x => x && x.bitrate === 22e6 && x.by === 'floor'), JSON.stringify([mb(F.p1080_24), mb(F.p1080_25), mb(F.p1080_30)]));
+  ok('the floor table: 1080p at 50 and 60 frames is 34 Mbps — inside the owner’s 28–40',
+     [F.p1080_50, F.p1080_60].every(x => x && x.bitrate === 34e6), JSON.stringify([mb(F.p1080_50), mb(F.p1080_60)]));
+  ok('the floor table: 1440p higher, 4K30 substantially higher, 4K60 higher again (33.9, 52.3, 62.2, 96.2 Mbps)',
+     near(mb(F.p1440_30), 33.9, 0.06) && near(mb(F.p1440_60), 52.3, 0.06) && near(mb(F.k4_30), 62.2, 0.06) && near(mb(F.k4_60), 96.2, 0.06)
+       && mb(F.p1440_30) > 22 && mb(F.k4_30) > mb(F.p1440_30) && mb(F.k4_60) > mb(F.k4_30),
+     JSON.stringify([mb(F.p1440_30), mb(F.p1440_60), mb(F.k4_30), mb(F.k4_60)]));
+  ok('the floor table: 720p is 12.0 Mbps at 30 frames and 18.5 at 60',
+     near(mb(F.p720_30), 12.0, 0.06) && near(mb(F.p720_60), 18.5, 0.06), JSON.stringify([mb(F.p720_30), mb(F.p720_60)]));
+  ok('nothing in the table is the old ~5 Mbps 1080p: every 1080p floor is over four times V2’s 4.98',
+     [F.p1080_24, F.p1080_25, F.p1080_30, F.p1080_50, F.p1080_60].every(x => x.bitrate > 4 * 4976640), '');
+  ok('HIGH QUALITY IS THE DEFAULT: a plan asked for without a mode is High',
+     P.dflt.mode === 'high' && P.dflt.bitrate === 28e6, JSON.stringify(P.dflt));
+  ok('the owner’s examples at twice the source: 14 → 28, 17 → 34 Mbps, by the source',
+     P.ex14.bitrate === 28e6 && P.ex17.bitrate === 34e6 && P.ex14.by === 'source' && P.ex17.by === 'source',
+     JSON.stringify([P.ex14, P.ex17].map(mb)));
+  ok('24 Mbps AVCHD is held at twice the floor — 44 Mbps, inside the owner’s 36–48, not an unbounded 48',
+     P.ex24.bitrate === 44e6 && P.ex24.by === 'ceiling', JSON.stringify(P.ex24));
+  ok('a source that spent little is never given less than the floor (5 Mbps → 22)',
+     P.low.bitrate === 22e6 && P.low.by === 'floor', JSON.stringify(P.low));
+  ok('an unmeasured source gets the floor table’s figure, not a guess',
+     P.unknown.bitrate === 22e6 && P.unknown.by === 'floor', JSON.stringify(P.unknown));
+  ok('an HEVC source counts 1.5x before it is doubled (8 Mbps HEVC → 24 Mbps H.264)',
+     P.hevc.bitrate === 24e6 && P.hevc.by === 'source', JSON.stringify(P.hevc));
+  ok('a ProRes-class source does not buy an absurd copy: twice the floor and no more',
+     P.prores.bitrate === 44e6 && P.prores.by === 'ceiling', JSON.stringify(P.prores));
+  ok('1080p60 at 28 Mbps → 56 Mbps (the 60-frame floor is 34, its cap 68)',
+     P.p60.bitrate === 56e6 && P.p60.floor === 34e6 && P.p60.ceiling === 68e6, JSON.stringify(P.p60));
+  ok('NEVER LOWERED: an hour on a phone keeps 28 Mbps and is reported as not fitting',
+     P.long.bitrate === 28e6 && P.long.fits === false && P.long.reduced === false && P.long.est > 256 * 1048576,
+     JSON.stringify(P.long));
+  ok('STANDARD is #346’s plan unchanged — the source’s own rate', P.std.mode === 'standard' && P.std.bitrate === 14e6 && P.std.by === 'source',
+     JSON.stringify(P.std));
+  ok('and STANDARD held to the memory budget SAYS so — `reduced`, with the rate it would have had',
+     P.stdMid.reduced === true && P.stdMid.by === 'memory' && P.stdMid.want === 14e6 && P.stdMid.bitrate < 14e6
+       && P.stdLong.reduced === true && P.stdLong.bitrate === P.stdLong.v2, JSON.stringify([P.stdMid, P.stdLong]));
+
+  /* THE LADDER, against devices of different kinds — the real
+     `vstEncoderConfig`, with `isConfigSupported` answering as each would. */
+  const L = await page.evaluate(async () => {
+    const LV = {21: [19800, 792, 4000], 22: [20250, 1620, 4000], 30: [40500, 1620, 10000], 31: [108000, 3600, 14000],
+      32: [216000, 5120, 20000], 40: [245760, 8192, 20000], 41: [245760, 8192, 50000], 42: [522240, 8704, 50000],
+      50: [589824, 22080, 135000], 51: [983040, 36864, 240000], 52: [2073600, 36864, 240000]};
+    const strict = c => { const m = /^avc1\.(..)(..)(..)$/i.exec(c.codec); if (!m) return false;
+      const L = LV[parseInt(m[3], 16)]; if (!L) return false;
+      const mbs = Math.ceil(c.width / 16) * Math.ceil(c.height / 16);
+      return mbs <= L[1] && mbs * (c.framerate || 30) <= L[0]
+        && (c.bitrate || 0) <= L[2] * (parseInt(m[1], 16) === 100 ? 1250 : 1000); };
+    const realVE = window.VideoEncoder;
+    const ask = async (accept, w, h, fps, o) => {
+      const asked = [];
+      window.VideoEncoder = class { static async isConfigSupported(c) { asked.push(Object.assign({}, c)); return {supported: !!accept(c), config: c}; } };
+      try { const c = await vstEncoderConfig(w, h, fps, o);
+            return {cfg: c ? Object.assign({}, c, {plan: c.vstPlan}) : null, asked}; }
+      finally { window.VideoEncoder = realVE; }
+    };
+    const NTSC = 30000 / 1001, DESK = 768 * 1048576;
+    const o = (x) => Object.assign({srcBitrate: 17e6, seconds: 60, budget: DESK, v2Fps: 30}, x);
+    const out = {};
+    out.hq1080 = await ask(strict, 1920, 1080, NTSC, o({}));
+    out.hq1080_44 = await ask(strict, 1920, 1080, NTSC, o({srcBitrate: 24e6}));
+    out.hq60 = await ask(strict, 1920, 1080, 60, o({srcBitrate: 24e6}));
+    out.hq60_68 = await ask(strict, 1920, 1080, 60, o({srcBitrate: 40e6}));
+    out.hq4k = await ask(strict, 3840, 2160, 30, o({srcBitrate: 48e6, seconds: 20}));
+    /* An encoder that will not go above 20 Mbps: High refuses, Standard asks V2's rate. */
+    out.capHq = await ask(c => strict(c) && c.bitrate <= 20e6, 1920, 1080, NTSC, o({}));
+    out.capSt = await ask(c => strict(c) && c.bitrate <= 20e6, 1920, 1080, NTSC, o({mode: 'standard', srcBitrate: 24e6}));
+    /* A device that knows only V2's configurations: High never falls to them. */
+    const V2 = ['avc1.640028', 'avc1.64002a', 'avc1.4d0028', 'avc1.42E01E'];
+    out.v2Hq = await ask(c => V2.includes(c.codec) && !c.bitrateMode, 1920, 1080, NTSC, o({}));
+    out.v2St = await ask(c => V2.includes(c.codec) && !c.bitrateMode, 1920, 1080, NTSC, o({mode: 'standard', srcBitrate: 14e6}));
+    /* A Constrained-Baseline-only encoder gets 1.2x, inside the cap. */
+    out.cb = await ask(c => strict(c) && /^avc1\.42e0/i.test(c.codec), 1920, 1080, NTSC, o({srcBitrate: 14e6}));
+    out.cbCap = await ask(c => strict(c) && /^avc1\.42e0/i.test(c.codec), 1920, 1080, NTSC, o({srcBitrate: 21e6}));
+    /* An encoder that offers only constant bitrate: the same rate, constant. */
+    out.cbr = await ask(c => strict(c) && c.bitrateMode === 'constant', 1920, 1080, NTSC, o({}));
+    /* An hour does not fit 768 MB at 34 Mbps: configured, and marked as not fitting. */
+    out.long = await ask(strict, 1920, 1080, NTSC, o({seconds: 3600}));
+    /* And the device's two encoders are asked about separately, only to report. */
+    const impl = [];
+    window.VideoEncoder = class { static async isConfigSupported(c) { impl.push(c.hardwareAcceleration); return {supported: c.hardwareAcceleration === 'prefer-hardware'}; } };
+    try { out.impls = await vstEncoderImpls({codec: 'avc1.640029', width: 1920, height: 1080, bitrate: 34e6}); out.implAsked = impl; }
+    finally { window.VideoEncoder = realVE; }
+    return out;
+  });
+  const c = x => (x && x.cfg) || {};
+  ok('HIGH 1080p29.97 at 34 Mbps is High profile level 4.1 — 4.0 holds only 25 Mbps',
+     c(L.hq1080).codec === 'avc1.640029' && c(L.hq1080).bitrate === 34e6, JSON.stringify(c(L.hq1080)));
+  ok('HIGH 1080p29.97 at 44 Mbps is still level 4.1 (62.5 Mbps for High)', c(L.hq1080_44).codec === 'avc1.640029'
+     && c(L.hq1080_44).bitrate === 44e6, JSON.stringify(c(L.hq1080_44)));
+  ok('HIGH 1080p60 at 48 Mbps is level 4.2; at 68 Mbps the level that holds it, 5.0',
+     c(L.hq60).codec === 'avc1.64002a' && c(L.hq60).bitrate === 48e6 && c(L.hq60_68).codec === 'avc1.640032'
+       && c(L.hq60_68).bitrate === 68e6, JSON.stringify([c(L.hq60).codec, c(L.hq60_68).codec, c(L.hq60_68).bitrate]));
+  ok('HIGH 4K30 at 96 Mbps is High 5.1, at 3840 x 2160', c(L.hq4k).codec === 'avc1.640033' && c(L.hq4k).bitrate === 96e6
+     && c(L.hq4k).width === 3840, JSON.stringify(c(L.hq4k)));
+  ok('every configuration asked for is latency "quality" — never real-time — and variable bitrate comes first',
+     [L.hq1080, L.hq60, L.capHq, L.cbr].every(x => x.asked.length && x.asked.every(a => a.latencyMode === 'quality' || !a.bitrateMode))
+       && L.hq1080.asked[0].bitrateMode === 'variable', JSON.stringify(L.hq1080.asked.slice(0, 2)));
+  ok('no configuration a copy is made with forces hardware or software — the browser chooses, and falls back by itself',
+     [L.hq1080, L.hq4k, L.cb, L.capSt].every(x => x.asked.every(a => !('hardwareAcceleration' in a))), '');
+  ok('HIGH IS NEVER ASKED AT A LOWER RATE: an encoder capped at 20 Mbps gets no High configuration at all',
+     L.capHq.cfg === null && L.capHq.asked.length > 0 && L.capHq.asked.every(a => a.bitrate >= 34e6),
+     JSON.stringify(L.capHq.asked.map(a => a.bitrate)));
+  ok('while STANDARD on the same encoder still steps to V2’s rate, as #346 did',
+     c(L.capSt).bitrate === 20e6 || (c(L.capSt).plan && c(L.capSt).plan.step === 'v2-rate'), JSON.stringify(c(L.capSt)));
+  ok('a device that knows only V2’s configurations: High is not available — Standard still makes V2’s copy',
+     L.v2Hq.cfg === null && c(L.v2St).codec === 'avc1.640028' && c(L.v2St).bitrate === 4976640 && c(L.v2St).plan.step === 'v2',
+     JSON.stringify([L.v2Hq.cfg, c(L.v2St)]));
+  ok('a Constrained Baseline encoder is given 1.2x the High rate (28 → 33.6 Mbps)',
+     /^avc1\.42e0/i.test(c(L.cb).codec || '') && c(L.cb).bitrate === Math.round(28e6 * 1.2), JSON.stringify(c(L.cb)));
+  ok('…and still never above twice the floor (42 x 1.2 is held to 44 Mbps)',
+     c(L.cbCap).bitrate === 44e6, JSON.stringify(c(L.cbCap)));
+  ok('an encoder that offers only constant bitrate gets the same High rate, constant',
+     c(L.cbr).bitrateMode === 'constant' && c(L.cbr).bitrate === 34e6, JSON.stringify(c(L.cbr)));
+  ok('an hour at 34 Mbps is configured, and marked as not fitting 768 MB — it is the caller who refuses, by name',
+     c(L.long).bitrate === 34e6 && c(L.long).plan && c(L.long).plan.fits === false, JSON.stringify(c(L.long).plan));
+  ok('this device’s hardware and software encoders are asked about separately — and only reported',
+     L.impls && L.impls.hardware === true && L.impls.software === false
+       && JSON.stringify(L.implAsked) === '["prefer-hardware","prefer-software"]', JSON.stringify([L.impls, L.implAsked]));
+  await page.close();
+}
+
+section('Timestamp Video HIGH QUALITY on camera formats: AVCHD 1080i and 1080p as .MTS and .M2TS at about 17 and 24 Mbps, and iPhone 1080p30, 1080p60 and 4K30');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  /* THE WHOLE PIPELINE, every format the owner named — stub codecs (this
+     Chromium has no H.264) that check H.264 levels as a real encoder does and
+     hand out planar pictures as a real decoder does; the parse, the plan, the
+     composite, the muxer, the clean check and the read-back all real. */
+  const R = await vstRun(page, `
+    const NTSC = 30000 / 1001;
+    const LV = {21: [19800, 792, 4000], 22: [20250, 1620, 4000], 30: [40500, 1620, 10000], 31: [108000, 3600, 14000],
+      32: [216000, 5120, 20000], 40: [245760, 8192, 20000], 41: [245760, 8192, 50000], 42: [522240, 8704, 50000],
+      50: [589824, 22080, 135000], 51: [983040, 36864, 240000], 52: [2073600, 36864, 240000]};
+    const hqStrict = c => { const m = /^avc1\\.(..)(..)(..)$/i.exec(c.codec); if (!m) return false;
+      const L = LV[parseInt(m[3], 16)]; if (!L) return false;
+      const mbs = Math.ceil(c.width / 16) * Math.ceil(c.height / 16);
+      return mbs <= L[1] && mbs * (c.framerate || 30) <= L[0]
+        && (c.bitrate || 0) <= L[2] * (parseInt(m[1], 16) === 100 ? 1250 : 1000); };
+    /* The copy's colour box, read straight out of its bytes. */
+    const hqColr = u8 => { for (let i = 4; i + 19 < u8.length; i++)
+      if (u8[i] === 0x63 && u8[i + 1] === 0x6f && u8[i + 2] === 0x6c && u8[i + 3] === 0x72 && u8[i + 4] === 0x6e && u8[i + 5] === 0x63)
+        return {p: (u8[i + 8] << 8) | u8[i + 9], t: (u8[i + 10] << 8) | u8[i + 11], m: (u8[i + 12] << 8) | u8[i + 13], full: u8[i + 14] >> 7};
+      return null; };
+    const runs = {};
+    const ts = async (k, mk, name, yuv) => {
+      try {
+        const r = await vstScenario({mk, name, plan: {encAccept: hqStrict, yuv, encColour: 'echo', sampleStamp: 10}});
+        runs[k] = r;
+      } catch (e) { runs[k] = {crash: String(e && e.message || e)}; }
+    };
+    await ts('fh17', {stride: 192, frames: 30, width: 1920, height: 1080, fps: NTSC, sliceLen: 70900, timing: [1001, 60000]}, '00001.MTS', 'I420');
+    await ts('fh24', {stride: 192, frames: 30, width: 1920, height: 1080, fps: NTSC, sliceLen: 100000, timing: [1001, 60000]}, '00002.M2TS', 'NV12');
+    await ts('fi17', {stride: 192, frames: 30, fields: 'pair', width: 1920, height: 1080, fps: NTSC, sliceLen: 35450}, '00003.MTS', 'NV12');
+    await ts('fi24', {stride: 192, frames: 30, fields: 'pair', width: 1920, height: 1080, fps: NTSC, sliceLen: 50050}, '00004.M2TS', 'I420');
+    /* iPhone MOVs: 1080p30 (14 Mbps, portrait — stored landscape, turned 90),
+       1080p60 (24 Mbps), 4K30 (48 Mbps). */
+    const hqEnc = new TextEncoder();
+    const hqCat = (...a) => { const n = a.reduce((s, x) => s + x.length, 0); const o = new Uint8Array(n); let k = 0;
+      for (const x of a) { o.set(x, k); k += x.length; } return o; };
+    const hqBox = (type, ...parts) => { const p = hqCat(...parts); const b = new Uint8Array(8 + p.length);
+      new DataView(b.buffer).setUint32(0, 8 + p.length); b.set(hqEnc.encode(type), 4); b.set(p, 8); return b; };
+    const hqU32 = n => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, n >>> 0); return b; };
+    const hqMov = ({w, h, scale, delta, N, SZ, rot = 0}) => {
+      const sps = new Uint8Array([0x67, 0x64, 0, 0x28]);
+      const avcC = hqCat(new Uint8Array([1, 0x64, 0, 0x28, 0xff, 0xe1, 0, sps.length]), sps, new Uint8Array([1, 0, 4, 0x68, 0xee, 0x3c, 0x80]));
+      const body = new Uint8Array(78);
+      new DataView(body.buffer).setUint16(24, w); new DataView(body.buffer).setUint16(26, h);
+      const entry = hqBox('avc1', body, hqBox('avcC', avcC));
+      const ftyp = hqBox('ftyp', hqEnc.encode('qt  '), hqU32(512));
+      const M = rot === 90 ? [0, 65536, 0, -65536, 0, 0, 0, 0, 0x40000000] : [65536, 0, 0, 0, 65536, 0, 0, 0, 0x40000000];
+      const build = at => {
+        const stbl = hqBox('stbl', hqBox('stsd', new Uint8Array(4), hqU32(1), entry),
+          hqBox('stts', new Uint8Array(4), hqU32(1), hqU32(N), hqU32(delta)),
+          hqBox('stsz', new Uint8Array(4), hqU32(SZ), hqU32(N)),
+          hqBox('stsc', new Uint8Array(4), hqU32(1), hqU32(1), hqU32(N), hqU32(1)),
+          hqBox('stco', new Uint8Array(4), hqU32(1), hqU32(at)),
+          hqBox('stss', new Uint8Array(4), hqU32(1), hqU32(1)));
+        const mdhd = hqBox('mdhd', new Uint8Array(4), new Uint8Array(8), hqU32(scale), hqU32(N * delta), new Uint8Array(4));
+        const hdlr = hqBox('hdlr', new Uint8Array(4), new Uint8Array(4), hqEnc.encode('vide'), new Uint8Array(12));
+        const tkhd = hqBox('tkhd', new Uint8Array(4), new Uint8Array(20), new Uint8Array(16), hqCat(...M.map(hqU32)), hqU32(0), hqU32(0));
+        return hqBox('moov', hqBox('trak', tkhd, hqBox('mdia', mdhd, hdlr, hqBox('minf', stbl))));
+      };
+      const moov = build(ftyp.length + build(0).length + 8);
+      return new File([ftyp, moov, hqBox('mdat', new Uint8Array(N * SZ))], 'IMG_0440.MOV', {type: 'video/quicktime', lastModified: 1790000000000});
+    };
+    const mov = async (k, o, yuv) => {
+      const f = hqMov(o);
+      const parsed = await vstParse(f);
+      const S = stubCodecs({encAccept: hqStrict, yuv, encColour: 'echo', sampleStamp: 4, stampCorner: o.rot === 90 ? 'tr' : 'br'});
+      try {
+        const r = await vstTranscode(f, parsed, 1790000000000, 'America/New_York', () => {}, {quality: 'high'});
+        const u8 = new Uint8Array(await r.blob.arrayBuffer());
+        const back = await vstParse(new File([u8], 'c.mp4', {type: 'video/mp4'}));
+        runs[k] = {cfg: S.log.encCfgs[0], q: r.quality, frames: r.frames, src: parsed.video.srcBitrate, fps: parsed.video.frameRate,
+          rot: parsed.rotation, fmt: Array.from(new Set(S.log.encFmt)), cs: S.log.encCs[0], stamp: [S.log.stampLit, S.log.stampChecked],
+          colr: hqColr(u8), back: back && back.video && {w: back.video.width, h: back.video.height, n: back.video.samples && back.video.samples.length,
+            rot: back.rotation, fps: back.video.frameRate}};
+      } catch (e) { runs[k] = {crash: String(e && e.message || e)}; }
+      finally { S.restore(); }
+    };
+    await mov('ip30', {w: 1920, h: 1080, scale: 600, delta: 20, N: 30, SZ: 58300, rot: 90}, 'NV12');
+    await mov('ip60', {w: 1920, h: 1080, scale: 600, delta: 10, N: 30, SZ: 50000}, 'NV12');
+    await mov('ip4k', {w: 3840, h: 2160, scale: 600, delta: 20, N: 12, SZ: 200000}, 'NV12');
+    /* THE TRANSCODE REFUSES FOR ITSELF, whatever the screens did: an encoder
+       that goes no higher than 20 Mbps gets no High copy at all — a fault
+       naming the owner's sentence, nothing written — while Standard on the
+       same encoder still makes one. */
+    {
+      const f = hqMov({w: 1920, h: 1080, scale: 600, delta: 20, N: 30, SZ: 58300});
+      const parsed = await vstParse(f);
+      const S = stubCodecs({encAccept: c => hqStrict(c) && c.bitrate <= 20e6, yuv: 'NV12'});
+      try {
+        let fault = null, made = null;
+        try { await vstTranscode(f, parsed, 1790000000000, 'America/New_York', () => {}, {quality: 'high'}); }
+        catch (e) { fault = {kind: e.vstKind, hq: e.vstDetail && e.vstDetail.hq, msg: e.message}; }
+        const configured = S.log.encCfgs.length;
+        try { const r = await vstTranscode(f, parsed, 1790000000000, 'America/New_York', () => {}, {quality: 'standard'});
+              made = {frames: r.frames, bitrate: r.quality.out.bitrate, mode: r.quality.plan.mode}; } catch (e) { made = {crash: String(e.message)}; }
+        runs.refuse = {fault, configured, made};
+      } finally { S.restore(); }
+    }
+    return runs;
+  `);
+  const near = (a, b, tol) => typeof a === 'number' && typeof b === 'number' && Math.abs(a - b) <= tol;
+  const NTSC = 30000 / 1001;
+  const say = r => JSON.stringify(r && {crash: r.crash, step: r.step, err: r.err, fault: r.fault, cfg: r.encCfgs && r.encCfgs[0], q: r.quality && r.quality.plan,
+    burn: r.quality && r.quality.burn, pv: r.parsedVideo}).slice(0, 700);
+  const TS = [['fh17', 'AVCHD 1080p .MTS at about 17 Mbps', 17e6], ['fh24', 'AVCHD 1080p .M2TS at about 24 Mbps', 24e6],
+              ['fi17', 'AVCHD 1080i .MTS at about 17 Mbps', 17e6], ['fi24', 'AVCHD 1080i .M2TS at about 24 Mbps', 24e6]];
+  for (const [k, label, want] of TS) {
+    const r = R[k] || {}, c = (r.encCfgs && r.encCfgs[0]) || {}, src = r.parsedVideo && r.parsedVideo.srcBitrate;
+    const hq = Math.min(44e6, Math.max(22e6, Math.round(src * 2)));
+    ok(`${label}: the source’s bitrate is measured from its packets (${(want / 1e6).toFixed(0)} Mbps ±6%)`,
+       near(src, want, want * 0.06), String(src));
+    ok(`${label}: a whole, clean copy at 1920 x 1080, 30 frames, the original untouched`,
+       r.step === 'done' && r.back && r.back.w === 1920 && r.back.h === 1080 && r.back.frames === 30 && r.clean && r.unchanged === true, say(r));
+    ok(`${label}: High Quality — twice the source, held to 44 Mbps (${(hq / 1e6).toFixed(1)} Mbps here)`,
+       c.bitrate === hq && r.quality && r.quality.plan && r.quality.plan.mode === 'high', say(r));
+    ok(`${label}: H.264 High profile at level 4.1, the level that holds 1080 lines at this rate`,
+       c.codec === 'avc1.640029' && c.width === 1920 && c.height === 1080, say(r));
+    ok(`${label}: at the exact 29.97 frames, quality latency, variable bitrate`,
+       near(c.framerate, NTSC, 0.001) && c.latencyMode === 'quality' && c.bitrateMode === 'variable', JSON.stringify(c));
+    ok(`${label}: the stamp is composited into the decoded picture — not through a canvas — and is in it`,
+       r.quality && r.quality.burn && r.quality.burn.path === 'yuv' && r.quality.burn.canvas === 0 && r.stamp && r.stamp[1] > 0 && r.stamp[0] === r.stamp[1],
+       JSON.stringify([r.quality && r.quality.burn, r.stamp]));
+  }
+  ok('.MTS and .M2TS are both read off their 192-byte packet grid', R.fh17.brand === R.fh24.brand && /M2TS|AVCHD/i.test(String(R.fh17.brand)),
+     JSON.stringify([R.fh17.brand, R.fh24.brand]));
+  ok('1080i is read as interlaced, and kept woven — one frame per field pair', R.fi17.interlaced === true && R.fi24.interlaced === true
+     && R.fi17.quality && R.fi17.quality.src.interlaced === true, JSON.stringify([R.fi17.interlaced, R.fi24.interlaced]));
+  const IP = [['ip30', 'iPhone 1080p30 (portrait)', 1920, 1080, 30, 'avc1.640029', 14e6], ['ip60', 'iPhone 1080p60', 1920, 1080, 60, 'avc1.64002a', 24e6],
+              ['ip4k', 'iPhone 4K30', 3840, 2160, 30, 'avc1.640033', 48e6]];
+  for (const [k, label, w, h, fps, codec, want] of IP) {
+    const r = R[k] || {}, c = r.cfg || {};
+    const hq = Math.round(r.src * 2);
+    ok(`${label}: the source is read — ${w} x ${h}, ${fps} frames, about ${(want / 1e6).toFixed(0)} Mbps`,
+       near(r.fps, fps, 0.001) && near(r.src, want, want * 0.03), JSON.stringify([r.fps, r.src, r.crash]));
+    ok(`${label}: the copy is the source’s own size and frame rate`,
+       c.width === w && c.height === h && near(c.framerate, fps, 0.001) && r.back && r.back.w === w && r.back.h === h && r.back.n === r.frames,
+       JSON.stringify([c, r.back]));
+    ok(`${label}: High Quality at twice the source (${(hq / 1e6).toFixed(1)} Mbps), H.264 High at ${codec.slice(-2) === '29' ? '4.1' : codec.slice(-2) === '2a' ? '4.2' : '5.1'}`,
+       c.bitrate === hq && c.codec === codec && r.q && r.q.plan.mode === 'high', JSON.stringify([c.bitrate, hq, c.codec]));
+    ok(`${label}: NV12 pictures go to the encoder untouched by any colour conversion, labelled BT.709`,
+       JSON.stringify(r.fmt) === '["NV12"]' && r.cs && r.cs.matrix === 'bt709' && r.cs.fullRange === false && r.q.burn.path === 'yuv',
+       JSON.stringify([r.fmt, r.cs, r.q && r.q.burn]));
+    ok(`${label}: and the copy carries that label — colr nclx 1/1/1, limited range`,
+       r.colr && r.colr.p === 1 && r.colr.t === 1 && r.colr.m === 1 && r.colr.full === 0, JSON.stringify(r.colr));
+    ok(`${label}: the stamp is in the picture${k === 'ip30' ? ' — upright at the foot of the picture as shown, so top right of the stored one' : ''}`,
+       r.stamp && r.stamp[1] > 0 && r.stamp[0] === r.stamp[1], JSON.stringify(r.stamp));
+  }
+  ok('THE TRANSCODE REFUSES FOR ITSELF: an encoder that takes no High rate gets no copy — the owner’s sentence, no encoder configured',
+     R.refuse && R.refuse.fault && R.refuse.fault.kind === 'setup' && R.refuse.fault.hq === 'encoder' && R.refuse.configured === 0
+       && R.refuse.fault.msg.startsWith('High-quality encoding is not available on this device for this file.'), JSON.stringify(R.refuse));
+  ok('…while Standard on the same encoder makes the whole copy, and says it was Standard',
+     R.refuse && R.refuse.made && R.refuse.made.frames === 30 && R.refuse.made.mode === 'standard' && R.refuse.made.bitrate <= 20e6,
+     JSON.stringify(R.refuse && R.refuse.made));
+  ok('the portrait iPhone clip keeps its rotation as metadata — stored 1920 x 1080, turned 90 — never turned in the pixels',
+     R.ip30.rot === 90 && R.ip30.back && R.ip30.back.rot === 90 && R.ip30.back.w === 1920, JSON.stringify(R.ip30.back));
+  await page.close();
+}
+
+section('Timestamp Video HIGH QUALITY in the editor: the choice and its cost, "not available" said before anything runs, Process next never downgrades, and the copy says what it was');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const HQ_SETUP = `
+    const hqEnc = new TextEncoder();
+    const hqCat = (...a) => { const n = a.reduce((s, x) => s + x.length, 0); const o = new Uint8Array(n); let k = 0;
+      for (const x of a) { o.set(x, k); k += x.length; } return o; };
+    const hqBox = (type, ...parts) => { const p = hqCat(...parts); const b = new Uint8Array(8 + p.length);
+      new DataView(b.buffer).setUint32(0, 8 + p.length); b.set(hqEnc.encode(type), 4); b.set(p, 8); return b; };
+    const hqU32 = n => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, n >>> 0); return b; };
+    const hqMov = ({w, h, scale, delta, N, SZ, name}) => {
+      const sps = new Uint8Array([0x67, 0x64, 0, 0x28]);
+      const avcC = hqCat(new Uint8Array([1, 0x64, 0, 0x28, 0xff, 0xe1, 0, sps.length]), sps, new Uint8Array([1, 0, 4, 0x68, 0xee, 0x3c, 0x80]));
+      const body = new Uint8Array(78);
+      new DataView(body.buffer).setUint16(24, w); new DataView(body.buffer).setUint16(26, h);
+      const entry = hqBox('avc1', body, hqBox('avcC', avcC));
+      const ftyp = hqBox('ftyp', hqEnc.encode('qt  '), hqU32(512));
+      const ident = [65536, 0, 0, 0, 65536, 0, 0, 0, 0x40000000];
+      const build = at => {
+        const stbl = hqBox('stbl', hqBox('stsd', new Uint8Array(4), hqU32(1), entry),
+          hqBox('stts', new Uint8Array(4), hqU32(1), hqU32(N), hqU32(delta)),
+          hqBox('stsz', new Uint8Array(4), hqU32(SZ), hqU32(N)),
+          hqBox('stsc', new Uint8Array(4), hqU32(1), hqU32(1), hqU32(N), hqU32(1)),
+          hqBox('stco', new Uint8Array(4), hqU32(1), hqU32(at)),
+          hqBox('stss', new Uint8Array(4), hqU32(1), hqU32(1)));
+        const mdhd = hqBox('mdhd', new Uint8Array(4), new Uint8Array(8), hqU32(scale), hqU32(N * delta), new Uint8Array(4));
+        const hdlr = hqBox('hdlr', new Uint8Array(4), new Uint8Array(4), hqEnc.encode('vide'), new Uint8Array(12));
+        const tkhd = hqBox('tkhd', new Uint8Array(4), new Uint8Array(20), new Uint8Array(16), hqCat(...ident.map(hqU32)), hqU32(0), hqU32(0));
+        return hqBox('moov', hqBox('trak', tkhd, hqBox('mdia', mdhd, hdlr, hqBox('minf', stbl))));
+      };
+      const moov = build(ftyp.length + build(0).length + 8);
+      return new File([ftyp, moov, hqBox('mdat', new Uint8Array(N * SZ))], name, {type: 'video/quicktime', lastModified: 1790000000000});
+    };
+    const LV = {40: [245760, 8192, 20000], 41: [245760, 8192, 50000], 42: [522240, 8704, 50000],
+      50: [589824, 22080, 135000], 51: [983040, 36864, 240000], 52: [2073600, 36864, 240000]};
+    const hqStrict = c => { const m = /^avc1\\.(..)(..)(..)$/i.exec(c.codec); if (!m) return false;
+      const L = LV[parseInt(m[3], 16)]; if (!L) return false;
+      const mbs = Math.ceil(c.width / 16) * Math.ceil(c.height / 16);
+      return mbs <= L[1] && mbs * (c.framerate || 30) <= L[0]
+        && (c.bitrate || 0) <= L[2] * (parseInt(m[1], 16) === 100 ? 1250 : 1000); };
+  `;
+  /* Three videos. A: 1 s of 1080p30 at 14 Mbps — High fits. B: 6 s of the
+     same — on a device with room for 5 MB, a High copy (21 MB) does not, and
+     Standard is held to that memory. C: 0.4 s of 4K30 at 48 Mbps on an encoder
+     that goes no higher than 60 Mbps — High (96) is refused by the encoder. */
+  await vstRun(page, HQ_SETUP + `
+    window.__hqBudget = window.vstCopyBudget;
+    window.vstCopyBudget = () => 5 * 1048576;
+    window.__S = stubCodecs({encAccept: c => hqStrict(c) && c.bitrate <= 60e6, yuv: 'NV12'});
+    vqOpen('');
+    vqAdd([hqMov({w: 1920, h: 1080, scale: 600, delta: 20, N: 30, SZ: 58300, name: 'HQ_A.MOV'}),
+           hqMov({w: 1920, h: 1080, scale: 600, delta: 20, N: 180, SZ: 58300, name: 'HQ_B.MOV'}),
+           hqMov({w: 3840, h: 2160, scale: 600, delta: 20, N: 12, SZ: 200000, name: 'HQ_C.MOV'})], {caseNo: ''});
+    await qWait(() => VQ.items.length === 3 && VQ.items.every(x => x.analysis === 'done'), 60000);
+    for (const v of VQ.items) await confirmTime(v);
+    qClick('vqEdit', VQ.items[0].qid);
+  `);
+  const ed = () => page.evaluate(() => {
+    const e = document.getElementById('vq_edit'), f = document.getElementById('vq_qual');
+    const go = document.getElementById('vq_go'), why = document.getElementById('vq_gowhy');
+    const rows = [...document.querySelectorAll('.vqd-row')];
+    return { sel: VQ.sel, text: f ? f.innerText : '', legend: f && f.querySelector('legend') ? f.querySelector('legend').innerText : '',
+      opts: f ? [...f.querySelectorAll('.vqd-qopt')].map(l => l.innerText.replace(/\s+/g, ' ').trim()) : [],
+      checked: f ? (f.querySelector('input:checked') || {}).value : null,
+      note: (document.getElementById('vq_qnote') || {}).innerText || '', warn: (document.getElementById('vq_qwhy') || {}).innerText || '',
+      goDisabled: go ? go.disabled : null, goText: go ? go.innerText : '', why: why ? why.innerText : '',
+      inRow: rows.some(r => r.querySelector('.vqd-qual')), rowText: rows.map(r => r.innerText).join(' | '),
+      status: VQ.items.map(x => vqStatus(x)), q: VQ.items.map(x => vstQualityOf(x)) };
+  });
+  const sel = async i => { await vstRun(page, `qClick('vqEdit', VQ.items[${i}].qid);`); await page.waitForTimeout(80); return ed(); };
+  const A = await sel(0);
+  ok('the editor’s Generate area asks “Video quality” — HIGH QUALITY — RECOMMENDED / Best for investigative copies. Larger file. / STANDARD / Smaller file.',
+     A.legend === 'Video quality' && A.opts[0] === 'HIGH QUALITY — RECOMMENDED Best for investigative copies. Larger file.'
+       && A.opts[1] === 'STANDARD Smaller file.', JSON.stringify([A.legend, A.opts]));
+  ok('High Quality is chosen by default', A.checked === 'high' && A.q.every(x => x === 'high'), JSON.stringify([A.checked, A.q]));
+  ok('and what it will cost is said before anything runs: about 28.0 Mbps, about 3 MB for this 1 s video',
+     /^About 28\.0 Mbps · about 3 MB for this video$/.test(A.note.trim()), A.note);
+  ok('the choice is not on the queue’s rows — the cards are not cluttered with it', A.inRow === false && !/HIGH QUALITY|STANDARD/.test(A.rowText),
+     A.rowText.slice(0, 300));
+  ok('Generate is offered for a video whose High copy fits', A.goDisabled === false && /^Generate timestamped copy$/.test(A.goText.trim()), A.goText);
+  const B = await sel(1);
+  ok('B — a High copy too long for this device’s memory: the owner’s sentence, before anything runs',
+     B.warn.startsWith('High-quality encoding is not available on this device for this file.') && /about 21 MB/.test(B.warn)
+       && /room for about 5 MB/.test(B.warn) && /Choose Standard/.test(B.warn), B.warn);
+  ok('…Generate is withdrawn and says the same sentence where it stands', B.goDisabled === true
+     && B.why.trim() === 'High-quality encoding is not available on this device for this file.', JSON.stringify([B.goDisabled, B.why]));
+  ok('…and B’s row says to open it and choose Standard — still READY, never failed', B.status[1] === 'ready'
+     && /High quality is not available for this file on this device — open it to choose Standard\./.test(B.rowText), B.rowText.slice(0, 400));
+  await page.click('#vq_q_standard'); await page.waitForTimeout(80);
+  const B2 = await ed();
+  ok('choosing STANDARD for B offers Generate, and says BEFORE it runs that memory holds it to 7.0 Mbps (14.0 otherwise)',
+     B2.checked === 'standard' && B2.goDisabled === false && !B2.warn
+       && /^About 7\.0 Mbps · about 5 MB for this video\. Limited by this device’s memory: a copy this long is built in memory, so Standard is held to 7\.0 Mbps here rather than 14\.0 Mbps\.$/.test(B2.note.replace(/\s+/g, ' ').trim()),
+     B2.note);
+  ok('the choice is B’s alone — A is still High', JSON.stringify(B2.q) === '["high","standard","high"]', JSON.stringify(B2.q));
+  const C = await sel(2);
+  ok('C — 4K whose High rate (96 Mbps) this encoder refuses: the sentence and the reason, with Standard offered',
+     C.warn.startsWith('High-quality encoding is not available on this device for this file.')
+       && /encoder would not take the high-quality settings/.test(C.warn) && /Choose Standard/.test(C.warn) && C.goDisabled === true, C.warn);
+  /* Make A, then Process next: B (Standard, by the operator's choice), then
+     C — which must STOP and say why, never be made at a lower quality. */
+  const before = await page.evaluate(() => window.__S.log.encCfgs.length);
+  await vstRun(page, `qClick('vqEdit', VQ.items[0].qid); qClick('vqGo', VQ.items[0].qid);
+    await qWait(() => VQ.items[0].out && !vqRunning(), 60000);
+    VQ.items[0].savedHere = true;
+    vqProcessNext(); await qWait(() => VQ.items[1].out && !vqRunning(), 90000);
+    VQ.items[1].savedHere = true;`);
+  const mid = await page.evaluate(() => ({ cfgs: window.__S.log.encCfgs.map(c => ({codec: c.codec, bitrate: c.bitrate})),
+    st: VQ.items.map(x => vqStatus(x)), outs: VQ.items.map(x => !!x.out),
+    q: VQ.items.map(x => x.out && x.out.quality && x.out.quality.plan && x.out.quality.plan.mode) }));
+  ok('A is made in High (28.0 Mbps) and B — by Process next — in the Standard its operator chose (7.0 Mbps)',
+     mid.outs[0] && mid.outs[1] && mid.q[0] === 'high' && mid.q[1] === 'standard'
+       && mid.cfgs[before] && mid.cfgs[before].bitrate === 27984000 && mid.cfgs[before + 1] && mid.cfgs[before + 1].bitrate < 7.1e6,
+     JSON.stringify(mid));
+  const runBefore = await page.evaluate(() => VQ.runId);
+  await vstRun(page, `vqProcessNext(); await new Promise(r => setTimeout(r, 400));`);
+  const C2 = await page.evaluate(() => ({ sel: VQ.sel, cid: VQ.items[2].qid, run: vqRunning(), out: !!VQ.items[2].out, err: VQ.items[2].err, runId: VQ.runId,
+    cfgs: window.__S.log.encCfgs.length, st: vqStatus(VQ.items[2]), warn: (document.getElementById('vq_qwhy') || {}).innerText || '' }));
+  ok('PROCESS NEXT NEVER DOWNGRADES: it stops on C, opens it, and says the sentence — no copy, no encoder configured',
+     String(C2.sel) === String(C2.cid) && !C2.run && !C2.out && C2.cfgs === before + 2 && C2.st === 'ready'
+       && C2.err.startsWith('High-quality encoding is not available on this device for this file.'), JSON.stringify(C2));
+  ok('…and it is refused at the press, before a run exists: the processing panel never moves to C',
+     String(C2.runId) === String(runBefore) && String(C2.runId) !== String(C2.cid), JSON.stringify([runBefore, C2.runId]));
+  /* THE COPY SAYS WHAT IT WAS — the owner's three lines, verbatim labels. */
+  const D = await page.evaluate(async () => {
+    const lines = i => { const v = VQ.items[i]; VST = v; v.step = 'done'; paintVStamp();
+      const t = (document.querySelector('.vst') || {}).innerText || ''; VST = null; paintVStamp(); return t; };
+    return { a: lines(0), b: lines(1), receipt: vqReceiptText() };
+  });
+  const kv = (t, k) => ((t.match(new RegExp('(?:^|\\n)' + k + '[\\t ]*(?:\\n|\\t)[\\t ]*([^\\n]+)')) || [])[1] || '').trim();
+  ok('Details: “Source video bitrate: 14.0 Mbps”', kv(D.a, 'Source video bitrate') === '14.0 Mbps', kv(D.a, 'Source video bitrate'));
+  ok('Details: “Timestamped copy bitrate” is the rate measured from the copy, with what was asked for beside it',
+     /^\d+\.\d Mbps — measured from the copy \(28\.0 Mbps asked for\)/.test(kv(D.a, 'Timestamped copy bitrate')), kv(D.a, 'Timestamped copy bitrate'));
+  ok('Details: “Quality mode: High”', kv(D.a, 'Quality mode') === 'High', kv(D.a, 'Quality mode'));
+  ok('B’s Details say Standard, and that memory held it — the reduction is on the copy’s record too',
+     /^Standard — held to this device's memory for a copy this long \(14\.0 Mbps otherwise\)$/.test(kv(D.b, 'Quality mode')), kv(D.b, 'Quality mode'));
+  ok('Details: the stamp was composited into the decoded picture', /composited into the decoded picture/.test(kv(D.a, 'Timestamp')), kv(D.a, 'Timestamp'));
+  ok('the receipt carries the three lines for every copy',
+     (D.receipt.match(/Source video bitrate: 14\.0 Mbps/g) || []).length === 2 && (D.receipt.match(/Timestamped copy bitrate: /g) || []).length === 2
+       && /Quality mode: High/.test(D.receipt) && /Quality mode: Standard/.test(D.receipt), D.receipt.slice(0, 900));
+  /* A MADE COPY IN THE OTHER MODE IS NOT "COMPLETE" FOR THIS ONE. */
+  await vstRun(page, `qClick('vqEdit', VQ.items[0].qid);`);
+  await page.click('#vq_q_standard'); await page.waitForTimeout(80);
+  const S = await ed();
+  ok('choosing Standard for A after its High copy was made: A reads changed since, and Generate is offered again',
+     S.status[0] === 'ready' && S.goDisabled === false && /The video quality was changed after the last copy was made\./.test(S.rowText),
+     JSON.stringify([S.status, S.rowText.slice(0, 300)]));
+  /* ON A PHONE: the choice fits, each option is a 44 px target, nothing sideways. */
+  for (const [w, h] of [[390, 844], [320, 568]]) {
+    await page.setViewportSize({ width: w, height: h }); await page.waitForTimeout(150);
+    await vstRun(page, `qClick('vqEdit', VQ.items[2].qid);`); await page.waitForTimeout(120);
+    const M = await page.evaluate(() => {
+      const f = document.getElementById('vq_qual'); f.scrollIntoView({block: 'center'});
+      const r = f.getBoundingClientRect();
+      const opts = [...f.querySelectorAll('.vqd-qopt')].map(l => { const b = l.getBoundingClientRect(); const i = l.querySelector('input').getBoundingClientRect();
+        const hit = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+        return { h: b.height, ih: i.height, iw: i.width, mine: !!hit && l.contains(hit) }; });
+      return { l: r.left, r: r.right, vw: innerWidth, over: document.documentElement.scrollWidth - innerWidth, opts };
+    });
+    ok(`${w}: the quality choice fits the screen, each option and its radio a 44 px target, uncovered`,
+       M.l >= 0 && M.r <= M.vw + 0.5 && M.over <= 0 && M.opts.length === 2 && M.opts.every(o => o.h >= 44 && o.ih >= 44 && o.iw >= 44 && o.mine),
+       JSON.stringify(M));
+  }
+  await page.evaluate(() => { try { window.__S && window.__S.restore(); window.vstCopyBudget = window.__hqBudget; vqClose && vqClose(); } catch {} });
+  await page.close();
+}
+
+section('Timestamp Video HIGH QUALITY on real codecs: the stamp is composited into the decoded picture, the footage keeps its colours, and generation loss is measured');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  /* THE COMPOSITE ITSELF, byte for byte: planar pictures in, the stamp in
+     the rows it covers, every other byte the decoder's. */
+  const U = await page.evaluate(async () => {
+    const W = 640, H = 360, out = {};
+    for (const fmt of ['I420', 'NV12']) {
+      const ys = W * H, cs = (W >> 1) * (H >> 1), buf = new Uint8Array(ys + 2 * cs);
+      for (let i = 0; i < ys; i++) buf[i] = 30 + (i % W) * 150 / W | 0;
+      for (let i = ys; i < buf.length; i++) buf[i] = fmt === 'I420' ? (i < ys + cs ? 90 : 170) : ((i - ys) % 2 ? 170 : 90);
+      const src = new VideoFrame(buf, {format: fmt, codedWidth: W, codedHeight: H, timestamp: 0, duration: 33333,
+        colorSpace: {primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: false}});
+      const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+      const st = vstStamper(W, H, 0, cv, cv.getContext('2d', {alpha: false}));
+      const f = await st.make(src, '12/31/2026 11:59:59 PM EST');
+      const b = new Uint8Array(f.allocationSize()); const layout = await f.copyTo(b);
+      const cs2 = f.colorSpace.toJSON();
+      let outY = 0, inY = 0, outC = 0, bright = 0;
+      /* The stamp's own rows and columns, from the layer the burn drew. */
+      const L = document.createElement('canvas'); L.width = W; L.height = H; const lx = L.getContext('2d', {willReadFrequently: true});
+      vstBurn(lx, W, H, '12/31/2026 11:59:59 PM EST', 0); const a = lx.getImageData(0, 0, W, H).data;
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        const s = buf[y * W + x], d = b[layout[0].offset + y * layout[0].stride + x], cov = a[(y * W + x) * 4 + 3];
+        if (!cov) { if (s !== d) outY++; } else { if (s !== d) inY++; if (d > 200) bright++; }
+      }
+      for (let y = 0; y < H / 2; y++) for (let x = 0; x < W / 2; x++) {
+        const cov = a[(2 * y * W + 2 * x) * 4 + 3] + a[(2 * y * W + 2 * x + 1) * 4 + 3] + a[((2 * y + 1) * W + 2 * x) * 4 + 3] + a[((2 * y + 1) * W + 2 * x + 1) * 4 + 3];
+        if (cov) continue;
+        const pairs = fmt === 'I420' ? [[ys + y * (W / 2) + x, layout[1].offset + y * layout[1].stride + x], [ys + cs + y * (W / 2) + x, layout[2].offset + y * layout[2].stride + x]]
+          : [[ys + y * W + 2 * x, layout[1].offset + y * layout[1].stride + 2 * x], [ys + y * W + 2 * x + 1, layout[1].offset + y * layout[1].stride + 2 * x + 1]];
+        for (const [i, j] of pairs) if (buf[i] !== b[j]) outC++;
+      }
+      out[fmt] = {fmt: f.format, w: f.codedWidth, h: f.codedHeight, ts: f.timestamp, cs: cs2, outY, inY, outC, bright, path: st.path, yuv: st.yuvFrames};
+      f.close(); src.close();
+    }
+    /* THE COLOUR LABEL a copy may carry. */
+    const meta = cs => ({decoderConfig: {codec: 'avc1.640029', description: new Uint8Array(4), colorSpace: cs}});
+    const keep = vstMetaColour(meta({primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: false}), 'avc');
+    const rgb = vstMetaColour(meta({primaries: 'bt709', transfer: 'iec61966-2-1', matrix: 'rgb', fullRange: true}), 'avc');
+    const b2020 = vstMetaColour(meta({primaries: 'bt2020', transfer: 'pq', matrix: 'bt2020-ncl', fullRange: false}), 'avc');
+    const nul = vstMetaColour(meta({primaries: null, transfer: null, matrix: null, fullRange: null}), 'avc');
+    const vp9 = vstMetaColour(meta({primaries: 'bt2020', transfer: 'pq', matrix: 'rgb', fullRange: false}), 'vp9');
+    out.colr = {keep: !!keep.decoderConfig.colorSpace, rgb: 'colorSpace' in rgb.decoderConfig, b2020: 'colorSpace' in b2020.decoderConfig,
+                nul: 'colorSpace' in nul.decoderConfig, vp9: !!vp9.decoderConfig.colorSpace, desc: rgb.decoderConfig.description instanceof Uint8Array};
+    /* A picture that is not planar, or is resized, goes the canvas's way. */
+    const rgba = new VideoFrame(new Uint8Array(64 * 36 * 4), {format: 'RGBA', codedWidth: 64, codedHeight: 36, timestamp: 0});
+    const i420 = new VideoFrame(new Uint8Array(64 * 36 * 3 / 2), {format: 'I420', codedWidth: 64, codedHeight: 36, timestamp: 0});
+    out.why = {rgba: vstYuvWhyNot(rgba, 64, 36), resized: vstYuvWhyNot(i420, 96, 36), ok: vstYuvWhyNot(i420, 64, 36)};
+    rgba.close(); i420.close();
+    /* THE ENCODER IS NOT AN UNBOUNDED QUEUE. */
+    const enc = {state: 'configured', encodeQueueSize: 30};
+    const t0 = performance.now(); const drain = setInterval(() => { enc.encodeQueueSize = Math.max(0, enc.encodeQueueSize - 4); }, 5);
+    await vstEncodeRoom(enc, () => true); clearInterval(drain);
+    out.room = {left: enc.encodeQueueSize, waited: performance.now() - t0 > 3};
+    return out;
+  });
+  for (const fmt of ['I420', 'NV12']) {
+    const r = U[fmt] || {};
+    ok(`${fmt}: the stamped picture comes back ${fmt}, the same size and moment, carrying the original’s colour label`,
+       r.fmt === fmt && r.w === 640 && r.h === 360 && r.ts === 0 && r.cs && r.cs.matrix === 'bt709' && r.cs.fullRange === false && r.path === 'yuv',
+       JSON.stringify(r));
+    ok(`${fmt}: EVERY BYTE OUTSIDE THE STAMP IS THE DECODER’S — luma and chroma alike`, r.outY === 0 && r.outC === 0,
+       JSON.stringify([r.outY, r.outC]));
+    ok(`${fmt}: and the stamp is in the picture, white where it is drawn`, r.inY > 500 && r.bright > 300, JSON.stringify([r.inY, r.bright]));
+  }
+  ok('a copy carries a colour label only when the muxer can write it truly — a BT.709 one is kept',
+     U.colr.keep && U.colr.desc, JSON.stringify(U.colr));
+  ok('— and one saying the samples are RGB, one it has no code for (BT.2020/PQ), or an empty one is left off, never written as 0',
+     U.colr.rgb === false && U.colr.b2020 === false && U.colr.nul === false, JSON.stringify(U.colr));
+  ok('(VP9’s box needs one by format, and VP9 is never shipped: it is left as it came)', U.colr.vp9 === true, JSON.stringify(U.colr));
+  ok('a picture the decoder hands out as RGBA, or one that must be resized to its display shape, goes the canvas’s way — and says why',
+     /RGBA/.test(U.why.rgba) && /resized/.test(U.why.resized) && U.why.ok === '', JSON.stringify(U.why));
+  ok('the encoder’s queue is waited on, not filled without limit', U.room.left <= 6 && U.room.waited, JSON.stringify(U.room));
+
+  /* THE PIPELINE ON REAL CODECS (VP9 here — this Chromium has no H.264; the
+     path is the one every device takes). A clip of colour bars recorded
+     near-losslessly, copied twice: through the composite, and with the
+     composite refused so the canvas makes the copy. */
+  const C = await vstRun(page, `
+    const W = 640, H = 360, N = 12, fps = 30;
+    const BARS = [[192,192,192],[192,192,0],[0,192,192],[0,192,0],[192,0,192],[192,0,0],[0,0,192],[16,16,16]];
+    const M = await vstMuxer();
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const cx = cv.getContext('2d');
+    const target = new M.ArrayBufferTarget();
+    const mux = new M.Muxer({target, video: {codec: 'vp9', width: W, height: H}, fastStart: 'in-memory', firstTimestampBehavior: 'offset'});
+    const enc = new VideoEncoder({output: (ch, meta) => mux.addVideoChunk(ch, meta), error: e => { throw e; }});
+    enc.configure({codec: 'vp09.00.10.08', width: W, height: H, bitrate: 20e6, framerate: fps});
+    for (let i = 0; i < N; i++) { BARS.forEach((c, k) => { cx.fillStyle = 'rgb(' + c + ')'; cx.fillRect(k * W / 8, 0, W / 8, H); });
+      const f = new VideoFrame(cv, {timestamp: Math.round(i * 1e6 / fps), duration: Math.round(1e6 / fps)}); enc.encode(f, {keyFrame: i === 0}); f.close(); }
+    await enc.flush(); enc.close(); mux.finalize();
+    const src = new Uint8Array(target.buffer);
+    const decodeAll = async u8 => { const f = new File([u8], 'x.mp4', {type: 'video/mp4'}); const p = await vstParse(f); const V = p.video;
+      const frames = []; const dec = new VideoDecoder({output: fr => frames.push(fr), error: e => { throw e; }});
+      dec.configure({codec: V.codecString, codedWidth: V.width, codedHeight: V.height});
+      for (const s of V.samples) dec.decode(new EncodedVideoChunk({type: s.sync ? 'key' : 'delta', timestamp: Math.round(s.cts / V.timescale * 1e6),
+        data: await f.slice(s.offset, s.offset + s.size).arrayBuffer()}));
+      await dec.flush(); dec.close();
+      const out = []; for (const fr of frames) { const b = new Uint8Array(fr.allocationSize()); const layout = await fr.copyTo(b);
+        out.push({b, layout, cs: fr.colorSpace.toJSON(), fmt: fr.format}); fr.close(); }
+      return out; };
+    const bars = P => BARS.map((c, k) => { const x0 = Math.round(k * W / 8 + 16), x1 = Math.round((k + 1) * W / 8 - 16), y0 = 40, y1 = 200;
+      return [0, 1, 2].map(pi => { const L = P.layout[pi], sub = pi ? 2 : 1; let s = 0, n = 0;
+        for (let y = Math.floor(y0 / sub); y < Math.floor(y1 / sub); y++) for (let x = Math.floor(x0 / sub); x < Math.floor(x1 / sub); x++) { s += P.b[L.offset + y * L.stride + x]; n++; }
+        return s / n; }); });
+    const psnrTop = (A, B) => { const La = A.layout[0], Lb = B.layout[0]; let sq = 0, n = 0;
+      for (let y = 0; y < 220; y++) for (let x = 0; x < W; x++) { const d = A.b[La.offset + y * La.stride + x] - B.b[Lb.offset + y * Lb.stride + x]; sq += d * d; n++; }
+      return 10 * Math.log10(255 * 255 / Math.max(1e-9, sq / n)); };
+    const realCfg = window.vstEncoderConfig, realWhy = window.vstYuvWhyNot;
+    window.vstEncoderConfig = async (w, h, f, o) => Object.defineProperty({codec: 'vp09.00.10.08', width: w, height: h, bitrate: 20e6, framerate: f || 30,
+      latencyMode: 'quality', bitrateMode: 'variable'}, 'vstPlan', {value: Object.assign(vstEncodePlan(Object.assign({}, o || {}, {w, h, fps: f})), {step: 'plan'}), enumerable: false});
+    const run = async forceCanvas => {
+      if (forceCanvas) window.vstYuvWhyNot = () => 'forced through the canvas for the comparison';
+      try { const f = new File([src], 'BARS.mp4', {type: 'video/mp4', lastModified: 1790000000000}); const parsed = await vstParse(f);
+            return await vstTranscode(f, parsed, 1790000000000, 'America/New_York', () => {}, {quality: 'high'}); }
+      finally { window.vstYuvWhyNot = realWhy; } };
+    try {
+      const sF = await decodeAll(src);
+      const yuv = await run(false), can = await run(true);
+      const yF = await decodeAll(new Uint8Array(await yuv.blob.arrayBuffer())), cF = await decodeAll(new Uint8Array(await can.blob.arrayBuffer()));
+      const i = 6, sb = bars(sF[i]), yb = bars(yF[i]), cb = bars(cF[i]);
+      const err = b => Math.max(...b.map((m, k) => Math.max(...m.map((v, j) => Math.abs(v - sb[k][j])))));
+      return {n: [sF.length, yF.length, cF.length], yuvErr: err(yb), canErr: err(cb), yellow: [sb[1][0], yb[1][0], cb[1][0]],
+              psnr: [psnrTop(sF[i], yF[i]), psnrTop(sF[i], cF[i])], cs: [sF[i].cs, yF[i].cs], burn: [yuv.quality.burn, can.quality.burn],
+              mode: yuv.quality.plan && yuv.quality.plan.mode};
+    } finally { window.vstEncoderConfig = realCfg; }
+  `);
+  ok('colour bars, copied on real codecs: every frame comes back', JSON.stringify(C.n) === '[12,12,12]', JSON.stringify(C.n));
+  ok('THE FOOTAGE KEEPS ITS COLOURS: through the composite every bar’s Y, Cb and Cr is within 1.5 of the original’s',
+     C.yuvErr <= 1.5 && C.burn[0] && C.burn[0].path === 'yuv' && C.burn[0].canvas === 0, JSON.stringify([C.yuvErr, C.burn[0]]));
+  ok('and the comparison can see the difference: through the canvas, this browser moves them further (it converts with another matrix)',
+     C.canErr > C.yuvErr + 1 && C.burn[1] && C.burn[1].path === 'canvas', JSON.stringify([C.canErr, C.yellow]));
+  ok('outside the stamp the composite copy is the original to within the codec (PSNR ≥ 45 dB), closer than the canvas’s copy',
+     C.psnr[0] >= 45 && C.psnr[0] > C.psnr[1], JSON.stringify(C.psnr));
+  ok('the copy is labelled what the original was — BT.709, limited range', C.cs[1] && C.cs[1].matrix === C.cs[0].matrix
+     && C.cs[1].primaries === C.cs[0].primaries && C.cs[1].fullRange === C.cs[0].fullRange, JSON.stringify(C.cs));
+
+  /* GENERATION LOSS, MEASURED (owner brief §15). A scene built to be hard
+     to copy — dark areas with grain, a foliage-like texture that moves, fine
+     edges that move, a smooth dark gradient — recorded the way a camera
+     records it, then copied two ways: #346's live behaviour (the source's own
+     rate, through the canvas) and this one (High Quality, composited). Each
+     copy is compared with the ORIGINAL frame by frame, region by region, for
+     the four things the brief names: macroblocking, texture loss, blur and
+     banding. The numbers are diagnostics on VP9 — a proxy for the device's
+     H.264 — and each assertion is a property, not a score. */
+  const G = await vstRun(page, `
+    const W = 640, H = 360, N = 30, fps = 30;
+    const M = await vstMuxer();
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const cx = cv.getContext('2d', {willReadFrequently: true});
+    let seed = 11; const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+    const leaves = Array.from({length: 900}, () => [320 + rnd() * 320, rnd() * 150, 2 + rnd() * 5, 60 + rnd() * 120]);
+    const paint = i => {
+      cx.fillStyle = '#16181c'; cx.fillRect(0, 0, 320, 150);                                  // D: dark
+      cx.fillStyle = '#2c4a22'; cx.fillRect(320, 0, 320, 150);                                // F: foliage
+      for (const [x, y, r, g] of leaves) { cx.fillStyle = 'rgb(' + (g * 0.35 | 0) + ',' + (g | 0) + ',' + (g * 0.25 | 0) + ')';
+        cx.fillRect(x + (i % 4), y + ((i >> 1) % 3), r, r); }
+      cx.fillStyle = '#6a6a6a'; cx.fillRect(0, 150, 320, 150);                                // E: fine edges
+      cx.strokeStyle = '#f0f0f0'; cx.lineWidth = 1;
+      for (let k = 0; k < 40; k++) { cx.beginPath(); cx.moveTo(k * 8 + i, 150); cx.lineTo(k * 8 + 40 + i, 300); cx.stroke(); }
+      for (let x = 320; x < 640; x++) { const v = 16 + (x - 320) * 64 / 320; cx.fillStyle = 'rgb(' + (v | 0) + ',' + ((v * 1.05) | 0) + ',' + ((v * 1.2) | 0) + ')'; cx.fillRect(x, 150, 1, 150); } // G: gradient
+      cx.fillStyle = '#20242a'; cx.fillRect(0, 300, W, 60);                                    // the stamp's corner
+      const img = cx.getImageData(0, 0, 320, 150);
+      for (let p = 0; p < img.data.length; p += 4) { const n = (rnd() - 0.5) * 22; img.data[p] += n; img.data[p + 1] += n; img.data[p + 2] += n; }
+      cx.putImageData(img, 0, 0);
+    };
+    const target = new M.ArrayBufferTarget();
+    const mux = new M.Muxer({target, video: {codec: 'vp9', width: W, height: H}, fastStart: 'in-memory', firstTimestampBehavior: 'offset'});
+    const enc = new VideoEncoder({output: (ch, meta) => mux.addVideoChunk(ch, meta), error: e => { throw e; }});
+    enc.configure({codec: 'vp09.00.10.08', width: W, height: H, bitrate: 1600000, framerate: fps});
+    for (let i = 0; i < N; i++) { paint(i); const f = new VideoFrame(cv, {timestamp: Math.round(i * 1e6 / fps), duration: Math.round(1e6 / fps)});
+      enc.encode(f, {keyFrame: i === 0}); f.close(); }
+    await enc.flush(); enc.close(); mux.finalize();
+    const src = new Uint8Array(target.buffer);
+    const decodeAll = async u8 => { const f = new File([u8], 'x.mp4', {type: 'video/mp4'}); const p = await vstParse(f); const V = p.video;
+      const frames = []; const dec = new VideoDecoder({output: fr => frames.push(fr), error: e => { throw e; }});
+      dec.configure({codec: V.codecString, codedWidth: V.width, codedHeight: V.height});
+      for (const s of V.samples) dec.decode(new EncodedVideoChunk({type: s.sync ? 'key' : 'delta', timestamp: Math.round(s.cts / V.timescale * 1e6),
+        data: await f.slice(s.offset, s.offset + s.size).arrayBuffer()}));
+      await dec.flush(); dec.close();
+      const out = []; for (const fr of frames) { const b = new Uint8Array(fr.allocationSize()); const layout = await fr.copyTo(b);
+        out.push({b, layout}); fr.close(); }
+      return out; };
+    /* The pipeline's own plan, asked of VP9: the plan picks the rate. */
+    const realCfg = window.vstEncoderConfig, realWhy = window.vstYuvWhyNot;
+    window.vstEncoderConfig = async (w, h, f, o) => { const plan = vstEncodePlan(Object.assign({}, o || {}, {w, h, fps: f}));
+      return Object.defineProperty({codec: 'vp09.00.10.08', width: w, height: h, bitrate: plan.bitrate, framerate: f || 30,
+        latencyMode: 'quality', bitrateMode: 'variable'}, 'vstPlan', {value: Object.assign(plan, {step: 'plan'}), enumerable: false}); };
+    const copy = async (quality, canvas) => {
+      if (canvas) window.vstYuvWhyNot = () => 'the live path, for the comparison';
+      try { const f = new File([src], 'SCENE.mp4', {type: 'video/mp4', lastModified: 1790000000000}); const parsed = await vstParse(f);
+            const r = await vstTranscode(f, parsed, 1790000000000, 'America/New_York', () => {}, {quality});
+            return {r, frames: await decodeAll(new Uint8Array(await r.blob.arrayBuffer()))}; }
+      finally { window.vstYuvWhyNot = realWhy; } };
+    const Y = (P, x, y) => P.b[P.layout[0].offset + y * P.layout[0].stride + x];
+    const REG = {dark: [0, 0, 320, 150], foliage: [320, 0, 640, 150], edges: [0, 150, 320, 300], gradient: [320, 150, 640, 300]};
+    const ssim = (A, B, [x0, y0, x1, y1]) => { const C1 = 6.5025, C2 = 58.5225; let s = 0, n = 0;
+      for (let y = y0; y + 8 <= y1; y += 4) for (let x = x0; x + 8 <= x1; x += 4) {
+        let ma = 0, mb = 0; for (let j = 0; j < 8; j++) for (let i = 0; i < 8; i++) { ma += Y(A, x + i, y + j); mb += Y(B, x + i, y + j); }
+        ma /= 64; mb /= 64; let va = 0, vb = 0, cov = 0;
+        for (let j = 0; j < 8; j++) for (let i = 0; i < 8; i++) { const a = Y(A, x + i, y + j) - ma, b = Y(B, x + i, y + j) - mb; va += a * a; vb += b * b; cov += a * b; }
+        va /= 63; vb /= 63; cov /= 63;
+        s += ((2 * ma * mb + C1) * (2 * cov + C2)) / ((ma * ma + mb * mb + C1) * (va + vb + C2)); n++; }
+      return s / n; };
+    const psnr = (A, B, [x0, y0, x1, y1]) => { let sq = 0, n = 0; for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const d = Y(A, x, y) - Y(B, x, y); sq += d * d; n++; }
+      return 10 * Math.log10(65025 / Math.max(1e-9, sq / n)); };
+    /* Macroblocking: the step across 8-pixel block boundaries over the step inside blocks. */
+    const blocky = (P, [x0, y0, x1, y1]) => { let bd = 0, nb = 0, inn = 0, ni = 0;
+      for (let y = y0; y < y1; y++) for (let x = x0 + 1; x < x1; x++) { const d = Math.abs(Y(P, x, y) - Y(P, x - 1, y));
+        if (x % 8 === 0) { bd += d; nb++; } else if (x % 8 === 4) { inn += d; ni++; } }
+      return (bd / nb) / Math.max(0.01, inn / ni); };
+    /* Texture and sharpness: the high-frequency energy left (Laplacian). */
+    const detail = (P, [x0, y0, x1, y1]) => { let e = 0, n = 0;
+      for (let y = y0 + 1; y < y1 - 1; y++) for (let x = x0 + 1; x < x1 - 1; x++) {
+        e += Math.abs(4 * Y(P, x, y) - Y(P, x - 1, y) - Y(P, x + 1, y) - Y(P, x, y - 1) - Y(P, x, y + 1)); n++; }
+      return e / n; };
+    /* Banding: how many distinct levels a row through the dark gradient keeps. */
+    const levels = P => { const s = new Set(); for (let x = 330; x < 630; x++) s.add(Math.round((Y(P, x, 220) + Y(P, x, 221) + Y(P, x, 222)) / 3)); return s.size; };
+    try {
+      const S = await decodeAll(src);
+      const old = await copy('standard', true), neu = await copy('high', false);
+      const avg = fn => { const o = {}; for (const [k, r] of Object.entries({old: old.frames, neu: neu.frames})) {
+        let t = 0, n = 0; for (let i = 4; i < 28; i += 3) { t += fn(S[i], r[i]); n++; } o[k] = t / n; } return o; };
+      const res = {n: [S.length, old.frames.length, neu.frames.length],
+        rate: {src: (await vstParse(new File([src], 's.mp4'))).video.srcBitrate, old: old.r.quality.out.bitrate, neu: neu.r.quality.out.bitrate},
+        path: [old.r.quality.burn.path, neu.r.quality.burn.path]};
+      for (const [k, reg] of Object.entries(REG)) {
+        res[k] = {ssim: avg((a, b) => ssim(a, b, reg)), psnr: avg((a, b) => psnr(a, b, reg))};
+      }
+      res.blocky = avg((a, b) => blocky(b, REG.foliage) / blocky(a, REG.foliage));
+      res.texture = avg((a, b) => detail(b, REG.foliage) / detail(a, REG.foliage));
+      res.sharp = avg((a, b) => detail(b, REG.edges) / detail(a, REG.edges));
+      res.grain = avg((a, b) => detail(b, REG.dark) / detail(a, REG.dark));
+      res.levels = avg((a, b) => levels(b) / levels(a));
+      return res;
+    } finally { window.vstEncoderConfig = realCfg; }
+  `);
+  const f3 = x => +x.toFixed(3);
+  console.error('GENLOSS ' + JSON.stringify(G));
+  ok('generation loss: the scene is copied whole both ways, the live way through the canvas and High Quality composited',
+     JSON.stringify(G.n) === '[30,30,30]' && G.path && G.path[0] === 'canvas' && G.path[1] === 'yuv', JSON.stringify([G.n, G.path]));
+  ok('…High Quality is given more than the live copy was (the floor table at this size, over the source’s own rate)',
+     G.rate && G.rate.neu > G.rate.old, JSON.stringify(G.rate));
+  /* Each region: closer to the original by at least half a decibel, and no
+     worse a structure — SSIM within a rounding of the live copy's or above. */
+  for (const k of ['dark', 'foliage', 'edges', 'gradient']) {
+    const r = G[k] || {ssim: {}, psnr: {}};
+    ok(`generation loss, ${k}: High Quality keeps more of the original than the live copy (SSIM ${f3(r.ssim.neu)} vs ${f3(r.ssim.old)}; PSNR ${(r.psnr.neu || 0).toFixed(1)} vs ${(r.psnr.old || 0).toFixed(1)} dB)`,
+       r.psnr.neu >= r.psnr.old + 0.5 && r.ssim.neu >= r.ssim.old - 0.0005, JSON.stringify(r));
+  }
+  /* The next four are properties of the copy against the ORIGINAL, held to a
+     floor: the canvas's blur makes the live copy's own figures an unfair
+     yardstick here (it smooths block edges away along with everything else),
+     so the live copy is shown beside them, not compared against. */
+  ok(`MACROBLOCKING: High Quality adds no block edges the original did not have (×${f3(G.blocky.neu)} of the original’s; the live copy ×${f3(G.blocky.old)})`,
+     G.blocky.neu <= 1.05, JSON.stringify(G.blocky));
+  ok(`TEXTURE: the foliage keeps its fine detail (${(G.texture.neu * 100).toFixed(0)}% of the original’s; the live copy ${(G.texture.old * 100).toFixed(0)}%)`,
+     G.texture.neu >= 0.9 && G.texture.neu >= G.texture.old - 0.01, JSON.stringify(G.texture));
+  ok(`BLUR: moving fine edges stay sharp (${(G.sharp.neu * 100).toFixed(0)}% of the original’s edge energy; the live copy ${(G.sharp.old * 100).toFixed(0)}%)`,
+     G.sharp.neu >= 0.95 && G.sharp.neu >= G.sharp.old - 0.01, JSON.stringify(G.sharp));
+  ok(`GRAIN: the dark area’s grain is kept, not smoothed away (${(G.grain.neu * 100).toFixed(0)}%; the live copy ${(G.grain.old * 100).toFixed(0)}%)`,
+     G.grain.neu >= 0.85 && G.grain.neu >= G.grain.old - 0.01, JSON.stringify(G.grain));
+  ok(`BANDING: the dark gradient keeps its levels (${(G.levels.neu * 100).toFixed(0)}% of the original’s; the live copy ${(G.levels.old * 100).toFixed(0)}%)`,
+     G.levels.neu >= 0.9, JSON.stringify(G.levels));
+  await page.close();
+}
+
 section('Timestamp Video editor: an MTS whose first frames are black previews a real frame, and the stamp follows every keystroke');
 {
   const page = await newPage();
