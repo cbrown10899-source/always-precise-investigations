@@ -15692,11 +15692,11 @@ section('Timestamp Video quality: the copy keeps the source’s size, frame rate
     ok('and its video bitrate is every frame’s size over its running time (1.20 Mbps here)',
        MV.pasp && near(MV.pasp.br, Math.round(30 * 5000 * 8 / 1.001), 2), String(MV.pasp && MV.pasp.br));
     const m = MV.mp4 || {}, mc = m.cfg || {};
-    ok('1080p MP4: the copy is configured at 1920 x 1080, at the exact 29.97, as H.264 High 4.1',
-       mc.width === 1920 && mc.height === 1080 && near(mc.framerate, NTSC, 0.001) && mc.codec === 'avc1.640029',
+    ok('1080p MP4: the copy is configured at 1920 x 1080, at the exact 29.97, as H.264 High 4.0 (24.3 Mbps is inside its 25)',
+       mc.width === 1920 && mc.height === 1080 && near(mc.framerate, NTSC, 0.001) && mc.codec === 'avc1.640028',
        JSON.stringify(m).slice(0, 600));
-    ok('1080p MP4: HIGH QUALITY BY DEFAULT — twice the source’s own 13.9 Mbps, 27.8 — not V2’s 4.98',
-       near(mc.bitrate, 2 * m.src, 2) && near(m.src, Math.round(60 * 58000 * 8 / (60 * 1001 / 30000)), 2)
+    ok('1080p MP4: HIGH QUALITY BY DEFAULT — 1.75x the source’s own 13.9 Mbps, 24.3 — not V2’s 4.98',
+       near(mc.bitrate, 1.75 * m.src, 2) && near(m.src, Math.round(60 * 58000 * 8 / (60 * 1001 / 30000)), 2)
          && m.q && m.q.plan && m.q.plan.by === 'source' && m.q.plan.mode === 'high', JSON.stringify([mc.bitrate, m.src, m.q && m.q.plan]));
     ok('1080p MP4: every frame decoded, stamped and written; the copy reads back at 1920 x 1080 with 60 frames',
        m.frames === 60 && m.back && m.back.w === 1920 && m.back.h === 1080 && m.back.n === 60, JSON.stringify([m.frames, m.back, m.crash]));
@@ -15908,7 +15908,7 @@ section('Timestamp Video quality on real codecs: an MP4, a portrait iPhone MOV a
    black/unhelpful", and the time being typed must be SEEN on the picture —
    date, time, AM/PM and zone, the moment they change, before anything is
    saved or generated. */
-section('Timestamp Video HIGH QUALITY: twice the source, never under the floor table, never above twice it — and never lowered under its own name');
+section('Timestamp Video HIGH QUALITY: 1.75x the source (2x for AVCHD), never under the floor table, never above twice it — and never lowered under its own name');
 {
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
