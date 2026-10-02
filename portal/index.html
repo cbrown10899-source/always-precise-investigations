@@ -14906,32 +14906,42 @@ function vstOutSize(V){
                : {w: W, h: even(H / k), normalized: true, sar};
 }
 
-/* ---- HIGH QUALITY IS THE DEFAULT (owner brief 2026-10-02, "TIMESTAMP VIDEO —
-   REAL FOOTAGE STILL GRAINY/BLOTCHY") ----
+/* ---- HIGH QUALITY IS THE DEFAULT (owner briefs 2026-10-02, "TIMESTAMP VIDEO —
+   REAL FOOTAGE STILL GRAINY/BLOTCHY", then "URGENT ... RHYTHMIC FLICKER
+   FIRST" §5, which governs the multiplier) ----
 
    A copy is a SECOND GENERATION. The camera already threw detail away once,
    and any H.264 encoder throws more away again — worst exactly where
    surveillance footage lives: dark areas, foliage, grain, fine edges, motion.
    Giving the copy the original's own bitrate (what #346 shipped, and what
    STANDARD below still does) is therefore not the same quality. Measured on a
-   noisy 1080p29.97 scene recorded at 18.7 Mbps, re-encoded by x264 at a
-   hardware-class speed, the copy's SSIM against the original:
+   noisy 1080p29.97 scene recorded at 17 Mbps, copied by x264 set up the way a
+   hardware encoder works, the share of the original's own frame-to-frame
+   grain the copy kept in the dark sky — the part that freezes into blotches
+   and then pulses at every keyframe when it is starved:
 
-       1x the source 0.980    1.5x 0.987    2x 0.991    2.5x 0.993
+       V2's 5 Mbps 41%   1x the source 73%   1.75x 90%   2x 93%
 
-   — the gain flattens after twice. So HIGH QUALITY is:
+   So HIGH QUALITY is:
 
-     2x the source's H.264-equivalent video bitrate (an HEVC source counts
-        1.5x, as STANDARD already counts it) — the top of the owner's 1.5-2x,
-        because surveillance footage is noisy footage;
+     1.75x the source's H.264-equivalent video bitrate (an HEVC source counts
+        1.5x, as STANDARD already counts it) — the urgent brief's starting
+        multiplier, and every one of its examples: 14 -> 24.5, 17 -> 29.75,
+        24 -> 42 Mbps;
+     2x for an AVCHD transport stream (.MTS / .M2TS) — the "up to
+        approximately 2x for noisy AVCHD" the same brief allows. 1.75x
+        already added no pulse the camera's file lacks; the extra quarter
+        bought 0.67 dB for 14% more file on the one format camcorders write;
      NEVER BELOW the floor table, and NEVER ABOVE twice it (the owner's
         "avoid absurd" — a ProRes or an over-recorded source does not buy an
         unbounded copy);
      and NEVER LOWERED. If this device's encoder will not take it, or the copy
-        would not fit the memory it is built in, High Quality is "not available
-        on this device for this file" — said BEFORE anything runs, with
-        STANDARD offered — never quietly made at a lower rate and still called
-        high.
+        would not fit the room it is made in (this tab's memory, or this
+        device's own storage where the browser offers it — vstCopyRoom), the
+        owner's sentence below is said BEFORE anything runs, with STANDARD
+        offered — never a copy quietly made at a lower rate and still called
+        high, and never a copy whose later minutes get fewer bits than its
+        first.
 
    THE FLOOR TABLE (Mbps). 1080p at 24/25/30 frames is 22 and at 50/60 is 34 —
    inside the owner's 18-24 and 28-40. Other sizes scale by pixel count to the
@@ -15003,15 +15013,16 @@ function vstTrackTimescale(parsed){
        blotches and each keyframe refreshes it all at once. In the dark sky the
        frame-to-frame change AT a keyframe was 4.3x the change between frames
        at V2's 5 Mbps — every two seconds, the rhythm the owner saw — against
-       1.9x in the camera's own file at its own keyframes. At the original's
-       rate it was 2.3x; at twice it, 1.95x: no pulse the original does not
-       already have. The rate is the cure, not the spacing.
+       1.91x in the camera's own file at its own keyframes. At the original's
+       rate it was 2.35x; at 1.75x it, 1.97x; at twice it, 1.95x: from 1.75x
+       up, no pulse the original does not already have. The rate is the cure,
+       not the spacing.
      * A TIGHT BUFFER STARVES THE FRAMES AFTER A KEYFRAME, and more keyframes
        starve more: at 5 Mbps the frames just after a keyframe got 61% of the
        bits of those before the next with keyframes 2 s apart, 49% at 1 s.
-       At High Quality's rate: 98-104%, either spacing.
+       At High Quality's rates: 97-104%, at 1, 2 or 4 s.
      * THE SPACING DOES NOT MOVE THE PICTURE: 1, 2 and 4 s apart, or none
-       after the first, averaged within 0.1 dB of each other at every rate.
+       after the first, averaged at most 0.21 dB apart at every rate.
 
    So keyframes stay two seconds apart — the top of the owner's 1-2 s, half
    as many pulses as one second would give a starved encoder, and a seek
