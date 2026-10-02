@@ -3918,7 +3918,7 @@ Tests:
 
 ```bash
 node case-portal/test-worker.mjs   # 4393 checks (2026-09-28): auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 4988 checks (2026-10-02): the page against the real Worker
+node portal/test-portal.mjs        # 5198 checks (2026-10-02): the page against the real Worker
 ```
 
 **A FULL RUN'S TOTAL MOVES WITH THE CLOCK, BY A CHECK OR TWO.** *A surveillance
@@ -5454,8 +5454,9 @@ mockup; its durable rules are the next subsection.
 - **One heavy thing at a time.** Analysis — structure, decoder questions, one
   thumbnail frame, fingerprint — is sequential and pauses during a run;
   Generate waits for the analysis in flight.
-- **One finished copy in memory.** Starting another lets go of a saved copy;
-  an unsaved one only after the operator agrees.
+- **One finished copy at a time** — in memory, or since 2026-10-02 in this
+  device's own storage when it is too large for memory. Starting another lets
+  go of a saved copy; an unsaved one only after the operator agrees.
 - **An entry is light.** A checked MOV/MP4 lets its frame table go and keeps
   the count (`vstSlim` — measured at ~85 bytes a frame, 18 MB for an hour at
   60 fps, per entry, which a queue of long clips would otherwise hold at once).
@@ -5632,7 +5633,8 @@ in memory before it can be saved (moov-first, V2's design, which the brief
 forbade redesigning): on a phone a 1080p30 clip keeps its source's bitrate to
 about 2½ minutes and is back at V2's from about 7; on a computer, 7½ and 21½.
 The finished screen names the budget when it decided. Lifting it is a streaming
-writer — a design change and the owner's call, not a keystroke.
+writer — a design change and the owner's call, not a keystroke. **The owner made
+that call the same day** (the urgent hotfix, §6): see the next subsection.
 
 **THE LEVEL IS CHOSEN, NEVER FIXED.** `vstEncoderConfig` asks High, Main, then
 Constrained Baseline at the lowest Table A-1 level that holds the copy, then
@@ -5708,6 +5710,92 @@ name. At 1280 the desk editor is a fixed 320 px track, 292 px of content, so a
 brief forbade; the check is the column, measured. And `vstRun` evaluates the
 fixture libraries and the test body in ONE scope, so a helper named `u32`
 crashed a section with "already been declared" — prefix a body's own helpers.
+
+### High Quality, the stamp in the decoded picture, and the pulse that was starved grain
+
+Owner, 2026-10-02, two briefs: *"REAL FOOTAGE STILL GRAINY/BLOTCHY"*, then the
+one that governs, *"URGENT … BLOTCHY / RHYTHMIC FLICKER FIRST"* — the blotches
+*"FLICKER OR PULSE IN A RHYTHM"*. Record in `case-portal/VIDEO-TIMESTAMP.md`
+(*BLOTCHY, AND PULSING IN A RHYTHM*). **This supersedes the memory-budget
+paragraph above**: the ceiling it called the owner's call is lifted, at the
+owner's request.
+
+**THE PULSE WAS GRAIN THE ENCODER COULD NOT AFFORD, AND THE RATE IS THE CURE.**
+Reproduced with x264 set up like a hardware encoder on a synthetic AVCHD night
+scene (this Chromium has no H.264 encoder). Short of bits, the frames between
+keyframes freeze grain into blotches and each keyframe refreshes it, so the
+copy beats at its keyframe spacing. Dark-sky change at a copy keyframe, as a
+multiple of the ordinary frame-to-frame change: **4.30× at V2's 5 Mbps, 2.35×
+at the source's own rate, 1.97× at 1.75×**, against 1.91× in the camera's own
+file. Keyframe SPACING moved the picture at most 0.21 dB; the clock's tick cost
+nothing. **High Quality is 1.75× the source (2× for an `.MTS`/`.M2TS`)**, never
+under the floor table, never over twice it, and **never lowered under its own
+name** — when it cannot be made, *"High-quality encoding is not available for
+this file on this device."* is said before anything runs, with Standard
+offered.
+
+**A DIP AT THE TICK WAS THE CAMERA'S OWN KEYFRAMES.** The first measurement
+blamed the timestamp: quality fell at the first frame of each second. AVCHD's
+half-second keyframes land on exactly those frames. A source with no keyframe
+rhythm of its own, copied with and without the stamp, showed the tick at
+0.986× the median frame size and the stamp region no worse. **Remove the
+source's own rhythm before blaming the copy for one.**
+
+**THE CEILING IS LIFTED BY WRITING TO THE DEVICE, NOT BY LOWERING THE RATE.**
+§6: *"HIGH QUALITY cannot mean: first portion = good, later portion = lower
+bitrate"*. A copy too large for this tab's memory is written to the browser's
+origin-private file system as it is made (`vstCopySink`) — local storage that
+belongs to this site, so **nothing leaves the device**. The index goes last and
+is **scrubbed before a byte of it is written**; the file is then checked clean
+and fingerprinted FROM THE FILE (`vstCleanCheckFile`, `vstSha256File`) through
+the same helpers the in-memory check uses. **Nothing stays**: a failure, a
+Stop, a failed clean check or a full disk deletes what was written; a let-go
+copy is deleted (two minutes after a download starts); a closed tab's leftovers
+are swept on the next open unless another tab holds the copy's Web Lock. A
+full disk is its own fault, never called an out-of-memory failure. **Without
+private storage the device keeps the memory writer and says so, in memory's
+terms, before anything runs** — whether the owner's iPhone has it is the
+device's answer, not this container's.
+
+**THE CANVAS ROUND TRIP COST MORE THAN THE RATE.** In this browser the encoder
+converts canvas RGB with BT.601 while the copy is labelled BT.709 — the yellow
+bar's luma went 162 → 157 in one generation. `vstStamper` copies the decoder's
+own I420/NV12 planes, blends the once-a-second `vstBurn` layer into the rows it
+covers, and hands the encoder a planar frame wearing the original's colour
+label; every byte outside the stamp is the decoder's, asserted byte for byte.
+The canvas stays for odd-sized, non-planar and anamorphic pictures.
+
+**THE COPY KEEPS THE ORIGINAL'S CLOCK.** The muxer's default 57,600 Hz track
+clock rounds a 29.97 frame to 1,922 or 1,921 ticks; the copy is written in 90
+kHz for a transport stream (3,003 a frame) or the MOV's own timescale
+(`vstTrackTimescale`). And the last unit of a transport stream took 3,000
+ticks from a rounded 30 — **found by asserting every frame reached the encoder
+with ONE duration**, not by looking at a timeline.
+
+**THE ENCODER'S OWN RHYTHM IS ON THE RECORD.** `vstChunkLog` keeps every
+chunk's time, duration, key flag and size (21 bytes a frame) and `vstRhythm`
+reads keyframe spacing and size, starvation after a keyframe, a collapsed
+second, and **a boost the encoder keeps by itself** — Chromium's VP9 makes
+every 10th frame several times larger (7.2× at the source's rate, 4.8× at
+twice it) and swings ~7 dB across ten frames whatever the rate. Details prints it beside the source, the requested and the
+written rate, so the owner's first real copy answers what this container
+cannot. **A constant quantizer was not taken for H.264**: it flattened VP9's
+beat, but in x264 it kept 66% of the dark grain where VBR at the same rate kept
+90%, and blotchy darks are the complaint.
+
+**THE TEST'S OWN SOURCE HAD A RHYTHM TOO, ONE LAYER DOWN.** The real-codec
+flatness check first dipped every second — at the SOURCE clip's keyframes, the
+tick trap again. Its source is all-intra now, so any rhythm left is the
+pipeline's. And a detector for an encoder's own periodic boost must skip the
+first two seconds: every rate control wobbles while it settles, and read from
+frame 0 that wobble is a "rhythm".
+
+**26 MUTATIONS, 25 NAMED, AND THE 26TH COULD NOT FAIL.** W07 read the copy's
+fingerprint 8 MiB + 64 bytes a slice — still a multiple of SHA-256's block, so
+the digest was right and nothing should have failed. The defect it stood for,
+a slice off the 64-byte grid (+1), fails test I by name at the one fixture
+size that crosses a slice boundary. **An equivalent mutation is not a test
+gap; write the one that can change the output.**
 
 ## A photograph is timestamped into the case, not onto the device
 

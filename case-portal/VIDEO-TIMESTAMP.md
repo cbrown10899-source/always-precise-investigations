@@ -2218,3 +2218,449 @@ stamp about 4% out of proportion — drawing at 640 px removes that too.
 **Run:** the five preview sections and every other video section, targeted as
 the owner asked — 945 passed, and the two failures are the trimmed runner's
 recorded "long case number" artefacts.
+
+
+---
+
+# BLOTCHY, AND PULSING IN A RHYTHM — 2026-10-02, the urgent hotfix
+
+Owner, two briefs the same day. First *"TIMESTAMP VIDEO — REAL FOOTAGE STILL
+GRAINY/BLOTCHY"*. Then, governing where the two differ, *"URGENT TIMESTAMP
+VIDEO QUALITY HOTFIX — BLOTCHY / RHYTHMIC FLICKER FIRST"*: the live copies were
+still blocky, blotchy and grainy, broke up around lettering, *"and the
+blotchy/blocky degradation appears to FLICKER OR PULSE IN A RHYTHM"*. The brief
+also said *"do not assume it is only average bitrate"*.
+
+What did not move: Timestamp Photo, the queue and its design, Process Next,
+the case workflow, the portrait preview, metadata stripping, both
+fingerprints, MTS compatibility (both decoders, the completeness ledger,
+fail-closed), Stop, and local-only processing.
+
+**This supersedes two things in OUTPUT QUALITY above**: the copy's rate (the
+source's own rate is now STANDARD, and HIGH is the default), and the memory
+budget it left as the owner's call, which is lifted at the owner's request
+(§6, section 4 here).
+
+## 1. Root cause — measured, then fixed
+
+This container's Chromium has no H.264 encoder, so the rhythm was reproduced
+two ways.
+
+**(a) x264 standing in for a hardware encoder.** It was set up the way a
+hardware encoder works: no B-frames, no look-ahead, no mb-tree, no scene-cut
+keyframes. Two rate controls were used:
+
+- **A:** an average with a one-second peak at 1.5×, the VideoToolbox shape;
+- **B:** a tight one-second buffer at the average, a CBR-like hardware rate
+  control.
+
+The source was a 30-second night scene recorded the way an AVCHD camcorder
+records: 1080p29.97 at 17 Mbps, a keyframe every half second, B-frames. It
+contains lettering and signage, a dark sky, brick mortar, window bars, a
+chain-link fence, wind-blown foliage, a plate-size registration, a face-size
+detail, a passing car, mild hand-held drift, and camcorder grain (per-pixel
+luma plus blotchy low-frequency chroma). There was also an interlaced version,
+rendered field by field and woven.
+
+Each copy was compared, frame by frame and region by region, with the exact
+stamped frames the encoder was given. Thirty-two copies plus four interlaced,
+five constant-quantizer and two isolation copies.
+
+**(b) This browser's real VP9 encoder, through the production transcode.**
+Every chunk the encoder returned was logged. Every frame of the copy was
+decoded and compared with the frame `vstStamper` handed the encoder.
+
+### What pulses, and why
+
+**THE PULSE IS GRAIN THE ENCODER COULD NOT AFFORD.** Short of bits, the frames
+between keyframes freeze the camera's grain into static blotches, and each
+keyframe refreshes it all at once. That gives a visible beat at the keyframe
+cadence, which was every two seconds.
+
+The table measures the frame-to-frame luma change in the dark sky. "At a copy
+keyframe" is that change as a multiple of the ordinary change between frames.
+"Grain kept" is the share of the original's own frame-to-frame grain the copy
+keeps.
+
+| copy | at a copy keyframe | grain kept | mean PSNR |
+| --- | --- | --- | --- |
+| the camera's own file, at its keyframes | 1.91× | — | — |
+| V2's 5 Mbps | **4.30×** | 41% | 34.9 dB |
+| #346, the source's own 17 Mbps | 2.35× | 73% | 39.6 dB |
+| **1.75× (29.75 Mbps)** | **1.97×** | 90% | 42.3 dB |
+| 2× (34 Mbps) | 1.95× | 93% | 42.9 dB |
+
+From 1.75× up, the copy's beat is the camera's own: 1.97× and 1.95× against
+the camera's 1.91×. A keyframe is still the copy's most faithful frame at any
+rate — the step up to it falls from 2.65 dB at the source's own rate to 2.25 at
+1.75× and 1.97 at 2× — but the grain no longer freezes and jumps there. **The
+rate is the cure, not the keyframe spacing.**
+
+**NO SECOND COLLAPSES.** Every region was read at 0, 1, 2, 5, 10, 20 and 29 s
+(the brief's §15 crops, as numbers). At 1.75× the weakest second carried 0.95
+of the median second's bits, and the worst 1% of frames scored 40.3 dB against
+37.5 at the source's own rate and 32.5 at V2's.
+
+**A TIGHT BUFFER STARVES THE FRAMES AFTER A KEYFRAME.** Under rate control B
+at 5 Mbps:
+
+- with keyframes two seconds apart, the frames just after a keyframe got 61%
+  of the bits of those just before the next;
+- with keyframes one second apart, 49%;
+- at the High Quality rates, 97–104%, with keyframes 1, 2 or 4 s apart.
+
+**THE SPACING DOES NOT MOVE THE PICTURE.** Keyframes 1, 2 or 4 s apart, or
+none after the first, averaged at most 0.21 dB apart at every rate.
+
+**THE CLOCK'S TICK IS NOT THE PULSE.** The first look seemed to say it was:
+quality dipped at the first frame of each second. That was the camera's own
+half-second keyframes, which land on the ticks. It was isolated with a source
+that has no keyframe rhythm of its own, copied with and without the stamp and
+with no keyframe forced after the first:
+
+- frames at a tick were 0.986× the median size (0.964× without the stamp);
+- the stamp region read 32.69 dB at a tick against 32.57 dB elsewhere.
+
+The tick costs nothing and dips nothing.
+
+**INTERLACED AVCHD BEHAVES THE SAME, A LITTLE DEARER.** Woven 1080i scored
+0.3 dB under progressive at the same rate. At 2× it added no pulse (2.01×
+against the camera's 1.98×).
+
+**AND A REAL BROWSER ENCODER CAN PULSE ON ITS OWN.** Chromium's VP9 encoder,
+under its own rate control, made every 10th frame several times the size of
+the others — 7.2× at the source's rate, 4.8× at twice it — and the picture
+swung about 7 dB across every ten frames at both. No keyframe request and no bitrate made or
+cured that beat. Held to one quantizer for every frame, the same encoder was
+flat: 0.3 dB across the cycle, and a better worst frame (37.2 dB against
+35.6) at a similar rate.
+
+A constant quantizer was **not** taken for H.264. In x264, one QP on every
+frame (and so no adaptive quantisation) kept 66% of the dark grain at the rate
+where VBR kept 90%, and blotchy darks are the owner's complaint. Instead, the
+copy's encoder log now names an encoder's own rhythm (section 6), so the
+owner's first real copy says whether their device keeps one.
+
+**AND THE MEMORY CEILING PUT LONG CLIPS AT V2'S RATE.** #346 held the whole
+file to a memory budget. A 20-minute 1080p clip on a computer, or a 5-minute
+clip on a phone, was copied at about 5–7 Mbps: the rate that pulses at 4.3×.
+Section 4 lifts that ceiling.
+
+So the cause is a combination:
+
+- too little bitrate for a second generation of noisy footage, made rhythmic
+  by the two-second keyframes, and dropped to V2's rate on long clips by the
+  memory ceiling;
+- the canvas round trip (section 5);
+- possibly the device encoder's own cadence, which only the device can show.
+
+The timestamp's seconds, interlacing, frame timing and colour conversion were
+each checked and are not causes, except the canvas, which is fixed.
+
+## 2. Before → after
+
+| | before (#346, live) | after |
+| --- | --- | --- |
+| source bitrate | AVCHD 17 / 24 Mbps; iPhone 14 Mbps | the same, measured from the file |
+| asked for | the source's own rate, held to memory on long clips (down to V2's 5 Mbps) | **AVCHD 34 / 44 Mbps (2×); iPhone 24.5 Mbps (1.75×)**, never lowered |
+| written | not shown | measured from the copy and printed beside the asked rate |
+| keyframes | every 2 s | every 2 s, measured and kept, never at a clock tick |
+| encoder mode | VBR, latency "quality", the browser's choice of encoder | the same, every chunk logged |
+| frames | 1920 × 1080 at 29.97, woven | the same, on the original's own clock |
+| picture | Y'CbCr → canvas RGB → Y'CbCr | the decoder's own planes, stamp composited |
+| a long clip | memory budget, said only after | written to the device's storage as it is made |
+
+## 3. High Quality
+
+- **1.75× the source's H.264-equivalent video bitrate.** That is the brief's
+  starting multiplier, and every one of the owner's examples lands on it: 14 →
+  24.5 (asked ~24–28), 17 → 29.75 (~30 class), 24 → 42 (~40–48).
+- **AVCHD — an `.MTS` or `.M2TS` — takes the 2× the brief allows** for noisy
+  camcorder footage: 17 → 34, and 24 → 44, held at twice the floor. 1.75× was
+  already pulse-free in section 1. The extra quarter bought 0.67 dB for 14%
+  more file, on the one format the owner's next test is.
+- **Never under the floor table** (Mbps). Other sizes scale by pixel count to
+  the 0.75 power:
+
+  | | 720p | 1080p | 1440p | 4K |
+  | --- | --- | --- | --- | --- |
+  | 24–30 fps | 12.0 | **22.0** | 33.9 | 62.2 |
+  | 48–60 fps | 18.5 | **34.0** | 52.3 | 96.2 |
+
+- **Never above twice the floor.**
+- **A Constrained Baseline encoder gets 1.2×** inside the cap: the measured
+  cost of its missing tools.
+- **Rate control:** VBR first, then constant for an encoder that offers only
+  that. Latency is "quality", never real-time.
+- **The level comes from the picture and the rate:**
+  - 1080p30 at 24.5 Mbps → High 4.0;
+  - 1080p30 at 34 Mbps → High 4.1;
+  - 1080p60 → 4.2, or 5.0 above 62.5 Mbps;
+  - 4K30 → 5.1.
+- STANDARD is #346's plan, one tap away.
+
+**NEVER LOWERED UNDER ITS OWN NAME.** `vqQualityCheck` asks this device's
+encoder for both modes, through the same `vstEncoderConfig` and with the same
+room the run will have. It asks when the file is checked and again as the run
+starts. When High cannot be made, the Generate area says the owner's sentence
+before anything runs:
+
+> **"High-quality encoding is not available for this file on this device."**
+
+That is §18's wording, which replaced *"on this device for this file"*. The
+reason and Standard are offered beside it. Process Next stops on such a video
+rather than downgrading it, and the transcode refuses for itself as well.
+
+## 4. The device-storage writer — the ceiling, lifted
+
+The copy used to be built whole in this tab's memory (768 MB on a computer,
+256 MB on a phone). High fit about three minutes of 1080 AVCHD on a computer
+and one on a phone. §6 says *"HIGH QUALITY cannot mean: first portion = good,
+later portion = lower bitrate"*: either a streaming writer, or tell the
+operator before generation. Telling would have refused High for most real
+camcorder clips, so the writer was built.
+
+**A copy too large for memory is written to this device's own storage as it
+is made.** The storage is the browser's origin-private file system: a folder
+on this device that belongs to this site alone. **Nothing leaves the device.**
+`vstCopySink` hands the vendored muxer a `StreamTarget`:
+
+- pieces are gathered into 4 MB writes;
+- the encoder waits while 64 MB is still on its way to the disk;
+- the file is laid out the way an iPhone writes its own recordings: ftyp, the
+  pictures, then the index;
+- **the index is scrubbed of the writer's own stamps before a byte of it is
+  written.**
+
+The file is then:
+
+- **proven clean from the file itself** (`vstCleanCheckFile`): the same
+  structure and field questions as before through the shared `vstCleanHead`,
+  and every frame read back in 8 MB slices and walked unit by unit through
+  the shared `vstCleanFrame`;
+- **fingerprinted slice by slice** (`vstSha256File`, held to `vstSha256` at
+  every block and slice boundary);
+- **read back** with the page's own parser.
+
+It is offered to save from there. A copy that fits in memory is still built
+there, index first, exactly as before.
+
+**THE ROOM IS THE LARGER OF THE TWO, AND IT IS SAID.** `vstCopyRoom` is read
+by the check before the run and by the run alike. For a copy that goes to
+storage, the editor says *"Written to this device's own storage as it is
+made"*, and Details has a **Written** line. Without private storage, or room
+in it, a device keeps the in-memory writer and its limit, and says so in
+memory's terms before anything runs.
+
+**NOTHING STAYS:**
+
+- a failed run, a stopped run, a run that fails its clean check, and a full
+  disk each delete what was written as the run ends;
+- a full disk is its own failure: *"This device ran out of storage space for
+  the copy"*;
+- a finished copy is deleted when it is let go. A started download gets two
+  minutes first;
+- a file a closed tab left behind is swept the next time the tool opens.
+  The exception is a copy an open tab still holds: its Web Lock is taken
+  before the file exists. Without Web Locks, only files over a day old are
+  swept.
+
+The Dropbox save uses the copy's finish-time fingerprint rather than reading
+a multi-gigabyte file into one allocation to hash it again.
+
+## 5. The stamp in the decoded picture
+
+This is the first brief's fix.
+
+**THE CANVAS ROUND TRIP WAS COSTING MORE THAN THE RATE.** In this browser the
+encoder converts canvas RGB with the BT.601 matrix, and the copy decodes
+labelled BT.709. On colour bars the yellow bar's luma went 162 → 157 in one
+generation. Even a correctly labelled round trip resamples chroma twice and
+rounds through 8-bit RGB.
+
+**`vstStamper` composites the stamp into the decoded picture instead.**
+
+- It copies the decoder's own I420 or NV12 planes into one reused buffer.
+- The stamp is `vstBurn` drawn once per second of footage onto a transparent
+  layer and blended into the rows it covers: luma per pixel, chroma per 2×2.
+  Blending in Y'CbCr is blending in R'G'B'.
+- White is 235 in a limited-range picture and 255 in a full-range one.
+- The planar frame carries the original's own colour label, and the encoder
+  converts nothing.
+- Every byte outside the stamp is the decoder's, asserted byte for byte.
+- `colr` is written only when the muxer can write it truly (`vstMetaColour`).
+
+The canvas remains for non-planar, odd-sized or anamorphic pictures, and the copy records
+which path made it.
+
+## 6. The encoder's own rhythm, on the copy's record (§3, §17)
+
+`vstChunkLog` records every chunk the encoder returns: time, duration, key or
+delta, bytes. That is 21 bytes a frame, the per-chunk table §3 asks for.
+`vstRhythm` reads three things from it:
+
+- **keyframes**: their spacing, and their size against the frames between;
+- **starvation**: the delta frames just after each keyframe against those just
+  before the next (below 60% is the pattern of a pulse);
+- **collapse**: any whole second under half the median second.
+
+It also reads **a rhythm the encoder keeps by itself**: delta frames over three
+times the median, recurring at a fixed spacing, read after the encoder's first
+two seconds of settling. That is the VP9 beat of section 1, named.
+
+**Details** (and the receipt, from one list, `vstQualityLines`) shows:
+
+- Source video: resolution, frame rate, codec, interlaced;
+- Source video bitrate;
+- Timestamped copy: resolution and frame rate;
+- Requested bitrate, and why;
+- Timestamped copy bitrate, the actual rate measured from the copy;
+- Quality mode;
+- Encoder path: profile, level, rate control, latency, keyframe spacing, and
+  whose encoder;
+- Written;
+- Keyframes;
+- Bitrate over time;
+- Timestamp;
+- Interlaced original.
+
+## 7. Cadence (§8) and the clock's tick (§13–14)
+
+**The copy keeps the original's own clock.** The muxer's default track clock
+is 57,600 ticks a second, in which a 29.97 frame is 1,921.92 ticks, rounded to
+1,922 or 1,921. The copy is now written in:
+
+- a transport stream's 90 kHz clock, 3,003 ticks a frame;
+- or a MOV/MP4's own timescale (`vstTrackTimescale`).
+
+**The last unit of a transport stream takes the exact interval.** It used to
+take 3,000 ticks from a rounded 30. The suite found this by asserting that
+every frame reached the encoder with one duration.
+
+**Asserted structurally, through the whole pipeline, on 1080i and 1080p AVCHD:**
+
+- the encoder is configured once;
+- keyframes are at 0, 60 and 120 exactly, and never at the ticks at 30, 90
+  and 150;
+- every frame is 1920 × 1080;
+- the stamp is drawn once per second of footage on one canvas size;
+- every duration is the same;
+- the copy reads back at 90 kHz with every frame 3,003 ticks, in order.
+
+## 8. Tests
+
+**Seven new sections, 191 assertions:**
+
+| section | assertions |
+| --- | --- |
+| HIGH QUALITY: 1.75× (2× for AVCHD), the floor table, the cap, never lowered under its own name | 31 |
+| HIGH QUALITY on camera formats: AVCHD 1080i and 1080p as `.MTS` and `.M2TS` at about 17 and 24 Mbps; iPhone 1080p30, 1080p60 and 4K30 | 47 |
+| HIGH QUALITY in the editor: the choice and its cost, "not available" before anything runs, Process next never downgrades | 23 |
+| HIGH QUALITY on real codecs: the composite, the colour label, generation loss measured | 29 |
+| RHYTHM: one configuration a run, a keyframe exactly every 2 s and never at a tick, one frame size, the exact clock, the detector | 33 |
+| RHYTHM on real codecs: flat quality through the whole pipeline, and an encoder's own beat named | 10 |
+| STORAGE WRITER: A–I | 18 |
+
+The plan section and the 1080p MP4 check from OUTPUT QUALITY were re-aimed
+to 1.75×. No assertion was weakened.
+
+**THE RHYTHM WALK** puts 180 frames of 1080i and of 1080p AVCHD through the
+whole pipeline. The H.264 codecs are stubs that hand out real planar
+pictures; the stamp, the muxer, the clean check and the read-back are real.
+It asserts the brief's §13–14 structurally:
+
+- one configuration;
+- keyframes asked for at 0, 60 and 120 exactly, and the ticks at 30, 90 and
+  150 not keyframes;
+- one frame size;
+- six labels and six draws on one canvas size;
+- one duration for every frame;
+- a 90 kHz copy with every frame 3,003 ticks.
+
+It also asserts the per-chunk table, every Details line, the detector against
+five shapes (steady, starved, a collapsed second, an encoder's own beat, and
+settling that is not a beat), and a MOV that keeps its 1/600 s clock.
+
+**ON REAL VP9 CODECS**, a 10-second noisy source goes through the production
+transcode held to one quantizer. The source is all-intra at 6 Mbps, so it
+carries no keyframe rhythm of its own. The assertions:
+
+- at the brief's sample points, 0, 1, 2, 5 and 9 s, the copy's quality is
+  within 1 dB of its median;
+- no frame of 300 is more than 1.5 dB below it;
+- keyframes are within 1 dB of the frames between them;
+- clock ticks are within 0.5 dB of the rest, for the whole picture and for
+  the stamp;
+- the sign holds its quality across the clip;
+- the encoder log reads steady.
+
+Under the encoder's own rate control at 1.8 Mbps, the same encoder keeps a
+beat, and the log names it: a boosted frame every 10.
+
+**STORAGE WRITER** asserts that a 12-second 1080p copy on a 4 MB memory budget
+is made in High, written to storage, laid out ftyp–mdat–moov, scrubbed before
+the index was written, proven clean and fingerprinted from the file, and gone
+once let go. It then covers eight cases:
+
+- B: an encoder failure;
+- C: Stop;
+- D: the index left unscrubbed;
+- E: user data in every frame;
+- F: a full disk;
+- G: no private storage;
+- H: the sweep;
+- I: the slice-by-slice fingerprint at 11 sizes, across every block and slice
+  boundary.
+
+**RUNS.** One full portal regression, alone: **5,198 passed, 0 failed**
+(4,988 before this unit). `.github/test-deploy.mjs`: 127 passed, 0 failed.
+CEO release gate: 43 PASS, 0 WARN, 0 FAIL. The Worker suite was not run:
+`case-portal/worker.js` and `schema.sql` are unchanged.
+
+## 9. Mutations
+
+Twenty-six mutations, each applied in a git worktree and run against the
+sections that hold its property, output to files:
+
+| group | mutations | named failures each |
+| --- | --- | --- |
+| keyframes one second apart, a keyframe at every tick, the encoder configured twice, the writer's own clock, a rounded last interval, the stamp layer redrawn every frame (K01–K06) | 6 | 2–11 |
+| starvation, a collapsed second or an encoder rhythm never reported, the settling read as a rhythm, the transport-stream log not kept, no Keyframes or Requested bitrate line (D01–D07) | 7 | 1–6 |
+| storage never used, the room ignoring storage, a failed run or a released copy left on the device, the index unscrubbed, the file check skipping frames, the sweep taking a held copy, a full disk called an encoder failure, no Written line (W01–W10, less W07) | 9 | 1–12 |
+| High twice every source, AVCHD not given its 2×, the earlier wording (G01–G03) | 3 | 6–14 |
+
+**25 failed by name on the first run, and none crashed.** The one that walked
+past was not a gap. W07 read the file's fingerprint 8 MiB + 64 bytes a slice,
+and that is still a multiple of SHA-256's 64-byte block, so the fingerprint
+stayed right and nothing should have failed — an EQUIVALENT mutation. The
+defect it stood for is a slice OFF the block grid. With 8 MiB + 1 it fails test
+I by name, at the 17 MiB file, the one size that crosses a slice boundary.
+**A mutation that cannot change the output tests nothing; write the one that
+can.**
+
+## 10. Proven here, and what is left for the owner's device
+
+**Proven here:**
+
+- the plan, the encoder ladder (against stub encoders that check levels the
+  way a real one does), the refusals and the screens;
+- the whole pipeline on stub H.264 codecs that hand out real planar pictures;
+- the storage writer, against this browser's real private storage;
+- the composite, the colour label, the generation-loss measurement and the
+  flat-quality series, on real VP9 codecs.
+
+**Not provable here:**
+
+- what the owner's H.264 encoder writes at the asked rate;
+- whether it keeps a rhythm of its own;
+- whether its hardware or its software encoder is the cleaner one (§10). The
+  copy is made with the browser's own choice, and Details names what the
+  device offered;
+- whether this iPhone's Safari offers the private-storage writer. If it does
+  not, a long High copy is refused there in the owner's sentence, before
+  anything runs;
+- how the copy looks.
+
+The first real copy answers the first three in Details: the written rate,
+keyframes, starvation, the bitrate over time, and an encoder rhythm if there
+is one. The rest is the owner's eye on the owner's footage.
