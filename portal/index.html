@@ -1736,8 +1736,18 @@
   .vqd-pv.vqd-vpv canvas.vqd-stampcv{position:absolute;inset:0;width:100%;height:100%;
     background:transparent;pointer-events:none;object-fit:fill;}
   /* Where the editor takes the whole screen (below the desk's 1240), the
-     preview gets less of it, so the fields stay close under the picture. */
-  @media(max-width:1239px){ .vqd-pv.vqd-vpv{--pv-maxh:min(36vh,400px);} }
+     preview gets less of it, so the fields stay close under the picture —
+     BUT NEVER NARROWER THAN 300 px (owner, 2026-10-02). The stamp is drawn at
+     the copy's own proportion, so its size follows the box's WIDTH: a
+     portrait clip held to that height was 171 px wide at 390 and 115 at 320,
+     and its stamp 4.7 and 3 px tall — there, but unreadable. At 300 px it is
+     8.3 px, about what a landscape preview shows on a 320 phone (296 px). The
+     picture keeps its shape, so a portrait one grows TALLER and the editor
+     scrolls; the stamp sits at the picture's foot, just above the date and
+     time fields that change it. A landscape picture is wider than 300 px
+     here already, so nothing about it moves. */
+  @media(max-width:1239px){ .vqd-pv.vqd-vpv{--pv-maxh:min(36vh,400px);
+    width:min(100%,max(calc(var(--pv-maxh) * var(--pv-ar,1.7778)),300px));} }
   .vqd-pvnote, .vqd-srcnote{font-size:.76rem;color:var(--vqd-muted);margin:6px 0 0;line-height:1.45;}
   .vqd-lbl{display:block;font-size:.8rem;color:var(--vqd-muted);margin:12px 0 4px;}
   .vqd-ro{display:flex;align-items:center;gap:8px;min-height:44px;padding:0 12px;border:1px solid var(--vqd-line);
@@ -21439,12 +21449,18 @@ const vqPvSrc = v => v.pvf && v.pvf.state === "done" ? v.pvf.url : v.thumb;
    turned as the header turns it — so no picture sits in a slab of black, and
    the stamp drawn over the box lands where it lands on the picture. */
 function vqPvAspect(v){
+  const d = vqShown(v);
+  const a = d ? d.w / d.h : 0;
+  return a > 0.2 && a < 5 ? +a.toFixed(4) : 1.7778;
+}
+/* The copy's picture as a viewer sees it — `vstOutSize`, turned as the
+   header turns it; null when the picture's size is not known. */
+function vqShown(v){
   const V = v && v.parsed && v.parsed.video;
-  if(!V || !V.width || !V.height) return 1.7778;
+  if(!V || !V.width || !V.height) return null;
   const sz = vstOutSize(V);
   const r = (((v.parsed.rotation || 0) % 360) + 360) % 360;
-  const a = r % 180 ? sz.h / sz.w : sz.w / sz.h;
-  return a > 0.2 && a < 5 ? +a.toFixed(4) : 1.7778;
+  return r % 180 ? {w: sz.h, h: sz.w} : {w: sz.w, h: sz.h};
 }
 
 function vqDropPreview(){
@@ -21510,6 +21526,7 @@ function vqMountPreview(){
    shows is what the copy will carry, only smaller. `data-label` holds the
    words it last drew. Typing redraws it (`vqTimeLive`), playing redraws it,
    resizing redraws it; nothing about it is ever written to the entry. */
+const VQ_STAMP_INK = 640;
 function vqDrawStamp(){
   const host = $("vq_pvhost"), cv = $("vq_stamp");
   const v = vqSel();
@@ -21517,7 +21534,19 @@ function vqDrawStamp(){
   const label = vqStampText(v);
   const r = host.getBoundingClientRect();
   const dpr = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
-  const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+  /* IN PROPORTION, NEVER ENLARGED (owner, 2026-10-02). `vstDraw` never draws
+     a face under 8 pixels: on a copy that floor never engages, but on a
+     narrow box drawn pixel for pixel on a 1x screen it would, and the stamp
+     would come out LARGER, against the picture, than the copy will carry it.
+     So the canvas is drawn at the copy's own width when that is small — its
+     stamp exactly as burned, floor and all — and at least VQ_STAMP_INK pixels
+     wide otherwise, where the floor cannot reach; the box scales the canvas,
+     and the stamp keeps the copy's proportion on any screen. */
+  const shown = vqShown(v);
+  const base = Math.max(1, Math.round(r.width * dpr));
+  const ink = shown ? Math.min(shown.w, Math.max(base, VQ_STAMP_INK)) : base;
+  const k = r.width > 0 ? ink / r.width : dpr;
+  const w = Math.max(1, Math.round(r.width * k)), h = Math.max(1, Math.round(r.height * k));
   if(cv.width !== w) cv.width = w;
   if(cv.height !== h) cv.height = h;
   const cx = cv.getContext("2d");
