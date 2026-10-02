@@ -21495,7 +21495,7 @@ function vstWrittenText(q){
   const o = q.out;
   if(!o.written) return o.bitrate ? `${vstMbps1(o.bitrate)} asked for — the written rate could not be measured` : "unknown";
   return `${vstMbps1(o.written)} — measured from the copy (${vstMbps1(o.bitrate)} asked for)`
-    + (q.src.bitrate && o.written < q.src.bitrate ? "; the encoder's variable rate spent less than the original's" : "");
+    + (q.src.bitrate && o.written < q.src.bitrate ? "; less than the original's own rate" : "");
 }
 function vstModeText(q){
   const p = q.plan || {};
