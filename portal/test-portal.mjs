@@ -16149,7 +16149,12 @@ section('Timestamp Video editor: an MP4 plays with the stamp where it burns, fol
 
 section('Timestamp Video editor on a phone (390, 320) and a desk (1280, 1440, 1920): the preview is in view, the stamp legible, the fields and Save in reach');
 {
-  for (const [width, height] of [[390, 844], [320, 568], [1280, 800], [1440, 900], [1920, 1080]]) {
+  /* A PORTRAIT PICTURE IS WHAT THE PHONE'S HEIGHT RULE IS FOR: a 16:9 frame on
+     a phone is held by its width long before any height cap, so a check run
+     only on 16:9 would pass with the cap gone (it did — the mutation walked
+     straight past it). Phones get both shapes. */
+  for (const [width, height] of [[390, 844], [320, 568], [1280, 800], [1440, 900], [1920, 1080]])
+  for (const tall of width < 1240 ? [false, true] : [false]) {
     const page = await newPage();
     await signIn(page, 'trever', 'AdminPassword1x');
     await page.setViewportSize({ width, height });
@@ -16157,8 +16162,8 @@ section('Timestamp Video editor on a phone (390, 320) and a desk (1280, 1440, 19
     const R = await vstRun(page, `
       window.__S = stubCodecs({});
       vqOpen('');
-      vqAdd([new File([makeTs({stride: 192, frames: 60, width: 1920, height: 1080, fps: 30})], '00081.MTS',
-                      {type: '', lastModified: 1790000000631})], {caseNo: ''});
+      vqAdd([new File([makeTs({stride: 192, frames: 60, width: ${tall ? 720 : 1920}, height: ${tall ? 1280 : 1080}, fps: 30})],
+                      '00081.MTS', {type: '', lastModified: 1790000000631})], {caseNo: ''});
       await qWait(() => VQ.items.every(x => x.analysis === 'done'));
       const v = VQ.items[0];
       qClick('vqEdit', v.qid);
@@ -16196,6 +16201,20 @@ section('Timestamp Video editor on a phone (390, 320) and a desk (1280, 1440, 19
       return res;
     });
     const tag = `${width}x${height}`;
+    if (tall) {
+      ok(`${tag}: a portrait picture gets a portrait box, in view — not a picture lost in a 16:9 slab`,
+         R.pvf === 'done' && !M.missing && M.pv.top >= -1 && M.pv.bottom <= M.vh + 1 && Math.abs(M.pv.w / M.pv.h - 720 / 1280) < 0.03,
+         JSON.stringify([R, M.pv]));
+      ok(`${tag}: a portrait picture is held to 40% of the screen’s height, however tall it is`, M.pv.h <= M.vh * 0.4 + 1,
+         JSON.stringify(M.pv));
+      ok(`${tag}: so the date and time fields stay on the same screen as the portrait picture`,
+         M.date.bottom <= M.vh && M.time.bottom <= M.vh, JSON.stringify([M.pv, M.date, M.time]));
+      ok(`${tag}: and Save and Generate are still reachable and 44 px tall`, M.save.ok && M.go.ok && M.save.h >= 44 && M.go.h >= 44,
+         JSON.stringify([M.save, M.go]));
+      await page.evaluate(() => { try { window.__S && window.__S.restore(); vstClose(); } catch {} });
+      await page.close();
+      continue;
+    }
     ok(`${tag}: the preview is a decoded frame, in view, at the picture’s 16:9 shape`,
        R.pvf === 'done' && !M.missing && M.pv.top >= -1 && M.pv.bottom <= M.vh + 1 && Math.abs(M.pv.w / M.pv.h - 16 / 9) < 0.03,
        JSON.stringify([R, M.pv]));
