@@ -3918,7 +3918,7 @@ Tests:
 
 ```bash
 node case-portal/test-worker.mjs   # 4393 checks (2026-09-28): auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 4988 checks (2026-10-02): the page against the real Worker
+node portal/test-portal.mjs        # 5198 checks (2026-10-02): the page against the real Worker
 ```
 
 **A FULL RUN'S TOTAL MOVES WITH THE CLOCK, BY A CHECK OR TWO.** *A surveillance
