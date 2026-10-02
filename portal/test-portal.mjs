@@ -12942,7 +12942,11 @@ const TS_LIB = String.raw`
 const VST_STUBS = String.raw`
 const stubCodecs = (plan = {}) => {
   const log = {cfgs: [], decoded: {hw: 0, soft: 0}, enc: 0, encTs: [], outTs: [], closes: 0, probes: [], stampLit: 0, stampChecked: 0,
-               encCfgs: [], encProbes: [], decoders: 0, encFmt: [], encCs: [], peek: null};
+               encCfgs: [], encProbes: [], decoders: 0, encFmt: [], encCs: [], peek: null,
+               /* THE RHYTHM, as the encoder is asked for it: which frames were
+                  asked to be keyframes, every picture size it was handed, and
+                  every configure() — the things a clock tick must not touch. */
+               keyReq: [], encDims: new Set(), encDur: [], configures: 0};
   /* plan.yuv ('I420' or 'NV12'): the decoder hands out PLANAR pictures at the
      size it was configured for — what a real H.264 decoder does — so the copy
      can be composited in Y'CbCr. A luma ramp, dark to mid, and flat chroma. */
@@ -13044,10 +13048,14 @@ const stubCodecs = (plan = {}) => {
     }
     constructor(init){ this.out = init.output; this.err = init.error; this.state = 'unconfigured';
       this.n = 0; this.encodeQueueSize = 0; this.q = Promise.resolve(); }
-    configure(cfg){ this.cfg = cfg; this.state = 'configured'; log.encCfgs.push(Object.assign({}, cfg, {avc: cfg.avc && Object.assign({}, cfg.avc)})); }
+    configure(cfg){ this.cfg = cfg; this.state = 'configured'; log.configures++;
+      log.encCfgs.push(Object.assign({}, cfg, {avc: cfg.avc && Object.assign({}, cfg.avc)})); }
     encode(frame, opts){
       if(this.state !== 'configured') throw new DOMException("Cannot call 'encode' on a closed codec", 'InvalidStateError');
       const k = this.n++;
+      if(opts && opts.keyFrame) log.keyReq.push(k);
+      log.encDims.add(frame.codedWidth + 'x' + frame.codedHeight + '/' + frame.displayWidth + 'x' + frame.displayHeight);
+      if(log.encDur.length < 4000) log.encDur.push(frame.duration);
       if(plan.encFailAt && this.n === plan.encFailAt){
         this.state = 'closed';
         setTimeout(() => this.err(new DOMException('Encoding error.', 'EncodingError')), 0);
@@ -13088,8 +13096,15 @@ const stubCodecs = (plan = {}) => {
       const extra = [];
       if(plan.encSei && (k === 0 || plan.encSei === 'every')) extra.push(...lp(encoderSei(plan.encSeiText)));
       if(plan.encUnspecified && k === 0) extra.push(...lp(new Uint8Array([0x19, 0x41, 0x50, 0x49])));
+      /* plan.chunkBytes: a picture that size, so a copy can be as large as a
+         real one without a real encoder (a slice unit, its length prefixed). */
+      const body = plan.chunkBytes
+        ? (() => { const n = (opts && opts.keyFrame) || k === 0 ? plan.chunkBytes * (plan.keyScale || 1) : plan.chunkBytes;
+                   const b = new Uint8Array(4 + n); new DataView(b.buffer).setUint32(0, n); b[4] = 0x65; b[5] = k & 0xff; return b; })()
+        : new Uint8Array([0, 0, 0, 2, 0x65, k & 0xff]);
+      const data = new Uint8Array(extra.length + body.length); data.set(extra, 0); data.set(body, extra.length);
       const chunk = new EncodedVideoChunk({type: (k === 0 || (opts && opts.keyFrame)) ? 'key' : 'delta',
-        timestamp: ts, duration: dur || 33367, data: new Uint8Array([...extra, 0, 0, 0, 2, 0x65, k & 0xff])});
+        timestamp: ts, duration: dur || 33367, data});
       /* plan.encColour: the colour label a real encoder reports with its first
          output — 'echo' reports the picture's own, an object reports that. */
       const colour = plan.encColour === 'echo' ? (frame.colorSpace && frame.colorSpace.toJSON ? frame.colorSpace.toJSON() : null)
@@ -13204,7 +13219,11 @@ const vstScenario = async (o) => {
   if(out && out.blob){
     const p = await vstParse(new File([out.blob], 'copy.mp4', {type: 'video/mp4'}));
     back = p && p.video ? {frames: p.video.samples ? p.video.samples.length : null,
-                           w: p.video.width, h: p.video.height, seconds: p.video.seconds} : null;
+                           w: p.video.width, h: p.video.height, seconds: p.video.seconds,
+                           /* THE COPY'S CLOCK: its timescale and every distinct frame duration in it */
+                           timescale: p.video.timescale,
+                           durs: p.video.samples ? Array.from(new Set(p.video.samples.map(x => x.duration))) : null,
+                           mono: p.video.samples ? p.video.samples.every((x, i, a) => !i || x.cts > a[i - 1].cts) : null} : null;
   }
   const mine = draws.filter(d => d.phase === (out && out.lane === 'compat' ? 'compat' : 'processing'));
   const r = {
@@ -13239,6 +13258,11 @@ const vstScenario = async (o) => {
       seconds: parsed.video.seconds} : null,
     burnSizes: Array.from(new Set(mine.map(d => d.cw + 'x' + d.ch))),
     sha: out && v.out.sha256, clean: !!(out && v.out.clean && v.out.clean.ok),
+    /* THE RHYTHM, as asked for and as written (see vstChunkLog). */
+    keyReq: S.log.keyReq.slice(), encDims: Array.from(S.log.encDims), configures: S.log.configures,
+    encDurs: Array.from(new Set(S.log.encDur)),
+    chunkRows: out && v.out.quality && v.out.quality.log ? v.out.quality.log.rows().slice(0, 400) : null,
+    written: out ? v.out.written : null,
   };
   W.restore(); S.restore();
   if(o.close !== false) vstClose();
@@ -15899,9 +15923,12 @@ section('Timestamp Video HIGH QUALITY: twice the source, never under the floor t
                   p1080_30: fl(1920, 1080, NTSC), p1080_50: fl(1920, 1080, 50), p1080_60: fl(1920, 1080, 60),
                   p1440_30: fl(2560, 1440, 30), p1440_60: fl(2560, 1440, 60), k4_30: fl(3840, 2160, 30), k4_60: fl(3840, 2160, 60)};
     out.dflt = vstEncodePlan({w: 1920, h: 1080, fps: NTSC, srcBitrate: 14e6, seconds: 60, budget: DESK});
-    out.ex14 = hq({srcBitrate: 14e6}); out.ex17 = hq({srcBitrate: 17e6}); out.ex24 = hq({srcBitrate: 24e6});
+    /* THE OWNER'S EXAMPLES (brief §5): 14 -> ~24-28, 17 -> ~30 class, 24 -> ~40-48 — at
+       the starting 1.75x; AVCHD (a transport stream) at the 2x the brief allows. */
+    out.ex14 = hq({srcBitrate: 14e6}); out.ex17mov = hq({srcBitrate: 17e6}); out.ex24mov = hq({srcBitrate: 24e6});
+    out.ex17 = hq({srcBitrate: 17e6, avchd: true}); out.ex24 = hq({srcBitrate: 24e6, avchd: true});
     out.low = hq({srcBitrate: 5e6}); out.unknown = hq({srcBitrate: null});
-    out.hevc = hq({srcBitrate: 8e6, srcCodec: 'hvc1'});
+    out.hevc = hq({srcBitrate: 10e6, srcCodec: 'hvc1'});
     out.prores = hq({srcBitrate: 147e6});
     out.p60 = vstEncodePlan({w: 1920, h: 1080, fps: 60, srcBitrate: 28e6, seconds: 30, budget: DESK});
     /* NEVER LOWERED: an hour of 1080p on a phone is far over the budget —
@@ -15927,25 +15954,27 @@ section('Timestamp Video HIGH QUALITY: twice the source, never under the floor t
      near(mb(F.p720_30), 12.0, 0.06) && near(mb(F.p720_60), 18.5, 0.06), JSON.stringify([mb(F.p720_30), mb(F.p720_60)]));
   ok('nothing in the table is the old ~5 Mbps 1080p: every 1080p floor is over four times V2’s 4.98',
      [F.p1080_24, F.p1080_25, F.p1080_30, F.p1080_50, F.p1080_60].every(x => x.bitrate > 4 * 4976640), '');
-  ok('HIGH QUALITY IS THE DEFAULT: a plan asked for without a mode is High',
-     P.dflt.mode === 'high' && P.dflt.bitrate === 28e6, JSON.stringify(P.dflt));
-  ok('the owner’s examples at twice the source: 14 → 28, 17 → 34 Mbps, by the source',
-     P.ex14.bitrate === 28e6 && P.ex17.bitrate === 34e6 && P.ex14.by === 'source' && P.ex17.by === 'source',
-     JSON.stringify([P.ex14, P.ex17].map(mb)));
-  ok('24 Mbps AVCHD is held at twice the floor — 44 Mbps, inside the owner’s 36–48, not an unbounded 48',
+  ok('HIGH QUALITY IS THE DEFAULT: a plan asked for without a mode is High, at 1.75x the source',
+     P.dflt.mode === 'high' && P.dflt.bitrate === 24.5e6 && P.dflt.hqGain === 1.75, JSON.stringify(P.dflt));
+  ok('the owner’s examples at the starting 1.75x: 14 → 24.5 (inside ~24–28), 17 → 29.75 (the ~30 class), 24 → 42 (inside ~40–48), by the source',
+     P.ex14.bitrate === 24.5e6 && P.ex17mov.bitrate === 29.75e6 && P.ex24mov.bitrate === 42e6
+       && [P.ex14, P.ex17mov, P.ex24mov].every(x => x.by === 'source'), JSON.stringify([P.ex14, P.ex17mov, P.ex24mov].map(mb)));
+  ok('AVCHD — noisy camcorder footage — takes the 2x the owner allows: 17 → 34 Mbps, by the source',
+     P.ex17.bitrate === 34e6 && P.ex17.by === 'source' && P.ex17.hqGain === 2, JSON.stringify(P.ex17));
+  ok('24 Mbps AVCHD is held at twice the floor — 44 Mbps, inside the owner’s ~40–48, not an unbounded 48',
      P.ex24.bitrate === 44e6 && P.ex24.by === 'ceiling', JSON.stringify(P.ex24));
   ok('a source that spent little is never given less than the floor (5 Mbps → 22)',
      P.low.bitrate === 22e6 && P.low.by === 'floor', JSON.stringify(P.low));
   ok('an unmeasured source gets the floor table’s figure, not a guess',
      P.unknown.bitrate === 22e6 && P.unknown.by === 'floor', JSON.stringify(P.unknown));
-  ok('an HEVC source counts 1.5x before it is doubled (8 Mbps HEVC → 24 Mbps H.264)',
-     P.hevc.bitrate === 24e6 && P.hevc.by === 'source', JSON.stringify(P.hevc));
+  ok('an HEVC source counts 1.5x before the 1.75x (10 Mbps HEVC → 26.25 Mbps H.264)',
+     P.hevc.bitrate === 26.25e6 && P.hevc.by === 'source', JSON.stringify(P.hevc));
   ok('a ProRes-class source does not buy an absurd copy: twice the floor and no more',
      P.prores.bitrate === 44e6 && P.prores.by === 'ceiling', JSON.stringify(P.prores));
-  ok('1080p60 at 28 Mbps → 56 Mbps (the 60-frame floor is 34, its cap 68)',
-     P.p60.bitrate === 56e6 && P.p60.floor === 34e6 && P.p60.ceiling === 68e6, JSON.stringify(P.p60));
-  ok('NEVER LOWERED: an hour on a phone keeps 28 Mbps and is reported as not fitting',
-     P.long.bitrate === 28e6 && P.long.fits === false && P.long.reduced === false && P.long.est > 256 * 1048576,
+  ok('1080p60 at 28 Mbps → 49 Mbps (the 60-frame floor is 34, its cap 68)',
+     P.p60.bitrate === 49e6 && P.p60.floor === 34e6 && P.p60.ceiling === 68e6, JSON.stringify(P.p60));
+  ok('NEVER LOWERED: an hour on a phone keeps 24.5 Mbps and is reported as not fitting',
+     P.long.bitrate === 24.5e6 && P.long.fits === false && P.long.reduced === false && P.long.est > 256 * 1048576,
      JSON.stringify(P.long));
   ok('STANDARD is #346’s plan unchanged — the source’s own rate', P.std.mode === 'standard' && P.std.bitrate === 14e6 && P.std.by === 'source',
      JSON.stringify(P.std));
@@ -15973,7 +16002,7 @@ section('Timestamp Video HIGH QUALITY: twice the source, never under the floor t
       finally { window.VideoEncoder = realVE; }
     };
     const NTSC = 30000 / 1001, DESK = 768 * 1048576;
-    const o = (x) => Object.assign({srcBitrate: 17e6, seconds: 60, budget: DESK, v2Fps: 30}, x);
+    const o = (x) => Object.assign({srcBitrate: 17e6, seconds: 60, budget: DESK, v2Fps: 30, avchd: true}, x);
     const out = {};
     out.hq1080 = await ask(strict, 1920, 1080, NTSC, o({}));
     out.hq1080_44 = await ask(strict, 1920, 1080, NTSC, o({srcBitrate: 24e6}));
@@ -16168,17 +16197,17 @@ section('Timestamp Video HIGH QUALITY on camera formats: AVCHD 1080i and 1080p a
      JSON.stringify([R.fh17.brand, R.fh24.brand]));
   ok('1080i is read as interlaced, and kept woven — one frame per field pair', R.fi17.interlaced === true && R.fi24.interlaced === true
      && R.fi17.quality && R.fi17.quality.src.interlaced === true, JSON.stringify([R.fi17.interlaced, R.fi24.interlaced]));
-  const IP = [['ip30', 'iPhone 1080p30 (portrait)', 1920, 1080, 30, 'avc1.640029', 14e6], ['ip60', 'iPhone 1080p60', 1920, 1080, 60, 'avc1.64002a', 24e6],
+  const IP = [['ip30', 'iPhone 1080p30 (portrait)', 1920, 1080, 30, 'avc1.640028', 14e6], ['ip60', 'iPhone 1080p60', 1920, 1080, 60, 'avc1.64002a', 24e6],
               ['ip4k', 'iPhone 4K30', 3840, 2160, 30, 'avc1.640033', 48e6]];
   for (const [k, label, w, h, fps, codec, want] of IP) {
     const r = R[k] || {}, c = r.cfg || {};
-    const hq = Math.round(r.src * 2);
+    const hq = Math.round(r.src * 1.75);
     ok(`${label}: the source is read — ${w} x ${h}, ${fps} frames, about ${(want / 1e6).toFixed(0)} Mbps`,
        near(r.fps, fps, 0.001) && near(r.src, want, want * 0.03), JSON.stringify([r.fps, r.src, r.crash]));
     ok(`${label}: the copy is the source’s own size and frame rate`,
        c.width === w && c.height === h && near(c.framerate, fps, 0.001) && r.back && r.back.w === w && r.back.h === h && r.back.n === r.frames,
        JSON.stringify([c, r.back]));
-    ok(`${label}: High Quality at twice the source (${(hq / 1e6).toFixed(1)} Mbps), H.264 High at ${codec.slice(-2) === '29' ? '4.1' : codec.slice(-2) === '2a' ? '4.2' : '5.1'}`,
+    ok(`${label}: High Quality at 1.75x the source (${(hq / 1e6).toFixed(1)} Mbps), H.264 High at ${codec.slice(-2) === '28' ? '4.0' : codec.slice(-2) === '2a' ? '4.2' : '5.1'}`,
        c.bitrate === hq && c.codec === codec && r.q && r.q.plan.mode === 'high', JSON.stringify([c.bitrate, hq, c.codec]));
     ok(`${label}: NV12 pictures go to the encoder untouched by any colour conversion, labelled BT.709`,
        JSON.stringify(r.fmt) === '["NV12"]' && r.cs && r.cs.matrix === 'bt709' && r.cs.fullRange === false && r.q.burn.path === 'yuv',
@@ -16190,7 +16219,7 @@ section('Timestamp Video HIGH QUALITY on camera formats: AVCHD 1080i and 1080p a
   }
   ok('THE TRANSCODE REFUSES FOR ITSELF: an encoder that takes no High rate gets no copy — the owner’s sentence, no encoder configured',
      R.refuse && R.refuse.fault && R.refuse.fault.kind === 'setup' && R.refuse.fault.hq === 'encoder' && R.refuse.configured === 0
-       && R.refuse.fault.msg.startsWith('High-quality encoding is not available on this device for this file.'), JSON.stringify(R.refuse));
+       && R.refuse.fault.msg.startsWith('High-quality encoding is not available for this file on this device.'), JSON.stringify(R.refuse));
   ok('…while Standard on the same encoder makes the whole copy, and says it was Standard',
      R.refuse && R.refuse.made && R.refuse.made.frames === 30 && R.refuse.made.mode === 'standard' && R.refuse.made.bitrate <= 20e6,
      JSON.stringify(R.refuse && R.refuse.made));
@@ -16243,12 +16272,14 @@ section('Timestamp Video HIGH QUALITY in the editor: the choice and its cost, "n
         && (c.bitrate || 0) <= L[2] * (parseInt(m[1], 16) === 100 ? 1250 : 1000); };
   `;
   /* Three videos. A: 1 s of 1080p30 at 14 Mbps — High fits. B: 6 s of the
-     same — on a device with room for 5 MB, a High copy (21 MB) does not, and
+     same — on a device with room for 5 MB and NO private storage (the
+     in-memory writer is all it has), a High copy (18 MB) does not, and
      Standard is held to that memory. C: 0.4 s of 4K30 at 48 Mbps on an encoder
-     that goes no higher than 60 Mbps — High (96) is refused by the encoder. */
+     that goes no higher than 60 Mbps — High (84) is refused by the encoder. */
   await vstRun(page, HQ_SETUP + `
-    window.__hqBudget = window.vstCopyBudget;
+    window.__hqBudget = window.vstCopyBudget; window.__hqStore = window.vstStore;
     window.vstCopyBudget = () => 5 * 1048576;
+    window.vstStore = async () => ({ok: false, why: 'this browser has no private file storage'});
     window.__S = stubCodecs({encAccept: c => hqStrict(c) && c.bitrate <= 60e6, yuv: 'NV12'});
     vqOpen('');
     vqAdd([hqMov({w: 1920, h: 1080, scale: 600, delta: 20, N: 30, SZ: 58300, name: 'HQ_A.MOV'}),
@@ -16276,17 +16307,17 @@ section('Timestamp Video HIGH QUALITY in the editor: the choice and its cost, "n
      A.legend === 'Video quality' && A.opts[0] === 'HIGH QUALITY — RECOMMENDED Best for investigative copies. Larger file.'
        && A.opts[1] === 'STANDARD Smaller file.', JSON.stringify([A.legend, A.opts]));
   ok('High Quality is chosen by default', A.checked === 'high' && A.q.every(x => x === 'high'), JSON.stringify([A.checked, A.q]));
-  ok('and what it will cost is said before anything runs: about 28.0 Mbps, about 3 MB for this 1 s video',
-     /^About 28\.0 Mbps · about 3 MB for this video$/.test(A.note.trim()), A.note);
+  ok('and what it will cost is said before anything runs: about 24.5 Mbps, about 3 MB for this 1 s video',
+     /^About 24\.5 Mbps · about 3 MB for this video$/.test(A.note.trim()), A.note);
   ok('the choice is not on the queue’s rows — the cards are not cluttered with it', A.inRow === false && !/HIGH QUALITY|STANDARD/.test(A.rowText),
      A.rowText.slice(0, 300));
   ok('Generate is offered for a video whose High copy fits', A.goDisabled === false && /^Generate timestamped copy$/.test(A.goText.trim()), A.goText);
   const B = await sel(1);
   ok('B — a High copy too long for this device’s memory: the owner’s sentence, before anything runs',
-     B.warn.startsWith('High-quality encoding is not available on this device for this file.') && /about 21 MB/.test(B.warn)
+     B.warn.startsWith('High-quality encoding is not available for this file on this device.') && /about 18 MB/.test(B.warn)
        && /room for about 5 MB/.test(B.warn) && /Choose Standard/.test(B.warn), B.warn);
   ok('…Generate is withdrawn and says the same sentence where it stands', B.goDisabled === true
-     && B.why.trim() === 'High-quality encoding is not available on this device for this file.', JSON.stringify([B.goDisabled, B.why]));
+     && B.why.trim() === 'High-quality encoding is not available for this file on this device.', JSON.stringify([B.goDisabled, B.why]));
   ok('…and B’s row says to open it and choose Standard — still READY, never failed', B.status[1] === 'ready'
      && /High quality is not available for this file on this device — open it to choose Standard\./.test(B.rowText), B.rowText.slice(0, 400));
   await page.click('#vq_q_standard'); await page.waitForTimeout(80);
@@ -16297,8 +16328,8 @@ section('Timestamp Video HIGH QUALITY in the editor: the choice and its cost, "n
      B2.note);
   ok('the choice is B’s alone — A is still High', JSON.stringify(B2.q) === '["high","standard","high"]', JSON.stringify(B2.q));
   const C = await sel(2);
-  ok('C — 4K whose High rate (96 Mbps) this encoder refuses: the sentence and the reason, with Standard offered',
-     C.warn.startsWith('High-quality encoding is not available on this device for this file.')
+  ok('C — 4K whose High rate (84 Mbps) this encoder refuses: the sentence and the reason, with Standard offered',
+     C.warn.startsWith('High-quality encoding is not available for this file on this device.')
        && /encoder would not take the high-quality settings/.test(C.warn) && /Choose Standard/.test(C.warn) && C.goDisabled === true, C.warn);
   /* Make A, then Process next: B (Standard, by the operator's choice), then
      C — which must STOP and say why, never be made at a lower quality. */
@@ -16311,9 +16342,9 @@ section('Timestamp Video HIGH QUALITY in the editor: the choice and its cost, "n
   const mid = await page.evaluate(() => ({ cfgs: window.__S.log.encCfgs.map(c => ({codec: c.codec, bitrate: c.bitrate})),
     st: VQ.items.map(x => vqStatus(x)), outs: VQ.items.map(x => !!x.out),
     q: VQ.items.map(x => x.out && x.out.quality && x.out.quality.plan && x.out.quality.plan.mode) }));
-  ok('A is made in High (28.0 Mbps) and B — by Process next — in the Standard its operator chose (7.0 Mbps)',
+  ok('A is made in High (24.5 Mbps) and B — by Process next — in the Standard its operator chose (7.0 Mbps)',
      mid.outs[0] && mid.outs[1] && mid.q[0] === 'high' && mid.q[1] === 'standard'
-       && mid.cfgs[before] && mid.cfgs[before].bitrate === 27984000 && mid.cfgs[before + 1] && mid.cfgs[before + 1].bitrate < 7.1e6,
+       && mid.cfgs[before] && mid.cfgs[before].bitrate === 24486000 && mid.cfgs[before + 1] && mid.cfgs[before + 1].bitrate < 7.1e6,
      JSON.stringify(mid));
   const runBefore = await page.evaluate(() => VQ.runId);
   await vstRun(page, `vqProcessNext(); await new Promise(r => setTimeout(r, 400));`);
@@ -16321,7 +16352,7 @@ section('Timestamp Video HIGH QUALITY in the editor: the choice and its cost, "n
     cfgs: window.__S.log.encCfgs.length, st: vqStatus(VQ.items[2]), warn: (document.getElementById('vq_qwhy') || {}).innerText || '' }));
   ok('PROCESS NEXT NEVER DOWNGRADES: it stops on C, opens it, and says the sentence — no copy, no encoder configured',
      String(C2.sel) === String(C2.cid) && !C2.run && !C2.out && C2.cfgs === before + 2 && C2.st === 'ready'
-       && C2.err.startsWith('High-quality encoding is not available on this device for this file.'), JSON.stringify(C2));
+       && C2.err.startsWith('High-quality encoding is not available for this file on this device.'), JSON.stringify(C2));
   ok('…and it is refused at the press, before a run exists: the processing panel never moves to C',
      String(C2.runId) === String(runBefore) && String(C2.runId) !== String(C2.cid), JSON.stringify([runBefore, C2.runId]));
   /* THE COPY SAYS WHAT IT WAS — the owner's three lines, verbatim labels. */
@@ -16333,7 +16364,7 @@ section('Timestamp Video HIGH QUALITY in the editor: the choice and its cost, "n
   const kv = (t, k) => ((t.match(new RegExp('(?:^|\\n)' + k + '[\\t ]*(?:\\n|\\t)[\\t ]*([^\\n]+)')) || [])[1] || '').trim();
   ok('Details: “Source video bitrate: 14.0 Mbps”', kv(D.a, 'Source video bitrate') === '14.0 Mbps', kv(D.a, 'Source video bitrate'));
   ok('Details: “Timestamped copy bitrate” is the rate measured from the copy, with what was asked for beside it',
-     /^\d+\.\d Mbps — measured from the copy \(28\.0 Mbps asked for\)/.test(kv(D.a, 'Timestamped copy bitrate')), kv(D.a, 'Timestamped copy bitrate'));
+     /^\d+\.\d Mbps — measured from the copy \(24\.5 Mbps asked for\)/.test(kv(D.a, 'Timestamped copy bitrate')), kv(D.a, 'Timestamped copy bitrate'));
   ok('Details: “Quality mode: High”', kv(D.a, 'Quality mode') === 'High', kv(D.a, 'Quality mode'));
   ok('B’s Details say Standard, and that memory held it — the reduction is on the copy’s record too',
      /^Standard — held to this device's memory for a copy this long \(14\.0 Mbps otherwise\)$/.test(kv(D.b, 'Quality mode')), kv(D.b, 'Quality mode'));
@@ -16364,7 +16395,7 @@ section('Timestamp Video HIGH QUALITY in the editor: the choice and its cost, "n
        M.l >= 0 && M.r <= M.vw + 0.5 && M.over <= 0 && M.opts.length === 2 && M.opts.every(o => o.h >= 44 && o.ih >= 44 && o.iw >= 44 && o.mine),
        JSON.stringify(M));
   }
-  await page.evaluate(() => { try { window.__S && window.__S.restore(); window.vstCopyBudget = window.__hqBudget; vqClose && vqClose(); } catch {} });
+  await page.evaluate(() => { try { window.__S && window.__S.restore(); window.vstCopyBudget = window.__hqBudget; window.vstStore = window.__hqStore; vqClose && vqClose(); } catch {} });
   await page.close();
 }
 
@@ -16640,6 +16671,405 @@ section('Timestamp Video HIGH QUALITY on real codecs: the stamp is composited in
   ok(`BANDING: the dark gradient keeps its levels (${(G.levels.neu * 100).toFixed(0)}% of the original’s; the live copy ${(G.levels.old * 100).toFixed(0)}%)`,
      G.levels.neu >= 0.9, JSON.stringify(G.levels));
   await page.close();
+}
+
+section('Timestamp Video RHYTHM: one encoder configuration a run, a keyframe exactly every two seconds and never because the clock ticked, every frame the same size, and the copy’s clock exact');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  /* THE OWNER'S QUESTION, ASKED STRUCTURALLY (brief 2026-10-02 §13-14): does
+     the timestamp changing every second cause an encoder reset, a
+     reconfigure, a keyframe, a canvas resize or a quality reset? Six seconds
+     of 1080i AVCHD (a field pair per packet) and of 1080p29.97 — three
+     keyframes and six clock ticks — through the whole pipeline. */
+  const R = await vstRun(page, `
+    const NTSC = 30000 / 1001, out = {};
+    out.fi = await vstScenario({mk: {stride: 192, frames: 180, fields: 'pair', width: 1920, height: 1080, fps: NTSC, sliceLen: 4000},
+                                name: '00011.MTS', plan: {yuv: 'NV12'}, keepBody: true});
+    out.fp = await vstScenario({mk: {stride: 192, frames: 180, width: 1920, height: 1080, fps: NTSC, sliceLen: 4000, timing: [1001, 60000]},
+                                name: '00012.M2TS', plan: {yuv: 'I420'}, keepBody: true});
+    /* the frames at which the clock's second changes, from the frames' own times */
+    out.ticks = []; for (let i = 1; i < 180; i++) if (Math.floor(i * 1001 / 30000) !== Math.floor((i - 1) * 1001 / 30000)) out.ticks.push(i);
+    return out;
+  `);
+  for (const [k, X] of [['1080i AVCHD', R.fi], ['1080p AVCHD', R.fp]]) {
+    ok(`${k}: the copy is made — 180 frames, read back`, X.out && X.back && X.back.frames === 180, JSON.stringify([X.err, X.fault, X.back]));
+    ok(`${k}: the encoder is configured ONCE for the whole run — no clock tick reconfigures it`, X.configures === 1, String(X.configures));
+    ok(`${k}: keyframes are asked for at frames 0, 60 and 120 exactly — every two seconds and nowhere else`,
+       JSON.stringify(X.keyReq) === '[0,60,120]', JSON.stringify(X.keyReq));
+    ok(`${k}: the clock ticks at frames 30, 60, 90, 120 and 150 — and the ticks at 30, 90 and 150 are NOT keyframes`,
+       JSON.stringify(R.ticks) === '[30,60,90,120,150]' && [30, 90, 150].every(t => !X.keyReq.includes(t)), JSON.stringify([R.ticks, X.keyReq]));
+    ok(`${k}: every frame handed to the encoder is the same size — 1920 x 1080, nothing resized at a tick`,
+       X.encDims.length === 1 && X.encDims[0] === '1920x1080/1920x1080', JSON.stringify(X.encDims));
+    ok(`${k}: the stamp is drawn once per second of footage (six labels, six draws) on one canvas size — never per frame, never resized`,
+       X.labels.unique.length === 6 && X.labels.count === 6 && X.burnSizes.length === 1 && X.burnSizes[0] === '1920x1080',
+       JSON.stringify([X.labels.count, X.labels.unique.length, X.burnSizes]));
+    ok(`${k}: every frame reaches the encoder with the same duration (one 29.97 frame)`,
+       X.encDurs.length >= 1 && X.encDurs.every(d => Math.abs(d - 33367) <= 1), JSON.stringify(X.encDurs));
+    ok(`${k}: THE COPY'S CLOCK IS EXACT — 90 kHz, every frame 3,003 ticks (29.97, never 30), in order, none repeated`,
+       X.back && X.back.timescale === 90000 && JSON.stringify(X.back.durs) === '[3003]' && X.back.mono === true,
+       JSON.stringify(X.back && [X.back.timescale, X.back.durs, X.back.mono]));
+    const r = X.quality && X.quality.rhythm;
+    ok(`${k}: the encoder log says what it did — 3 keyframes, 2.0 s apart, 180 chunks`,
+       r && r.keys === 3 && r.frames === 180 && Math.abs(r.keyEverySec - 2.002) < 0.01, JSON.stringify(r));
+    ok(`${k}: and the log is the per-chunk table §3 asks for: time, duration, key, bytes — keyframes exactly at 0, 60 and 120`,
+       Array.isArray(X.chunkRows) && X.chunkRows.length === 180 && X.chunkRows.every(row => row.length === 4)
+         && JSON.stringify(X.chunkRows.map((row, i) => row[2] ? i : -1).filter(i => i >= 0)) === '[0,60,120]',
+       JSON.stringify(X.chunkRows && X.chunkRows.slice(0, 3)));
+  }
+  const kv = (t, k) => ((t.match(new RegExp('(?:^|\\n)' + k + '[\\t ]*(?:\\n|\\t)[\\t ]*([^\\n]+)')) || [])[1] || '').trim();
+  const B = R.fi.body;
+  ok('Details: “Source video” — resolution, frame rate and codec, and that it is interlaced',
+     /^1920 × 1080 · 29\.97 fps · .*interlaced/.test(kv(B, 'Source video')), kv(B, 'Source video'));
+  ok('Details: “Timestamped copy” — the same size and frame rate', /^1920 × 1080 · 29\.97 fps — the original's own size and frame rate$/.test(kv(B, 'Timestamped copy')),
+     kv(B, 'Timestamped copy'));
+  ok('Details: “Requested bitrate” — and why (this tiny fixture is under the floor, so the floor)',
+     /^22\.0 Mbps — the High Quality floor for 1920 × 1080 at 29\.97 fps$/.test(kv(B, 'Requested bitrate')), kv(B, 'Requested bitrate'));
+  ok('Details: “Encoder path” names the codec, rate control, latency, the keyframe spacing and whose encoder',
+     /H\.264 High, level 4\.0 · variable bitrate · quality, not real-time encoding · a keyframe every 2\.0 s · the browser's own choice of encoder/.test(kv(B, 'Encoder path')),
+     kv(B, 'Encoder path'));
+  ok('Details: “Keyframes” — every 2.0 s, 3 in the copy, and the frames after each keyframe not starved',
+     /^every 2\.0 s \(3 in the copy\), each about [\d.]+× the size of a frame between them; the frames just after each keyframe were given 100% of the bits of those just before the next — not starved$/.test(kv(B, 'Keyframes')),
+     kv(B, 'Keyframes'));
+  ok('Details: “Bitrate over time” — second by second, and that no second collapsed',
+     /^[\d.]+ Mbps to [\d.]+ Mbps a second \(median [\d.]+ Mbps, over 6 whole seconds\); no second fell below half the median$/.test(kv(B, 'Bitrate over time')),
+     kv(B, 'Bitrate over time'));
+
+  /* THE DETECTOR ITSELF, on encoder logs built to show each failure. */
+  const D = await page.evaluate(() => {
+    const mk = (n, size) => { const L = vstChunkLog(); for (let i = 0; i < n; i++) L.add({timestamp: Math.round(i * 1e6 * 1001 / 30000), duration: 33367, type: i % 60 === 0 ? 'key' : 'delta'}, size(i)); return L; };
+    const steady = vstRhythm(mk(300, i => i % 60 === 0 ? 50000 : 10000));
+    const starved = vstRhythm(mk(300, i => i % 60 === 0 ? 50000 : (i % 60 <= 10 ? 2500 : 10000)));
+    const collapse = vstRhythm(mk(300, i => i % 60 === 0 ? 50000 : (i >= 90 && i < 120 ? 1000 : 10000)));
+    /* an encoder that boosts every 10th frame by itself, and one that only wobbles while it settles */
+    const boost = vstRhythm(mk(300, i => i % 60 === 0 ? 50000 : (i % 10 === 0 ? 80000 : 10000)));
+    const settling = vstRhythm(mk(300, i => i % 60 === 0 ? 50000 : (i < 40 && i % 2 ? 200 : i < 40 ? 15000 : 10000)));
+    const q = r => ({rhythm: r, src: {}, out: {}});
+    return {steady, starved, collapse, boost, settling, tSteady: vstKeyframesText(q(steady)), tStarved: vstKeyframesText(q(starved)),
+            tBoost: vstKeyframesText(q(boost)), bCollapse: vstBitrateTimeText(q(collapse)), bSteady: vstBitrateTimeText(q(steady))};
+  });
+  ok('the rhythm detector: a steady encoder reads as steady — keyframe 5× a delta frame, delta frames not starved, no second collapsed',
+     D.steady.keyRatio === 5 && D.steady.starve === 1 && !D.steady.starved && D.steady.collapsedCount === 0, JSON.stringify(D.steady));
+  ok('…and a starved one is caught and SAID: the frames after each keyframe got 25% of the bits — “the pattern of a pulse”',
+     D.starved.starved === true && D.starved.starve === 0.25 && /given only 25% of the bits of those just before the next — the pattern of a pulse/.test(D.tStarved),
+     D.tStarved);
+  ok('…and a second whose bitrate collapsed is caught and placed: one second, 3.0 s in',
+     D.collapse.collapsedCount === 1 && D.collapse.collapsed[0] === 3 && /fell below half the median in 1 second, first 3\.0 s in/.test(D.bCollapse),
+     JSON.stringify([D.collapse.collapsed, D.bCollapse]));
+  ok('…and a steady one says no second fell', /no second fell below half the median$/.test(D.bSteady), D.bSteady);
+  ok('…and an encoder that keeps a rhythm of its own is named: every 10th frame, 8× the rest, 0.33 s',
+     D.boost.boost && D.boost.boost.every === 10 && Math.abs(D.boost.boost.ratio - 8) < 0.01 && Math.abs(D.boost.boost.seconds - 0.334) < 0.01
+       && /the encoder by itself made every 10th frame about 8\.0× the size of the rest — a rhythm of 0\.33 s that this device's encoder keeps on its own/.test(D.tBoost),
+     JSON.stringify([D.boost.boost, D.tBoost]));
+  ok('…while one that only wobbles as its rate control settles is not mistaken for a rhythm, and a steady one has none',
+     !D.settling.boost && !D.steady.boost, JSON.stringify([D.settling.boost, D.steady.boost]));
+
+  /* THE MOV/MP4 PATH keeps its original's own clock: an iPhone-style 1/600 s track. */
+  const M = await vstRun(page, `
+    const rEnc = new TextEncoder();
+    const rCat = (...a) => { const n = a.reduce((s, x) => s + x.length, 0); const o = new Uint8Array(n); let k = 0; for (const x of a) { o.set(x, k); k += x.length; } return o; };
+    const rBox = (type, ...parts) => { const p = rCat(...parts); const b = new Uint8Array(8 + p.length); new DataView(b.buffer).setUint32(0, 8 + p.length); b.set(rEnc.encode(type), 4); b.set(p, 8); return b; };
+    const rU32 = n => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, n >>> 0); return b; };
+    const N = 90, SZ = 4000;
+    const sps = new Uint8Array([0x67, 0x64, 0, 0x28]);
+    const avcC = rCat(new Uint8Array([1, 0x64, 0, 0x28, 0xff, 0xe1, 0, sps.length]), sps, new Uint8Array([1, 0, 4, 0x68, 0xee, 0x3c, 0x80]));
+    const body = new Uint8Array(78); new DataView(body.buffer).setUint16(24, 1920); new DataView(body.buffer).setUint16(26, 1080);
+    const entry = rBox('avc1', body, rBox('avcC', avcC));
+    const ftyp = rBox('ftyp', rEnc.encode('qt  '), rU32(512));
+    const build = at => rBox('moov', rBox('trak', rBox('tkhd', new Uint8Array(4), new Uint8Array(20), new Uint8Array(16), rCat(...[65536, 0, 0, 0, 65536, 0, 0, 0, 0x40000000].map(rU32)), rU32(0), rU32(0)),
+      rBox('mdia', rBox('mdhd', new Uint8Array(4), new Uint8Array(8), rU32(600), rU32(N * 20), new Uint8Array(4)),
+        rBox('hdlr', new Uint8Array(4), new Uint8Array(4), rEnc.encode('vide'), new Uint8Array(12)),
+        rBox('minf', rBox('stbl', rBox('stsd', new Uint8Array(4), rU32(1), entry), rBox('stts', new Uint8Array(4), rU32(1), rU32(N), rU32(20)),
+          rBox('stsz', new Uint8Array(4), rU32(SZ), rU32(N)), rBox('stsc', new Uint8Array(4), rU32(1), rU32(1), rU32(N), rU32(1)),
+          rBox('stco', new Uint8Array(4), rU32(1), rU32(at)), rBox('stss', new Uint8Array(4), rU32(1), rU32(1)))))));
+    const moov = build(ftyp.length + build(0).length + 8);
+    const f = new File([ftyp, moov, rBox('mdat', new Uint8Array(N * SZ))], 'IMG_0441.MOV', {type: 'video/quicktime', lastModified: 1790000000000});
+    const parsed = await vstParse(f);
+    const S = stubCodecs({yuv: 'NV12'});
+    try {
+      const r = await vstTranscode(f, parsed, 1790000000000, 'America/New_York', () => {}, {quality: 'high'});
+      const back = await vstParse(new File([r.blob], 'c.mp4', {type: 'video/mp4'}));
+      return {ts: back.video.timescale, durs: Array.from(new Set(back.video.samples.map(x => x.duration))), n: back.video.samples.length,
+              keyReq: S.log.keyReq, configures: S.log.configures, written: r.written};
+    } finally { S.restore(); }
+  `);
+  ok('MOV/MP4: the copy keeps the original’s own 1/600 s clock — every frame 20 ticks, 90 frames — configured once, keyframes at 0 and 60',
+     M.ts === 600 && JSON.stringify(M.durs) === '[20]' && M.n === 90 && M.configures === 1 && JSON.stringify(M.keyReq) === '[0,60]',
+     JSON.stringify(M));
+}
+
+section('Timestamp Video RHYTHM on real codecs: through the whole pipeline the copy’s quality is flat — at 0, 1, 2, 5 and 9 s, at keyframes and at clock ticks alike — and an encoder’s own rhythm is named');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  /* THIS BROWSER'S REAL VP9 ENCODER AND DECODER, the real stamper, muxer,
+     clean check and read-back — on a noisy night scene (grain on every frame,
+     lettering, foliage, a slow hand-held drift) recorded EVERY FRAME A KEYFRAME,
+     so the original has no rhythm of its own for the copy to inherit (a camera
+     file's own keyframes make its grain jump, and a copy measured against
+     them dips with them — that is the original, not the pipeline). Each frame
+     of the copy is decoded and
+     compared with the very frame the encoder was handed (the decoded original,
+     stamped by vstStamper), so what is measured is what encoding did, frame by
+     frame, over ten seconds.
+
+     (a) An encoder held to ONE quality for every frame (VP9's constant
+     quantizer): whatever the pipeline did to the rhythm would show here, and
+     nothing must — no dip at a keyframe, at a clock tick, or anywhere.
+     (b) The same encoder under its own rate control: it keeps a rhythm of its
+     own (every 10th frame boosted — measured, 2026-10-02), and the copy's
+     encoder log must NAME it, so a real device's copy says the same. */
+  const R = await vstRun(page, `
+    if (typeof VideoEncoder === 'undefined') return {skipped: 'no WebCodecs'};
+    const W = 640, H = 360, N = 300, FPS = 30000 / 1001;
+    const M = await vstMuxer();
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const cx = cv.getContext('2d', {willReadFrequently: true});
+    const base = document.createElement('canvas'); base.width = W + 16; base.height = H + 16;
+    const bgx = base.getContext('2d');
+    bgx.fillStyle = '#0c1220'; bgx.fillRect(0, 0, W + 16, H + 16);
+    bgx.fillStyle = '#5a2a20';
+    for (let y = 120; y < 300; y += 6) for (let x = 0; x < 380; x += 14) bgx.fillRect(x + ((y / 6) % 2) * 7, y, 12, 4);
+    bgx.fillStyle = '#961a1a'; bgx.fillRect(40, 96, 300, 72); bgx.fillStyle = '#f8f4e8';
+    bgx.font = 'bold 34px sans-serif'; bgx.fillText('CORNER MARKET', 50, 144);
+    bgx.font = 'bold 12px sans-serif'; bgx.fillText('NO PARKING 10 PM - 6 AM  TOW-AWAY ZONE', 48, 162);
+    const leaf = bgx.getImageData(420, 0, W + 16 - 420, 150);
+    for (let i = 0; i < leaf.data.length; i += 4) { const v = Math.random(); if (v > 0.45) { leaf.data[i] = 20; leaf.data[i + 1] = 60 + v * 100; leaf.data[i + 2] = 22; } }
+    bgx.putImageData(leaf, 420, 0);
+    const target = new M.ArrayBufferTarget();
+    const mux = new M.Muxer({target, video: {codec: 'vp9', width: W, height: H}, fastStart: false, firstTimestampBehavior: 'offset'});
+    let err = null;
+    const enc = new VideoEncoder({output: (c, m) => mux.addVideoChunk(c, m), error: e => { err = e; }});
+    enc.configure({codec: 'vp09.00.10.08', width: W, height: H, bitrate: 6000000, framerate: FPS});
+    for (let i = 0; i < N; i++) {
+      cx.drawImage(base, -8 + Math.round(4 * Math.sin(i / 23)), -8 + Math.round(3 * Math.sin(i / 31)));
+      const fr = cx.getImageData(0, 0, W, H), d = fr.data;
+      for (let p = 0; p < d.length; p += 4) { const g = (Math.random() - 0.5) * 22; d[p] += g; d[p + 1] += g; d[p + 2] += g; }
+      cx.putImageData(fr, 0, 0);
+      const f = new VideoFrame(cv, {timestamp: Math.round(i * 1e6 / FPS), duration: Math.round(1e6 / FPS)});
+      enc.encode(f, {keyFrame: true}); f.close();
+      while (enc.encodeQueueSize > 6) await new Promise(r => setTimeout(r, 1));
+    }
+    await enc.flush(); enc.close(); mux.finalize();
+    if (err) throw err;
+    const file = new File([new Uint8Array(target.buffer)], 'night.mp4', {type: 'video/mp4'});
+    const parsed = await vstParse(file);
+    const startMs = Date.UTC(2026, 9, 2, 23, 41, 23);
+    const realCfg = window.vstEncoderConfig, realEncode = VideoEncoder.prototype.encode;
+    const run = async (mode) => {
+      window.vstEncoderConfig = async (w, h, fps) => mode === 'q'
+        ? ({codec: 'vp09.00.10.08', width: w, height: h, bitrateMode: 'quantizer', framerate: fps, latencyMode: 'quality'})
+        : ({codec: 'vp09.00.10.08', width: w, height: h, bitrate: 1800000, bitrateMode: 'variable', framerate: fps, latencyMode: 'quality'});
+      if (mode === 'q') VideoEncoder.prototype.encode = function(f, o){ return realEncode.call(this, f, Object.assign({}, o, {vp9: {quantizer: 24}})); };
+      let r;
+      try { r = await vstTranscode(file, parsed, startMs, 'America/New_York', null, null); }
+      finally { window.vstEncoderConfig = realCfg; VideoEncoder.prototype.encode = realEncode; }
+      /* decode the copy and the encoder's input in step, and compare luma */
+      const st = vstStamper(W, H, 0, (() => { const c = document.createElement('canvas'); c.width = W; c.height = H; return c; })(), null);
+      const cp = await vstParse(new File([r.blob], 'c.mp4', {type: 'video/mp4'}));
+      const chunk = async (P, f, i) => { const s = P.video.samples[i], t = P.video.timescale;
+        return new EncodedVideoChunk({type: s.sync ? 'key' : 'delta', timestamp: Math.round(s.cts / t * 1e6), duration: Math.round(s.duration / t * 1e6),
+          data: await f.slice(s.offset, s.offset + s.size).arrayBuffer()}); };
+      const qa = [], qb = [];
+      const da = new VideoDecoder({output: f => qa.push(f), error: () => {}}), db = new VideoDecoder({output: f => qb.push(f), error: () => {}});
+      da.configure({codec: parsed.video.codecString, description: parsed.video.description || undefined, codedWidth: W, codedHeight: H});
+      db.configure({codec: cp.video.codecString, description: cp.video.description || undefined, codedWidth: W, codedHeight: H});
+      const cf = new File([r.blob], 'c.mp4');
+      const reg = {full: [0, 0, W, H], stamp: [Math.round(W * 0.42), Math.round(H * 0.86), Math.round(W * 0.58), Math.round(H * 0.14)], sign: [40, 96, 300, 72]};
+      const ps = {full: [], stamp: [], sign: []};
+      let ia = 0, ib = 0, n = 0;
+      const NB = cp.video.samples.length;
+      while (n < NB) {
+        while (qa.length < 3 && ia < N) { da.decode(await chunk(parsed, file, ia++)); if (ia === N) await da.flush(); }
+        while (qb.length < 3 && ib < NB) { db.decode(await chunk(cp, cf, ib++)); if (ib === NB) await db.flush(); }
+        let w = 0; while ((!qa.length || !qb.length) && w++ < 2000) await new Promise(r => setTimeout(r, 2));
+        if (!qa.length || !qb.length) break;
+        qa.sort((x, y) => x.timestamp - y.timestamp); qb.sort((x, y) => x.timestamp - y.timestamp);
+        const fa = qa.shift(), fb = qb.shift();
+        const ref = await st.make(fa, vstLabel(startMs + Math.floor(Math.max(0, fa.timestamp) / 1e6) * 1000, 'America/New_York')); fa.close();
+        const A = new Uint8Array(ref.allocationSize()), LA = await ref.copyTo(A), B = new Uint8Array(fb.allocationSize()), LB = await fb.copyTo(B);
+        ref.close(); fb.close();
+        for (const [k, [x, y, w2, h2]] of Object.entries(reg)) {
+          let se = 0;
+          for (let yy = y; yy < y + h2; yy++) { const pa = LA[0].offset + yy * LA[0].stride, pb = LB[0].offset + yy * LB[0].stride;
+            for (let xx = x; xx < x + w2; xx++) { const dd = A[pa + xx] - B[pb + xx]; se += dd * dd; } }
+          ps[k].push(10 * Math.log10(255 * 255 / Math.max(1e-9, se / (w2 * h2))));
+        }
+        n++;
+      }
+      da.close(); db.close();
+      return {frames: r.frames, n, ps, rhythm: r.quality.rhythm, keys: r.quality.log.rows().map((x, i) => x[2] ? i : -1).filter(i => i >= 0),
+              sizes: r.quality.log.rows().slice(0, 64).map(x => x[3]),
+              burn: r.quality.burn.path, written: r.quality.out.written};
+    };
+    return {q: await run('q'), v: await run('v'), src: parsed.video.srcBitrate};
+  `);
+  if (R.skipped) ok('real-codec rhythm (skipped: ' + R.skipped + ')', true);
+  else {
+    const med = a => { const s = a.slice().sort((x, y) => x - y); return s[s.length >> 1]; };
+    const mean = a => a.reduce((x, y) => x + y, 0) / a.length;
+    const Q = R.q, F = Q.ps.full, m = med(F);
+    const FPS = 30000 / 1001;
+    const keys = new Set(Q.keys);
+    const ticks = []; for (let i = 1; i < F.length; i++) if (Math.floor(i / FPS) !== Math.floor((i - 1) / FPS) && !keys.has(i)) ticks.push(i);
+    const plain = []; for (let i = 1; i < F.length; i++) if (!keys.has(i) && !ticks.includes(i)) plain.push(i);
+    const byTen = Array.from({length: 10}, (_, k) => mean(F.filter((x, i) => i % 10 === k)));
+    ok('(a) the copy is whole: 300 frames out, every one decoded and compared, the stamp composited into the decoded picture',
+       Q.frames === 300 && Q.n === 300 && Q.burn === 'yuv', JSON.stringify([Q.frames, Q.n, Q.burn]));
+    ok('(a) keyframes exactly where asked — 0, 60, 120, 180, 240 — and nowhere else',
+       JSON.stringify(Q.keys) === '[0,60,120,180,240]', JSON.stringify(Q.keys));
+    ok('(a) THE BRIEF’S SAMPLE POINTS — 0, 1, 2, 5 and 9 s — each within 1 dB of the clip’s median quality',
+       [0, 30, 60, 150, 270].every(i => Math.abs(F[i] - m) <= 1), JSON.stringify({median: +m.toFixed(2), at: [0, 30, 60, 150, 270].map(i => +F[i].toFixed(2))}));
+    ok('(a) NO PERIODIC COLLAPSE: not one frame of 300 falls more than 1.5 dB below the median',
+       Math.min(...F) >= m - 1.5, JSON.stringify({median: +m.toFixed(2), min: +Math.min(...F).toFixed(2)}));
+    ok('(a) no ten-frame cycle in the pipeline: by position 0–9, the quality varies under 1 dB',
+       Math.max(...byTen) - Math.min(...byTen) < 1, JSON.stringify(byTen.map(x => +x.toFixed(2))));
+    ok('(a) a keyframe is not a pulse: the frames at keyframes are within 1 dB of the frames between them',
+       Math.abs(mean([...keys].filter(i => i > 0).map(i => F[i])) - mean(plain.map(i => F[i]))) < 1,
+       JSON.stringify([mean([...keys].filter(i => i > 0).map(i => F[i])).toFixed(2), mean(plain.map(i => F[i])).toFixed(2)]));
+    ok('(a) THE CLOCK’S TICK IS NOT A PULSE: frames where the second changes are within 0.5 dB of the rest — whole picture and the stamp itself',
+       Math.abs(mean(ticks.map(i => F[i])) - mean(plain.map(i => F[i]))) < 0.5
+         && Math.abs(mean(ticks.map(i => Q.ps.stamp[i])) - mean(plain.map(i => Q.ps.stamp[i]))) < 0.5,
+       JSON.stringify([ticks.length, mean(ticks.map(i => F[i])).toFixed(2), mean(plain.map(i => F[i])).toFixed(2),
+                       mean(ticks.map(i => Q.ps.stamp[i])).toFixed(2), mean(plain.map(i => Q.ps.stamp[i])).toFixed(2)]));
+    ok('(a) the lettering keeps its quality across the clip — the sign at 0, 5 and 9 s within 1 dB of its median',
+       [0, 150, 270].every(i => Math.abs(Q.ps.sign[i] - med(Q.ps.sign)) <= 1), JSON.stringify([0, 150, 270].map(i => +Q.ps.sign[i].toFixed(2))));
+    ok('(a) the encoder log of a steady encoder: no starved frames after a keyframe, no collapsed second, no rhythm of its own',
+       Q.rhythm && !Q.rhythm.starved && Q.rhythm.collapsedCount === 0 && !Q.rhythm.boost, JSON.stringify(Q.rhythm));
+    const V = R.v;
+    ok('(b) under its own rate control the same encoder keeps a rhythm — and the copy’s encoder log NAMES it: a boosted frame every 10',
+       V.rhythm && V.rhythm.boost && Math.abs(V.rhythm.boost.every - 10) <= 1 && V.rhythm.boost.ratio > 3, JSON.stringify([V.rhythm && V.rhythm.boost, V.sizes]));
+  }
+}
+
+section('Timestamp Video STORAGE WRITER: a copy too large for memory is written to this device’s own storage as it is made — never lowered, proven clean from the file, and deleted on failure, Stop or release');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  /* THE OWNER'S §6: "HIGH QUALITY cannot mean: first portion = good, later
+     portion = lower bitrate ... If the in-memory writer has a ceiling: DO NOT
+     silently reduce bitrate." This device is given 4 MB of memory for a copy
+     (vstCopyBudget), so every clip below is too large for it — and the copy
+     goes to this browser's origin-private storage instead, at full rate. */
+  const R = await vstRun(page, `
+    const NTSC = 30000 / 1001, out = {};
+    const dir = async () => (await navigator.storage.getDirectory()).getDirectoryHandle('timestamp-video-copies', {create: true});
+    const names = async () => { const d = await dir(); const n = []; for await (const [k, h] of d.entries()) if (h.kind === 'file') n.push(k); return n.sort(); };
+    const tops = u8 => { const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength); const o = []; let p = 0;
+      while (p + 8 <= u8.length) { let sz = dv.getUint32(p); if (sz === 1) sz = Number(dv.getBigUint64(p + 8)); o.push(String.fromCharCode(u8[p + 4], u8[p + 5], u8[p + 6], u8[p + 7])); if (sz < 8) break; p += sz; } return o; };
+    const find = (u8, t) => { for (let i = 4; i + 4 < u8.length; i++) if (u8[i] === t.charCodeAt(0) && u8[i + 1] === t.charCodeAt(1) && u8[i + 2] === t.charCodeAt(2) && u8[i + 3] === t.charCodeAt(3)) return i - 4; return -1; };
+    const shaOf = async u8 => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', u8))).map(b => b.toString(16).padStart(2, '0')).join('');
+    const realBudget = window.vstCopyBudget;
+    window.vstCopyBudget = () => 4 * 1048576;
+    try {
+      for (const n of await names()) await (await dir()).removeEntry(n);
+      out.room = await vstCopyRoom();
+      const A = {stride: 192, frames: 360, width: 1920, height: 1080, fps: NTSC, sliceLen: 3000, timing: [1001, 60000]};
+      /* A: 12 s of 1080p AVCHD — about 33 MB at High's 22 Mbps — on 4 MB of memory */
+      out.a = await vstScenario({mk: A, name: '00021.MTS', plan: {yuv: 'NV12', chunkBytes: 20000, keyScale: 4}, keepBody: true, close: false});
+      out.aHeld = await names();
+      if (VST && VST.out && VST.out.blob) {
+        const u8 = new Uint8Array(await VST.out.blob.arrayBuffer());
+        const mv = find(u8, 'mvhd'), hd = find(u8, 'hdlr');
+        out.aFile = {isFile: VST.out.blob instanceof File, size: VST.out.blob.size, written: VST.out.written,
+          store: VST.out.store && VST.out.store.name, tops: tops(u8),
+          shaMatches: (await shaOf(u8)) === VST.out.sha256,
+          mvhdTimes: mv > 0 ? Array.from(u8.subarray(mv + 12, mv + 20)) : null,
+          hdlrName: hd > 0 ? Array.from(u8.subarray(hd + 32, hd + 33)) : null,
+          plan: VST.out.quality && VST.out.quality.plan, mode: VST.out.quality && VST.out.quality.plan && VST.out.quality.plan.mode,
+          requested: VST.out.quality && VST.out.quality.out.bitrate, url: !!VST.out.url};
+      }
+      vstClose();
+      await new Promise(r => setTimeout(r, 400));
+      out.aAfter = await names();
+      /* B: the encoder fails part-way — nothing may stay on the device */
+      out.b = await vstScenario({mk: A, name: '00022.MTS', plan: {yuv: 'NV12', chunkBytes: 20000, encFailAt: 200}});
+      await new Promise(r => setTimeout(r, 300)); out.bAfter = await names();
+      /* C: Stop part-way */
+      out.c = await vstScenario({mk: Object.assign({}, A, {frames: 900, width: 640, height: 480}), name: '00023.MTS',
+                                 plan: {yuv: 'NV12', chunkBytes: 20000}, cancelAfter: 400});
+      await new Promise(r => setTimeout(r, 300)); out.cAfter = await names();
+      /* D: the writer's own stamps NOT scrubbed — the check of the FILE must refuse it */
+      const realScrub = window.vstScrubMp4;
+      window.vstScrubMp4 = () => ({times: 0, names: 0});
+      try { out.d = await vstScenario({mk: A, name: '00024.MTS', plan: {yuv: 'NV12', chunkBytes: 20000}}); }
+      finally { window.vstScrubMp4 = realScrub; }
+      await new Promise(r => setTimeout(r, 300)); out.dAfter = await names();
+      /* E: an encoder's user data NOT stripped — the check walks every frame in the file and refuses it */
+      const realStrip = window.vstStripUserData;
+      window.vstStripUserData = raw => ({data: raw, removed: 0});
+      try { out.e = await vstScenario({mk: A, name: '00025.MTS', plan: {yuv: 'NV12', chunkBytes: 20000, encSei: 'every', encSeiText: 'SECRETCAM-SERIAL-77'}}); }
+      finally { window.vstStripUserData = realStrip; }
+      await new Promise(r => setTimeout(r, 300)); out.eAfter = await names();
+      /* F: the disk fills part-way */
+      const W = FileSystemWritableFileStream.prototype, realWrite = W.write; let calls = 0;
+      W.write = function(){ if (++calls > 3) return Promise.reject(new DOMException('The quota has been exceeded.', 'QuotaExceededError')); return realWrite.apply(this, arguments); };
+      try { out.f = await vstScenario({mk: A, name: '00026.MTS', plan: {yuv: 'NV12', chunkBytes: 400000}}); }
+      finally { W.write = realWrite; }
+      await new Promise(r => setTimeout(r, 300)); out.fAfter = await names();
+      /* G: no private storage at all — the in-memory writer and its limit, said before anything runs */
+      const realStore = window.vstStore;
+      window.vstStore = async () => ({ok: false, why: 'this browser has no private file storage'});
+      try { out.g = await vstScenario({mk: A, name: '00027.MTS', plan: {yuv: 'NV12', chunkBytes: 20000}}); out.gRoom = await vstCopyRoom(); }
+      finally { window.vstStore = realStore; }
+      /* H: what a closed tab left behind goes; what an open tab holds stays */
+      const d = await dir();
+      for (const n of ['copy-old1-a.mp4', 'copy-held-b.mp4']) { const w = await (await d.getFileHandle(n, {create: true})).createWritable(); await w.write(new Uint8Array(64)); await w.close(); }
+      let let_go = null;
+      const held = new Promise(granted => navigator.locks.request('timestamp-video-copies/copy-held-b.mp4', () => { granted(); return new Promise(r => { let_go = r; }); }));
+      await held;
+      out.swept1 = await vstStoreSweep(); out.h1 = await names();
+      let_go(); await new Promise(r => setTimeout(r, 50));
+      out.swept2 = await vstStoreSweep(); out.h2 = await names();
+      /* I: the fingerprint of a file, slice by slice, against the one of the bytes */
+      const sizes = [0, 1, 55, 56, 63, 64, 65, 8 * 1048576 - 1, 8 * 1048576, 8 * 1048576 + 1, 17 * 1048576 + 37];
+      out.sha = [];
+      for (const n of sizes) { const u8 = new Uint8Array(n); for (let i = 0; i < n; i += 4096) crypto.getRandomValues(u8.subarray(i, Math.min(n, i + 4096)));
+        out.sha.push((await vstSha256File(new Blob([u8]))) === (await vstSha256(u8))); }
+    } finally { window.vstCopyBudget = realBudget; }
+    return out;
+  `);
+  ok('this browser has private storage, so a copy too large for 4 MB of memory has the room of the device’s storage',
+     R.room && R.room.where === 'storage' && R.room.memory === 4 * 1048576 && R.room.budget > 40 * 1048576, JSON.stringify(R.room));
+  const A = R.a, F = R.aFile || {};
+  ok('A — 12 s of 1080p AVCHD on 4 MB of memory is made in HIGH QUALITY, not lowered, not refused',
+     A.out && A.back && A.back.frames === 360 && F.mode === 'high' && F.requested >= 22e6, JSON.stringify([A.err, A.fault, F.mode, F.requested]));
+  ok('…written to this device’s storage as it was made — and the copy is that file, not a copy of it in memory',
+     F.written === 'storage' && F.isFile === true && R.aHeld.includes(F.store), JSON.stringify([F.written, F.isFile, F.store, R.aHeld]));
+  ok('…its layout is ftyp, the pictures, then the index — the way an iPhone writes its own recordings',
+     JSON.stringify(F.tops) === '["ftyp","mdat","moov"]', JSON.stringify(F.tops));
+  ok('…the writer’s own stamps were scrubbed BEFORE the index was written: no creation time, no handler name',
+     F.mvhdTimes && F.mvhdTimes.every(b => b === 0) && F.hdlrName && F.hdlrName[0] === 0, JSON.stringify([F.mvhdTimes, F.hdlrName]));
+  ok('…proven clean FROM THE FILE, fingerprinted slice by slice — and the fingerprint is the file’s own SHA-256',
+     A.clean === true && F.shaMatches === true, JSON.stringify([A.clean, F.shaMatches]));
+  ok('…nothing left the device to make it', A.doors.fetches === 0 && A.doors.xhr === 0 && A.doors.beacons === 0, JSON.stringify(A.doors));
+  ok('…and the copy’s Details say so: written to this device’s own storage as it was made',
+     /Written\s+to this device's own storage as it was made — too large to build in memory; nothing left the device/.test(A.body), A.body.slice(0, 1500));
+  ok('…the finished screen says where its room came from: the device’s storage, and the plan says High was never lowered',
+     F.plan && F.plan.where === 'storage' && F.plan.fits === true && F.plan.reduced === false, JSON.stringify(F.plan));
+  ok('LET GO, IT IS GONE: closing the tool deletes the copy from the device’s storage', !R.aAfter.includes(F.store) && R.aAfter.length === 0,
+     JSON.stringify(R.aAfter));
+  ok('B — the encoder stops part-way: no copy, and nothing left on the device', !R.b.out && R.b.fault && R.bAfter.length === 0,
+     JSON.stringify([R.b.fault && R.b.fault.kind, R.bAfter]));
+  ok('C — Stop part-way: nothing left on the device', !R.c.out && R.cAfter.length === 0, JSON.stringify([R.c.step, R.c.err, R.cAfter]));
+  ok('D — the writer’s stamps left in: the check of the FILE refuses it (“still carries a creation or modification time”), nothing kept',
+     !R.d.out && R.d.fault && R.d.fault.kind === 'clean' && /creation or modification time/.test((R.d.fault.lines || []).join(' ')) && R.dAfter.length === 0,
+     JSON.stringify([R.d.fault, R.dAfter]));
+  ok('E — an encoder’s user data left in every frame: the check walks the frames IN THE FILE and refuses it, nothing kept',
+     !R.e.out && R.e.fault && R.e.fault.kind === 'clean' && /user data inside the video stream/.test((R.e.fault.lines || []).join(' ')) && R.eAfter.length === 0,
+     JSON.stringify([R.e.fault, R.eAfter]));
+  ok('F — the disk fills part-way: “This device ran out of storage space for the copy”, what it wrote deleted, and nothing left',
+     !R.f.out && R.f.fault && R.f.fault.kind === 'storage' && /^This device ran out of storage space for the copy\./.test(R.f.fault.head)
+       && /what it had written has been deleted/.test((R.f.fault.lines || []).join(' ')) && R.fAfter.length === 0,
+     JSON.stringify([R.f.err, R.f.fault, R.fAfter]));
+  ok('G — a browser with no private storage keeps the in-memory writer, and High is refused BEFORE it runs, in the owner’s sentence and memory’s terms',
+     R.gRoom && R.gRoom.where === 'memory' && !R.g.out && /^High-quality encoding is not available for this file on this device\. A high-quality copy of this video would be about \d+ MB, and this device builds the copy in memory with room for about 4 MB\./.test(R.g.err),
+     JSON.stringify([R.gRoom, R.g.err]));
+  ok('H — what a closed tab left behind is deleted when the tool opens; a copy an open tab still holds is not',
+     R.swept1 === 1 && JSON.stringify(R.h1) === '["copy-held-b.mp4"]' && R.swept2 === 1 && R.h2.length === 0,
+     JSON.stringify([R.swept1, R.h1, R.swept2, R.h2]));
+  ok('I — the fingerprint of a file read in slices is the fingerprint of its bytes, at every block and slice boundary',
+     R.sha.length === 11 && R.sha.every(Boolean), JSON.stringify(R.sha));
 }
 
 section('Timestamp Video editor: an MTS whose first frames are black previews a real frame, and the stamp follows every keystroke');
