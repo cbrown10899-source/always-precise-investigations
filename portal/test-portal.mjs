@@ -16095,7 +16095,11 @@ section('Timestamp Video editor: an MP4 plays with the stamp where it burns, fol
       const v = VQ.items.find(x => x.name === 'PLAY.mp4');
       const vm = VQ.items.find(x => x.name === 'IMG_0513.MOV');
       qClick('vqEdit', v.qid);
-      for (const [k, val] of [['mo', '10'], ['da', '01'], ['yr', '2026'], ['hr', '06'], ['mi', '59'], ['se', '02']]) {
+      /* AM IS SET, NOT INHERITED: this fixture's own creation time is the moment
+         it was made, so its AM or PM is whatever the clock says when the suite
+         runs — and a test that only types the hour passes before noon Eastern
+         and fails after it. */
+      for (const [k, val] of [['mo', '10'], ['da', '01'], ['yr', '2026'], ['hr', '06'], ['mi', '59'], ['se', '02'], ['ap', 'AM']]) {
         const el = document.getElementById('vst_' + k); el.value = val; el.dispatchEvent(new Event('input', { bubbles: true })); }
       qClick('vqSaveTime');
       await qWait(() => !!document.getElementById('vq_pv'), 5000);
