@@ -2124,10 +2124,97 @@ prints both numbers, asked for and written, so the first real copy answers it.
 Whether the copy now looks as sharp as its original is the owner's eye on the
 owner's footage; no number here claims it.
 
-**A known limit, left for the owner:** a PORTRAIT clip's preview on a phone is
-narrow — about 171 px at 390, 115 at 320 — and its stamp, drawn at the copy's
-own proportion, is then about 4 px tall: there, but not legible. The exact
-text is beside it in the burned-in line. Making the picture's own stamp
-legible there means a preview taller than the 40% that keeps the fields on the
-screen, or a stamp drawn larger than the copy will carry it — either is the
-owner's call, not a quiet change.
+**The portrait-preview limit recorded here was the owner's to decide, and they
+did, the same day** — see the next part.
+
+
+---
+
+# PORTRAIT PREVIEW READABILITY — 2026-10-02, the owner's follow-up
+
+Owner: *"keep the timestamp preview pixel/proportionally faithful to the FINAL
+video. Do NOT artificially enlarge the timestamp relative to the final output.
+Instead: allow the portrait preview area to become somewhat taller when
+needed … allow normal vertical scrolling where needed rather than shrinking
+the preview timestamp to 3–4px."* Final output, encoder, MTS path and
+Timestamp Photo untouched.
+
+## 1. Measured before anything changed
+
+The stamp is drawn at the copy's own proportion, so its size follows the
+preview box's WIDTH — about the width divided by 36, measured with the burn's
+own `vstDraw` at iPhone density (dpr 3). A portrait clip held to the phone's
+36%-of-the-screen height was 171 px wide at 390 and 115 at 320: glyphs **4.7
+and 3.0 px**.
+
+**And a second fault the measurement found:** `vstDraw` never draws a face
+under 8 pixels. On a copy that floor never engages; but the preview canvas was
+drawn pixel for pixel, so on a 1x screen any box narrower than about 230 px
+hit it, and the preview's stamp came out LARGER against the picture than the
+copy will carry it — the stamp spanning 24–95% of a 171 px box, against
+45–96% of the copy. On a 2x or 3x phone it never showed; on an ordinary
+office laptop, a short window gave exactly that box.
+
+## 2. What changed
+
+- **Below 1240 px the preview is never narrower than 300 px** (or the
+  editor's whole width where that is less). The picture keeps its shape, so a
+  portrait one grows TALLER and the editor scrolls; a landscape one is wider
+  than 300 px here already and does not move. 300 px was chosen from the
+  measurement: 8.3 px glyphs, about what a landscape preview shows on a 320
+  phone.
+- **The stamp canvas is drawn at the copy's own width when that is small, and
+  at least 640 px wide otherwise** (`VQ_STAMP_INK`); the box scales it. So the
+  8-pixel floor can only engage where it engages on the copy itself, and the
+  preview's stamp has the copy's proportion on any screen. `vqShown` is the
+  one writer of the copy's shown size, read by the box's shape and the canvas
+  alike.
+- `vstDraw`, the copy, its stamp size, the encoder and the MTS path are
+  untouched.
+
+## 3. After, the same instrument
+
+| phone | source | box | stamp glyph (dpr 3) | stamp against the copy's |
+| --- | --- | --- | --- | --- |
+| 390 | landscape | 366 x 206 (unchanged) | 9.7 px (unchanged) | within 1.5% (asserted) |
+| 390 | portrait | 171 x 304 → **300 x 533** | 4.7 → **7.9 px** | left edge 0.447 of the width, copy 0.447 |
+| 320 | landscape | 296 x 166 (unchanged) | 7.7 px (unchanged) | within 1.5% (asserted) |
+| 320 | portrait | 115 x 204 → **296 x 526** | 3.0 → **7.8 px** | left edge 0.447, copy 0.447 |
+
+**Editing stays practical, and that is what is tested.** A portrait clip's
+date row now starts below the first screen (69 px at 390, 355 at 320). With
+the date and time fields brought into view — as a phone brings a field it is
+typing into — the stamp at the picture's foot is on the same screen, at 390
+and 320. Save and Generate are reachable and 44 px, nothing scrolls sideways.
+**One limit stated, not hidden:** on a 320 x 568 phone with the numeric keypad
+open (roughly 260 px of it), the visible area is about 310 px against about
+380 from the stamp to the time row, so the stamp can sit just above it while a
+time field is focused — an estimate, keyboards differ. The burned-in line
+directly under the fields shows the exact text throughout.
+
+## 4. Tests and mutations
+
+The phone section now runs both shapes at 390 and 320 with two long labels —
+*12/31/2026 11:59:59 PM EST* and *07/04/2026 12:00:00 AM EDT* — and asserts,
+per case: the portrait box's width and readable glyphs, the stamp and the
+fields on one screen, the stamp **in the copy's proportion** (its position
+and size as fractions of the box against the burn on the full-size copy,
+within 1.5% of either side), both labels inside the picture, Save and
+Generate reachable, nothing sideways. The old portrait assertions — held to
+40%, fields on the picture's screen — encoded the rule the owner replaced and
+were re-aimed, not loosened; the landscape ones are unchanged. One desk case
+was added, a 1366 x 650 laptop window, because it is the only layout left that
+gives a box narrow enough for the 8-pixel floor to matter.
+
+**Five mutations in a git worktree, all five named on the first run:** no
+readable minimum width (4 assertions), the preview stamp drawn 1.3x larger
+than the copy's (12 — every proportion check), the canvas pixel for pixel
+again (2), the fields pushed away from the picture (4), and the copy's turn
+ignored for its shown size (1). The pixel-for-pixel one taught something: it
+failed the 1280 x 800 LANDSCAPE case as well as the laptop's portrait one,
+because rounding the font to whole pixels in a 290 px canvas alone pushes the
+stamp about 4% out of proportion — drawing at 640 px removes that too.
+
+**Run:** the five preview sections and every other video section, targeted as
+the owner asked — 945 passed, and the two failures are the trimmed runner's
+recorded "long case number" artefacts.

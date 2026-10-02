@@ -5685,11 +5685,20 @@ time is the moment it was made, so an editor test that left AM/PM alone passed
 before noon Eastern and failed after it — found when the batch crossed noon.
 Same family as *a full run's total moves with the clock*.
 
-**A PORTRAIT CLIP'S PREVIEW STAMP IS NOT LEGIBLE ON A PHONE, AND THAT IS THE
-OWNER'S CALL.** At the copy's own proportion it is about 4 px tall in a 171 px
-box (390) and smaller at 320; the exact text is beside it. Legible there means
-a taller preview than the 40% that keeps the fields on screen, or a stamp
-larger than the copy carries.
+**A PORTRAIT PREVIEW ON A PHONE GROWS TALLER; ITS STAMP NEVER GROWS** (owner,
+2026-10-02, deciding what was left for them). Below 1240 px the preview is
+never narrower than 300 px, keeping its shape, so a portrait clip's box goes
+from 171 to 300 px wide at 390 (glyphs 4.7 → 7.9 px) and the editor scrolls;
+landscape does not move. What is tested is that editing stays practical — with
+the date and time fields in view, the stamp they change is on the same screen.
+
+**A FLOOR IN THE BURN IS AN ENLARGEMENT IN THE PREVIEW.** `vstDraw` never draws
+a face under 8 px — invisible on a copy, but a preview canvas drawn pixel for
+pixel on a 1x screen hits it below about 230 px, and the stamp came out LARGER
+against the picture than the copy's (24–95% of a 171 px box against 45–96%).
+The canvas is drawn at the copy's own width when small and at least 640 px
+otherwise, so the floor engages only where it engages on the copy. Only a
+short laptop window still makes such a box, so that is where the test is.
 
 **THREE INSTRUMENT LESSONS, NONE OF THEM THE PRODUCT.** The queue SORTS what is
 added, so a test reading `VQ.items[0]` as the MP4 measured the portrait MOV

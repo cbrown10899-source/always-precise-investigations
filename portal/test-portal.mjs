@@ -16147,18 +16147,29 @@ section('Timestamp Video editor: an MP4 plays with the stamp where it burns, fol
   await page.close();
 }
 
-section('Timestamp Video editor on a phone (390, 320) and a desk (1280, 1440, 1920): the preview is in view, the stamp legible, the fields and Save in reach');
+section('Timestamp Video editor on a phone (390, 320) and a desk (1280, 1440, 1920): the preview is in view, the stamp legible and in the copy’s proportion, the fields and Save in reach');
 {
-  /* A PORTRAIT PICTURE IS WHAT THE PHONE'S HEIGHT RULE IS FOR: a 16:9 frame on
-     a phone is held by its width long before any height cap, so a check run
-     only on 16:9 would pass with the cap gone (it did — the mutation walked
-     straight past it). Phones get both shapes. */
-  for (const [width, height] of [[390, 844], [320, 568], [1280, 800], [1440, 900], [1920, 1080]])
-  for (const tall of width < 1240 ? [false, true] : [false]) {
+  /* PHONES GET BOTH SHAPES, AND THE LONG LABELS. A 16:9 frame on a phone is
+     held by its width long before any height rule, so a check run only on
+     16:9 cannot reach the rules a portrait picture needs (a mutation once
+     walked straight past one). Owner, 2026-10-02: a portrait preview grows
+     TALLER until its stamp is readable — never by drawing the stamp larger
+     than the copy carries it — and the editor scrolls. */
+  const LONG = [['12', '31', '2026', '11', '59', '59', 'PM', '12/31/2026 11:59:59 PM EST'],
+                ['07', '04', '2026', '12', '00', '00', 'AM', '07/04/2026 12:00:00 AM EDT']];
+  /* AND ONE DESK THAT IS SHORT: a 1366 x 650 laptop window gives a portrait
+     clip a 190 px box. Below about 230 px, drawn pixel for pixel on a 1x
+     screen, `vstDraw`'s 8-pixel floor would make the preview's stamp some 40%
+     larger against the picture than the copy's — the enlargement the owner
+     ruled out — so this is where "in proportion" can actually fail. */
+  for (const [width, height] of [[390, 844], [320, 568], [1280, 800], [1440, 900], [1920, 1080], [1366, 650]])
+  for (const tall of width < 1240 ? [false, true] : width === 1366 ? [true] : [false]) {
+    const phone = width < 1240;
     const page = await newPage();
     await signIn(page, 'trever', 'AdminPassword1x');
     await page.setViewportSize({ width, height });
     await page.waitForTimeout(150);
+    const first = phone ? LONG[0] : ['10', '01', '2026', '06', '59', '02', 'AM', '10/01/2026 06:59:02 AM EDT'];
     const R = await vstRun(page, `
       window.__S = stubCodecs({});
       vqOpen('');
@@ -16168,73 +16179,120 @@ section('Timestamp Video editor on a phone (390, 320) and a desk (1280, 1440, 19
       const v = VQ.items[0];
       qClick('vqEdit', v.qid);
       await qWait(() => v.pvf && v.pvf.state !== 'busy', 15000);
-      for (const [k, val] of [['mo', '10'], ['da', '01'], ['yr', '2026'], ['hr', '06'], ['mi', '59'], ['se', '02']]) {
-        const el = document.getElementById('vst_' + k); el.value = val; el.dispatchEvent(new Event('input', { bubbles: true })); }
+      const t = ${JSON.stringify(first)};
+      ['mo', 'da', 'yr', 'hr', 'mi', 'se', 'ap'].forEach((k, i) => {
+        const el = document.getElementById('vst_' + k); el.value = t[i]; el.dispatchEvent(new Event('input', { bubbles: true })); });
       await new Promise(r => setTimeout(r, 80));
       return { pvf: v.pvf && v.pvf.state };
     `);
+    /* THE STAMP AGAINST THE COPY'S OWN: where the burn puts it on the
+       full-size copy, as fractions of the picture, beside where the preview
+       puts it as fractions of the box. Equal fractions are what "the same
+       relative size and position" means. */
+    const measure = () => page.evaluate(() => {
+      const host = document.getElementById('vq_pvhost'), ed = document.getElementById('vq_edit');
+      const cv = document.getElementById('vq_stamp');
+      if (!host || !ed || !cv) return { missing: true };
+      const lit = (c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+        for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) {
+          const i = (y * c.width + x) * 4; if (d[i + 3] > 200 && d[i] > 230 && d[i + 1] > 230 && d[i + 2] > 230) {
+            if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; } }
+        return x1 < 0 ? null : { x0: x0 / c.width, x1: (x1 + 1) / c.width, y0: y0 / c.height, y1: (y1 + 1) / c.height, py0: y0, py1: y1 }; };
+      const v = vqSel(), shown = vqShown(v);
+      const copy = document.createElement('canvas'); copy.width = shown.w; copy.height = shown.h;
+      vstDraw(copy.getContext('2d'), shown.w, shown.h, cv.dataset.label);
+      return { prev: lit(cv), copy: lit(copy), shown, label: cv.dataset.label,
+               glyph: (() => { const l = lit(cv); return l ? (l.py1 - l.py0 + 1) / (cv.width / host.getBoundingClientRect().width) : 0; })() };
+    });
+    const S1 = await measure();
     /* The editor scrolled so the picture is at the top of its screen — then
-       is everything the operator types into, and its live stamp, in view? */
+       is everything the operator types into, and its live stamp, in reach? */
     const M = await page.evaluate(() => {
       const host = document.getElementById('vq_pvhost'), ed = document.getElementById('vq_edit');
       if (!host || !ed) return { missing: true };
       host.scrollIntoView({ block: 'start' });
       const vis = el => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, w: r.width, h: r.height }; };
-      const cv = document.getElementById('vq_stamp');
-      const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
-      let y0 = 1e9, y1 = -1;
-      for (let y = 0; y < cv.height; y++) for (let x = 0; x < cv.width; x++) {
-        const i = (y * cv.width + x) * 4; if (d[i + 3] > 200 && d[i] > 230) { if (y < y0) y0 = y; if (y > y1) y1 = y; } }
-      const dpr = cv.width / host.getBoundingClientRect().width;
       const hit = el => { el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect();
         const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
         return { ok: !!at && (at === el || el.contains(at)), h: r.height, w: r.width }; };
       const pv = vis(host), time = vis(document.getElementById('vst_se')), date = vis(document.getElementById('vst_mo'));
       const es = getComputedStyle(ed);
       const colW = ed.clientWidth - parseFloat(es.paddingLeft) - parseFloat(es.paddingRight);
-      const res = { pv, time, date, colW, glyph: y1 >= y0 ? (y1 - y0 + 1) / dpr : 0, label: cv.dataset.label,
-        vw: innerWidth, vh: innerHeight,
+      const res = { pv, time, date, colW, vw: innerWidth, vh: innerHeight,
         overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth };
+      /* EDITING IS PRACTICAL WHEN THE STAMP AND THE FIELDS THAT CHANGE IT ARE ON
+         ONE SCREEN: the time row brought to the foot of the screen, the way a
+         phone brings a field it is typing into, and the stamp — which sits at
+         the picture's foot — looked for on the same screen. */
+      const tRow = document.getElementById('vst_se').closest('.vqd-dtrow');
+      tRow.scrollIntoView({ block: 'end' });
+      const cv = document.getElementById('vq_stamp'), cr = cv.getBoundingClientRect();
+      const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+      let y0 = 1e9, y1 = -1;
+      for (let y = 0; y < cv.height; y++) for (let x = 0; x < cv.width; x++) {
+        const i = (y * cv.width + x) * 4; if (d[i + 3] > 200 && d[i] > 230) { if (y < y0) y0 = y; if (y > y1) y1 = y; } }
+      res.together = { stampTop: cr.top + (y0 / cv.height) * cr.height, stampBottom: cr.top + ((y1 + 1) / cv.height) * cr.height,
+        dateTop: document.getElementById('vst_mo').getBoundingClientRect().top, timeBottom: tRow.getBoundingClientRect().bottom };
       host.scrollIntoView({ block: 'start' });
       res.save = hit(document.querySelector('#vq_edit [data-act="vqSaveTime"]'));
       res.go = hit(document.getElementById('vq_go'));
       return res;
     });
-    const tag = `${width}x${height}`;
-    if (tall) {
-      ok(`${tag}: a portrait picture gets a portrait box, in view — not a picture lost in a 16:9 slab`,
+    /* The other long label: a summer date reads EDT, and fits the same way. */
+    let S2 = null;
+    if (phone) {
+      await page.evaluate((t) => {
+        ['mo', 'da', 'yr', 'hr', 'mi', 'se', 'ap'].forEach((k, i) => {
+          const el = document.getElementById('vst_' + k); el.value = t[i]; el.dispatchEvent(new Event('input', { bubbles: true })); });
+      }, LONG[1]);
+      await page.waitForTimeout(80);
+      S2 = await measure();
+    }
+    const tag = `${width}x${height}` + (tall ? ' portrait' : '');
+    const near = (a, b) => !!(a && b) && Math.abs(a.x0 - b.x0) <= 0.015 && Math.abs(a.x1 - b.x1) <= 0.015
+      && Math.abs(a.y0 - b.y0) <= 0.015 && Math.abs(a.y1 - b.y1) <= 0.015;
+    const inBox = l => !!l && l.x0 > 0 && l.x1 < 1 && l.y0 > 0 && l.y1 < 1;
+    if (tall && !phone) {
+      ok(`${tag}: a portrait picture keeps its portrait box on a desk, inside the unchanged editor column`,
+         R.pvf === 'done' && !M.missing && Math.abs(M.pv.w / M.pv.h - 720 / 1280) < 0.03 && M.pv.w <= M.colW + 1,
+         JSON.stringify([R, M.pv, M.colW]));
+    } else if (tall) {
+      ok(`${tag}: a portrait picture gets a portrait box, in view, no taller than the screen — not a picture lost in a 16:9 slab`,
          R.pvf === 'done' && !M.missing && M.pv.top >= -1 && M.pv.bottom <= M.vh + 1 && Math.abs(M.pv.w / M.pv.h - 720 / 1280) < 0.03,
          JSON.stringify([R, M.pv]));
-      ok(`${tag}: a portrait picture is held to 40% of the screen’s height, however tall it is`, M.pv.h <= M.vh * 0.4 + 1,
-         JSON.stringify(M.pv));
-      /* Measured at 320 x 568: the date row ends at 568.3 — flush with the
-         screen's edge, a sub-pixel the same 1 px allowance covers as the
-         picture's own edges above. A preview that pushed the fields down would
-         put them hundreds of pixels further. */
-      ok(`${tag}: so the date and time fields stay on the same screen as the portrait picture`,
-         M.date.bottom <= M.vh + 1 && M.time.bottom <= M.vh + 1, JSON.stringify([M.pv, M.date, M.time]));
-      ok(`${tag}: and Save and Generate are still reachable and 44 px tall`, M.save.ok && M.go.ok && M.save.h >= 44 && M.go.h >= 44,
-         JSON.stringify([M.save, M.go]));
-      await page.evaluate(() => { try { window.__S && window.__S.restore(); vstClose(); } catch {} });
-      await page.close();
-      continue;
-    }
-    ok(`${tag}: the preview is a decoded frame, in view, at the picture’s 16:9 shape`,
-       R.pvf === 'done' && !M.missing && M.pv.top >= -1 && M.pv.bottom <= M.vh + 1 && Math.abs(M.pv.w / M.pv.h - 16 / 9) < 0.03,
-       JSON.stringify([R, M.pv]));
-    if (width < 1240) {
-      ok(`${tag}: the preview takes at most 40% of the screen’s height`, M.pv.h <= M.vh * 0.4 + 1, JSON.stringify(M.pv));
-      ok(`${tag}: the date and time fields are on the same screen as the picture they change`,
-         M.date.bottom <= M.vh && M.time.bottom <= M.vh, JSON.stringify([M.pv, M.date, M.time]));
+      ok(`${tag}: it grows taller until its stamp can be read — 300 px wide, or the whole editor where that is less`,
+         M.pv.w >= Math.min(300, M.colW) - 1 && M.pv.h > M.vh * 0.4, JSON.stringify([M.pv, M.colW]));
+      ok(`${tag}: so its stamp is readable — glyphs at least 7 px tall, where the old 40% box gave 3–5`,
+         S1.glyph >= 7, JSON.stringify([S1.glyph, S1.label]));
+      ok(`${tag}: editing stays practical — with the date and time fields in view, the stamp they change is in view too`,
+         M.together && M.together.stampTop >= 0 && M.together.stampBottom <= M.vh + 1
+           && M.together.dateTop >= 0 && M.together.timeBottom <= M.vh + 1, JSON.stringify(M.together));
     } else {
-      /* THE DESK LAYOUT IS NOT CHANGED (the brief): the editor column is the
-         width it was, 292 px of content at 1280 and 352 above it, and the
-         picture fills the whole of it. */
-      ok(`${tag}: the preview fills the editor’s column — the largest picture the unchanged layout holds`,
-         M.pv.w >= M.colW - 2 && M.pv.w >= 280, JSON.stringify([M.pv, M.colW]));
+      ok(`${tag}: the preview is a decoded frame, in view, at the picture’s 16:9 shape`,
+         R.pvf === 'done' && !M.missing && M.pv.top >= -1 && M.pv.bottom <= M.vh + 1 && Math.abs(M.pv.w / M.pv.h - 16 / 9) < 0.03,
+         JSON.stringify([R, M.pv]));
+      if (phone) {
+        ok(`${tag}: the preview takes at most 40% of the screen’s height`, M.pv.h <= M.vh * 0.4 + 1, JSON.stringify(M.pv));
+        ok(`${tag}: the date and time fields are on the same screen as the picture they change`,
+           M.date.bottom <= M.vh && M.time.bottom <= M.vh, JSON.stringify([M.pv, M.date, M.time]));
+      } else {
+        /* THE DESK LAYOUT IS NOT CHANGED (the brief): the editor column is the
+           width it was, 292 px of content at 1280 and 352 above it, and the
+           picture fills the whole of it. */
+        ok(`${tag}: the preview fills the editor’s column — the largest picture the unchanged layout holds`,
+           M.pv.w >= M.colW - 2 && M.pv.w >= 280, JSON.stringify([M.pv, M.colW]));
+      }
+      ok(`${tag}: the stamp over it is legible — its glyphs at least 6 px tall`, S1.glyph >= 6 && S1.label === first[7],
+         JSON.stringify([S1.glyph, S1.label]));
     }
-    ok(`${tag}: the stamp over it is legible — its glyphs at least 6 px tall`, M.glyph >= 6 && M.label === '10/01/2026 06:59:02 AM EDT',
-       JSON.stringify([M.glyph, M.label]));
+    ok(`${tag}: the stamp is the copy’s, in proportion — where and how large the burn puts it on the ${S1.shown && S1.shown.w} x ${S1.shown && S1.shown.h} copy, never enlarged`,
+       S1.label === first[7] && near(S1.prev, S1.copy), JSON.stringify([S1.label, S1.prev, S1.copy]));
+    if (phone) {
+      ok(`${tag}: “${LONG[1][7]}” — the summer zone and the other half of the day — sits inside the picture the same way`,
+         S2 && S2.label === LONG[1][7] && inBox(S2.prev) && near(S2.prev, S2.copy) && inBox(S1.prev),
+         JSON.stringify(S2 && [S2.label, S2.prev, S2.copy]));
+    }
     ok(`${tag}: Save and Generate are reachable and 44 px tall`, M.save.ok && M.go.ok && M.save.h >= 44 && M.go.h >= 44,
        JSON.stringify([M.save, M.go]));
     ok(`${tag}: nothing scrolls sideways`, M.overflow <= 1, String(M.overflow));
