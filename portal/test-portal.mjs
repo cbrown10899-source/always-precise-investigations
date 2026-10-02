@@ -12674,7 +12674,7 @@ const TS_LIB = String.raw`
     }
     return new Uint8Array(out);
   };
-  const makeSps = ({profile = 66, level = 30, wMbs, hUnits, frameMbsOnly = 1, cropB = 0}) => {
+  const makeSps = ({profile = 66, level = 30, wMbs, hUnits, frameMbsOnly = 1, cropB = 0, sar = null, timing = null}) => {
     const w = bitWriter();
     w.u(profile, 8); w.u(0, 8); w.u(level, 8);
     w.ue(0);                                     // seq_parameter_set_id
@@ -12687,7 +12687,25 @@ const TS_LIB = String.raw`
     w.u(1, 1);
     w.u(cropB ? 1 : 0, 1);
     if(cropB){ w.ue(0); w.ue(0); w.ue(0); w.ue(cropB); }
-    w.u(0, 1);
+    /* THE VUI, written from H.264 Annex E: aspect_ratio_info (an idc from
+       Table E-1, or 255 and an explicit width:height), then nothing optional
+       until timing_info, then none of the HRD. A long-recording AVCHD mode
+       writes idc 14 — pixels 4:3 wide on a 1440 x 1080 picture. */
+    if(sar || timing){
+      w.u(1, 1);                                 // vui_parameters_present_flag
+      w.u(sar ? 1 : 0, 1);
+      if(sar){
+        if(Array.isArray(sar)){ w.u(255, 8); w.u(sar[0], 16); w.u(sar[1], 16); }
+        else w.u(sar, 8);
+      }
+      w.u(0, 1); w.u(0, 1); w.u(0, 1);           // overscan, video_signal_type, chroma_loc
+      w.u(timing ? 1 : 0, 1);
+      if(timing){
+        const u32b = v => { for(let i = 31; i >= 0; i--) w.u(Math.floor(v / 2 ** i) % 2, 1); };
+        u32b(timing[0]); u32b(timing[1]); w.u(1, 1);
+      }
+      w.u(0, 1); w.u(0, 1); w.u(0, 1); w.u(0, 1); // nal_hrd, vcl_hrd, pic_struct, bitstream_restriction
+    } else w.u(0, 1);
     const esc = escapeRbsp(w.bytes());
     const out = new Uint8Array(1 + esc.length);
     out[0] = 0x67; out.set(esc, 1);
@@ -12807,17 +12825,17 @@ const TS_LIB = String.raw`
   const makeTs = ({stride = 188, frames = 30, fps = 30, width = 1920, height = 1080,
       interlaced = false, videoType = 0x1b, audio = true, basePts = 900000,
       picturesPerPes = 1, bframes = false, sliceLen = 0, fields = null,
-      audioType = 0x0f, leadIn = 0, badNalAt = -1, sei = null} = {}) => {
+      audioType = 0x0f, leadIn = 0, badNalAt = -1, sei = null, sar = null, timing = null} = {}) => {
     /* FIELD-CODED 1080i, the AVCHD default: every frame is two field pictures
        with real slice headers, carried as a PAIR in one PES under one PTS, or
        SPLIT one field per PES half a frame apart. */
     if(fields) return makeFieldTs({stride, frames, fps, width, height, audio, audioType,
-                                   basePts, fields, sliceLen, badNalAt});
+                                   basePts, fields, sliceLen, badNalAt, sar, timing});
     const wMbs = Math.ceil(width / 16);
     const hUnits = interlaced ? Math.ceil(height / 32) : Math.ceil(height / 16);
     const coded = interlaced ? hUnits * 32 : hUnits * 16;
     const cropB = (coded - height) / (interlaced ? 4 : 2);
-    const sps = makeSps({wMbs, hUnits, frameMbsOnly: interlaced ? 0 : 1, cropB});
+    const sps = makeSps({wMbs, hUnits, frameMbsOnly: interlaced ? 0 : 1, cropB, sar, timing});
     const pps = new Uint8Array([0x68, 0xce, 0x38, 0x80]);
     const dur = Math.round(90000 / fps);
     const streams = [{type: videoType, pid: 0x1011}];
@@ -12845,11 +12863,11 @@ const TS_LIB = String.raw`
     return tsPackets(units, stride);
   };
   const makeFieldTs = ({stride, frames, fps, width, height, audio, audioType, basePts, fields,
-                        sliceLen, badNalAt}) => {
+                        sliceLen, badNalAt, sar = null, timing = null}) => {
     const wMbs = Math.ceil(width / 16);
     const hUnits = Math.ceil(height / 32);
     const cropB = (hUnits * 32 - height) / 4;
-    const sps = makeSps({profile: 100, level: 40, wMbs, hUnits, frameMbsOnly: 0, cropB});
+    const sps = makeSps({profile: 100, level: 40, wMbs, hUnits, frameMbsOnly: 0, cropB, sar, timing});
     const pps = new Uint8Array([0x68, 0xce, 0x38, 0x80]);
     const dur = Math.round(90000 / fps);
     const streams = [{type: 0x1b, pid: 0x1011}];
@@ -12867,7 +12885,7 @@ const TS_LIB = String.raw`
         units.push({pid: 0x1011, data: pesOf(key ? annexb(sps, pps, top, bot) : annexb(top, bot), pts, null), pusi: true});
       } else {
         units.push({pid: 0x1011, data: pesOf(key ? annexb(sps, pps, top) : annexb(top), pts, null), pusi: true});
-        units.push({pid: 0x1011, data: pesOf(annexb(bot), pts + dur / 2, null), pusi: true});
+        units.push({pid: 0x1011, data: pesOf(annexb(bot), pts + Math.round(dur / 2), null), pusi: true});
       }
       if(audio) units.push({pid: 0x1100, data: pesOf(new Uint8Array(64).fill(0x0b), pts, null)
         .map((b, k) => k === 3 ? 0xc0 : b), pusi: true});
@@ -12923,9 +12941,20 @@ const TS_LIB = String.raw`
    could leave the page. */
 const VST_STUBS = String.raw`
 const stubCodecs = (plan = {}) => {
-  const log = {cfgs: [], decoded: {hw: 0, soft: 0}, enc: 0, encTs: [], outTs: [], closes: 0, probes: [], stampLit: 0, stampChecked: 0};
+  const log = {cfgs: [], decoded: {hw: 0, soft: 0}, enc: 0, encTs: [], outTs: [], closes: 0, probes: [], stampLit: 0, stampChecked: 0,
+               encCfgs: [], encProbes: [], decoders: 0};
   const tile = document.createElement('canvas'); tile.width = 64; tile.height = 36;
   const tctx = tile.getContext('2d'); tctx.fillStyle = '#202830'; tctx.fillRect(0, 0, 64, 36);
+  /* A CAMCORDER'S OPENING: with plan.dark = k, each decoder's first k pictures
+     come out black — the shutter opening — and the rest carry a scene with
+     light and edges in it. */
+  const black = document.createElement('canvas'); black.width = 64; black.height = 36;
+  const bctx = black.getContext('2d'); bctx.fillStyle = '#000000'; bctx.fillRect(0, 0, 64, 36);
+  const scene = document.createElement('canvas'); scene.width = 64; scene.height = 36;
+  const sctx = scene.getContext('2d');
+  { const g = sctx.createLinearGradient(0, 0, 64, 36); g.addColorStop(0, '#5a6b4a'); g.addColorStop(1, '#a0907a');
+    sctx.fillStyle = g; sctx.fillRect(0, 0, 64, 36);
+    sctx.fillStyle = '#2a2420'; sctx.fillRect(10, 14, 18, 14); sctx.fillStyle = '#c8b090'; sctx.fillRect(40, 6, 12, 10); }
   class StubDecoder {
     static async isConfigSupported(cfg){
       log.probes.push(Object.assign({}, cfg));
@@ -12933,7 +12962,7 @@ const stubCodecs = (plan = {}) => {
       return {supported: soft ? plan.softSupported !== false : plan.hwSupported !== false, config: cfg};
     }
     constructor(init){ this.out = init.output; this.err = init.error; this.state = 'unconfigured';
-      this.decodeQueueSize = 0; this.n = 0; this.q = Promise.resolve(); }
+      this.decodeQueueSize = 0; this.n = 0; this.shown = 0; this.q = Promise.resolve(); log.decoders++; }
     configure(cfg){
       if(this.state === 'closed') throw new DOMException('Cannot call configure on a closed codec', 'InvalidStateError');
       this.cfg = cfg; this.soft = cfg.hardwareAcceleration === 'prefer-software';
@@ -12970,11 +12999,15 @@ const stubCodecs = (plan = {}) => {
       }
       const ts = chunk.timestamp, dur = chunk.duration, n = this.n;
       this.decodeQueueSize++;
-      this.q = this.q.then(() => new Promise(r => setTimeout(r, 0))).then(() => {
+      /* plan.hold, while it is set, keeps every picture inside the decoder —
+         a run that stays in progress for as long as a test needs to look. */
+      const hold = plan.hold;
+      this.q = (hold ? this.q.then(() => hold) : this.q).then(() => new Promise(r => setTimeout(r, 0))).then(() => {
         this.decodeQueueSize--;
         if(this.state !== 'configured') return;
         log.outTs.push(ts);
-        this.out(new VideoFrame(tile, {timestamp: ts, duration: dur || undefined}));
+        const pic = plan.dark != null ? (this.shown++ < plan.dark ? black : scene) : tile;
+        this.out(new VideoFrame(pic, {timestamp: ts, duration: dur || undefined}));
         const extra = this.soft ? plan.softInventAt : plan.hwInventAt;
         if(extra && n === extra) this.out(new VideoFrame(tile, {timestamp: ts + 7, duration: dur || undefined}));
       });
@@ -12989,10 +13022,16 @@ const stubCodecs = (plan = {}) => {
   const AVCC = new Uint8Array([1, 0x64, 0, 0x28, 0xff, 0xe1, 0, 4, 0x67, 0x64, 0, 0x28, 1, 0, 4, 0x68, 0xee, 0x3c, 0x80]);
   const probe = document.createElement('canvas');
   class StubEncoder {
-    static async isConfigSupported(cfg){ return {supported: plan.encSupported !== false, config: cfg}; }
+    /* plan.encAccept, when given, decides what this "device" takes — a level
+       check, or an encoder that knows only V2's configurations. */
+    static async isConfigSupported(cfg){
+      log.encProbes.push(Object.assign({}, cfg));
+      const ok = plan.encSupported !== false && (!plan.encAccept || plan.encAccept(cfg));
+      return {supported: ok, config: cfg};
+    }
     constructor(init){ this.out = init.output; this.err = init.error; this.state = 'unconfigured';
       this.n = 0; this.encodeQueueSize = 0; this.q = Promise.resolve(); }
-    configure(cfg){ this.cfg = cfg; this.state = 'configured'; }
+    configure(cfg){ this.cfg = cfg; this.state = 'configured'; log.encCfgs.push(Object.assign({}, cfg, {avc: cfg.avc && Object.assign({}, cfg.avc)})); }
     encode(frame, opts){
       if(this.state !== 'configured') throw new DOMException("Cannot call 'encode' on a closed codec", 'InvalidStateError');
       const k = this.n++;
@@ -13104,7 +13143,8 @@ const vstScenario = async (o) => {
      text it was given and which pass was running. */
   const draws = [];
   const realDraw = window.vstDraw;
-  window.vstDraw = function(cx, w, h, text){ draws.push({text, phase: VST ? VST.phase : ''}); return realDraw.apply(this, arguments); };
+  window.vstDraw = function(cx, w, h, text){ draws.push({text, phase: VST ? VST.phase : '',
+    cw: cx && cx.canvas ? cx.canvas.width : null, ch: cx && cx.canvas ? cx.canvas.height : null}); return realDraw.apply(this, arguments); };
   let restoreMux = null;
   /* A WRITER THAT LOSES A FRAME WITHOUT A WORD — it takes the chunk, says
      nothing, and keeps nothing. Only reading the finished file back finds it. */
@@ -13161,6 +13201,14 @@ const vstScenario = async (o) => {
              expect: [0, 1, 2].map(k => vstLabel(startMs + k * 1000, 'America/New_York'))},
     startMs, remembered: VST_PRIMARY_FAILED.has(vstFileKey(f)),
     unchanged: before === await digest(await readAll()),
+    /* WHAT THE ENCODER WAS ASKED FOR, and what the copy says about itself. */
+    encCfgs: S.log.encCfgs, encProbes: S.log.encProbes.length,
+    quality: out && v.out.quality ? JSON.parse(JSON.stringify(v.out.quality)) : null,
+    parsedVideo: parsed.video ? {w: parsed.video.width, h: parsed.video.height, sar: parsed.video.sar,
+      frameRate: parsed.video.frameRate, fieldUnits: parsed.video.fieldUnits, srcBitrate: parsed.video.srcBitrate,
+      seconds: parsed.video.seconds} : null,
+    burnSizes: Array.from(new Set(mine.map(d => d.cw + 'x' + d.ch))),
+    sha: out && v.out.sha256, clean: !!(out && v.out.clean && v.out.clean.ok),
   };
   W.restore(); S.restore();
   if(o.close !== false) vstClose();
@@ -15358,22 +15406,28 @@ section('Timestamp dashboard: the editor previews the original on this device, w
       qClick('vqEdit', v.qid);
       await qWait(() => !!document.getElementById('vq_pv'), 5000);
       const pv = document.getElementById('vq_pv');
+      /* The stamp is a canvas the burn draws on; data-label is what it drew. */
       const first = { src: pv && pv.src, kind: document.getElementById('vq_pvhost').dataset.kind,
-                      stamp: document.getElementById('vq_stamp').textContent };
+                      stamp: document.getElementById('vq_stamp').dataset.label };
       document.getElementById('vst_hr').value = '07';
       document.getElementById('vst_hr').dispatchEvent(new Event('input', { bubbles: true }));
-      const live = { stamp: document.getElementById('vq_stamp').textContent, burn: document.getElementById('vst_res').textContent };
+      const live = { stamp: document.getElementById('vq_stamp').dataset.label, burn: document.getElementById('vst_res').textContent };
       paintVStamp();
       const same = document.getElementById('vq_pv') === pv;
       qClick('vqUndoTime');
+      /* The stub decoder stays in place while the MTS is previewed: its frame
+         is decoded by the same local decoder a copy uses. */
       const S2 = stubCodecs({});
       vqAdd([new File([makeTs({ frames: 12 })], '00061.MTS', { type: '', lastModified: 1790000000502 })], { caseNo: '' });
       await qWait(() => VQ.items.every(x => x.analysis === 'done'));
-      S2.restore();
       qClick('vqEdit', VQ.items[1].qid);
+      await qWait(() => VQ.items[1].pvf && VQ.items[1].pvf.state === 'done', 10000);
+      await new Promise(r => setTimeout(r, 50));
+      const img = document.querySelector('#vq_pvhost img');
       const ts = { player: !!document.getElementById('vq_pv'), kind: document.getElementById('vq_pvhost').dataset.kind,
-                   img: !!document.querySelector('#vq_pvhost img'),
+                   img: !!img, decoded: !!(img && VQ.items[1].pvf && img.getAttribute('src') === VQ.items[1].pvf.url),
                    note: (document.querySelector('.vqd-pvnote') || {}).textContent || '' };
+      S2.restore();
       return { first, live, same, ts, fetches: W.fetches + W.xhr + W.beacons };
     } finally { W.restore(); restore(); vstClose(); }
   `);
@@ -15384,10 +15438,782 @@ section('Timestamp dashboard: the editor previews the original on this device, w
   ok('typing a new time moves the preview’s stamp and the burned-in line together, with no repaint',
      /^\d{2}\/\d{2}\/\d{4} 07:/.test(R.live.stamp) && R.live.stamp === R.live.burn, JSON.stringify(R.live));
   ok('a repaint keeps the same player', R.same === true);
-  ok('a transport stream is never handed to the player; it shows its first frame and says why',
-     !R.ts.player && R.ts.kind === 'img' && R.ts.img && /not played inside the page/.test(R.ts.note), JSON.stringify(R.ts));
+  ok('a transport stream is never handed to the player; it shows a frame decoded from it, and says why',
+     !R.ts.player && R.ts.kind === 'img' && R.ts.img && R.ts.decoded && /not played inside the page/.test(R.ts.note)
+       && /decoded/.test(R.ts.note), JSON.stringify(R.ts));
   ok('and nothing was fetched to preview anything', R.fetches === 0, String(R.fetches));
   await page.close();
+}
+
+/* ====================================================== OUTPUT QUALITY
+
+   Owner, 2026-10-02: "Real timestamped copies are visibly softer/lower
+   quality than the originals." Measured on master before anything changed:
+   the encoder was asked for 0.08 bits per pixel per frame (4.98 Mbps for
+   1080p at 30 frames) of footage recorded at 14-24 Mbps, at level 4.0 for
+   every picture (not a valid level for 1080p60 or 4K), with a 1440x1080
+   stream's 4:3-wide pixels ignored and the frame rate rounded to 30. These
+   sections hold the fix to the property, not to the numbers alone: the copy is
+   the source's own size and shape, at the source's own rate, encoded at a
+   bitrate taken from the source. */
+section('Timestamp Video quality: the copy keeps the source’s size, frame rate and shape, and its bitrate comes from the source');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  /* Representative transport streams through the whole pipeline — stub codecs
+     (this Chromium has no H.264), everything else real. `sliceLen` sets how
+     many bytes the camera spent on each picture, so each fixture's own video
+     bitrate is a real, measurable property of its file. */
+  const R = await vstRun(page, `
+    const NTSC = 30000 / 1001;
+    const runs = {};
+    const go = async (k, mk, plan) => {
+      try { runs[k] = await vstScenario({mk, plan: plan || {}}); }
+      catch (e) { runs[k] = {crash: String(e && e.message || e)}; }
+    };
+    await go('fh', {stride: 192, frames: 60, width: 1920, height: 1080, fps: NTSC, sliceLen: 70000, timing: [1001, 60000]});
+    await go('lp', {stride: 192, frames: 60, fields: 'pair', width: 1440, height: 1080, fps: NTSC, sar: 14,
+                    sliceLen: 20000, audioType: 0x81});
+    await go('novui', {stride: 192, frames: 30, fields: 'pair', width: 1440, height: 1080, fps: 30});
+    await go('split', {stride: 192, frames: 30, fields: 'split', width: 1920, height: 1080, fps: NTSC, sliceLen: 30000},
+             {pairFields: true});
+    await go('p60', {stride: 192, frames: 60, width: 1920, height: 1080, fps: 60, sliceLen: 40000});
+    await go('hd720', {stride: 188, frames: 30, width: 1280, height: 720, fps: 30, sliceLen: 12000});
+    return runs;
+  `);
+  const near = (a, b, tol) => typeof a === 'number' && typeof b === 'number' && Math.abs(a - b) <= tol;
+  const cfg = r => (r && r.encCfgs && r.encCfgs[0]) || {};
+  const say = r => JSON.stringify(r && {crash: r.crash, step: r.step, fault: r.fault, cfg: r.encCfgs, back: r.back,
+    q: r.quality, pv: r.parsedVideo, burn: r.burnSizes}).slice(0, 900);
+  const NTSC = 30000 / 1001;
+
+  /* 1920 x 1080 at 29.97, about 17 Mbps of picture: the AVCHD "FH" class. */
+  {
+    const r = R.fh, c = cfg(r), src = r.parsedVideo && r.parsedVideo.srcBitrate;
+    ok('1080p MTS: the copy is made, whole and clean, and the original is untouched',
+       r.step === 'done' && r.out && r.out.check && r.out.check.frames === 60 && r.clean && r.unchanged === true, say(r));
+    ok('1080p MTS: the source’s own video bitrate is measured from its packets (about 16.8 Mbps)',
+       src > 15.5e6 && src < 18.5e6, String(src));
+    ok('1080p MTS: the encoder is configured at the source’s size — 1920 x 1080',
+       c.width === 1920 && c.height === 1080, say(r));
+    ok('1080p MTS: at the source’s exact rate, 29.97 — not rounded to 30',
+       near(c.framerate, NTSC, 0.001), String(c.framerate));
+    ok('1080p MTS: H.264 High at level 4.0, the lowest level that holds 1080 lines at 29.97 and this bitrate',
+       c.codec === 'avc1.640028', String(c.codec));
+    ok('1080p MTS: the bitrate is the source’s own (within 5%), more than three times what V2 asked for',
+       near(c.bitrate, src, src * 0.05) && c.bitrate > 3 * 4976640, `${c.bitrate} vs source ${src}`);
+    ok('1080p MTS: variable bitrate, quality latency — written down, not left to a default',
+       c.bitrateMode === 'variable' && c.latencyMode === 'quality', JSON.stringify(c));
+    ok('1080p MTS: the finished MP4 reads back at 1920 x 1080, 60 frames, 2.00 s',
+       r.back && r.back.w === 1920 && r.back.h === 1080 && r.back.frames === 60 && near(r.back.seconds, 60 / NTSC, 0.05),
+       JSON.stringify(r.back));
+    ok('1080p MTS: every frame’s stamp is drawn into a 1920 x 1080 picture — the copy’s own, never a preview’s',
+       JSON.stringify(r.burnSizes) === '["1920x1080"]', JSON.stringify(r.burnSizes));
+    ok('1080p MTS: the copy says what it is — 1920 x 1080 at 29.97, the bitrate it was given and why',
+       r.quality && r.quality.out.w === 1920 && r.quality.out.h === 1080 && near(r.quality.src.fps, NTSC, 0.001)
+         && r.quality.plan && r.quality.plan.by === 'source' && r.quality.out.bitrate === c.bitrate, say(r));
+  }
+  /* 1440 x 1080 interlaced, pixels 4:3 wide: a long-recording AVCHD mode. */
+  {
+    const r = R.lp, c = cfg(r);
+    ok('anamorphic MTS: the stream’s VUI is read — its pixels are 4:3 wide',
+       r.parsedVideo && r.parsedVideo.sar && r.parsedVideo.sar.w === 4 && r.parsedVideo.sar.h === 3, say(r));
+    ok('anamorphic MTS: the copy is drawn at the shape a player shows the original — 1920 x 1080, square pixels',
+       c.width === 1920 && c.height === 1080 && r.back && r.back.w === 1920 && r.back.h === 1080, say(r));
+    ok('anamorphic MTS: and the stamp is burned into that 1920 x 1080 picture',
+       JSON.stringify(r.burnSizes) === '["1920x1080"]', JSON.stringify(r.burnSizes));
+    ok('anamorphic MTS: every field pair came through, at 29.97',
+       r.out && r.out.check && r.out.check.frames === 60 && near(c.framerate, NTSC, 0.001), say(r));
+    ok('anamorphic MTS: the copy says it was the 1440 x 1080 picture with 4:3 pixels',
+       r.quality && r.quality.out.normalized === true && r.quality.src.w === 1440 && r.quality.src.interlaced === true,
+       say(r));
+  }
+  {
+    const r = R.novui;
+    ok('a 1440 x 1080 stream that says nothing about its pixels keeps 1440 x 1080 — no shape is invented',
+       r.step === 'done' && r.back && r.back.w === 1440 && r.back.h === 1080
+         && (!r.parsedVideo || !r.parsedVideo.sar) && cfg(r).width === 1440, say(r));
+  }
+  /* 1080i carried one field per packet: the decode clock ticks per field. */
+  {
+    const r = R.split, c = cfg(r);
+    ok('one field per packet: the copy is one frame per field pair, at 29.97 — not 59.94',
+       r.parsedVideo && r.parsedVideo.fieldUnits === true && near(c.framerate, NTSC, 0.03)
+         && r.out && r.out.check && r.out.check.frames === 30, say(r));
+  }
+  {
+    const r = R.p60, c = cfg(r);
+    ok('1080p60: level 4.2, the level that holds 1080 lines at 60 frames (V2 asked for 4.0, which does not)',
+       c.codec === 'avc1.64002a' && near(c.framerate, 60, 0.001) && c.width === 1920, say(r));
+    ok('1080p60: read back at 1920 x 1080, every frame, 1.00 s',
+       r.back && r.back.w === 1920 && r.back.frames === 60 && near(r.back.seconds, 1, 0.05), JSON.stringify(r.back));
+  }
+  {
+    const r = R.hd720, c = cfg(r);
+    ok('a lower-resolution source stays its own size — 1280 x 720, never scaled up',
+       c.width === 1280 && c.height === 720 && r.back && r.back.w === 1280 && r.back.h === 720
+         && JSON.stringify(r.burnSizes) === '["1280x720"]', say(r));
+    ok('and is given the quality floor when the source spent less (0.15 bits per pixel, 4.1 Mbps)',
+       near(c.bitrate, Math.round(1280 * 720 * 30 * 0.15), 1) && r.quality && r.quality.plan.by === 'floor', say(r));
+  }
+  /* AN MP4 OR MOV STATES ITS PIXEL SHAPE TWO WAYS — a `pasp` box beside the
+     codec record, or the SPS inside its avcC — and its frame rate and its
+     video bitrate are in its own tables. Minimal files, parsed for real. */
+  const MV = await vstRun(page, `
+    const qEnc = new TextEncoder();
+    const qCat = (...a) => { const n = a.reduce((s, x) => s + x.length, 0); const o = new Uint8Array(n); let k = 0;
+      for (const x of a) { o.set(x, k); k += x.length; } return o; };
+    const qBox = (type, ...parts) => { const p = qCat(...parts); const b = new Uint8Array(8 + p.length);
+      new DataView(b.buffer).setUint32(0, 8 + p.length); b.set(qEnc.encode(type), 4); b.set(p, 8); return b; };
+    const qU32 = n => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, n >>> 0); return b; };
+    const qFull = () => new Uint8Array(4);
+    const DELTA = 1001, TS = 30000;
+    const mov = ({pasp, sps, w = 1440, h = 1080, N = 30, SZ = 5000}) => {
+      const s = sps || new Uint8Array([0x67, 0x64, 0, 0x28]);
+      const avcC = qCat(new Uint8Array([1, 0x64, 0, 0x28, 0xff, 0xe1, s.length >> 8, s.length & 255]), s,
+                       new Uint8Array([1, 0, 4, 0x68, 0xee, 0x3c, 0x80]));
+      const body = new Uint8Array(78);
+      new DataView(body.buffer).setUint16(24, w); new DataView(body.buffer).setUint16(26, h);
+      const entry = qBox('avc1', body, qBox('avcC', avcC), ...(pasp ? [qBox('pasp', qU32(pasp[0]), qU32(pasp[1]))] : []));
+      const ftyp = qBox('ftyp', qEnc.encode('qt  '), qU32(512));
+      const build = mdatAt => {
+        const stbl = qBox('stbl', qBox('stsd', qFull(), qU32(1), entry),
+          qBox('stts', qFull(), qU32(1), qU32(N), qU32(DELTA)),
+          qBox('stsz', qFull(), qU32(SZ), qU32(N)),
+          qBox('stsc', qFull(), qU32(1), qU32(1), qU32(N), qU32(1)),
+          qBox('stco', qFull(), qU32(1), qU32(mdatAt)),
+          qBox('stss', qFull(), qU32(1), qU32(1)));
+        const mdhd = qBox('mdhd', qFull(), new Uint8Array(8), qU32(TS), qU32(N * DELTA), new Uint8Array(4));
+        const hdlr = qBox('hdlr', qFull(), new Uint8Array(4), qEnc.encode('vide'), new Uint8Array(12));
+        const ident = qCat(qU32(65536), qU32(0), qU32(0), qU32(0), qU32(65536), qU32(0), qU32(0), qU32(0), qU32(0x40000000));
+        const tkhd = qBox('tkhd', qFull(), new Uint8Array(20), new Uint8Array(16), ident, qU32(0), qU32(0));
+        return qBox('moov', qBox('trak', tkhd, qBox('mdia', mdhd, hdlr, qBox('minf', stbl))));
+      };
+      const moov = build(ftyp.length + build(0).length + 8);
+      return new File([ftyp, moov, qBox('mdat', new Uint8Array(N * SZ))], 'X.MOV',
+                      {type: 'video/quicktime', lastModified: 1790000000000});
+    };
+    const read = async f => { const p = await vstParse(f); const V = p && p.video;
+      return V ? {sar: V.sar || null, out: vstOutSize(V), fps: V.frameRate, br: V.srcBitrate, w: V.width, h: V.height}
+               : {err: String(p && p.error)}; };
+    const res = {
+      pasp: await read(mov({pasp: [4, 3]})),
+      sps: await read(mov({sps: makeSps({profile: 100, level: 40, wMbs: 90, hUnits: 68, cropB: 4, sar: 14})})),
+      square: await read(mov({pasp: [1, 1]})),
+      none: await read(mov({})),
+    };
+    /* A 1920 x 1080 MP4 AT 29.97, about 13.9 Mbps of picture, through the
+       H.264 path end to end — stub codecs (this Chromium has no H.264), the
+       canvas, the burn, the muxer, the clean check and the read-back real. */
+    {
+      const f = mov({w: 1920, h: 1080, N: 60, SZ: 58000});
+      const parsed = await vstParse(f);
+      const S = stubCodecs({sampleStamp: 10});
+      const draws = []; const realDraw = window.vstDraw;
+      window.vstDraw = function (cx, w, h, t) { draws.push(cx.canvas.width + 'x' + cx.canvas.height); return realDraw.apply(this, arguments); };
+      try {
+        const r = await vstTranscode(f, parsed, 1790000000000, 'America/New_York', () => {});
+        const back = await vstParse(new File([r.blob], 'c.mp4', {type: 'video/mp4'}));
+        res.mp4 = { cfg: S.log.encCfgs[0], q: r.quality, frames: r.frames, check: r.check, src: parsed.video.srcBitrate,
+          back: back && back.video && {w: back.video.width, h: back.video.height, n: back.video.samples && back.video.samples.length},
+          draws: Array.from(new Set(draws)), stamped: [S.log.stampLit, S.log.stampChecked] };
+      } catch (e) { res.mp4 = {crash: String(e && e.message || e)}; }
+      finally { window.vstDraw = realDraw; S.restore(); }
+    }
+    return res;
+  `);
+  {
+    const sar43 = x => !!(x && x.sar && x.sar.w === 4 && x.sar.h === 3);
+    ok('an MP4 or MOV’s `pasp` box is read — pixels 4:3 wide make a 1440 x 1080 picture a 1920 x 1080 copy',
+       sar43(MV.pasp) && MV.pasp.out.w === 1920 && MV.pasp.out.h === 1080 && MV.pasp.out.normalized === true,
+       JSON.stringify(MV.pasp));
+    ok('with no `pasp`, the SPS inside its avcC says it, and is read the same way',
+       sar43(MV.sps) && MV.sps.out.w === 1920 && MV.sps.out.h === 1080, JSON.stringify(MV.sps));
+    ok('square pixels, stated or not stated at all, keep the picture exactly its own size',
+       MV.square && MV.square.out.w === 1440 && MV.square.out.h === 1080 && !MV.square.out.normalized
+         && MV.none && !MV.none.sar && MV.none.out.w === 1440 && MV.none.out.h === 1080,
+       JSON.stringify([MV.square, MV.none]));
+    ok('its frame rate is exact, from its own table — 30 frames in 1.001 s is 29.97, not 30',
+       MV.pasp && near(MV.pasp.fps, NTSC, 0.0005), String(MV.pasp && MV.pasp.fps));
+    ok('and its video bitrate is every frame’s size over its running time (1.20 Mbps here)',
+       MV.pasp && near(MV.pasp.br, Math.round(30 * 5000 * 8 / 1.001), 2), String(MV.pasp && MV.pasp.br));
+    const m = MV.mp4 || {}, mc = m.cfg || {};
+    ok('1080p MP4: the copy is configured at 1920 x 1080, at the exact 29.97, as H.264 High 4.0',
+       mc.width === 1920 && mc.height === 1080 && near(mc.framerate, NTSC, 0.001) && mc.codec === 'avc1.640028',
+       JSON.stringify(m).slice(0, 600));
+    ok('1080p MP4: at the source’s own 13.9 Mbps — not V2’s 4.98',
+       near(mc.bitrate, m.src, m.src * 0.01) && near(m.src, Math.round(60 * 58000 * 8 / (60 * 1001 / 30000)), 2)
+         && m.q && m.q.plan && m.q.plan.by === 'source', JSON.stringify([mc.bitrate, m.src, m.q && m.q.plan]));
+    ok('1080p MP4: every frame decoded, stamped and written; the copy reads back at 1920 x 1080 with 60 frames',
+       m.frames === 60 && m.back && m.back.w === 1920 && m.back.h === 1080 && m.back.n === 60, JSON.stringify([m.frames, m.back, m.crash]));
+    ok('1080p MP4: the stamp is burned into the 1920 x 1080 picture, in the corner it belongs in',
+       JSON.stringify(m.draws) === '["1920x1080"]' && m.stamped && m.stamped[1] > 0 && m.stamped[0] === m.stamped[1],
+       JSON.stringify([m.draws, m.stamped]));
+  }
+
+  /* THE PLAN AND THE CONFIGURATION, against devices of different kinds — the
+     real `vstEncoderConfig`, with `isConfigSupported` answering as each kind of
+     device answers. */
+  const P = await page.evaluate(async () => {
+    const LV = {21: [19800, 792, 4000], 22: [20250, 1620, 4000], 30: [40500, 1620, 10000], 31: [108000, 3600, 14000],
+      32: [216000, 5120, 20000], 40: [245760, 8192, 20000], 41: [245760, 8192, 50000], 42: [522240, 8704, 50000],
+      50: [589824, 22080, 135000], 51: [983040, 36864, 240000], 52: [2073600, 36864, 240000]};
+    /* A device that checks H.264 levels the way Chromium's encoders do. */
+    const strict = c => { const m = /^avc1\.(..)(..)(..)$/i.exec(c.codec); if (!m) return false;
+      const L = LV[parseInt(m[3], 16)]; if (!L) return false;
+      const mbs = Math.ceil(c.width / 16) * Math.ceil(c.height / 16);
+      return mbs <= L[1] && mbs * (c.framerate || 30) <= L[0]
+        && (c.bitrate || 0) <= L[2] * (parseInt(m[1], 16) === 100 ? 1250 : 1000); };
+    const V2 = ['avc1.640028', 'avc1.64002a', 'avc1.4d0028', 'avc1.42E01E'];
+    const realVE = window.VideoEncoder;
+    const ask = async (accept, w, h, fps, o) => {
+      window.VideoEncoder = class { static async isConfigSupported(c) { return { supported: !!accept(c), config: c }; } };
+      try { const c = await vstEncoderConfig(w, h, fps, o);
+            return c ? Object.assign({}, c, { plan: c.vstPlan }) : null; }
+      finally { window.VideoEncoder = realVE; }
+    };
+    const out = {};
+    out.k4 = await ask(strict, 3840, 2160, 30, { srcBitrate: 45e6, seconds: 30, budget: 768 * 1048576 });
+    out.k4v2 = V2.some(codec => strict({ codec, width: 3840, height: 2160, framerate: 30, bitrate: 19906560 }));
+    out.v2only = await ask(c => V2.includes(c.codec) && !c.bitrateMode, 1920, 1080, 30000 / 1001,
+                           { srcBitrate: 14e6, seconds: 48, v2Fps: 30, budget: 768 * 1048576 });
+    out.capped = await ask(c => c.bitrate <= 20e6, 1920, 1080, 30000 / 1001, { srcBitrate: 24e6, seconds: 60, budget: 768 * 1048576 });
+    out.none = await ask(() => false, 1920, 1080, 30, {});
+    const plan = o => vstEncodePlan(Object.assign({ w: 1920, h: 1080, fps: 30000 / 1001, budget: 768 * 1048576 }, o));
+    out.long = plan({ srcBitrate: 24e6, seconds: 3600 });
+    out.mid = plan({ srcBitrate: 24e6, seconds: 600 });
+    out.phone = plan({ srcBitrate: 14e6, seconds: 300, budget: 256 * 1048576 });
+    out.wild = plan({ srcBitrate: 100e6, seconds: 30 });
+    out.hevc = plan({ srcBitrate: 8e6, seconds: 30, srcCodec: 'hvc1' });
+    out.unknown = plan({ srcBitrate: null, seconds: 30 });
+    out.iphone = plan({ srcBitrate: Math.round(84.7e6 * 8 / 48.12) - 96000, seconds: 48.12 });
+    out.budgets = [VST_BUDGET_DESK, VST_BUDGET_PHONE];
+    /* WHICH BUDGET A DEVICE GETS: an iPhone, an Android phone or anything
+       reporting 4 GB of memory or less gets the small one. */
+    const as = (props, fn) => { const undo = [];
+      for (const [k, v] of Object.entries(props)) { Object.defineProperty(navigator, k, { get: () => v, configurable: true }); undo.push(k); }
+      try { return fn(); } finally { for (const k of undo) delete navigator[k]; } };
+    const WIN = { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/129.0 Safari/537.36',
+                  platform: 'Win32', maxTouchPoints: 0 };
+    out.devices = {
+      desk: as(Object.assign({ deviceMemory: 8 }, WIN), vstCopyBudget),
+      iphone: as({ userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148',
+                   platform: 'iPhone', maxTouchPoints: 5 }, vstCopyBudget),
+      android: as({ userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/129.0 Mobile Safari/537.36',
+                    platform: 'Linux armv8l', deviceMemory: 8, maxTouchPoints: 5 }, vstCopyBudget),
+      small: as(Object.assign({ deviceMemory: 4 }, WIN), vstCopyBudget),
+    };
+    return out;
+  });
+  ok('4K30 on a device that checks levels: High 5.1 is found — V2 found NO configuration it would take',
+     P.k4 && P.k4.codec === 'avc1.640033' && P.k4.width === 3840 && P.k4v2 === false, JSON.stringify(P.k4));
+  ok('a device that knows only V2’s configurations still makes a copy, with V2’s exact configuration',
+     P.v2only && P.v2only.codec === 'avc1.640028' && P.v2only.bitrate === 4976640 && P.v2only.framerate === 30
+       && !P.v2only.bitrateMode && P.v2only.plan.step === 'v2', JSON.stringify(P.v2only));
+  ok('an encoder that refuses the plan’s rate is asked again at V2’s rate before anything older',
+     P.capped && P.capped.bitrate === P.capped.plan.v2 && P.capped.plan.step === 'v2-rate' && P.capped.bitrateMode === 'variable',
+     JSON.stringify(P.capped));
+  ok('and a device that takes nothing gets no configuration — the copy is refused with the reason, as before',
+     P.none === null, JSON.stringify(P.none));
+  ok('the memory budget: an hour of 1080p never gets fewer bits than V2 gave it (4.98 Mbps)',
+     P.long.bitrate === P.long.v2 && P.long.by === 'v2', JSON.stringify(P.long));
+  ok('the memory budget: ten minutes is held so the copy stays within 768 MB, and still above V2',
+     P.mid.by === 'memory' && P.mid.bitrate * 600 / 8 <= 768 * 1048576 && P.mid.bitrate > P.mid.v2, JSON.stringify(P.mid));
+  ok('on a phone the budget is 256 MB', P.phone.by === 'memory' && P.phone.bitrate * 300 / 8 <= 256 * 1048576
+     && JSON.stringify(P.budgets) === JSON.stringify([768 * 1048576, 256 * 1048576]), JSON.stringify(P.phone));
+  ok('which budget: a desk computer gets 768 MB; an iPhone, an Android phone or a 4 GB machine gets 256 MB',
+     P.devices && P.devices.desk === 768 * 1048576 && P.devices.iphone === 256 * 1048576
+       && P.devices.android === 256 * 1048576 && P.devices.small === 256 * 1048576, JSON.stringify(P.devices));
+  ok('a source that spent absurdly much is held to the 0.40 bpp ceiling (24.9 Mbps at 1080p 29.97)',
+     P.wild.by === 'ceiling' && P.wild.bitrate === Math.round(1920 * 1080 * (30000 / 1001) * 0.4), JSON.stringify(P.wild));
+  ok('an HEVC source is matched at what H.264 needs for the same pictures (8 Mbps of HEVC → 12 of H.264)',
+     P.hevc.by === 'source' && P.hevc.bitrate === 12e6, JSON.stringify(P.hevc));
+  ok('a source whose bitrate cannot be measured gets the floor, 0.15 bpp — not a guess',
+     P.unknown.by === 'floor' && P.unknown.bitrate === Math.round(1920 * 1080 * (30000 / 1001) * 0.15), JSON.stringify(P.unknown));
+  ok('the owner’s IMG_0440.mov (84.7 MB over 48.12 s): about 14 Mbps of video is asked for where V2 asked 4.98',
+     P.iphone.by === 'source' && P.iphone.bitrate > 13.5e6 && P.iphone.bitrate < 14.5e6, JSON.stringify(P.iphone));
+  await page.close();
+}
+
+section('Timestamp Video quality on real codecs: an MP4, a portrait iPhone MOV and a small clip keep their size, and the stamp is burned at full size, upright');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  /* THE REAL PIPELINE ON REAL CODECS — VP9 only because this machine has no
+     H.264 encoder. Each clip is decoded, stamped, re-encoded, muxed, checked
+     clean and read back; then the copy is played by the browser, which applies
+     the header's rotation exactly as a phone does, and the stamp is found in
+     the picture a viewer sees. */
+  const R = await page.evaluate(`(async () => { ${VP9_LIB}
+    if (typeof VideoEncoder === 'undefined') return { skipped: 'no WebCodecs' };
+    /* THE IPHONE'S PORTRAIT: landscape pixels and a 90-degree turn in the
+       track header — written the way iOS writes it (a=0 b=1 c=-1 d=0). */
+    const withRotation = (src, deg) => {
+      const u8 = src.slice(); const dv = new DataView(u8.buffer);
+      const tops = topBoxes(u8); const moov = tops.find(b => b.type === 'moov');
+      const trak = kidsOf(u8, moov.start + 8, moov.start + moov.size).find(b => b.type === 'trak');
+      const tkhd = kidsOf(u8, trak.start + 8, trak.start + trak.size).find(b => b.type === 'tkhd');
+      const m = tkhd.start + 8 + (u8[tkhd.start + 8] === 1 ? 52 : 40);
+      const one = 65536;
+      const set = deg === 90 ? [0, one, 0, -one, 0, 0] : [one, 0, 0, 0, one, 0];
+      dv.setInt32(m, set[0]); dv.setInt32(m + 4, set[1]); dv.setInt32(m + 12, set[3]); dv.setInt32(m + 16, set[4]);
+      return u8;
+    };
+    const run = async (name, bytes, type) => {
+      const restore = useVp9();
+      const draws = []; const realDraw = window.vstDraw;
+      window.vstDraw = function (cx, w, h, text) { draws.push((cx && cx.canvas ? cx.canvas.width + 'x' + cx.canvas.height : '?') + '|' + w + 'x' + h);
+        return realDraw.apply(this, arguments); };
+      try {
+        const file = new File([bytes], name, { type, lastModified: 1790000000700 });
+        const before = await sha(await readFileBytes(file));
+        const parsed = await vstParse(file);
+        VST = { step: 'preview', caseNo: '', file, name, size: file.size, url: '', tz: 'America/New_York',
+                mo: '10', da: '01', yr: '2026', hr: '06', mi: '59', se: '02', ap: 'AM',
+                guessed: false, hash: null, pct: 0, err: '', saveMsg: '', readable: null, decodeOk: true, parsed,
+                out: null, recId: null, savedHere: false, started: false };
+        await vstGenerate();
+        const v = VST;
+        if (!v || !v.out) return { failed: true, err: v && v.err, fault: v && v.fault && v.fault.lines };
+        const back = await vstParse(new File([v.out.blob], 'c.mp4', { type: 'video/mp4' }));
+        // ---- the copy, as a viewer sees it ----
+        const el = document.createElement('video'); el.muted = true; el.playsInline = true; el.src = v.out.url;
+        await new Promise((res, rej) => { el.onloadedmetadata = res; el.onerror = () => rej(new Error('copy not playable'));
+          setTimeout(() => rej(new Error('timeout')), 10000); });
+        await new Promise(res => { el.onseeked = res; el.currentTime = 0.2; setTimeout(res, 1500); });
+        const cv = document.createElement('canvas'); cv.width = el.videoWidth; cv.height = el.videoHeight;
+        const cx = cv.getContext('2d'); cx.drawImage(el, 0, 0);
+        const d = cx.getImageData(0, 0, cv.width, cv.height).data;
+        let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1, n = 0;
+        for (let y = 0; y < cv.height; y++) for (let x = 0; x < cv.width; x++) {
+          const i = (y * cv.width + x) * 4;
+          if (d[i] > 200 && d[i + 1] > 200 && d[i + 2] > 200) { n++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+        }
+        const after = await sha(await readFileBytes(file));
+        return { src: { w: parsed.video.width, h: parsed.video.height, frames: parsed.video.samples.length,
+                        rotation: parsed.rotation },
+                 copy: { w: back.video.width, h: back.video.height, frames: back.video.samples.length,
+                         seconds: back.video.seconds, rotation: back.rotation },
+                 shown: { w: el.videoWidth, h: el.videoHeight },
+                 stamp: n ? { x0, y0, x1, y1, n } : null,
+                 draws: Array.from(new Set(draws)), clean: !!(v.out.clean && v.out.clean.ok),
+                 sha: !!v.out.sha256, unchanged: before === after, quality: v.out.quality };
+      } finally { window.vstDraw = realDraw; restore(); vstClose(); }
+    };
+    return {
+      mp4: await run('LANDSCAPE.mp4', await vp9Clip({ frames: 20, w: 640, h: 360, shade: '#101820' }), 'video/mp4'),
+      portrait: await run('IMG_0512.MOV', withRotation(await vp9Clip({ frames: 20, w: 640, h: 360, shade: '#101820' }), 90),
+                          'video/quicktime'),
+      small: await run('SMALL.mp4', await vp9Clip({ frames: 20, w: 320, h: 180, shade: '#101820' }), 'video/mp4'),
+    };
+  })()`);
+  if (R.skipped) ok('real codecs are available here', false, R.skipped);
+  else {
+    const say = x => JSON.stringify(x).slice(0, 700);
+    const box = s => s && s.stamp;
+    {
+      const r = R.mp4;
+      ok('MP4: the copy is 640 x 360 — the source’s own size — with every frame', !r.failed && r.copy.w === 640 && r.copy.h === 360
+         && r.copy.frames === r.src.frames, say(r));
+      ok('MP4: the stamp is drawn on the 640 x 360 picture itself', JSON.stringify(r.draws) === '["640x360|640x360"]', say(r.draws));
+      const b = box(r);
+      ok('MP4: in the copy as played, the stamp sits in the bottom-right, across about half the width',
+         b && b.x1 > 640 * 0.9 && b.y1 > 360 * 0.85 && b.x0 > 640 * 0.3 && (b.x1 - b.x0) > 640 * 0.4 && (b.x1 - b.x0) > (b.y1 - b.y0),
+         say(b));
+      ok('MP4: still checked clean, fingerprinted, and the original is byte-identical', r.clean && r.sha && r.unchanged, say(r));
+    }
+    {
+      const r = R.portrait;
+      ok('portrait MOV: stored as 640 x 360 with a 90-degree turn, copied the same — pixels and turn both kept',
+         !r.failed && r.src.rotation === 90 && r.copy.w === 640 && r.copy.h === 360 && r.copy.rotation === 90
+           && r.copy.frames === r.src.frames, say(r));
+      ok('portrait MOV: a player shows it upright, 360 x 640', r.shown.w === 360 && r.shown.h === 640, say(r.shown));
+      const b = box(r);
+      /* THE DEFECT THIS FIXES: V2 drew on the stored landscape pixels, so the
+         turned copy showed the stamp running down the left edge, sideways. */
+      ok('portrait MOV: the stamp a viewer sees is upright — reading across, at the bottom right',
+         b && b.x1 > 360 * 0.9 && b.y1 > 640 * 0.9 && (b.x1 - b.x0) > (b.y1 - b.y0) * 2 && b.x0 > 360 * 0.3, say(b));
+      ok('portrait MOV: drawn into the full 640 x 360 stored picture, sized from the 360-wide picture the viewer sees',
+         JSON.stringify(r.draws) === '["640x360|360x640"]', say(r.draws));
+      ok('portrait MOV: clean, fingerprinted, original byte-identical', r.clean && r.sha && r.unchanged, say(r));
+    }
+    {
+      const r = R.small;
+      ok('a small clip stays 320 x 180 — never scaled up', !r.failed && r.copy.w === 320 && r.copy.h === 180
+         && JSON.stringify(r.draws) === '["320x180|320x180"]', say(r));
+    }
+  }
+  await page.close();
+}
+
+/* ====================================================== THE EDITOR'S PREVIEW
+
+   Owner, 2026-10-02, on a real MTS: the editor's preview "is effectively
+   black/unhelpful", and the time being typed must be SEEN on the picture —
+   date, time, AM/PM and zone, the moment they change, before anything is
+   saved or generated. */
+section('Timestamp Video editor: an MTS whose first frames are black previews a real frame, and the stamp follows every keystroke');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const R = await vstRun(page, `
+    const S = stubCodecs({dark: 18});
+    const W = watchDoors();
+    const out = {};
+    const label = () => (document.getElementById('vq_stamp') || {dataset: {}}).dataset.label;
+    const type = (k, val) => { const el = document.getElementById('vst_' + k); if (!el) return false;
+      el.value = val; el.dispatchEvent(new Event('input', { bubbles: true })); return true; };
+    /* Where the stamp's light is, in the overlay's own pixels. */
+    const lit = () => { const cv = document.getElementById('vq_stamp'); if (!cv || !cv.width) return null;
+      const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+      let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1, n = 0;
+      for (let y = 0; y < cv.height; y++) for (let x = 0; x < cv.width; x++) {
+        const i = (y * cv.width + x) * 4;
+        if (d[i + 3] > 200 && d[i] > 230 && d[i + 1] > 230 && d[i + 2] > 230) { n++;
+          if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; } }
+      return n ? { x0, y0, x1, y1, n, w: cv.width, h: cv.height } : { n: 0, w: cv.width, h: cv.height }; };
+    try {
+      const mk = n => new File([makeTs({stride: 192, frames: 90, width: 1920, height: 1080, fps: 30})], n,
+                               {type: '', lastModified: 1790000000601 + n.length});
+      vqOpen('');
+      vqAdd([mk('00071.MTS'), mk('00072.MTS')], {caseNo: ''});
+      await qWait(() => VQ.items.every(x => x.analysis === 'done'));
+      const v = VQ.items[0];
+      qClick('vqEdit', v.qid);
+      await qWait(() => v.pvf && v.pvf.state !== 'busy', 15000);
+      await new Promise(r => setTimeout(r, 60));
+      const host = document.getElementById('vq_pvhost'), img = host && host.querySelector('img');
+      const rect = host ? host.getBoundingClientRect() : null;
+      out.frame = { pvf: v.pvf && { state: v.pvf.state, t: v.pvf.t, dark: v.pvf.dark, w: v.pvf.w, h: v.pvf.h },
+        kind: host && host.dataset.kind, decoded: !!(img && v.pvf && img.getAttribute('src') === v.pvf.url),
+        thumb: v.thumb, note: (document.querySelector('.vqd-pvnote') || {}).textContent || '',
+        box: rect && { w: rect.width, h: rect.height } };
+      /* THE ENTRY HAS NO TIME YET (the fixture carries no date) — type one and
+         save it, so the draft below has a saved value to differ from. */
+      for (const [k, val] of [['mo', '10'], ['da', '01'], ['yr', '2026'], ['hr', '06'], ['mi', '59'], ['se', '02']]) type(k, val);
+      qClick('vqSaveTime');
+      const saved = { mo: v.mo, da: v.da, yr: v.yr, hr: v.hr, mi: v.mi, se: v.se, ap: v.ap };
+      out.savedLabel = label();
+      out.savedLit = lit();
+      const cv0 = document.getElementById('vq_stamp');
+      /* B — the DATE. */
+      type('mo', '11'); out.date = { label: label(), burn: document.getElementById('vst_res').textContent };
+      type('mo', '10');
+      /* C — hour, minute, second: the brief's own example. */
+      type('se', '15'); out.sec = label();
+      type('mi', '07'); out.min = label();
+      type('hr', '08'); out.hour = label();
+      /* D — AM / PM. */
+      const ap = document.getElementById('vst_ap'); ap.value = 'PM'; ap.dispatchEvent(new Event('input', { bubbles: true }));
+      out.pm = label();
+      /* E — the zone follows the date across the change to daylight time. */
+      type('hr', '09'); type('mi', '00'); type('se', '00'); ap.value = 'AM'; ap.dispatchEvent(new Event('input', { bubbles: true }));
+      type('mo', '03'); type('da', '07'); out.est = { label: label(), zone: document.getElementById('vq_tz').textContent };
+      type('da', '09'); out.edt = { label: label(), zone: document.getElementById('vq_tz').textContent };
+      out.sameCanvas = document.getElementById('vq_stamp') === cv0;
+      out.whileTyping = { mo: v.mo, da: v.da, hr: v.hr, ap: v.ap };
+      /* F — Undo puts the saved time back, on the entry and on the picture. */
+      qClick('vqUndoTime');
+      out.undo = { label: label(), entry: { mo: v.mo, da: v.da, yr: v.yr, hr: v.hr, mi: v.mi, se: v.se, ap: v.ap } };
+      /* And leaving with a change open asks; Discard keeps the saved time. */
+      type('se', '44');
+      qClick('vqEditNext');
+      out.asked = !!document.getElementById('vq_ask');
+      qClick('vqAskDiscard');
+      out.discard = { entry: { mo: v.mo, da: v.da, yr: v.yr, hr: v.hr, mi: v.mi, se: v.se, ap: v.ap }, sel: VQ.sel === VQ.items[1].qid };
+      out.saved = saved;
+      /* THE PREVIEW NEVER BECOMES THE COPY: Generate, and read what was made. */
+      qClick('vqEdit', v.qid);
+      const draws = []; const realDraw = window.vstDraw;
+      window.vstDraw = function (cx, w, h, t) { draws.push((cx && cx.canvas && cx.canvas.id) || (cx.canvas.width + 'x' + cx.canvas.height));
+        return realDraw.apply(this, arguments); };
+      try {
+        qClick('vqGo', v.qid);
+        await qWait(() => !!(v.out || v.fault) && !VQ.busy, 30000);
+      } finally { window.vstDraw = realDraw; }
+      const back = v.out ? await vstParse(new File([v.out.blob], 'c.mp4', {type: 'video/mp4'})) : null;
+      out.copy = { made: !!v.out, w: back && back.video.width, h: back && back.video.height,
+                   q: v.out && v.out.quality && { w: v.out.quality.out.w, h: v.out.quality.out.h },
+                   burns: Array.from(new Set(draws.filter(d => d !== 'vq_stamp'))) };
+      out.doors = { fetches: W.fetches + W.xhr + W.beacons, urls: W.urls.slice() };
+    } finally { W.restore(); S.restore(); vstClose(); }
+    /* "Preview unavailable" — a decoder that returns nothing — is never a
+       verdict on the copy. */
+    {
+      const S2 = stubCodecs({hwDropEvery: 1, softDropEvery: 1});
+      try {
+        vqOpen('');
+        vqAdd([new File([makeTs({stride: 192, frames: 30})], '00073.MTS', {type: '', lastModified: 1790000000611})], {caseNo: ''});
+        await qWait(() => VQ.items.every(x => x.analysis === 'done'));
+        const v = VQ.items[0];
+        qClick('vqEdit', v.qid);
+        await qWait(() => v.pvf && v.pvf.state !== 'busy', 15000);
+        for (const [k, val] of [['mo', '10'], ['da', '01'], ['yr', '2026'], ['hr', '06'], ['mi', '59'], ['se', '02']]) type(k, val);
+        qClick('vqSaveTime');
+        await new Promise(r => setTimeout(r, 50));
+        const go = document.getElementById('vq_go');
+        out.unavailable = { pvf: v.pvf && v.pvf.state, note: (document.querySelector('.vqd-pvnote') || {}).textContent || '',
+          status: vqStatus(v), go: !!go && !go.disabled, label: label() };
+      } finally { S2.restore(); vstClose(); }
+    }
+    /* NEVER THE WHOLE VIDEO: a clip whose every frame is dark is looked at for
+       its first 2.5 seconds and no further, and the brightest of them is shown
+       with the reason. */
+    {
+      const S4 = stubCodecs({dark: 1e9});
+      try {
+        vqOpen('');
+        vqAdd([new File([makeTs({stride: 192, frames: 300, width: 1280, height: 720, fps: 30})], '00091.MTS',
+                        {type: '', lastModified: 1790000000631})], {caseNo: ''});
+        await qWait(() => VQ.items.every(x => x.analysis === 'done'));
+        const v = VQ.items[0];
+        const n0 = S4.log.decoded.hw + S4.log.decoded.soft;
+        qClick('vqEdit', v.qid);
+        await qWait(() => v.pvf && v.pvf.state !== 'busy', 15000);
+        await new Promise(r => setTimeout(r, 60));
+        out.dark = { pvf: v.pvf && { state: v.pvf.state, dark: v.pvf.dark, t: v.pvf.t },
+          fed: S4.log.decoded.hw + S4.log.decoded.soft - n0,
+          note: (document.querySelector('.vqd-pvnote') || {}).textContent || '' };
+      } finally { S4.restore(); vstClose(); }
+    }
+    /* ONE HEAVY THING AT A TIME: while a copy is being made the run has the
+       decoder to itself, so a video selected meanwhile waits for its preview
+       frame — and gets it once the run has finished. */
+    {
+      const plan = {dark: 0};
+      const S3 = stubCodecs(plan);
+      let release = null;
+      try {
+        vqOpen('');
+        const mk3 = n => new File([makeTs({stride: 192, frames: 60})], n, {type: '', lastModified: 1790000000621 + n.length});
+        vqAdd([mk3('00081.MTS'), mk3('00082.MTS')], {caseNo: ''});
+        await qWait(() => VQ.items.every(x => x.analysis === 'done'));
+        const a = VQ.items.find(x => x.name === '00081.MTS'), b = VQ.items.find(x => x.name === '00082.MTS');
+        qClick('vqEdit', a.qid);
+        await qWait(() => a.pvf && a.pvf.state !== 'busy', 15000);
+        for (const [k, val] of [['mo', '10'], ['da', '01'], ['yr', '2026'], ['hr', '06'], ['mi', '59'], ['se', '02']]) type(k, val);
+        qClick('vqSaveTime');
+        plan.hold = new Promise(r => { release = r; });
+        const before = S3.log.decoders;
+        qClick('vqGo', a.qid);
+        await qWait(() => vqRunning() && S3.log.decoders > before, 5000);
+        const runDecoders = S3.log.decoders;
+        qClick('vqEdit', b.qid);
+        await new Promise(r => setTimeout(r, 400));
+        out.during = { running: vqRunning(), sel: VQ.sel === b.qid, pvf: b.pvf ? b.pvf.state : null,
+          extra: S3.log.decoders - runDecoders, note: (document.querySelector('.vqd-pvnote') || {}).textContent || '' };
+        plan.hold = null; release(); release = null;
+        await qWait(() => !!(a.out || a.fault) && !VQ.busy, 30000);
+        await qWait(() => b.pvf && b.pvf.state !== 'busy', 15000);
+        out.after = { made: !!a.out, pvf: b.pvf && b.pvf.state, sel: VQ.sel === b.qid };
+      } finally { if (release) release(); S3.restore(); vstClose(); }
+    }
+    return out;
+  `);
+  const f = R.frame || {};
+  ok('A: the first frames are black — the preview skips them and shows the first real picture, 0.6 s in',
+     f.pvf && f.pvf.state === 'done' && f.pvf.dark === false && Math.abs(f.pvf.t - 0.6) < 0.05, JSON.stringify(f));
+  ok('A: it is a frame decoded from the file at preview size (1280 x 720) — not the 160-pixel thumbnail of the black first frame',
+     f.kind === 'img' && f.decoded && f.pvf.w === 1280 && f.pvf.h === 720, JSON.stringify(f));
+  ok('A: and the editor says so, without claiming the format plays here',
+     /not played inside the page/.test(f.note) && /decoded/.test(f.note) && /0\.6 s/.test(f.note), f.note);
+  ok('A: the preview has the picture’s own shape, 16:9', f.box && Math.abs(f.box.w / f.box.h - 16 / 9) < 0.02, JSON.stringify(f.box));
+  const L = R.savedLit || {};
+  ok('the stamp is drawn where the burn puts it — bottom right, across about half the picture — not in a corner chip',
+     R.savedLabel === '10/01/2026 06:59:02 AM EDT' && L.n > 20 && L.x1 > L.w * 0.9 && L.y1 > L.h * 0.85
+       && L.x0 > L.w * 0.3 && (L.x1 - L.x0) > L.w * 0.4 && L.y0 > L.h * 0.6, JSON.stringify([R.savedLabel, L]));
+  ok('B: changing the date changes the stamp at once, and it agrees with the burned-in line',
+     R.date && R.date.label === '11/01/2026 06:59:02 AM EST' && R.date.burn === R.date.label, JSON.stringify(R.date));
+  ok('C: seconds — 06:59:02 becomes 06:59:15 the moment 15 is typed',
+     R.sec === '10/01/2026 06:59:15 AM EDT', String(R.sec));
+  ok('C: minutes and hours too', R.min === '10/01/2026 06:07:15 AM EDT' && R.hour === '10/01/2026 08:07:15 AM EDT',
+     JSON.stringify([R.min, R.hour]));
+  ok('D: AM to PM', R.pm === '10/01/2026 08:07:15 PM EDT', String(R.pm));
+  ok('E: across the change to daylight time the zone follows the date — EST on 7 March, EDT on 9 March',
+     R.est && R.est.label === '03/07/2026 09:00:00 AM EST' && /EST/.test(R.est.zone)
+       && R.edt && R.edt.label === '03/09/2026 09:00:00 AM EDT' && /EDT/.test(R.edt.zone), JSON.stringify([R.est, R.edt]));
+  ok('none of it repainted the editor — the same stamp canvas throughout', R.sameCanvas === true);
+  ok('and none of it was written to the video while it was a draft',
+     JSON.stringify(R.whileTyping) === JSON.stringify({ mo: '10', da: '01', hr: '06', ap: 'AM' }), JSON.stringify(R.whileTyping));
+  ok('F: Undo puts the saved time back — on the video and on the picture',
+     R.undo && R.undo.label === '10/01/2026 06:59:02 AM EDT' && JSON.stringify(R.undo.entry) === JSON.stringify(R.saved),
+     JSON.stringify(R.undo));
+  ok('F: leaving with a change open asks first, and Discard leaves the saved time exactly as it was',
+     R.asked === true && R.discard && R.discard.sel && JSON.stringify(R.discard.entry) === JSON.stringify(R.saved),
+     JSON.stringify([R.asked, R.discard]));
+  ok('the preview never becomes the copy: the copy is 1920 x 1080, made from the original, not the 1280 x 720 preview',
+     R.copy && R.copy.made && R.copy.w === 1920 && R.copy.h === 1080 && R.copy.q && R.copy.q.w === 1920
+       && JSON.stringify(R.copy.burns) === '["1920x1080"]', JSON.stringify(R.copy));
+  ok('and nothing was fetched or uploaded to preview or to make it', R.doors && R.doors.fetches === 0, JSON.stringify(R.doors));
+  const U = R.unavailable || {};
+  ok('a frame that cannot be decoded says “Preview unavailable for this file.”',
+     U.pvf === 'none' && U.note === 'Preview unavailable for this file.', JSON.stringify(U));
+  ok('and that is not a verdict on the copy: the video is READY and Generate is offered',
+     U.status === 'ready' && U.go === true, JSON.stringify(U));
+  ok('the stamp is still shown over the empty box, with the time being set', U.label === '10/01/2026 06:59:02 AM EDT', String(U.label));
+  const K = R.dark || {};
+  ok('never the whole video: a clip dark from end to end is looked at for its first 2.5 s (76 of its 300 frames) and no further',
+     K.fed >= 60 && K.fed <= 80, JSON.stringify(K));
+  ok('and the brightest of those frames is shown, saying the opening seconds are dark',
+     K.pvf && K.pvf.state === 'done' && K.pvf.dark === true && /opening seconds are dark/.test(K.note), JSON.stringify(K));
+  const D = R.during || {};
+  ok('one heavy thing at a time: while a copy is being made, a video selected meanwhile decodes no preview frame, and says it waits',
+     D.running === true && D.sel === true && D.pvf === null && D.extra === 0
+       && /once the video being processed has finished/.test(D.note), JSON.stringify(D));
+  ok('and once the copy is made, that video’s frame is decoded — the preview waited, it was not lost',
+     R.after && R.after.made && R.after.sel && R.after.pvf === 'done', JSON.stringify(R.after));
+  await page.close();
+}
+
+section('Timestamp Video editor: an MP4 plays with the stamp where it burns, following the footage; a portrait clip keeps its shape');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const R = await vstRun(page, `
+    const restore = useVp9();
+    const out = {};
+    const withRotation = (src, deg) => {
+      const u8 = src.slice(); const dv = new DataView(u8.buffer);
+      const moov = topBoxes(u8).find(b => b.type === 'moov');
+      const trak = kidsOf(u8, moov.start + 8, moov.start + moov.size).find(b => b.type === 'trak');
+      const tkhd = kidsOf(u8, trak.start + 8, trak.start + trak.size).find(b => b.type === 'tkhd');
+      const m = tkhd.start + 8 + (u8[tkhd.start + 8] === 1 ? 52 : 40);
+      dv.setInt32(m, 0); dv.setInt32(m + 4, 65536); dv.setInt32(m + 12, -65536); dv.setInt32(m + 16, 0);
+      return u8;
+    };
+    const label = () => (document.getElementById('vq_stamp') || {dataset: {}}).dataset.label;
+    try {
+      const mp4 = new File([await vp9Clip({ frames: 60, w: 640, h: 360 })], 'PLAY.mp4', { type: 'video/mp4', lastModified: 1790000000621 });
+      const mov = new File([withRotation(await vp9Clip({ frames: 20, w: 640, h: 360 }), 90)], 'IMG_0513.MOV',
+                           { type: 'video/quicktime', lastModified: 1790000000622 });
+      vqOpen('');
+      vqAdd([mp4, mov], { caseNo: '' });
+      await qWait(() => VQ.items.every(x => x.analysis === 'done'));
+      /* The queue sorts what is added, so each video is found by its name. */
+      const v = VQ.items.find(x => x.name === 'PLAY.mp4');
+      const vm = VQ.items.find(x => x.name === 'IMG_0513.MOV');
+      qClick('vqEdit', v.qid);
+      for (const [k, val] of [['mo', '10'], ['da', '01'], ['yr', '2026'], ['hr', '06'], ['mi', '59'], ['se', '02']]) {
+        const el = document.getElementById('vst_' + k); el.value = val; el.dispatchEvent(new Event('input', { bubbles: true })); }
+      qClick('vqSaveTime');
+      await qWait(() => !!document.getElementById('vq_pv'), 5000);
+      const pv = document.getElementById('vq_pv');
+      await new Promise(res => { if (pv.readyState >= 1) res(); else { pv.onloadedmetadata = res; setTimeout(res, 4000); } });
+      const host = document.getElementById('vq_pvhost'); const r = host.getBoundingClientRect();
+      out.mp4 = { kind: host.dataset.kind, at0: label(), ratio: r.width / r.height };
+      await new Promise(res => { pv.addEventListener('seeked', () => setTimeout(res, 50), { once: true }); pv.currentTime = 1.6; setTimeout(res, 4000); });
+      out.mp4.at16 = label();
+      out.mp4.burn = document.getElementById('vst_res').textContent;
+      qClick('vqEdit', vm.qid);
+      await new Promise(r2 => setTimeout(r2, 100));
+      const h2 = document.getElementById('vq_pvhost'); const r2 = h2.getBoundingClientRect();
+      const cv = document.getElementById('vq_stamp');
+      out.portrait = { kind: h2.dataset.kind, w: r2.width, h: r2.height, cw: cv.width, ch: cv.height,
+                       parentW: h2.parentElement.getBoundingClientRect().width };
+      /* A FILE THIS DEVICE WILL NOT PLAY IN THE PAGE — the player's own error,
+         as it arrives — gets a frame decoded from it instead, turned upright
+         at the picture's shape exactly as a player would show it. */
+      vm.pvFailed = true; vqDropPreview(); paintVStamp();
+      await qWait(() => vm.pvf && vm.pvf.state !== 'busy', 15000);
+      await new Promise(r3 => setTimeout(r3, 60));
+      const h3 = document.getElementById('vq_pvhost'), img3 = h3 && h3.querySelector('img');
+      out.unplayable = { pvf: vm.pvf && { state: vm.pvf.state, w: vm.pvf.w, h: vm.pvf.h }, kind: h3 && h3.dataset.kind,
+        shown: !!(img3 && vm.pvf && img3.getAttribute('src') === vm.pvf.url),
+        note: (document.querySelector('.vqd-pvnote') || {}).textContent || '' };
+      return out;
+    } finally { restore(); vstClose(); }
+  `);
+  ok('an MP4 this device plays is previewed by playing it, with the stamp canvas over it',
+     R.mp4 && R.mp4.kind === 'video' && R.mp4.at0 === '10/01/2026 06:59:02 AM EDT', JSON.stringify(R.mp4));
+  ok('the stamp follows the footage — 1.6 s in, it shows the start plus one whole second',
+     R.mp4 && R.mp4.at16 === '10/01/2026 06:59:03 AM EDT', JSON.stringify(R.mp4));
+  ok('the box is the picture’s shape, 16:9', R.mp4 && Math.abs(R.mp4.ratio - 16 / 9) < 0.02, JSON.stringify(R.mp4));
+  ok('a portrait iPhone clip gets a portrait box — taller than wide, not a picture lost in a 16:9 slab',
+     R.portrait && R.portrait.h > R.portrait.w * 1.6 && R.portrait.w < R.portrait.parentW, JSON.stringify(R.portrait));
+  ok('and its stamp canvas covers exactly that box', R.portrait && Math.abs(R.portrait.cw / R.portrait.ch - R.portrait.w / R.portrait.h) < 0.02,
+     JSON.stringify(R.portrait));
+  const X = R.unplayable || {};
+  ok('a clip this device will not play in the page is previewed by a frame decoded from it, upright — 360 x 640, as it is shown',
+     X.pvf && X.pvf.state === 'done' && X.pvf.w === 360 && X.pvf.h === 640 && X.kind === 'img' && X.shown === true,
+     JSON.stringify(X));
+  ok('and the editor says why a frame stands in for playback', /will not play this file inside the page/.test(X.note || ''),
+     String(X.note));
+  await page.close();
+}
+
+section('Timestamp Video editor on a phone (390, 320) and a desk (1280, 1440, 1920): the preview is in view, the stamp legible, the fields and Save in reach');
+{
+  for (const [width, height] of [[390, 844], [320, 568], [1280, 800], [1440, 900], [1920, 1080]]) {
+    const page = await newPage();
+    await signIn(page, 'trever', 'AdminPassword1x');
+    await page.setViewportSize({ width, height });
+    await page.waitForTimeout(150);
+    const R = await vstRun(page, `
+      window.__S = stubCodecs({});
+      vqOpen('');
+      vqAdd([new File([makeTs({stride: 192, frames: 60, width: 1920, height: 1080, fps: 30})], '00081.MTS',
+                      {type: '', lastModified: 1790000000631})], {caseNo: ''});
+      await qWait(() => VQ.items.every(x => x.analysis === 'done'));
+      const v = VQ.items[0];
+      qClick('vqEdit', v.qid);
+      await qWait(() => v.pvf && v.pvf.state !== 'busy', 15000);
+      for (const [k, val] of [['mo', '10'], ['da', '01'], ['yr', '2026'], ['hr', '06'], ['mi', '59'], ['se', '02']]) {
+        const el = document.getElementById('vst_' + k); el.value = val; el.dispatchEvent(new Event('input', { bubbles: true })); }
+      await new Promise(r => setTimeout(r, 80));
+      return { pvf: v.pvf && v.pvf.state };
+    `);
+    /* The editor scrolled so the picture is at the top of its screen — then
+       is everything the operator types into, and its live stamp, in view? */
+    const M = await page.evaluate(() => {
+      const host = document.getElementById('vq_pvhost'), ed = document.getElementById('vq_edit');
+      if (!host || !ed) return { missing: true };
+      host.scrollIntoView({ block: 'start' });
+      const vis = el => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, w: r.width, h: r.height }; };
+      const cv = document.getElementById('vq_stamp');
+      const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+      let y0 = 1e9, y1 = -1;
+      for (let y = 0; y < cv.height; y++) for (let x = 0; x < cv.width; x++) {
+        const i = (y * cv.width + x) * 4; if (d[i + 3] > 200 && d[i] > 230) { if (y < y0) y0 = y; if (y > y1) y1 = y; } }
+      const dpr = cv.width / host.getBoundingClientRect().width;
+      const hit = el => { el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect();
+        const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return { ok: !!at && (at === el || el.contains(at)), h: r.height, w: r.width }; };
+      const pv = vis(host), time = vis(document.getElementById('vst_se')), date = vis(document.getElementById('vst_mo'));
+      const es = getComputedStyle(ed);
+      const colW = ed.clientWidth - parseFloat(es.paddingLeft) - parseFloat(es.paddingRight);
+      const res = { pv, time, date, colW, glyph: y1 >= y0 ? (y1 - y0 + 1) / dpr : 0, label: cv.dataset.label,
+        vw: innerWidth, vh: innerHeight,
+        overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth };
+      host.scrollIntoView({ block: 'start' });
+      res.save = hit(document.querySelector('#vq_edit [data-act="vqSaveTime"]'));
+      res.go = hit(document.getElementById('vq_go'));
+      return res;
+    });
+    const tag = `${width}x${height}`;
+    ok(`${tag}: the preview is a decoded frame, in view, at the picture’s 16:9 shape`,
+       R.pvf === 'done' && !M.missing && M.pv.top >= -1 && M.pv.bottom <= M.vh + 1 && Math.abs(M.pv.w / M.pv.h - 16 / 9) < 0.03,
+       JSON.stringify([R, M.pv]));
+    if (width < 1240) {
+      ok(`${tag}: the preview takes at most 40% of the screen’s height`, M.pv.h <= M.vh * 0.4 + 1, JSON.stringify(M.pv));
+      ok(`${tag}: the date and time fields are on the same screen as the picture they change`,
+         M.date.bottom <= M.vh && M.time.bottom <= M.vh, JSON.stringify([M.pv, M.date, M.time]));
+    } else {
+      /* THE DESK LAYOUT IS NOT CHANGED (the brief): the editor column is the
+         width it was, 292 px of content at 1280 and 352 above it, and the
+         picture fills the whole of it. */
+      ok(`${tag}: the preview fills the editor’s column — the largest picture the unchanged layout holds`,
+         M.pv.w >= M.colW - 2 && M.pv.w >= 280, JSON.stringify([M.pv, M.colW]));
+    }
+    ok(`${tag}: the stamp over it is legible — its glyphs at least 6 px tall`, M.glyph >= 6 && M.label === '10/01/2026 06:59:02 AM EDT',
+       JSON.stringify([M.glyph, M.label]));
+    ok(`${tag}: Save and Generate are reachable and 44 px tall`, M.save.ok && M.go.ok && M.save.h >= 44 && M.go.h >= 44,
+       JSON.stringify([M.save, M.go]));
+    ok(`${tag}: nothing scrolls sideways`, M.overflow <= 1, String(M.overflow));
+    await page.evaluate(() => { try { window.__S && window.__S.restore(); vstClose(); } catch {} });
+    await page.close();
+  }
 }
 
 section('Timestamp dashboard on a desk: the table, the editor and the processing row at 1280, 1440 and 1920');

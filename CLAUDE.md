@@ -5546,8 +5546,10 @@ event was overwritten the moment the file's own date arrived.
 from a local object URL; each repaint moves that element into the new editor
 inside the same task, and the HTML spec only pauses a media element still out
 of the document once the task ends — so a repaint does not stop what is
-playing. A transport stream is never handed to the player; it shows its first
-frame and says why.
+playing. A transport stream is never handed to the player; it shows a frame
+decoded from its first seconds and says why (since 2026-10-02 — a real frame
+past a black opening, with the live stamp over it; see the quality subsection
+below).
 
 **A THUMBNAIL IS ONE FRAME** — one keyframe, one decoder, closed at once, a
 160px JPEG in this tab. Asserted over twenty videos (one decoder per video at
@@ -5607,6 +5609,80 @@ number" ones). "Timestamp video is reachable without opening a case" and
 "Timestamp Photo is reachable in the field" fail in a trimmed run on master
 too — they rely on state earlier sections build. Check any trimmed-run failure
 against master in a worktree before chasing it.
+
+### The copy is given the source's bits, and the preview shows the stamp being typed
+
+Owner, 2026-10-02: saved copies *"visibly softer/lower quality than the
+originals"*, and the editor's preview *"effectively black/unhelpful"*. Record
+in `case-portal/VIDEO-TIMESTAMP.md` (*OUTPUT QUALITY + A LIVE TIMESTAMP
+PREVIEW*).
+
+**THE SOFTNESS WAS THE BITRATE, AND NOTHING ELSE IN THE PATH.** Traced before
+anything changed: the original is decoded once at its own size, burned and
+encoded once — no preview, thumbnail or display size reaches the transcode, and
+nothing is encoded twice. V2 asked for 0.08 bits per pixel per frame: 4.98 Mbps
+for 1080p the owner's iPhone had recorded at about 14 and AVCHD at 17–24.
+`vstEncodePlan` is the one formula now — the larger of a 0.15 bpp floor and the
+source's own measured video bitrate (x1.5 for HEVC), under a 0.40 bpp ceiling
+and a memory budget, and **never below what V2 gave**, so no limit can make a
+copy worse than it was.
+
+**THE MEMORY BUDGET IS A REAL LIMIT, AND IT IS SAID.** The copy is built whole
+in memory before it can be saved (moov-first, V2's design, which the brief
+forbade redesigning): on a phone a 1080p30 clip keeps its source's bitrate to
+about 2½ minutes and is back at V2's from about 7; on a computer, 7½ and 21½.
+The finished screen names the budget when it decided. Lifting it is a streaming
+writer — a design change and the owner's call, not a keystroke.
+
+**THE LEVEL IS CHOSEN, NEVER FIXED.** `vstEncoderConfig` asks High, Main, then
+Constrained Baseline at the lowest Table A-1 level that holds the copy, then
+again at V2's rate, then V2's exact four configurations last. V2's fixed level
+4.0 holds neither 1080p60 nor 4K — on an encoder that checks levels, a 4K clip
+made no copy at all.
+
+**SIZE, SHAPE AND RATE ARE THE SOURCE'S.** Never scaled; non-square pixels
+(the VUI in an MTS, `pasp` or the avcC SPS in an MP4) are drawn at their display
+shape through `vstOutSize`, the one writer — a 1440 x 1080 AVCHD stream with
+4:3-wide pixels is a 1920 x 1080 copy, not a squeezed one; the frame rate is
+exact (29.97 is never 30), and an MTS carrying one field per packet is counted
+per field PAIR.
+
+**THE BURN IS UPRIGHT ON A ROTATED CLIP** (`vstBurn`). Found by building the
+preview, which has to match the copy: V2 burned a portrait iPhone clip's stamp
+onto the stored landscape pixels, so it played sideways.
+
+**INTERLACED AVCHD IS KEPT WOVEN, AND THE SCREEN SAYS SO** — not deinterlaced,
+by the brief's own *"do not invent deinterlacing"*. Field lines can show on fast
+motion; that is stated, not hidden.
+
+**THE PREVIEW'S STAMP IS DRAWN BY THE BURN ITSELF** — `vstDraw` on a canvas over
+the picture, at the burn's corner and proportion, with the DRAFT time, redrawn
+on every keystroke without repainting the editor. A playable MP4/MOV plays; an
+MTS (no browser plays MPEG-TS in a page) shows a frame decoded from its first
+2.5 s, skipping a black opening; *"Preview unavailable for this file."* is never
+a verdict on the copy. The frame is decoded by the queue's one worker — never
+during a run, never the whole video — and never becomes the copy, which is
+always decoded from the original again at full size.
+
+**FOUR TESTS WERE MISSING, AND A MUTATION WOULD HAVE WALKED PAST EACH.** Writing
+the mutation list showed four properties with nothing holding them: an MP4's
+`pasp` and avcC pixel shape, which device gets which memory budget, the preview
+waiting for a run, and the preview's bounded window. Each got its test before
+the batch ran. **A mutation of the preview's run guard alone is EQUIVALENT** —
+the queue's pump refuses during a run as well — so the mutation that counts is
+the realistic one, the editor decoding its own frame, and the new test catches
+it.
+
+**THE MUTATION TALLY IS IN PROGRESS** — recorded here when the batch finishes.
+
+**THREE INSTRUMENT LESSONS, NONE OF THEM THE PRODUCT.** The queue SORTS what is
+added, so a test reading `VQ.items[0]` as the MP4 measured the portrait MOV
+and reported the stamp frozen and the box the wrong shape — find entries by
+name. At 1280 the desk editor is a fixed 320 px track, 292 px of content, so a
+"preview at least 320 px wide" check would have demanded the layout change the
+brief forbade; the check is the column, measured. And `vstRun` evaluates the
+fixture libraries and the test body in ONE scope, so a helper named `u32`
+crashed a section with "already been declared" — prefix a body's own helpers.
 
 ## A photograph is timestamped into the case, not onto the device
 
