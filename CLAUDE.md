@@ -5673,7 +5673,23 @@ the queue's pump refuses during a run as well — so the mutation that counts is
 the realistic one, the editor decoding its own frame, and the new test catches
 it.
 
-**THE MUTATION TALLY IS IN PROGRESS** — recorded here when the batch finishes.
+**43 MUTATIONS, 42 NAMED ON THE FIRST RUN, AND THE ONE THAT WALKED PAST WAS
+THE TEST.** Removing the phone preview's height cap failed nothing: the phone
+checks used a 16:9 picture, which a phone holds by its WIDTH long before any
+height cap, so the check could not reach the rule — the `[].every()` shape
+again, in a layout. The rule exists for a portrait picture, so the phones check
+one now, and the mutation fails four assertions by name.
+
+**A TEST THAT TYPES THE HOUR MUST SET AM OR PM.** The MP4 fixture's creation
+time is the moment it was made, so an editor test that left AM/PM alone passed
+before noon Eastern and failed after it — found when the batch crossed noon.
+Same family as *a full run's total moves with the clock*.
+
+**A PORTRAIT CLIP'S PREVIEW STAMP IS NOT LEGIBLE ON A PHONE, AND THAT IS THE
+OWNER'S CALL.** At the copy's own proportion it is about 4 px tall in a 171 px
+box (390) and smaller at 320; the exact text is beside it. Legible there means
+a taller preview than the 40% that keeps the fields on screen, or a stamp
+larger than the copy carries.
 
 **THREE INSTRUMENT LESSONS, NONE OF THEM THE PRODUCT.** The queue SORTS what is
 added, so a test reading `VQ.items[0]` as the MP4 measured the portrait MOV

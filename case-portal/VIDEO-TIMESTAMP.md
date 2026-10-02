@@ -2023,3 +2023,105 @@ with the date and time fields on the same screen, the stamp's glyphs at least
 6 px, Save and Generate 44 px. Desks (1280, 1440, 1920): **the layout is
 unchanged**, so the preview fills the editor's column — 292 px of content at
 1280, 352 above it. Nothing scrolls sideways at any width.
+
+## 7. Tests
+
+Five new portal sections and one re-aimed:
+
+- **Timestamp Video quality: the copy keeps the source's size, frame rate and
+  shape, and its bitrate comes from the source** — six transport streams
+  through the whole pipeline (stub codecs; canvas, burn, muxer, clean check
+  and read-back real): 1080p29.97 at about 16.8 Mbps, an anamorphic 1440 x
+  1080i whose VUI says 4:3 pixels, a 1440 x 1080 that says nothing, 1080i
+  carried one field per packet, 1080p60, and 720p30. MP4/MOV parsing of
+  `pasp`, of the SPS inside `avcC`, of square and unstated pixels, and the
+  exact rate and bitrate from the frame table. A 1920 x 1080 MP4 at 13.9 Mbps
+  through the H.264 path. The plan and the configuration against stub encoders
+  that check levels the way a real one does: 4K30, a device that knows only
+  V2's configurations, one that refuses the plan's rate, one that takes
+  nothing, both memory budgets and which device gets which, the ceiling, an
+  HEVC source, an unmeasurable one, and the owner's `IMG_0440.mov`.
+- **… on real codecs** — VP9 decode and encode here: an MP4, a portrait MOV
+  (stored 640 x 360, turned 90 degrees) and a 320 x 180 clip keep their size;
+  the stamp is found in the PLAYED copy's pixels, upright, bottom right.
+- **Timestamp Video editor: an MTS whose first frames are black …** — A, a
+  black opening skipped for the first real picture; B–E, date, h/m/s, AM/PM and
+  EST/EDT on the picture the moment they are typed; F, Undo and Discard leave
+  the saved time exactly as it was; the copy 1920 x 1080 from a 1280 x 720
+  preview; nothing fetched; *"Preview unavailable for this file."* with
+  Generate still offered; a clip dark end to end decoded for 2.5 s (76 of its
+  300 frames) and no further; no preview decode while a copy is being made.
+- **… an MP4 plays …** — the playing original with the stamp following the
+  footage; a portrait clip's portrait box; a clip the player refuses previewed
+  by a frame decoded from it, upright.
+- **… on a phone (390, 320) and a desk (1280, 1440, 1920)** — a 16:9
+  picture in view at its shape, the stamp's glyphs at least 6 px, Save and
+  Generate 44 px, nothing sideways; and on phones a PORTRAIT picture as well:
+  a portrait box, held to 40% of the screen's height, the fields and Save and
+  Generate still on the screen (its stamp's size is the known limit in §9).
+- Re-aimed, not loosened: *Timestamp dashboard: the editor previews the
+  original…* — its stamp is a canvas now (read through `data-label`), and its
+  transport stream shows a decoded frame rather than the thumbnail.
+
+## 8. Every property, mutated
+
+43 mutations, each applied in a git worktree, each run against the sections
+that hold its property, counted only when an assertion NAMING it failed —
+25 on the copy (the plan's terms, the configuration, rate, shape, bitrate, the
+copy's size on both paths, the rotation) and 18 on the preview (position,
+draft, keystrokes, footage time, black skip, decoded frame shown, the MTS
+frame decoded at all, the queue's single turn, Generate kept, the window, the
+dark note, the box's shape and turn, the decoded frame turned upright, its
+size, the player kept across repaints, the phone's height cap, typing without
+a repaint).
+
+**42 were named on the first run, by 118 assertions, with no crash.** The 43rd
+walked past, and it was the test's fault:
+
+- **The phone preview's height cap could be removed with nothing failing**,
+  because the phone checks used a 16:9 picture — and a 16:9 frame on a phone
+  is held by its WIDTH long before any height cap. The rule exists for a
+  portrait picture, so the phones now check a portrait picture too; re-run,
+  the mutation fails four assertions by name.
+
+**Four of my own tests were wrong before the batch ran, and all four were the
+instrument.** The queue SORTS what is added, so a test reading `VQ.items[0]`
+as the MP4 measured the portrait MOV and reported the stamp frozen; it finds
+entries by name now. A desk check demanded a 320 px preview where the
+unchanged layout's editor is 292 px of content at 1280. A body helper named
+`u32` collided with the fixture library in `vstRun`'s single scope. And the MP4
+editor test typed the hour but not AM or PM, so the fixture's own creation time
+— the moment it was made — decided it: the test passed before noon Eastern
+and failed after. It sets AM now.
+
+And four properties had **no test at all** until writing the mutation list
+showed it: the MP4's `pasp`/`avcC` pixel shape, which device gets which memory
+budget, the preview waiting for a run, and the preview's bounded window. A
+mutation of the preview's run guard alone turned out EQUIVALENT — the queue's
+pump refuses during a run as well — so the mutation that counts is the
+realistic one: the editor decoding its own frame, bypassing the queue.
+
+## 9. Proven here, and what is left for the device
+
+Proven in this container: the copy's size, shape, rate and level on every
+fixture above; the bitrate plan on every term; the burn at full size and upright
+in a played copy on real VP9 codecs; the preview's decoded frame, its stamp,
+its live typing and its limits; the safety properties unchanged — the original
+untouched, both fingerprints, the clean check, both decoder lanes, completeness,
+fail-closed and Stop, the queue, Process Next and drag and drop, and no request
+made by previewing or by making a copy.
+
+**Not provable here, and the owner's check:** this Chromium has no H.264
+encoder, so what a real device's encoder WRITES is not measured — under
+variable bitrate it may write less than it is asked for. The finished screen
+prints both numbers, asked for and written, so the first real copy answers it.
+Whether the copy now looks as sharp as its original is the owner's eye on the
+owner's footage; no number here claims it.
+
+**A known limit, left for the owner:** a PORTRAIT clip's preview on a phone is
+narrow — about 171 px at 390, 115 at 320 — and its stamp, drawn at the copy's
+own proportion, is then about 4 px tall: there, but not legible. The exact
+text is beside it in the burned-in line. Making the picture's own stamp
+legible there means a preview taller than the 40% that keeps the fields on the
+screen, or a stamp drawn larger than the copy will carry it — either is the
+owner's call, not a quiet change.
