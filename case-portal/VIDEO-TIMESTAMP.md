@@ -2063,6 +2063,12 @@ Five new portal sections and one re-aimed:
   original…* — its stamp is a canvas now (read through `data-label`), and its
   transport stream shows a decoded frame rather than the thumbnail.
 
+**The record, 2026-10-02:** the six sections hold 123 assertions (117 new).
+The one full portal regression, run alone after every targeted run was green:
+**4,988 passed, 0 failed**. `.github/test-deploy.mjs` 127 passed, 0 failed; the
+CEO release gate 43 PASS, 0 WARN, 0 FAIL. The Worker suite was not needed: the
+Worker and the schema did not change.
+
 ## 8. Every property, mutated
 
 43 mutations, each applied in a git worktree, each run against the sections
