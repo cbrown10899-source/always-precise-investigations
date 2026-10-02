@@ -16380,20 +16380,23 @@ section('Timestamp Video HIGH QUALITY on real codecs: the stamp is composited in
       const ys = W * H, cs = (W >> 1) * (H >> 1), buf = new Uint8Array(ys + 2 * cs);
       for (let i = 0; i < ys; i++) buf[i] = 30 + (i % W) * 150 / W | 0;
       for (let i = ys; i < buf.length; i++) buf[i] = fmt === 'I420' ? (i < ys + cs ? 90 : 170) : ((i - ys) % 2 ? 170 : 90);
-      const src = new VideoFrame(buf, {format: fmt, codedWidth: W, codedHeight: H, timestamp: 0, duration: 33333,
-        colorSpace: {primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: false}});
+      /* Two labels that are NOT the default: a BT.601 picture and a full-range
+         one — so a copy that dropped the label, or ignored the range, shows. */
+      const label = fmt === 'I420' ? {primaries: 'smpte170m', transfer: 'smpte170m', matrix: 'smpte170m', fullRange: false}
+                                   : {primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: true};
+      const src = new VideoFrame(buf, {format: fmt, codedWidth: W, codedHeight: H, timestamp: 0, duration: 33333, colorSpace: label});
       const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
       const st = vstStamper(W, H, 0, cv, cv.getContext('2d', {alpha: false}));
       const f = await st.make(src, '12/31/2026 11:59:59 PM EST');
       const b = new Uint8Array(f.allocationSize()); const layout = await f.copyTo(b);
       const cs2 = f.colorSpace.toJSON();
-      let outY = 0, inY = 0, outC = 0, bright = 0;
+      let outY = 0, inY = 0, outC = 0, bright = 0, maxY = 0;
       /* The stamp's own rows and columns, from the layer the burn drew. */
       const L = document.createElement('canvas'); L.width = W; L.height = H; const lx = L.getContext('2d', {willReadFrequently: true});
       vstBurn(lx, W, H, '12/31/2026 11:59:59 PM EST', 0); const a = lx.getImageData(0, 0, W, H).data;
       for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
         const s = buf[y * W + x], d = b[layout[0].offset + y * layout[0].stride + x], cov = a[(y * W + x) * 4 + 3];
-        if (!cov) { if (s !== d) outY++; } else { if (s !== d) inY++; if (d > 200) bright++; }
+        if (!cov) { if (s !== d) outY++; } else { if (s !== d) inY++; if (d > 200) bright++; if (d > maxY) maxY = d; }
       }
       for (let y = 0; y < H / 2; y++) for (let x = 0; x < W / 2; x++) {
         const cov = a[(2 * y * W + 2 * x) * 4 + 3] + a[(2 * y * W + 2 * x + 1) * 4 + 3] + a[((2 * y + 1) * W + 2 * x) * 4 + 3] + a[((2 * y + 1) * W + 2 * x + 1) * 4 + 3];
@@ -16402,7 +16405,8 @@ section('Timestamp Video HIGH QUALITY on real codecs: the stamp is composited in
           : [[ys + y * W + 2 * x, layout[1].offset + y * layout[1].stride + 2 * x], [ys + y * W + 2 * x + 1, layout[1].offset + y * layout[1].stride + 2 * x + 1]];
         for (const [i, j] of pairs) if (buf[i] !== b[j]) outC++;
       }
-      out[fmt] = {fmt: f.format, w: f.codedWidth, h: f.codedHeight, ts: f.timestamp, cs: cs2, outY, inY, outC, bright, path: st.path, yuv: st.yuvFrames};
+      out[fmt] = {fmt: f.format, w: f.codedWidth, h: f.codedHeight, ts: f.timestamp, cs: cs2, want: label, outY, inY, outC, bright, maxY,
+                  path: st.path, yuv: st.yuvFrames};
       f.close(); src.close();
     }
     /* THE COLOUR LABEL a copy may carry. */
@@ -16428,9 +16432,11 @@ section('Timestamp Video HIGH QUALITY on real codecs: the stamp is composited in
   });
   for (const fmt of ['I420', 'NV12']) {
     const r = U[fmt] || {};
-    ok(`${fmt}: the stamped picture comes back ${fmt}, the same size and moment, carrying the original’s colour label`,
-       r.fmt === fmt && r.w === 640 && r.h === 360 && r.ts === 0 && r.cs && r.cs.matrix === 'bt709' && r.cs.fullRange === false && r.path === 'yuv',
-       JSON.stringify(r));
+    ok(`${fmt}: the stamped picture comes back ${fmt}, the same size and moment, carrying the original’s own colour label (${fmt === 'I420' ? 'BT.601' : 'BT.709, full range'})`,
+       r.fmt === fmt && r.w === 640 && r.h === 360 && r.ts === 0 && r.cs && r.want && r.path === 'yuv'
+         && ['primaries', 'transfer', 'matrix', 'fullRange'].every(k => r.cs[k] === r.want[k]), JSON.stringify(r));
+    ok(`${fmt}: the stamp’s white is that range’s white — ${fmt === 'I420' ? '235 in a limited-range picture' : '255 in a full-range one'}`,
+       r.maxY === (fmt === 'I420' ? 235 : 255), String(r.maxY));
     ok(`${fmt}: EVERY BYTE OUTSIDE THE STAMP IS THE DECODER’S — luma and chroma alike`, r.outY === 0 && r.outC === 0,
        JSON.stringify([r.outY, r.outC]));
     ok(`${fmt}: and the stamp is in the picture, white where it is drawn`, r.inY > 500 && r.bright > 300, JSON.stringify([r.inY, r.bright]));
