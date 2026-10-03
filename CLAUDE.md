@@ -82,7 +82,24 @@ back to the 30-run default and returned 464 KB. The `resource_id` filter was
 honoured then and is honoured now; the spelling was the whole problem.
 
 So the cheap call is: `resource_id` + `perPage: 3` + a `workflow_runs_filter`
-of `{branch: "master", event: "push"}`. Do not go back to unfiltered listings.
+of `{branch: "master"}` — **branch alone, without `event`** (corrected
+2026-10-03; the next paragraph says why). Do not go back to unfiltered
+listings.
+
+**THE `event` FILTER ONCE ANSWERED WEEKS OUT OF DATE, AND ONLY THE SHA SAID
+SO.** Verifying #348's merge (`e8044d3`) on 2026-10-02, `{branch: "master",
+event: "push"}` with `perPage: 1` returned `total_count: 75` and, as the
+newest run, #388 from 2026-09-08. `{branch: "master"}` alone returned 422 and
+the right one, #422 at `e8044d3`. Re-run on 2026-10-03, the event-filtered
+call returned 417 and #422 — the five it leaves out are `deploy.yml`'s
+dispatched runs, none newer than 2026-08-12 — so the filter is honoured, but
+for a while its answer lagged weeks behind, with nothing in the response to
+mark it as stale. `deploy.yml` runs on pushes to `master` and almost nothing
+else, so `event` buys nothing here and is one more answer that can lag.
+**Whatever the filter, read the newest run's `head_sha` before its
+conclusion**: a newest run older than the merge is a stale listing, not a
+missing deploy, so re-query with `branch` alone before saying a merge did not
+deploy.
 
 What actually works:
 
@@ -110,9 +127,11 @@ with their per-step conclusions and **no commit blob**: roughly 1,500 tokens,
 and it answers the actual question ("did every step pass?") in more detail.
 
 So the cheap pattern for "did my merge deploy?" is: ONE `list_workflow_runs`
-with `resource_id` + `perPage: 1` to learn the run id, then `list_workflow_jobs`
-for that id — and for a workflow you dispatched yourself, poll the JOBS call
-only. Measured 2026-09-07 verifying #299 across three workflows.
+with `resource_id` + `perPage: 1` + `{branch: "master"}` to learn the run id —
+**checking that its `head_sha` is the merge commit** — then
+`list_workflow_jobs` for that id; and for a workflow you dispatched yourself,
+poll the JOBS call only. Measured 2026-09-07 verifying #299 across three
+workflows.
 
 The same caution applies to `get_job_logs` on this repo: `site-health.yml`
 emits a long step summary.
