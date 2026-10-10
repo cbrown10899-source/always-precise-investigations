@@ -48,6 +48,14 @@ npx wrangler secret put WATCH_PASSWORD      # the passcode he'll type
 npx wrangler secret put SALT                # any random string
 ```
 
+**Type the secret NAME exactly.** The live Worker's salt was created as
+`SALT ` — with a trailing space — so for as long as the Worker existed it read
+no salt at all and fell back to a constant this public repository prints
+(found 2026-10-10). The Worker now reads the salt by its trimmed name, so the
+live secret works as it is; leave it. Renaming it means choosing a new value
+(Cloudflare never shows a secret again), and a new salt makes every returning
+visitor look new once.
+
 Pick a passcode that is not guessable, and do not write the real one down in
 this file — it is committed to a repository. A short numeric PIN can be
 brute-forced; the Worker locks a client out after 8 failed attempts for 15

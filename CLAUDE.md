@@ -3805,7 +3805,7 @@ Tests, which intercept form delivery so a run never reaches the firm's inbox:
 
 ```bash
 node intake/test-intake.mjs      # 934 checks (2026-10-10); needs Playwright, skips cleanly without it
-node visitor-alerts/test-worker.mjs   # 206 checks (2026-10-10): journeys on real SQLite
+node visitor-alerts/test-worker.mjs   # 210 checks (2026-10-10): journeys on real SQLite
 node watch/test-watch.mjs        # 74 checks (2026-10-10): the beacon and the dashboard against the real Worker
 ```
 
@@ -7343,3 +7343,14 @@ its journey reads are null-safe. Two dashboard mutations crashed the browser
 suite on a 30-second wait for a screen that never drew; every browser section
 now runs under `run()`, which turns a throw into a FAIL named for its section
 and lets the rest of the run continue. All 48 mutations now fail by name.
+
+**A SECRET WITH A SPACE IN ITS NAME IS NO SECRET, AND A FALLBACK HID IT.** The
+setup's binding list printed the live salt as `SALT ` — a trailing space — so
+`env.SALT` had always been undefined and every salted key had used the `'api'`
+fallback that this public repository prints. Nothing failed, because the
+fallback is what made it work. `saltOf()` reads it by its trimmed name and is
+the only reader (a test counts them; two mutations fail by name). Fixed the day
+journeys began, so the one-time change of every salted key cost a handful of
+visitors rather than a history. **A `|| 'default'` on a secret is a missing
+secret that will never announce itself** — when a setup can list the bindings,
+read the list.

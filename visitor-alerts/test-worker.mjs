@@ -542,6 +542,33 @@ async function sha256(s) {
   CLOCK = null;
 }
 
+// --- the salt. The live secret was created as "SALT " — a trailing space in its
+// NAME — so env.SALT was undefined and every salted key used the fallback this
+// public repository publishes (found 2026-10-10 by visitors-setup.yml).
+{
+  clockAt('2026-10-09T15:00:00Z');
+  const T = tok('salty');
+  const live = journeyEnv();
+  delete live.SALT;
+  live['SALT '] = 'the-real-secret';            // exactly as the live Worker carries it
+  await page(live, T, 'pvSalt0001', '/');
+  const real = (await sha256(`vid|${T}|the-real-secret`)).slice(0, 32);
+  const fallback = (await sha256(`vid|${T}|api`)).slice(0, 32);
+  ok('SALT: a secret named "SALT " (a trailing space, as on the live Worker) is the salt actually used',
+    !!one(live, 'SELECT 1 AS x FROM visitor WHERE id = ?', real));
+  ok('and the published fallback is not', !one(live, 'SELECT 1 AS x FROM visitor WHERE id = ?', fallback));
+  const none = journeyEnv();
+  delete none.SALT;
+  await page(none, T, 'pvSalt0002', '/');
+  ok('with no salt at all a page view is still counted, on the stated fallback', !!one(none, 'SELECT 1 AS x FROM visitor WHERE id = ?', fallback));
+  const code = fs.readFileSync(new URL('./worker.js', import.meta.url), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  ok('one reader of the salt: env.SALT is read only inside saltOf, and nothing falls back on its own',
+    (code.match(/env\.SALT\b/g) || []).length === 2 && !/env\.SALT\s*\|\|/.test(code) && (code.match(/saltOf\(env\)/g) || []).length >= 6,
+    String((code.match(/env\.SALT\b/g) || []).length));
+  CLOCK = null;
+}
+
 // --- visits: 30 minutes of nothing starts a new one; a reload is not a visit
 {
   clockAt('2026-10-09T15:00:00Z');
