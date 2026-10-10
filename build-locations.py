@@ -218,9 +218,11 @@ BY_SLUG = {p["slug"]: p for p in PLACES}
 # next. `current` marks the page a link points at with aria-current, and only on
 # a link whose address IS that page.
 #
-# THE LOGO IS THE OWNER'S APPROVED DIAMOND LOGO, assets/logo-white.webp, used
-# exactly as supplied (owner, 2026-10-10). Only its height is set, in site.css;
-# the width and height attributes are the file's own 500x116.
+# THE LOGO IS THE ONE THE LIVE SITE'S HEADER SHOWS — assets/logo-lockup.svg, the
+# navy and red scales of justice in a white badge, unchanged since 2026-08-02.
+# The owner chose it on 2026-10-10 from a side-by-side of the live header and the
+# white diamond. Only its height is set, in site.css; the width and height
+# attributes are the file's own 240x68 viewbox proportions.
 SITE_CSS = "/assets/site.css?v=1"
 NAV = [("/#private", "Private Investigations"),
        ("/child-custody-investigations/", "Child Custody"),
@@ -256,7 +258,7 @@ def site_header(current=""):
 
 <header class="site-head">
   <div class="head-in">
-    <a class="brand" href="/" aria-label="Always Precise Investigations home"><img src="/assets/logo-white.webp" alt="Always Precise Investigations" width="500" height="116"></a>
+    <a class="brand" href="/" aria-label="Always Precise Investigations home"><img src="/assets/logo-lockup.svg" alt="Always Precise Investigations — scales of justice logo" width="240" height="68"></a>
     <nav class="site-nav" aria-label="Main">
 {nav}
       <a class="nav-cta" href="{cta_h}">{cta_t}</a>

@@ -939,20 +939,25 @@ section('The manifest describes the site honestly');
   const placeholders = marketing.filter(f => /data-dev-placeholder|DEVELOPMENT PLACEHOLDER/.test(readAll(f))).map(rel);
   ok('RELEASE GATE: no development placeholder reaches the public site', placeholders.length === 0, placeholders.join(' | '));
 
-  /* THE LOGO IS THE OWNER'S, BYTE FOR BYTE (owner, 2026-10-10: "Do not redesign,
-     recreate, replace, recolor, or distort it"). The digest is the file as it
-     has been since it was restored in bdd4a83; a changed file fails here. */
-  const logo = path.join(site, 'assets/logo-white.webp');
-  ok('the approved diamond logo is published unchanged (SHA-256 pinned)',
+  /* THE LOGO IS THE ONE THE LIVE SITE'S HEADER SHOWS, BYTE FOR BYTE (owner,
+     2026-10-10, chosen from a side-by-side of the live header and the white
+     diamond: "Preserve that exact logo. Do not substitute, redraw, recolor, or
+     redesign it"). assets/logo-lockup.svg — the navy and red scales of justice,
+     unchanged since 928dd3f on 2026-08-02 — so the digest is pinned, a changed
+     file fails here, and the diamond may not take a header again by accident. */
+  const logo = path.join(site, 'assets/logo-lockup.svg');
+  ok('the approved scales-of-justice logo is published unchanged (SHA-256 pinned)',
      fs.existsSync(logo) && crypto.createHash('sha256').update(fs.readFileSync(logo)).digest('hex')
-       === 'b6ad9122b0b0979450b8dbf8133a1addee352175b210583452eb9c66a84159eb');
-  const LOGO_TAG = '<a class="brand" href="/" aria-label="Always Precise Investigations home"><img src="/assets/logo-white.webp" alt="Always Precise Investigations" width="500" height="116"></a>';
+       === 'c1c642440074d35be6ff9455968bb0256745c0bcbe7e479085da957853942ccf');
+  const LOGO_TAG = '<a class="brand" href="/" aria-label="Always Precise Investigations home"><img src="/assets/logo-lockup.svg" alt="Always Precise Investigations — scales of justice logo" width="240" height="68"></a>';
   const noLogo = marketing.filter(f => !readAll(f).includes(LOGO_TAG)).map(rel);
-  ok('every public page wears that logo in its header, at its own 500x116 proportions', noLogo.length === 0, noLogo.join(' | '));
-  const oldLogo = marketing.filter(f => /logo-lockup/.test(readAll(f))).map(rel);
-  ok('no public page still uses the scales lockup', oldLogo.length === 0, oldLogo.join(' | '));
+  ok('every public page wears that logo in its header, at its own 240x68 proportions', noLogo.length === 0, noLogo.join(' | '));
+  const diamondHead = marketing.filter(f => /logo-white\.webp/.test((readAll(f).match(/<header[\s\S]*?<\/header>/) || [''])[0])).map(rel);
+  ok('no public header shows the white diamond instead', diamondHead.length === 0, diamondHead.join(' | '));
   const css = fs.readFileSync(path.join(site, 'assets/site.css'), 'utf8');
   const brandRule = (css.match(/\.brand img\{[^}]*\}/g) || []).join(' ');
+  /* The badge is the live header's: a white ground behind a logo drawn for one. */
+  ok('the logo sits in the live header\'s white rounded badge', /\.brand\{[^}]*background:#fff[^}]*border-radius:12px/.test(css));
   ok('the logo is only ever sized by height — no width, filter, recolour or crop',
      /height:/.test(brandRule) && !/(^|[;{])\s*width:\s*\d/.test(brandRule.replace(/width:auto/g, ''))
        && !/filter|object-fit|clip|mix-blend|opacity/.test(brandRule), brandRule);

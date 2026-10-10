@@ -55,15 +55,17 @@ a{color:var(--navy-2)}
 /* ---------------------------------------------------------------- header */
 .site-head{background:var(--navy);color:#fff;position:sticky;top:0;z-index:40;border-bottom:1px solid rgba(255,255,255,.08)}
 .head-in{max-width:var(--wrap);margin:0 auto;padding:10px 20px;display:flex;align-items:center;gap:18px}
-/* THE LOGO IS THE OWNER'S APPROVED DIAMOND LOGO, assets/logo-white.webp, used
-   EXACTLY as supplied (owner, 2026-10-10: "Do not redesign, recreate, replace,
-   recolor, or distort it"). It is white artwork on a transparent ground, made
-   for a dark background, so it sits directly on the navy header. Only its HEIGHT
-   is set; the width follows from the file's own 500x116, so its proportions are
-   the file's and nothing else. A deploy test pins the file's SHA-256 and every
-   public header's use of it. No filter, no recolour, no crop. */
-.brand{display:inline-flex;align-items:center;flex:none;padding:6px 0;min-height:44px}
-.brand img{height:54px;width:auto;max-width:none}
+/* THE LOGO IS THE ONE THE LIVE SITE'S HEADER ALREADY SHOWS (owner, 2026-10-10,
+   chosen from a side-by-side): assets/logo-lockup.svg, the navy and red scales
+   of justice, in the same white rounded badge it has worn since 2026-08-02 —
+   the file is drawn for a light ground, so the badge is part of how it is shown.
+   The badge's colour, radius, padding and shadow are the live header's. Only the
+   image's HEIGHT is set; its width follows from the file's own 240x68, so the
+   proportions are the file's. No filter, recolour or crop — a deploy test pins
+   the file's SHA-256 and every public header's use of it. */
+.brand{display:inline-flex;align-items:center;flex:none;background:#fff;border-radius:12px;padding:9px 16px;
+  box-shadow:0 1px 6px rgba(0,0,0,.35);min-height:44px}
+.brand img{height:58px;width:auto;max-width:none}
 .site-nav{display:flex;align-items:center;gap:22px;margin-left:auto}
 .site-nav a{color:#fff;text-decoration:none;font-size:.9rem;font-weight:600;letter-spacing:.01em;
   padding:10px 0;border-bottom:2px solid transparent}
@@ -248,7 +250,8 @@ body.b2b .hero{text-align:center;padding-left:20px;padding-right:20px}
 @media (max-width:720px){
   body{font-size:16px}
   .head-in{padding:8px 16px;gap:12px}
-  .brand img{height:44px}
+  .brand{padding:6px 14px}
+  .brand img{height:46px}
   .notice{font-size:.74rem;padding:7px 14px;line-height:1.4}
   .wrap{padding:0 16px}
   .site-foot .wrap{grid-template-columns:minmax(0,1fr)}
@@ -264,4 +267,8 @@ body.b2b .hero{text-align:center;padding-left:20px;padding-right:20px}
   .pg .hero{padding:40px 0 34px}
   .pg section{padding:32px 0}
 }
+/* At the narrowest phones the badge steps down once more, so it and the Menu
+   button share the row without the page scrolling sideways. Same file, same
+   proportions — only the height. */
+@media (max-width:360px){.brand{padding:5px 10px}.brand img{height:38px}}
 @media (prefers-reduced-motion:reduce){.btn{transition:none}}

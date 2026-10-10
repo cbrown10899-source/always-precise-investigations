@@ -2111,13 +2111,14 @@ for (const [w, h] of [[320, 568], [360, 740], [390, 844], [430, 932], [768, 1024
     const cards = [...document.querySelectorAll('.art-grid a.art')].map(R);
     const hero = [...document.querySelectorAll('.hero-actions .btn')].map(R);
     const logo = R(document.querySelector('.site-head .brand img'));
+    const badge = getComputedStyle(document.querySelector('.site-head .brand')).backgroundColor;
     const bar = document.querySelector('.mobile-actions');
     const barShown = bar && getComputedStyle(bar).display !== 'none';
     return { vw: innerWidth, doc: document.documentElement.scrollWidth - innerWidth,
       cardTops: cards.map(r => Math.round(r.top)), cardLefts: cards.map(r => Math.round(r.left)),
       cardRight: Math.max(...cards.map(r => r.right)), cardW: cards.map(r => Math.round(r.width)),
       heroH: hero.map(r => Math.round(r.height)), heroRight: Math.max(...hero.map(r => r.right)),
-      logo: logo && { w: logo.width, h: logo.height },
+      logo: logo && { w: logo.width, h: logo.height }, badge,
       barShown, barH: barShown ? Math.round(R(bar).height) : 0,
       barBtns: barShown ? [...bar.querySelectorAll('a')].map(a => Math.round(R(a).height)) : [],
       bodyPad: parseFloat(getComputedStyle(document.body).paddingBottom) };
@@ -2128,7 +2129,8 @@ for (const [w, h] of [[320, 568], [360, 740], [390, 844], [430, 932], [768, 1024
   else ok(`${w}px: the cards sit side by side, the same size`, m.cardTops[0] === m.cardTops[1] && m.cardW[0] === m.cardW[1], JSON.stringify(m));
   ok(`${w}px: the hero's two actions clear the 44px floor and stay on screen`,
      m.heroH.length === 2 && m.heroH.every(x => x >= 44) && m.heroRight <= m.vw + 0.5, JSON.stringify(m.heroH));
-  ok(`${w}px: the logo keeps its own 500x116 proportions`, m.logo && Math.abs(m.logo.w / m.logo.h - 500 / 116) < 0.03, JSON.stringify(m.logo));
+  ok(`${w}px: the logo keeps its own 240x68 proportions, in its white badge`,
+     m.logo && Math.abs(m.logo.w / m.logo.h - 240 / 68) < 0.03 && m.badge === 'rgb(255, 255, 255)', JSON.stringify(m.logo) + ' ' + m.badge);
   if (w <= 720) {
     ok(`${w}px: the Call Privately / Online Intake bar is shown, both targets ≥44px`,
        m.barShown && m.barBtns.length === 2 && m.barBtns.every(x => x >= 44), JSON.stringify(m.barBtns));
