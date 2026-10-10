@@ -116,21 +116,38 @@ Production unchanged (yes/no/unknown): YES — nothing merged, nothing dispatche
   `assets/spouse-relationship-photo.webp`, owner-approved, commercially usable.
   Until they are installed the build is NOT READY and the release gate fails.
 
-## Tests run (final, this session)
-- `.github/test-deploy.mjs`: **190 passed, 3 failed**. The 3 are the RELEASE
-  GATE checks (both photographs missing, placeholders present). They fail by
-  design: this is what stops deploy.yml.
-- `intake/test-intake.mjs`: **948 passed, 0 failed** (was 934 before).
-- `visitor-alerts/test-worker.mjs`: **217 passed, 0 failed** (was 210 before).
-- `watch/test-watch.mjs`: **74 passed, 0 failed**.
-- `portal/test-portal.mjs`: **NOT COMPLETED — UNVERIFIED.** It was started
-  after the last change and was progressing (234 sections reached, about 20
-  minutes in). It prints results only at the end, and it was stopped at the
-  owner's request, so there is no pass/fail result. `portal/index.html` changed
-  (display of "Investigation type"), and a new section tests it. Run it first
-  next session.
-- Deploy-guard mutations, run in a worktree: **13 of 13 caught by name** (M12
-  first walked past; the guard was fixed and M12 then failed by name).
+## Tests run (latest: second session, 2026-10-10, on the live-logo build)
+- `.github/test-deploy.mjs`: **191 passed, 3 failed** — the 3 are the RELEASE
+  GATE checks (both photographs missing, placeholders present). Expected; this
+  is what stops deploy.yml. Not weakened.
+- `intake/test-intake.mjs`: **957 passed, 0 failed** (adds a 15-page check at
+  320/390/1280: no sideways scroll, the live logo in every header, nothing
+  failing to load except the two photographs).
+- `portal/test-portal.mjs`: **5,202 passed, 0 failed** — run ALONE, detached,
+  finished in ~38 min inside the 45-min limit. (The first run that session
+  failed 3: all three were the new "Investigation type" test reading the wrong
+  element — the card's first sub-line, and an uppercase label via innerText;
+  the probes were fixed, the product was right, and the re-run is clean.)
+- `visitor-alerts/test-worker.mjs`: **217 passed, 0 failed**.
+- `watch/test-watch.mjs`: 74 passed, 0 failed (first session; nothing it
+  covers changed since).
+- Mutations: 13/13 deploy-guard mutations caught (first session) + 3/3 logo
+  guard mutations caught (diamond back on a page, a changed byte, the badge
+  removed).
+
+## Consistency (second session)
+All 15 public pages measured at 390 and 1280 (and 5 at 320): one identical
+header and footer, the live scales logo at 205x58 on desktop (the live site's
+exact size), 162x46 on phones; zero sideways scroll on every page (the vendor
+table overflowed 16px at 320 and was fixed); the phone bar opens the legal door
+on Legal and the carrier door on Insurance/Vendor; no page has a broken
+resource except the two not-yet-supplied photographs on the homepage.
+
+## Screenshots (second session, local preview only)
+Scratchpad `rd/out/` and `rd/review/`: homepage at 320/390/430/768/1280/1440,
+the phone menu, the cards, the intake opened on Spouse / Relationship, and every
+public page at 390 and 1280. Sent to the owner. Re-shoot after the photographs
+are installed.
 
 ## Files changed
 - index.html, assets/site.css, .github/deploy-manifest.txt
@@ -155,36 +172,21 @@ Production unchanged (yes/no/unknown): YES — nothing merged, nothing dispatche
   deploy suite. Height 58px desktop (the live size), 46px phones, 38px at
   ≤360px; proportions always the file's own 240x68. Commit `dfaf2ec`.
 
-## Next actions (the next session, in order — owner's priorities)
-1. `git fetch origin claude/app-crashes-lockups-debug-psf6zd && git checkout
-   claude/app-crashes-lockups-debug-psf6zd`. Read this file, then CLAUDE.md
-   "The 2026-10-10 public redesign". Nothing is merged; master is `daa7b54`.
-2. PHOTOGRAPHS, if supplied: add `assets/child-custody-photo.webp` and
-   `assets/spouse-relationship-photo.webp` (realistic, gender-neutral; custody
-   = hands only, relationship = two empty chairs and two mugs; owner-approved,
-   commercially usable), list both in `.github/deploy-manifest.txt`, delete the
-   two `<span class="art-dev" data-dev-placeholder …>` badges in index.html,
-   bump `?v=` on both `--art` URLs if a file is ever replaced. If not supplied:
-   leave the gate failing and say so.
-3. SCREENSHOTS for the owner from the local preview only
-   (`python3 -m http.server 8090 --bind 127.0.0.1` at the repo root; script at
-   scratchpad `rd/review.mjs` may be gone — it shot 320/390/430/768/1280/1440,
-   the open phone menu, and the intake on Spouse / Relationship). Send them.
-4. PORTAL VERIFICATION with a time limit: run `portal/test-portal.mjs` alone,
-   detached, to a file (`nohup setsid node portal/test-portal.mjs >
-   <file> 2>&1 &`); check progress by `grep -c '^>> '` on the file (it prints
-   results only at the end, ~35 min); give it at most ~45 min. Fix any failure
-   caused by the "Investigation type" line without weakening assertions.
-   Never run another Playwright suite beside it.
-5. LOGO against production — DONE (owner chose the live scales lockup).
-6. CONSISTENCY across all 15 public pages: re-run `.github/test-deploy.mjs`
-   (identical header/footer guard) and screenshot each page at 390 and 1280.
-7. Report: screenshots, results, readiness (NOT READY while photos are
-   missing or the logo is unreconciled). STOP. Merge/deploy ONLY after the
-   owner writes "GO LIVE"; never dispatch deploy.yml from the branch.
+## Next actions (remaining)
+1. PHOTOGRAPHS — still not supplied. When they are: add
+   `assets/child-custody-photo.webp` and `assets/spouse-relationship-photo.webp`
+   (realistic, gender-neutral; custody = hands only, relationship = two empty
+   chairs and two mugs; owner-approved, commercially usable; subject in the
+   central 60% of the frame), list both in `.github/deploy-manifest.txt`, delete
+   the two `<span class="art-dev" data-dev-placeholder …>` badges in index.html,
+   re-run all suites (the painted-pixel contrast checks then measure the real
+   photos) and re-shoot the screenshots. The release gate then passes.
+2. Owner review of the finished site with photos. Readiness stays NOT READY
+   until then.
+3. Only after the owner writes "GO LIVE": PR, merge, verify the deploy
+   (`/.well-known/build.txt` SHA). Never dispatch deploy.yml from the branch.
 
 ## Open questions for the owner (decide at review)
-- Logo: see "Owner decisions received" — to be reconciled visually.
 - Process Serving kept as a 4th answer; Surveillance folded into "Other".
 - The new H1 replaces the local-SEO headline (title, meta and JSON-LD unchanged).
 - Header nav has no Insurance or Legal link (brief's six); they are reached via

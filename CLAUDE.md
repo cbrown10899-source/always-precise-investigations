@@ -166,7 +166,7 @@ published. The stager **fails if a listed path is missing**, so a renamed
 directory is caught at build time instead of by someone finding a 404 later.
 
 ```bash
-node .github/test-deploy.mjs   # 139 checks (2026-10-10): what may and may not be published
+node .github/test-deploy.mjs   # 194 checks (2026-10-10, redesign branch: 3 RELEASE GATE checks fail until the photos land): what may and may not be published
 ```
 
 It runs the real stager and asserts both halves — that the site is complete,
@@ -3804,8 +3804,8 @@ know the cap they are working to. The price fields (`package`, `package_price`,
 Tests, which intercept form delivery so a run never reaches the firm's inbox:
 
 ```bash
-node intake/test-intake.mjs      # 934 checks (2026-10-10); needs Playwright, skips cleanly without it
-node visitor-alerts/test-worker.mjs   # 210 checks (2026-10-10): journeys on real SQLite
+node intake/test-intake.mjs      # 957 checks (2026-10-10, redesign branch); needs Playwright, skips cleanly without it
+node visitor-alerts/test-worker.mjs   # 217 checks (2026-10-10, redesign branch): journeys on real SQLite
 node watch/test-watch.mjs        # 74 checks (2026-10-10): the beacon and the dashboard against the real Worker
 ```
 
@@ -3939,7 +3939,7 @@ Tests:
 
 ```bash
 node case-portal/test-worker.mjs   # 4393 checks (2026-09-28): auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 5198 checks (2026-10-02): the page against the real Worker
+node portal/test-portal.mjs        # 5202 checks (2026-10-10, redesign branch): the page against the real Worker
 ```
 
 **A FULL RUN'S TOTAL MOVES WITH THE CLOCK, BY A CHECK OR TWO.** *A surveillance
