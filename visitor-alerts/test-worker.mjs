@@ -947,6 +947,7 @@ let VISITOR_A = null;
   ok('the click handler reads only a link\'s address', /closest\('a\[href\]'\)/.test(src));
   ok('its calls are simple requests that survive the page being left', /text\/plain/.test(src) && /keepalive/.test(src));
   ok('the token lives in local storage, not a cookie', /localStorage\.setItem\('apiv-id'/.test(src) && !/document\.cookie/.test(src));
+  ok('it never sends before 200ms, so a moving cursor is not filed as "instant-fire"', /var wait = 200 - performance\.now\(\);/.test(src) && /if \(wait > 0\)/.test(src));
   ok('the referrer is reduced to its host before it leaves', /u\.protocol \+ '\/\/' \+ u\.hostname/.test(src));
   const intake = fs.readFileSync(new URL('../intake/index.html', import.meta.url), 'utf8');
   const at0 = intake.indexOf('function visitNote');

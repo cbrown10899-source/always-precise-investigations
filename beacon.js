@@ -131,8 +131,17 @@
     });
   }
 
+  /* NEVER BEFORE 200ms. The Worker files a page view whose human signal came
+     under 150ms after load as a replayed request ("instant-fire") — but a
+     cursor already moving as the next page paints fires pointermove at once,
+     and those page views were being dropped as bots, silently, mid-journey.
+     So an early signal waits out the first moments instead: the rule still
+     catches a script that posts without waiting, and no real visit is lost. */
+  var early = null;
   function send() {
     if (sent) return;
+    var wait = 200 - performance.now();
+    if (wait > 0) { if (!early) early = setTimeout(function () { early = null; send(); }, wait + 5); return; }
     sent = true;
     cleanup();
     var body = {

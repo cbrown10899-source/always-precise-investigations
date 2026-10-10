@@ -72,7 +72,7 @@ main{padding-top:16px}
   body.detail-open #listcol{display:none}
   body.detail-open #detail{display:block}
   body.detail-open .back{display:inline-flex}
-  body.detail-open h1,body.detail-open #signout{display:none}
+  body.detail-open h1,body.detail-open #signout{display:none !important}
 }
 
 /* summary */
@@ -86,7 +86,8 @@ main{padding-top:16px}
 .stat .l{color:var(--ink);font-size:15.5px;opacity:.85}
 .stat.r{text-align:right}
 .bar{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
-.bar button{display:flex;align-items:center;justify-content:center;gap:10px;font-size:16.5px;min-height:56px;background:var(--card)}
+.bar button{display:flex;align-items:center;justify-content:center;gap:8px;font-size:16px;min-height:56px;background:var(--card);
+padding:10px;white-space:nowrap}
 .offer{padding:16px;margin-top:12px;border-color:var(--cyan-2)}
 .offer b{color:var(--white);font-size:15px;display:block;margin-bottom:3px}
 .offer p{color:var(--muted);font-size:14px;margin-bottom:12px}
@@ -110,9 +111,9 @@ border:1px solid var(--line);min-height:44px}
 .vc-ago{color:var(--muted);font-size:14.5px;white-space:nowrap}
 .chev{width:18px;height:18px;align-self:center;color:var(--muted)}
 .vc-meta{color:var(--muted);font-size:15px;margin-top:4px;overflow-wrap:anywhere}
-.badges{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
-.badge{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;letter-spacing:.11em;
-text-transform:uppercase;border:1.5px solid var(--dim);color:var(--ink);border-radius:999px;padding:4px 12px;line-height:1.3}
+.badges{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;letter-spacing:.08em;
+text-transform:uppercase;border:1.5px solid var(--dim);color:var(--ink);border-radius:999px;padding:4px 9px;line-height:1.3}
 .badge.high{border-color:var(--gold);color:var(--gold)}
 .badge.ret{border-color:var(--cyan);color:var(--cyan)}
 .badge.interested{border-color:var(--green);color:var(--green)}
@@ -121,12 +122,16 @@ text-transform:uppercase;border:1.5px solid var(--dim);color:var(--ink);border-r
 .badge.live{border-color:var(--green);color:var(--green)}
 .badge.live::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--green)}
 .badge svg{width:15px;height:15px}
-.vc-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}
-.m{display:flex;gap:8px;align-items:flex-start;min-width:0}
-.m .ico{width:24px;height:24px;color:var(--ink);opacity:.9;margin-top:2px}
+/* The visits and time columns take what their words need; the activity
+   column takes the rest, so "7m 59s" never breaks and the interest wraps. */
+.vc-metrics{display:grid;grid-template-columns:auto auto minmax(0,1fr);gap:8px 14px;margin-top:12px}
+.m{display:flex;gap:7px;align-items:flex-start;min-width:0}
+.m .ico{width:22px;height:22px;color:var(--ink);opacity:.9;margin-top:2px}
+.m b,.m span{white-space:nowrap}
+.m:last-child b,.m:last-child span{white-space:normal}
 .m div{min-width:0;font-size:14px;line-height:1.35;color:var(--ink)}
-.m b{display:block;font-weight:500;overflow-wrap:anywhere}
-.m span{display:block;color:var(--muted);overflow-wrap:anywhere}
+.m b{display:block;font-weight:500}
+.m span{display:block;color:var(--muted)}
 .empty{color:var(--muted);text-align:center;padding:30px 0;font-size:15px}
 .filtered{color:var(--dim);font-size:13px;margin-top:14px;text-align:center}
 .note{color:var(--muted);font-size:13px;margin-top:16px;line-height:1.6}
@@ -142,26 +147,31 @@ text-transform:uppercase;border:1.5px solid var(--dim);color:var(--ink);border-r
 .d-loc.t-intake{border:2px solid var(--coral);padding:17px}
 .d-loc-top{display:flex;gap:14px;align-items:flex-start}
 .d-loc-top .pin{width:34px;height:34px;color:var(--gold);flex:none;fill:var(--gold);stroke:none}
-.place{font-size:21px;font-weight:700;color:var(--white);overflow-wrap:anywhere}
-.muted{color:var(--muted);font-size:15px}
+.place{font-size:18.5px;font-weight:700;color:var(--white);overflow-wrap:anywhere}
+.muted{color:var(--muted);font-size:14px}
 .d-ago{margin-left:auto;text-align:right;white-space:nowrap}
-.d-ago b{display:block;font-size:17px;font-weight:500;color:var(--ink)}
+.d-ago b{display:block;font-size:16px;font-weight:500;color:var(--ink)}
 .d-ago span{font-size:14px;color:var(--muted)}
 .live-line{margin-top:12px;color:var(--green);font-size:15px;font-weight:600;overflow-wrap:anywhere}
-.d-score{padding:18px;display:grid;grid-template-columns:auto minmax(0,1fr);gap:18px;align-items:center}
+.d-score{padding:18px}
+/* The heading sits ABOVE the grid, not across it: a heading spanning both
+   tracks of an auto/1fr grid sized the number's track to its own width and
+   squeezed the reasons into a sliver that ran off a phone screen. */
+.score-body{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:18px;align-items:start;margin-top:4px}
 .d-score h2{font-size:19px;font-weight:700;color:var(--white);display:flex;align-items:center;gap:8px}
 .info{background:transparent;border:0;padding:0;min-height:44px;min-width:44px;color:var(--muted);display:inline-flex;
 align-items:center;justify-content:center}
 .info svg{width:20px;height:20px}
-.score-n{font-size:76px;font-weight:800;line-height:1;color:var(--white);letter-spacing:-.03em}
+.score-n{font-size:72px;font-weight:800;line-height:1;color:var(--white);letter-spacing:-.03em;min-width:1.2em}
 .score-n.t-high{color:var(--gold)}
 .score-n.t-interested{color:var(--green)}
 .reasons{list-style:none;display:flex;flex-direction:column;gap:12px;border-left:1px solid var(--line);padding-left:18px}
-.reasons li{display:flex;gap:12px;align-items:center;font-size:15.5px}
+.reasons li{display:flex;gap:10px;align-items:center;font-size:15px}
 .reasons .ico{color:var(--gold);width:22px;height:22px}
 .reasons .pts{margin-left:auto;color:var(--dim);font-size:13px;white-space:nowrap}
 .reasons .none{color:var(--muted)}
-.rules{grid-column:1/-1;color:var(--muted);font-size:13.5px;line-height:1.6;border-top:1px solid var(--line);padding-top:12px}
+.rules{color:var(--muted);font-size:13.5px;line-height:1.6;border-top:1px solid var(--line);padding-top:12px;margin-top:8px}
+.nw{white-space:nowrap}
 .sec{padding:18px}
 .sec h2{font-size:19px;font-weight:700;color:var(--white);display:flex;align-items:center;gap:12px;margin-bottom:14px}
 .sec h2 .ico{color:var(--cyan);width:24px;height:24px}
@@ -203,11 +213,29 @@ border-bottom:1px solid rgba(33,64,95,.6)}
 .rows.acts li{grid-template-columns:24px minmax(0,1fr) auto}
 .placeholder{color:var(--muted);padding:40px 20px;text-align:center}
 @media (max-width:430px){
-  .d-score{grid-template-columns:1fr}
-  .reasons{border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:14px}
+  .vcard{padding:14px 14px}
+  .vcard.t-high,.vcard.t-intake{padding:13px 13px}
+  .m div{font-size:13.5px}
+  .vc-metrics{column-gap:12px}
+  .d-wrap{gap:12px}
+  .d-loc,.d-score,.sec{padding:16px}
+  .d-loc.t-high,.d-loc.t-intake{padding:15px}
+  .score-n{font-size:60px}
+  .score-body{gap:14px}
+  .reasons{padding-left:14px;gap:10px}
+  .reasons li{font-size:14.5px}
+  .dgrid{gap:14px 14px}
+  .dcol + .dcol{padding-left:14px}
+  .dgrid dd{font-size:14.5px}
+  .journey li.j{grid-template-columns:20px 82px minmax(0,1fr) auto;gap:6px}
+  .jt,.jd,.jl span{font-size:13.5px}
+}
+@media (max-width:359.98px){
+  .score-body{grid-template-columns:1fr}
+  .reasons{border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:12px}
   .dgrid{grid-template-columns:1fr}
   .dcol + .dcol{border-left:0;padding-left:0}
-  .journey li.j{grid-template-columns:22px 84px minmax(0,1fr)}
+  .journey li.j{grid-template-columns:20px 78px minmax(0,1fr)}
   .journey .jd{grid-column:3;justify-self:start;margin-top:-4px}
 }
 @media (max-width:359px){
@@ -479,14 +507,20 @@ function journeyHtml(d) {
   });
   return h;
 }
+/* "Oct 9, 2026 · 11:48:09 PM EDT" — if it must wrap, it wraps between the
+   date and the time, so the time and its zone stay together. */
+function exactHtml(full) {
+  const i = String(full || '').indexOf(' · ');
+  return i < 0 ? esc(full) : esc(full.slice(0, i)) + ' · <span class="nw">' + esc(full.slice(i + 3)) + '</span>';
+}
 function detailHtml(d) {
   const v = d.visitor;
   const tc = tierClass(v);
   const intake = v.intake
-    ? '<dd class="acc">Submitted ✓<small>' + esc(v.intake.service || 'Intake') + ' &middot; ' + esc(v.intake.label) + '</small><small>Request ' + esc(v.intake.case) + '</small></dd>'
+    ? '<dd class="acc">Submitted ✓<small>' + esc(v.intake.service || 'Intake') + ' &middot; ' + exactHtml(v.intake.label) + '</small><small>Request ' + esc(v.intake.case) + '</small></dd>'
     : '<dd>Not submitted</dd>';
   const interest = v.interest
-    ? '<dd>' + esc(v.interest) + (v.interest_basis.length ? '<small>from: ' + esc(v.interest_basis.join(', ')) + '</small>' : '') + '</dd>'
+    ? '<dd>' + esc(v.interest) + (v.interest_basis.length ? '<small>from ' + esc(v.interest_basis.slice(0, 2).join(' + ')) + '</small>' : '') + '</dd>'
     : '<dd>Not determined</dd>';
   return '<div class="d-wrap">'
     + '<h2 class="vh" id="dhead" tabindex="-1">Visitor in ' + esc(v.place) + '</h2>'
@@ -497,12 +531,12 @@ function detailHtml(d) {
     + (v.live ? '<div class="live-line">● On the site now &middot; ' + esc(v.current_label) + ' (' + esc(v.path) + ')</div>' : '')
     + '</div>'
     + '<div class="card d-score"><div><h2>Interest Score <button class="info" type="button" data-act="rules" aria-expanded="' + ST.rulesOpen + '" aria-controls="rules" aria-label="How the score is counted">' + ico('info') + '</button></h2>'
-    + '<div class="score-n t-' + esc(v.tier) + '" aria-label="Interest score ' + v.score + ' of 100">' + v.score + '</div></div>'
-    + '<ul class="reasons">' + reasonsHtml(v) + '</ul>'
+    + '</div><div class="score-body"><div class="score-n t-' + esc(v.tier) + '" aria-label="Interest score ' + v.score + ' of 100">' + v.score + '</div>'
+    + '<ul class="reasons">' + reasonsHtml(v) + '</ul></div>'
     + '<p class="rules" id="rules"' + (ST.rulesOpen ? '' : ' hidden') + '>' + esc(v.score_rules) + '</p></div>'
     + '<div class="card sec"><h2>' + ico('user') + 'Visitor Details</h2><dl class="dgrid">'
-    + '<div class="dcol"><div><dt>First seen</dt><dd>' + esc(v.first_label) + '</dd></div>'
-    + '<div><dt>Last active</dt><dd>' + esc(v.last_label) + '</dd></div>'
+    + '<div class="dcol"><div><dt>First seen</dt><dd>' + exactHtml(v.first_label) + '</dd></div>'
+    + '<div><dt>Last active</dt><dd>' + exactHtml(v.last_label) + '</dd></div>'
     + '<div><dt>Total visits</dt><dd>' + esc(v.visits_detail) + '</dd></div>'
     + '<div><dt>Time on site</dt><dd>' + esc(v.engaged_total_label) + '<small>this visit ' + esc(v.engaged_visit_label) + '</small></dd></div></div>'
     + '<div class="dcol"><div><dt>Source</dt><dd class="acc">' + esc(v.source_detail) + '</dd></div>'

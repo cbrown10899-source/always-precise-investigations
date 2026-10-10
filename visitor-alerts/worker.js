@@ -633,8 +633,8 @@ function interestOf(events) {
     if (!svc) return;
     weight[svc] = (weight[svc] || 0) + pts;
     last[svc] = Math.max(last[svc] || 0, at);
-    basis[svc] = basis[svc] || [];
-    if (why && !basis[svc].includes(why)) basis[svc].push(why);
+    basis[svc] = basis[svc] || {};
+    basis[svc][why] = Math.max(basis[svc][why] || 0, pts);
   };
   for (const e of events) {
     const info = e.kind === 'page' ? pageInfo(e.path) : null;
@@ -642,10 +642,9 @@ function interestOf(events) {
       bump(info.service, 10 + Math.min(10, Math.floor((Number(e.engaged_ms) || 0) / 30_000)), e.at,
         `${info.label} page`);
     } else if (e.kind === 'action' && e.service) {
-      const label = SERVICE_LABEL[e.service] || '';
-      if (e.name === 'intake_submitted') bump(e.service, 100, e.at, `${label} intake submitted`);
-      else if (e.name === 'intake_opened') bump(e.service, 40, e.at, `${label} intake opened`);
-      else if (e.name === 'cta') bump(e.service, 30, e.at, `“${(CTA[e.detail] || CTA.intake).label}”`);
+      if (e.name === 'intake_submitted') bump(e.service, 100, e.at, 'intake submitted');
+      else if (e.name === 'intake_opened') bump(e.service, 40, e.at, 'intake opened');
+      else if (e.name === 'cta') bump(e.service, 30, e.at, 'intake button');
     }
   }
   const keys = Object.keys(weight);
@@ -653,7 +652,9 @@ function interestOf(events) {
   const pool = specific.length ? specific : keys;
   if (!pool.length) return { interest: null, basis: [] };
   pool.sort((a, b) => weight[b] - weight[a] || last[b] - last[a]);
-  return { interest: pool[0], basis: basis[pool[0]] };
+  // What decided it, strongest first, in a few words each.
+  const why = basis[pool[0]];
+  return { interest: pool[0], basis: Object.keys(why).sort((a, b) => why[b] - why[a]) };
 }
 
 /* Recompute one visitor's score, tier, interest and card summary from the
@@ -909,7 +910,13 @@ async function journeyPage(env, { vid, body, path, refHost, cf, now }) {
     const stmts = [
       db.prepare("INSERT OR IGNORE INTO visitor_event (id, visitor_id, session_id, page_id, at, kind, path, service) VALUES (?1, ?2, ?3, ?1, ?4, 'page', ?5, ?6)")
         .bind(pid, vid, sid, at, path, service),
-      db.prepare('UPDATE visitor_session SET pages = pages + 1, current_path = CASE WHEN ?2 >= last_at THEN ?3 ELSE current_path END, last_at = MAX(last_at, ?2) WHERE id = ?1')
+      /* The visit's current page is its latest page BY ARRIVAL. Not by
+         last_at: the page being left sends its final check-in after the next
+         page has opened, so last_at is routinely later than the newest page,
+         and comparing against it kept the visit on the page it had left. */
+      db.prepare(`UPDATE visitor_session SET pages = pages + 1,
+          current_path = CASE WHEN ?2 >= (SELECT MAX(at) FROM visitor_event WHERE session_id = ?1 AND kind = 'page') THEN ?3 ELSE current_path END,
+          last_at = MAX(last_at, ?2) WHERE id = ?1`)
         .bind(sid, at, path),
       db.prepare('UPDATE visitor SET last_at = MAX(last_at, ?2), sessions = sessions + ?3 WHERE id = ?1')
         .bind(vid, at, opened ? 1 : 0),
