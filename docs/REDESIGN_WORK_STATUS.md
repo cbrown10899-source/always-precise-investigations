@@ -5,7 +5,7 @@ so this file is never published (the deploy suite also refuses every `.md`).
 
 Last updated: 2026-10-10
 Feature branch: `claude/app-crashes-lockups-debug-psf6zd` (restarted from master at `daa7b54`)
-Last commit: see `git log -1` on the branch
+Last commit: see `git log -1` on the branch (the commit carrying this text)
 Production deploy trigger verified: YES — see "Production safety" below
 Production unchanged (yes/no/unknown): YES — nothing merged, nothing dispatched
 
@@ -40,8 +40,11 @@ Production unchanged (yes/no/unknown): YES — nothing merged, nothing dispatche
 - [x] Secondary Insurance and Legal cards
 - [x] Sticky mobile actions (business pages open their own door)
 - [x] Analytics integration (beacon + Worker vocabulary; Worker tests)
-- [ ] Accessibility and responsive checks — automated in the intake suite; run
-- [ ] Automated tests — see "Tests run"
+- [x] Accessibility and responsive checks — automated in the intake suite
+      (320/360/390/430/768/1024/1280; 44px targets, tab order, gold focus,
+      painted-pixel contrast, no sideways scroll) — PASSING
+- [ ] Automated tests — all PASS except the portal suite (not completed) and
+      the three RELEASE GATE checks (fail by design) — see "Tests run"
 - [ ] Mobile screenshots
 - [ ] Desktop screenshots
 
@@ -104,8 +107,8 @@ Production unchanged (yes/no/unknown): YES — nothing merged, nothing dispatche
   Insurance and Vendor → carrier door, all consumer pages → private door.
 
 ## In progress
-- Tests: deploy suite green except the three RELEASE GATE checks (by design);
-  intake suite re-aimed (Unit 40 → two photo cards), portal + watch suites to run.
+- Nothing running. Session paused at the owner's request (usage limit),
+  2026-10-10, with every change committed and pushed.
 
 ## Blockers
 - **The two photographs are not in the package** (`assets/ASSETS_REQUIRED.md`
@@ -113,11 +116,21 @@ Production unchanged (yes/no/unknown): YES — nothing merged, nothing dispatche
   `assets/spouse-relationship-photo.webp`, owner-approved, commercially usable.
   Until they are installed the build is NOT READY and the release gate fails.
 
-## Tests run
-- `.github/test-deploy.mjs`: 190 passed, 3 failed — the three RELEASE GATE
-  checks (two photographs missing, placeholders present). Expected until the
-  photographs are supplied; this is what blocks deploy.yml.
-- `visitor-alerts/test-worker.mjs`: 217 passed, 0 failed.
+## Tests run (final, this session)
+- `.github/test-deploy.mjs`: **190 passed, 3 failed**. The 3 are the RELEASE
+  GATE checks (both photographs missing, placeholders present). They fail by
+  design: this is what stops deploy.yml.
+- `intake/test-intake.mjs`: **948 passed, 0 failed** (was 934 before).
+- `visitor-alerts/test-worker.mjs`: **217 passed, 0 failed** (was 210 before).
+- `watch/test-watch.mjs`: **74 passed, 0 failed**.
+- `portal/test-portal.mjs`: **NOT COMPLETED — UNVERIFIED.** It was started
+  after the last change and was progressing (234 sections reached, about 20
+  minutes in). It prints results only at the end, and it was stopped at the
+  owner's request, so there is no pass/fail result. `portal/index.html` changed
+  (display of "Investigation type"), and a new section tests it. Run it first
+  next session.
+- Deploy-guard mutations, run in a worktree: **13 of 13 caught by name** (M12
+  first walked past; the guard was fixed and M12 then failed by name).
 
 ## Files changed
 - index.html, assets/site.css, .github/deploy-manifest.txt
@@ -129,12 +142,43 @@ Production unchanged (yes/no/unknown): YES — nothing merged, nothing dispatche
 - tests: .github/test-deploy.mjs, intake/test-intake.mjs,
   visitor-alerts/test-worker.mjs, portal/test-portal.mjs
 
-## Next actions
-1. Finish the suite runs (intake, watch, portal) and mutations of the new guards.
-2. Screenshots at 320/390/430/768/1280+, then the owner review report. STOP.
-3. After photos arrive: add both to assets/ and deploy-manifest.txt, remove the
-   two `.art-dev` badges, re-run the painted-pixel contrast checks. After "GO
-   LIVE" only: merge and verify.
+## Next actions (the next session, in order)
+1. `git fetch origin claude/app-crashes-lockups-debug-psf6zd && git checkout
+   claude/app-crashes-lockups-debug-psf6zd`. Read this file, then CLAUDE.md
+   "The 2026-10-10 public redesign".
+2. Run the portal suite ALONE, detached, output to a file:
+   `nohup setsid node portal/test-portal.mjs > /tmp/portal.txt 2>&1 &`
+   (about 35 minutes). Fix any failure the "Investigation type" line caused.
+   Do not weaken assertions.
+3. Take the review screenshots (local preview only:
+   `python3 -m http.server 8090 --bind 127.0.0.1` from the repo root). Cover
+   phone 320/390/430, tablet 768, desktop 1280/1440, plus the intake opened on
+   Spouse / Relationship.
+4. Give the owner the review report: screenshots, test results, this checklist.
+   Readiness stays **NOT READY** until the photographs are installed.
+5. When the owner supplies and approves the two photographs:
+   add `assets/child-custody-photo.webp` and
+   `assets/spouse-relationship-photo.webp` (realistic, gender-neutral; the
+   custody one hands-only, the relationship one two empty chairs and two mugs),
+   list both in `.github/deploy-manifest.txt`, delete the two
+   `<span class="art-dev" data-dev-placeholder …>` badges in index.html, and
+   re-run all suites (the painted-pixel contrast checks then measure the real
+   photos). The release gate then passes.
+6. **Only after the owner writes "GO LIVE":** open a PR, merge, and verify the
+   deploy (`/.well-known/build.txt` SHA). Never dispatch deploy.yml from the
+   branch.
+
+## Open questions for the owner (decide at review)
+- Logo: the redesign uses the diamond `logo-white.webp`, unchanged, as
+  instructed. The headers on master (therefore probably on the live site) show
+  the SCALES lockup `logo-lockup.svg`. Which one is "the logo on my live
+  website"? Switching is one line in `build-locations.py` (`site_header`),
+  copied to the pages, plus the deploy guard's pinned tag.
+- Process Serving kept as a 4th answer; Surveillance folded into "Other".
+- The new H1 replaces the local-SEO headline (title, meta and JSON-LD unchanged).
+- Header nav has no Insurance or Legal link (brief's six); they are reached via
+  "Other Investigation Services", the cards and the footer.
+- Insurance and Legal blocks keep a direct "Submit…" link beside "View Services".
 
 ## Owner approval
 Final photo approval: NOT YET RECEIVED
