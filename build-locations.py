@@ -210,48 +210,97 @@ for _p in PLACES:
     _p["nearby"] = NEARBY[_p["slug"]]
 BY_SLUG = {p["slug"]: p for p in PLACES}
 
-CSS = """
-*{margin:0;padding:0;box-sizing:border-box}
-:root{--navy:#13233c;--navy-2:#1a2f4e;--card:#1d3251;--line:#31517a;
---ink:#dfe6ef;--muted:#9fb0c4;--white:#fff;--teal:#3d97ad;--teal-2:#4fb3cb;--gold:#e6b54a}
-html{scroll-behavior:smooth}
-body{font-family:Georgia,'Times New Roman',serif;color:var(--ink);background:var(--navy);line-height:1.7;-webkit-text-size-adjust:100%}
-h1,h2,h3,.sans{font-family:'Segoe UI',Arial,Helvetica,sans-serif}
-h1,h2,h3{line-height:1.2;color:var(--white)}
-a{color:var(--teal-2)}
-img{max-width:100%;display:block}
-.wrap{max-width:920px;margin:0 auto;padding:0 20px}
-header{background:var(--navy-2);border-bottom:1px solid var(--line);padding:14px 0}
-header .wrap{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
-header .brand{font-family:'Segoe UI',Arial,sans-serif;color:#fff;font-weight:700;letter-spacing:.02em;text-decoration:none}
-header .call{background:var(--teal);color:#08131f;text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;
-font-weight:700;padding:9px 16px;border-radius:6px;white-space:nowrap}
-.hero{padding:46px 0 30px;border-bottom:1px solid var(--line)}
-.eyebrow{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--gold);margin-bottom:12px}
-h1{font-size:clamp(28px,5vw,42px);margin-bottom:14px}
-.lede{color:var(--muted);font-size:18px}
-section{padding:34px 0;border-bottom:1px solid var(--line)}
-h2{font-size:clamp(22px,3.4vw,28px);margin-bottom:14px}
-h3{font-size:18px;margin-bottom:6px}
-p{margin-bottom:14px}
-ul{margin:0 0 14px 20px}
-li{margin-bottom:8px}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-top:18px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px}
-.card p{color:var(--muted);margin:0;font-size:15px}
-.cta{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:24px;margin-top:22px;text-align:center}
-.cta a.btn{display:inline-block;background:var(--teal);color:#08131f;text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;
-font-weight:700;padding:13px 26px;border-radius:6px;margin-top:8px}
-.faq h3{margin-top:18px}
-.faq p{color:var(--muted)}
-.near{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
-.near a{background:var(--card);border:1px solid var(--line);border-radius:999px;padding:8px 16px;
-text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;font-size:14px}
-.near a:hover{border-color:var(--teal)}
-.disclaim{color:var(--muted);font-size:14px;font-style:italic}
-footer{padding:26px 0 40px;text-align:center;color:var(--muted);font-size:14px}
-footer .row{margin-bottom:6px}
-"""
+# THE PUBLIC SITE'S CHROME — header, footer and the phone's two-button bar —
+# has ONE writer, and it is this file. The generated pages are composed from it,
+# and the hand-written pages (the homepage, the service pages, Legal, Insurance,
+# Vendor, Privacy, the 404) carry the same bytes; a deploy test holds every page
+# to it, so the navigation cannot say one thing on one page and another on the
+# next. `current` marks the page a link points at with aria-current, and only on
+# a link whose address IS that page.
+#
+# THE LOGO IS THE OWNER'S APPROVED DIAMOND LOGO, assets/logo-white.webp, used
+# exactly as supplied (owner, 2026-10-10). Only its height is set, in site.css;
+# the width and height attributes are the file's own 500x116.
+SITE_CSS = "/assets/site.css?v=1"
+NAV = [("/#private", "Private Investigations"),
+       ("/child-custody-investigations/", "Child Custody"),
+       ("/infidelity-investigations/", "Spouse / Relationship"),
+       ("/#how", "How It Works"),
+       ("/#other", "Other Services")]
+NAV_CTA = ("/#contact", "Contact / Intake")
+FOOT_NAV = [("/#private", "Private Investigations"),
+            ("/child-custody-investigations/", "Child Custody"),
+            ("/infidelity-investigations/", "Spouse / Relationship"),
+            ("/insurance-investigations/", "Insurance"),
+            ("/legal-investigations/", "Legal"),
+            ("/private-investigator/", "Service Areas"),
+            ("/#about", "About"),
+            ("/#contact", "Contact"),
+            ("/privacy", "Privacy Policy")]
+ICON_PHONE = ('<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" '
+              'stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 '
+              '19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 '
+              '2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/></svg>')
+ICON_PEN = ('<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" '
+            'stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>')
+
+def _links(items, current, indent):
+    return "\n".join(f'{indent}<a href="{h}"' + (' aria-current="page"' if h == current else "") + f'>{t}</a>'
+                     for h, t in items)
+
+def site_header(current=""):
+    nav = _links(NAV, current, "      ")
+    menu = _links(NAV, current, "        ")
+    cta_h, cta_t = NAV_CTA
+    return f"""<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-head">
+  <div class="head-in">
+    <a class="brand" href="/" aria-label="Always Precise Investigations home"><img src="/assets/logo-white.webp" alt="Always Precise Investigations" width="500" height="116"></a>
+    <nav class="site-nav" aria-label="Main">
+{nav}
+      <a class="nav-cta" href="{cta_h}">{cta_t}</a>
+    </nav>
+    <details class="menu">
+      <summary><span class="bars" aria-hidden="true"></span>Menu</summary>
+      <nav aria-label="Main">
+{menu}
+        <a class="nav-cta" href="{cta_h}">{cta_t}</a>
+      </nav>
+    </details>
+  </div>
+</header>"""
+
+# A BUSINESS PAGE'S BAR OPENS ITS OWN DOOR. A law firm is never routed through the
+# private-client intake and a carrier is never shown the consumer side (both
+# standing rules), so Legal passes "legal", Insurance and its Vendor page pass
+# "insurance", and only the consumer pages get the private door.
+DOORS = {"private": ("/intake/?assignment=private", "Online Intake"),
+         "legal": ("/intake/?assignment=legal", "Submit Assignment"),
+         "insurance": ("/intake/?assignment=insurance", "Submit Assignment")}
+
+def site_footer(current="", door="private"):
+    door_h, door_t = DOORS[door]
+    return f"""<footer class="site-foot">
+  <div class="wrap">
+    <div>
+      <div class="fname">Always Precise Investigations, LLC</div>
+      <div class="row"><a href="tel:{PHONE_LINK}">{PHONE_DISPLAY}</a></div>
+      <div class="row"><a href="mailto:{EMAIL}">{EMAIL}</a></div>
+      <div class="row lic">{LICENSE} · Licensed and Insured</div>
+      <div class="row">{BRAND_LINE}</div>
+    </div>
+    <nav aria-label="Footer">
+{_links(FOOT_NAV, current, "      ")}
+    </nav>
+    <div class="base">All investigations are conducted strictly within the law.</div>
+  </div>
+</footer>
+
+<div class="mobile-actions" aria-label="Quick contact">
+  <a href="tel:{PHONE_LINK}">{ICON_PHONE}Call Privately</a>
+  <a class="ma-intake" href="{door_h}">{ICON_PEN}{door_t}</a>
+</div>"""
 
 def esc(t): return html.escape(t, quote=True)
 
@@ -449,18 +498,17 @@ def page(p):
 <meta name="twitter:title" content="{esc(title)}">
 <meta name="twitter:description" content="{esc(desc)}">
 <meta name="twitter:image" content="{DOMAIN}/assets/banner1.webp">
-<meta name="theme-color" content="#0e1a2c">
+<meta name="theme-color" content="#10243b">
 <link rel="icon" href="/assets/logo-white.webp">
 <script type="application/ld+json">{json.dumps(biz_ld)}</script>
 <script type="application/ld+json">{json.dumps(faq_ld)}</script>
 <script type="application/ld+json">{json.dumps(crumb_ld)}</script>
-<style>{CSS}</style>
+<link rel="stylesheet" href="{SITE_CSS}">
 </head>
-<body>
-<header><div class="wrap">
-  <a class="brand" href="{DOMAIN}/" aria-label="Always Precise Investigations home" style="background:#fff;border-radius:12px;padding:8px 14px;display:inline-flex;align-items:center"><img src="/assets/logo-lockup.svg" alt="Always Precise Investigations" style="height:48px;width:auto" width="240" height="68"></a>
-  <a class="call" href="tel:{PHONE_LINK}">Call {PHONE_DISPLAY}</a>
-</div></header>
+<body class="pg has-actions">
+{site_header()}
+
+<main id="main">
 
 <div class="hero"><div class="wrap">
   <p class="eyebrow">Serving {esc(place)}, Virginia</p>
@@ -537,12 +585,9 @@ def page(p):
   </div>
 </div></section>
 
-<footer><div class="wrap">
-  <div class="row"><strong>Always Precise Investigations, LLC</strong></div>
-  <div class="row"><a href="tel:{PHONE_LINK}">{PHONE_DISPLAY}</a> &middot; <a href="mailto:{EMAIL}">{EMAIL}</a></div>
-  <div class="row">{LICENSE} &middot; Licensed and Insured &middot; {BRAND_LINE}</div>
-  <div class="row"><a href="{DOMAIN}/">Home</a> &middot; <a href="{DOMAIN}/private-investigator/">Service areas</a> &middot; <a href="{DOMAIN}/infidelity-investigations/">Infidelity</a> &middot; <a href="{DOMAIN}/child-custody-investigations/">Child custody</a> &middot; <a href="{DOMAIN}/insurance-investigations/">Insurance claims</a> &middot; <a href="{DOMAIN}/legal-investigations/">Legal</a> &middot; <a href="{DOMAIN}/privacy">Privacy</a></div>
-</div></footer>
+</main>
+
+{site_footer()}
 <script src="/beacon.js" defer></script>
 </body>
 </html>
@@ -645,19 +690,18 @@ def hub():
 <meta name="twitter:title" content="{esc(title)}">
 <meta name="twitter:description" content="{esc(desc)}">
 <meta name="twitter:image" content="{DOMAIN}/assets/banner1.webp">
-<meta name="theme-color" content="#0e1a2c">
+<meta name="theme-color" content="#10243b">
 <link rel="icon" href="/assets/logo-white.webp">
 <script type="application/ld+json">{json.dumps(ld)}</script>
 <script type="application/ld+json">{json.dumps(hub_biz)}</script>
 <script type="application/ld+json">{json.dumps(hub_faq_ld)}</script>
 <script type="application/ld+json">{json.dumps(hub_crumb)}</script>
-<style>{CSS}</style>
+<link rel="stylesheet" href="{SITE_CSS}">
 </head>
-<body>
-<header><div class="wrap">
-  <a class="brand" href="{DOMAIN}/" aria-label="Always Precise Investigations home" style="background:#fff;border-radius:12px;padding:8px 14px;display:inline-flex;align-items:center"><img src="/assets/logo-lockup.svg" alt="Always Precise Investigations" style="height:48px;width:auto" width="240" height="68"></a>
-  <a class="call" href="tel:{PHONE_LINK}">Call {PHONE_DISPLAY}</a>
-</div></header>
+<body class="pg has-actions">
+{site_header("/private-investigator/")}
+
+<main id="main">
 
 <div class="hero"><div class="wrap">
   <p class="eyebrow">Central Virginia</p>
@@ -714,12 +758,9 @@ def hub():
   </div>
 </div></section>
 
-<footer><div class="wrap">
-  <div class="row"><strong>Always Precise Investigations, LLC</strong></div>
-  <div class="row"><a href="tel:{PHONE_LINK}">{PHONE_DISPLAY}</a> &middot; <a href="mailto:{EMAIL}">{EMAIL}</a></div>
-  <div class="row">{LICENSE} &middot; Licensed and Insured &middot; {BRAND_LINE}</div>
-  <div class="row"><a href="{DOMAIN}/">Home</a> &middot; <a href="{DOMAIN}/infidelity-investigations/">Infidelity</a> &middot; <a href="{DOMAIN}/child-custody-investigations/">Child custody</a> &middot; <a href="{DOMAIN}/insurance-investigations/">Insurance claims</a> &middot; <a href="{DOMAIN}/legal-investigations/">Legal</a> &middot; <a href="{DOMAIN}/privacy">Privacy</a></div>
-</div></footer>
+</main>
+
+{site_footer("/private-investigator/")}
 <script src="/beacon.js" defer></script>
 </body>
 </html>
