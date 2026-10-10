@@ -24400,7 +24400,9 @@ section('The owner sees the investigation type a private client chose');
   for (const [svc, who] of [['Spouse / Relationship', 'Riley Question'], ['Other Private Investigation', 'Owen Question']]) {
     const line = await page.evaluate((who) => {
       const c = [...document.querySelectorAll('.pcard')].find(x => x.innerText.includes(who));
-      const s = c && c.querySelector('.uihead-s');
+      /* The card carries several sub-lines (Subject first); read the one that is
+         the investigation type, by its own words, not by position. */
+      const s = c && [...c.querySelectorAll('.uihead-s')].find(x => /^Investigation type:/.test(x.textContent.trim()));
       return s ? s.textContent.trim() : null;
     }, who);
     ok(`the Intakes card for ${who} reads "Investigation type: ${svc}"`, line === `Investigation type: ${svc}`, String(line));
@@ -24412,9 +24414,14 @@ section('The owner sees the investigation type a private client chose');
   ok('a carrier assignment does not gain a private investigation-type line', carrierLine === false, String(carrierLine));
   await page.evaluate(() => openCase('API-QTYPE-1', 'details'));
   await page.waitForTimeout(900);
-  const summary = await page.evaluate(() => document.body.innerText);
-  ok('the submitted-intake summary names it too', /Investigation type\s*\n?\s*Spouse \/ Relationship/.test(summary),
-     (summary.match(/Investigation type[^\n]*\n?[^\n]*/) || [''])[0]);
+  /* Read the summary CELL, not the page's innerText: the label is styled
+     text-transform:uppercase, so innerText reports "INVESTIGATION TYPE" and a
+     case-sensitive match of the page text misses a correct screen. */
+  const cellVal = await page.evaluate(() => {
+    const c = [...document.querySelectorAll('.isum-c')].find(x => (x.querySelector('.isum-k') || {}).textContent === 'Investigation type');
+    return c ? c.textContent.replace('Investigation type', '').trim() : null;
+  });
+  ok('the submitted-intake summary names it too', cellVal === 'Spouse / Relationship', String(cellVal));
   await page.close();
 }
 
