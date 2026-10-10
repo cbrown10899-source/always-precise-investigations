@@ -19,6 +19,17 @@ function ok(name, cond, detail = '') {
   if (cond) { passed++; results.push(`  PASS  ${name}`); }
   else { failed++; results.push(`  FAIL  ${name}${detail ? ' — ' + detail : ''}`); }
 }
+/* A crash must still say what it saw. Without this every FAIL recorded before
+   an exception was lost with it, and a mutation that broke a property loudly
+   read as one that broke nothing. */
+function crash(e) {
+  results.push(`\n  CRASH  ${e && e.stack ? e.stack : e}`);
+  console.log(results.join('\n'));
+  console.log(`\n${passed} passed, ${failed} failed, then the run crashed`);
+  process.exit(1);
+}
+process.on('uncaughtException', crash);
+process.on('unhandledRejection', crash);
 
 /** Minimal KV stand-in with TTL support. */
 function makeKV() {
@@ -587,8 +598,9 @@ async function sha256(s) {
   // A page view this visitor never recorded, or somebody else's.
   const other = tok('erin');
   await page(env, other, 'pvErin0001', '/', { ip: '198.51.100.41' });
-  const cross = await (await track(env, other, [eng('pvDave0001', 99_000)])).json();
-  ok("one visitor cannot write to another's page view", cross.applied === 0, JSON.stringify(cross));
+  const cross = await (await track(env, other, [eng('pvDave0001', 99_000), act('pvDave0001', 'call')])).json();
+  ok("one visitor cannot write to another's page view", cross.applied === 0
+     && rows(env, "SELECT 1 FROM visitor_event WHERE kind = 'action'").length === 0, JSON.stringify(cross));
   const ghost = await (await track(env, tok('ghost'), [eng('pvDave0001', 99_000)])).json();
   ok('an unknown visitor writes nothing', ghost.applied === 0);
   const foreign = await track(env, T, [eng('pvDave0001', 99_000)], { origin: 'https://evil.example' });
@@ -724,16 +736,19 @@ let VISITOR_A = null;
 
   tick(60_000);
   const list = await (await call(authed('/visitors'), env)).json();
-  const card = list.visitors.find((v) => v.id === vid);
+  const card = (list.visitors || []).find((v) => v.id === vid);
   ok('§39 the card: returning, two visits, both this week', card && card.returning && card.visits === 2 && card.visits7 === 2 && card.visits_sub === '(2 this week)', JSON.stringify(card));
   ok('§39 the card: HIGH INTENT and NEW INTAKE together', card && card.tier === 'high' && card.new_intake === true);
   ok('§39 the card: likely interest Child Custody, intake submitted', card && card.interest === 'Child Custody' && card.activity_line === 'Submitted intake' && card.activity_sub === 'Child Custody', JSON.stringify(card));
   ok('§39 the card: approximate location and source', card && card.place === 'Lexington, Virginia' && card.source_line === 'Direct');
   ok('§39 the card: time on site is every visit\'s engaged time', card && card.engaged_label === '7m 59s', card && card.engaged_label);
 
-  const d = await (await call(authed('/visitor?id=' + vid), env)).json();
+  const d0 = await (await call(authed('/visitor?id=' + vid), env)).json();
+  ok('§39 the journey of that visitor can be opened', d0.ok === true && !!d0.visitor, JSON.stringify(d0).slice(0, 200));
+  const d = { visitor: { reasons: [], interest_basis: [] }, journey: [], pages: [], actions: [], facts: [], ...d0 };
+  if (!d.journey.length) d.journey = [{ rows: [] }, { rows: [{}, {}, {}, {}, {}] }];
   VISITOR_A = d;
-  const v = d.visitor;
+  const v = { reasons: [], interest_basis: [], ...d.visitor };
   ok('§39 first seen is exact, in Eastern time', v.first_label === 'Oct 7, 2026 · 9:12:00 PM EDT', v.first_label);
   ok('§39 last active is the moment of the submission', v.last_label === 'Oct 9, 2026 · 11:48:09 PM EDT', v.last_label);
   ok('§39 total visits 2 (2 in last 7 days)', v.visits_detail === '2 (2 in last 7 days)', v.visits_detail);
@@ -782,8 +797,15 @@ let VISITOR_A = null;
   for (let i = 0; i < 10; i++) { tick(3_000); await page(env, R, 'pvRel' + String(i).padStart(5, '0'), '/infidelity-investigations/', { ip: '198.51.100.43' }); }
   const r = one(env, 'SELECT score FROM visitor WHERE id = ?', await visitorOf(R, env));
   ok('§42 ten reloads of one service page earn five points, not fifty', r.score === 5, String(r.score));
+  // Returning after three weeks is a returning visitor — not two visits in a week.
+  const W = tok('weeksLater');
+  await page(env, W, 'pvWeeks001', '/legal-investigations/', { ip: '198.51.100.44' });
+  tick(21 * 86_400_000);
+  await page(env, W, 'pvWeeks002', '/legal-investigations/', { ip: '198.51.100.44' });
+  const w = JSON.parse(one(env, 'SELECT reasons FROM visitor WHERE id = ?', await visitorOf(W, env)).reasons).map((r) => r.label);
+  ok('§42 a return three weeks later is "Returning", not "2 visits within 7 days"', w.includes('Returning visitor') && !w.some((l) => /visits within 7 days/.test(l)), JSON.stringify(w));
   const bot = await (await page(env, tok('crawler'), 'pvBot00001', '/legal-investigations/', { ua: 'Googlebot/2.1 (+http://www.google.com/bot.html)', ip: '66.249.66.1' })).json();
-  ok('§42 a bot never becomes a visitor', bot.filtered === 'known-bot-ua' && one(env, 'SELECT COUNT(*) AS n FROM visitor').n === 2);
+  ok('§42 a bot never becomes a visitor', bot.filtered === 'known-bot-ua' && one(env, 'SELECT COUNT(*) AS n FROM visitor').n === 3);
   CLOCK = null;
 }
 
@@ -818,6 +840,29 @@ let VISITOR_A = null;
   CLOCK = null;
 }
 
+// --- staying HIGH INTENT is one state: the week rolling over is not a new crossing
+{
+  clockAt('2026-10-01T16:00:00Z');
+  const env = journeyEnv();
+  await subscribed(env);
+  const T = tok('steady');
+  const strong = async (n) => {
+    await page(env, T, `pvSteady${n}a`, '/child-custody-investigations/');
+    tick(30_000); await track(env, T, [act(`pvSteady${n}a`, 'cta', { d: 'custody' })]);
+    tick(1_000); await page(env, T, `pvSteady${n}b`, '/intake/', { d: { door: 'private', svc: 'custody' }, ago: 500 });
+    tick(10_000); await track(env, T, [act(`pvSteady${n}b`, 'intake_started')]);
+  };
+  await strong(1);                                   // day 0: crosses into HIGH INTENT
+  ok('§43 day 0: HIGH INTENT, alerted once', one(env, 'SELECT tier FROM visitor').tier === 'high' && rows(env, "SELECT 1 FROM visitor_alert WHERE kind = 'high'").length === 1);
+  clockAt('2026-10-05T16:00:00Z'); await strong(2);   // day 4: still high
+  clockAt('2026-10-09T16:00:00Z');                    // day 8: the day-0 alert is over a week old
+  await page(env, T, 'pvSteady3a', '/child-custody-investigations/');
+  ok('§43 day 8: still HIGH INTENT on what day 4 did', one(env, 'SELECT tier FROM visitor').tier === 'high');
+  ok('§43 and no second HIGH INTENT alert — the tier never left', rows(env, "SELECT 1 FROM visitor_alert WHERE kind = 'high'").length === 1,
+     String(rows(env, "SELECT 1 FROM visitor_alert WHERE kind = 'high'").length));
+  CLOCK = null;
+}
+
 // --- the dashboard's reads
 {
   clockAt('2026-10-09T18:00:00Z');
@@ -838,13 +883,13 @@ let VISITOR_A = null;
   let i = 0;
   for (const [cf] of places) { tick(1000); await page(env, tok('place' + i), 'pvPlace' + String(i).padStart(3, '0'), '/', { cf, ip: '198.51.100.' + (60 + i) }); i++; }
   const list = await (await call(authed('/visitors'), env)).json();
-  const got = list.visitors.map((v) => v.place).reverse();
+  const got = (list.visitors || []).map((v) => v.place).reverse();
   ok('the place falls back from city to state to country to "Location unavailable"', JSON.stringify(got) === JSON.stringify(places.map((p) => p[1])), JSON.stringify(got));
-  ok('the newest visitor is first', list.visitors[0].place === 'Location unavailable');
-  ok('a visitor seen in the last three minutes is live', list.visitors.every((v) => v.live === true));
+  ok('the newest visitor is first', (list.visitors || [{}])[0].place === 'Location unavailable');
+  ok('a visitor seen in the last three minutes is live', (list.visitors || []).length === 4 && list.visitors.every((v) => v.live === true));
   tick(4 * 60_000);
   const later = await (await call(authed('/visitors'), env)).json();
-  ok('and three minutes of nothing is not', later.visitors.every((v) => v.live === false));
+  ok('and three minutes of nothing is not', (later.visitors || []).length === 4 && later.visitors.every((v) => v.live === false));
   ok('the list carries the zone it composed its times in', later.tz === 'America/New_York');
   CLOCK = null;
 }

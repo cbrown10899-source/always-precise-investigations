@@ -9,7 +9,15 @@ your phone's service worker then fetches the detail and shows the notification.
 Push messages carry no payload, so no visitor information ever passes through
 Google's or Apple's push servers.
 
-**Cost:** free. Cloudflare's Workers and KV free tiers cover this many times over.
+**Journeys (Live Visitors V2, 2026-10-10).** Beside the rolling log the Worker
+keeps each visitor's journey in a D1 database of its own, `api-visitor-journeys`
+(binding `VDB`): visits, pages with engaged time, button presses, and — after an
+intake is submitted — its request number. The dashboard turns that into a card
+per visitor, an explainable interest score, and a journey with exact times. The
+full record is `LIVE-VISITORS.md` beside this file.
+
+**Cost:** free. The KV free tier allows 1,000 writes a day, which is why the
+journey's check-ins go to D1 (100,000 row writes a day) instead.
 
 ---
 
@@ -45,6 +53,16 @@ this file — it is committed to a repository. A short numeric PIN can be
 brute-forced; the Worker locks a client out after 8 failed attempts for 15
 minutes, which raises the cost enormously, but length still matters. Twelve or
 more mixed characters from a password manager is the right answer.
+
+## 3b. Journeys: run visitors-setup.yml once
+
+Actions → **Set up Live Visitors journeys** → Run workflow. It creates (or finds)
+the D1 database, applies `schema.sql`, uploads the Worker, and attaches the
+database as `VDB` while re-listing every existing binding as `inherit`, so the
+passcode, the push keys and both KV namespaces carry over by name. It checks
+`/health` afterwards and rolls the Worker back to the version it recorded if
+anything is missing. Until it has run, everything works exactly as before and
+the dashboard shows the page-view log.
 
 ## 4. Deploy the Worker
 
@@ -88,21 +106,42 @@ The beacon `<script>` tag is already on every page.
 node visitor-alerts/test-worker.mjs
 ```
 
-Runs the real Worker against an in-memory KV and a stubbed push service —
-33 checks covering origin locking, body limits, path sanitising, bot
-filtering, the alert debounce, the auth lockout, beacon rate limiting, push
-endpoint validation, CORS behaviour, and error handling. Run it after any
-change to `worker.js`; it needs no deployment and no network.
+Runs the real Worker against an in-memory KV, real SQLite standing in for D1,
+and a stubbed push service — origin locking, body limits, path sanitising, bot
+filtering, the alerts, the auth lockout, rate limiting, push endpoint
+validation, CORS, error handling, and the journeys: identity, visits, reloads,
+engagement caps, the action vocabulary, the intake link, scoring, alerts,
+retention and fail-open. Needs Node 22 (node:sqlite), no deployment and no
+network.
+
+```bash
+node watch/test-watch.mjs
+```
+
+The beacon on the real public pages, the intake's hooks and the dashboard at
+390, 320 and 1280, in Playwright, against the same Worker in-process.
 
 ## Behaviour
 
+With journeys set up:
+
+- **Alerts:** once when a visit starts, once when a visitor crosses into HIGH
+  INTENT (at most once a week), and once per submitted intake — never for a
+  refresh, another page or a heartbeat.
+- **Dashboard** shows the 30-day ticker, who is on the site now (activity in
+  the last 3 minutes), visits today, and a card per visitor; tapping one opens
+  the journey with exact Eastern times, the score and its reasons.
+- **Your own browser** is marked as not counted when you unlock the dashboard
+  in it (the toggle is at the bottom of the page).
+
+Without them (before visitors-setup.yml has run):
+
 - **Debounced:** at most one alert per visitor per 15 minutes, so a person
   browsing six pages does not buzz the phone six times.
-- **Always alerts** for `/intake` and contact pages, regardless of the debounce —
-  those are the high-intent moments worth interrupting for.
-- **Dashboard** shows who is on the site now (last 3 minutes), visits today, and
-  the recent trail with page, city, referrer, and whether they are returning.
-- Alerts collapse under one notification tag, so a burst does not stack up.
+- **Always alerts** for `/intake` and contact pages, regardless of the debounce.
+- **Dashboard** shows the recent page-view trail.
+
+Alerts collapse under one notification tag, so a burst does not stack up.
 
 ## Tuning
 
@@ -137,21 +176,23 @@ he re-enters the new one once.
 Deliberately minimal, which matters on a site where visitors are often in
 sensitive situations:
 
-- Stores page path, referring hostname, coarse city/region from Cloudflare, and
-  a **daily-rotating pseudonymous hash** used only to debounce alerts.
+- The rolling log stores page path, referring hostname, coarse city/region from
+  Cloudflare, and a **daily-rotating pseudonym**.
+- A journey stores a **salted hash of a random token** the visitor's own browser
+  keeps in local storage (never the token itself), the pages and engaged time,
+  the buttons pressed, each visit's source and approximate location, and only
+  after Submit the intake's request number. Journeys older than 90 days are
+  deleted automatically.
 - Does **not** store IP addresses or user agents, does not set cookies, does not
-  track anyone across sites, and captures **nothing** from the intake form's
-  fields — not even keystrokes, and not partial input.
-- Honours Do Not Track and Global Privacy Control: those visitors are not logged.
-- The log is a small rolling window (120 visits) that overwrites itself; it is
-  not an archive.
+  fingerprint, does not track anyone across sites, and captures **nothing**
+  typed into the intake form — not values, not field names, not keystrokes.
+- Honours Do Not Track and Global Privacy Control: those visitors are not
+  recorded at all, and no token is made for them.
 
 **Two things to do before this goes live:**
 
-1. Add a line to the site's privacy policy — something like: *"We record
-   anonymous page-visit information (page, approximate city, and referring site)
-   so we can respond promptly to enquiries. We do not use cookies and do not
-   track visitors across other websites."*
+1. The privacy policy states what is recorded (done 2026-10-10, and
+   `.github/test-deploy.mjs` pins it to what the beacon and Worker do).
 2. Never extend this to capture form contents. Visitors type case details into
    the intake form; that is confidential client information and capturing it
    before they choose to submit would be a serious breach of trust — and
