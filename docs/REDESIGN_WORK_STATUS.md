@@ -147,21 +147,13 @@ Production unchanged (yes/no/unknown): YES — nothing merged, nothing dispatche
   Spouse / Relationship / Other Private Investigation.
 - KEEP the release safeguards. The three RELEASE GATE checks must not be
   weakened, skipped or edited to pass while the photographs are missing.
-- LOGO: "the logo currently displayed on my live website is the correct,
-  approved API logo. Preserve that exact logo."
-  **FACT FROM THE REPOSITORY, NOT YET RECONCILED:** master `daa7b54` (the commit
-  live production was deployed from, run 15:15 UTC 2026-10-10) serves
-  `assets/logo-lockup.svg` in every header. That is the navy/red SCALES OF
-  JUSTICE lockup, shown inside a white rounded badge (`.brand-badge`,
-  alt "Always Precise Investigations — scales of justice logo"). This branch
-  currently uses the DIAMOND `assets/logo-white.webp`, per the owner's earlier
-  message. The two instructions name different files. The live site cannot be
-  fetched from the container (egress proxy denies the domain), so the next
-  session must show the owner BOTH, side by side, before release. If the live
-  one is confirmed: switch `site_header()` in build-locations.py back to the
-  live markup (`logo-lockup.svg` in its white badge, same 240x68 attributes),
-  copy it to the hand-written pages, and re-pin the deploy guard's
-  LOGO_TAG/SHA to that file. Either way, redraw or recolour nothing.
+- LOGO — DECIDED (owner, 2026-10-10, second session, from a side-by-side of
+  the live header and the branch's diamond): **the scales-of-justice lockup**,
+  `assets/logo-lockup.svg`, exactly as the live header shows it, in its white
+  rounded badge (#fff, radius 12px, padding 9px 16px, the live shadow). File
+  byte-identical to master `daa7b54`, SHA-256 c1c64244…942ccf, pinned by the
+  deploy suite. Height 58px desktop (the live size), 46px phones, 38px at
+  ≤360px; proportions always the file's own 240x68. Commit `dfaf2ec`.
 
 ## Next actions (the next session, in order — owner's priorities)
 1. `git fetch origin claude/app-crashes-lockups-debug-psf6zd && git checkout
@@ -184,7 +176,7 @@ Production unchanged (yes/no/unknown): YES — nothing merged, nothing dispatche
    results only at the end, ~35 min); give it at most ~45 min. Fix any failure
    caused by the "Investigation type" line without weakening assertions.
    Never run another Playwright suite beside it.
-5. LOGO against production — see "Owner decisions received". Show both.
+5. LOGO against production — DONE (owner chose the live scales lockup).
 6. CONSISTENCY across all 15 public pages: re-run `.github/test-deploy.mjs`
    (identical header/footer guard) and screenshot each page at 390 and 1280.
 7. Report: screenshots, results, readiness (NOT READY while photos are

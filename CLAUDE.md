@@ -7256,7 +7256,7 @@ something untrue.
 ## The 2026-10-10 public redesign — built on a branch, gated until "GO LIVE"
 
 Owner brief 2026-10-10 (*"NEVER DEPLOY A PARTIALLY FINISHED WEBSITE"*) plus
-three clarifications the same day: keep the diamond logo exactly, one private
+three clarifications the same day: keep the live logo exactly, one private
 intake with one new question, and nothing merges or deploys until the owner
 says **GO LIVE**. Record and owner checklist in `docs/REDESIGN_WORK_STATUS.md`
 (internal — `docs/` is in no manifest line).
@@ -7280,12 +7280,18 @@ normalised out, then checked on their own), the header nav is the brief's six in
 order, and every page links `assets/site.css` at one `?v=`. **Change the chrome
 in the generator, then copy it** — the guard fails the first page that drifts.
 
-**THE LOGO IS THE OWNER'S DIAMOND, BYTE FOR BYTE.** `assets/logo-white.webp`,
-SHA-256 pinned (`b6ad9122…159eb`, identical to its restore in `bdd4a83`), sized
-by height only — a guard refuses a width, filter, crop or blend on `.brand img`.
-The scales lockup (`logo-lockup.svg`) is used by no public page, and a guard
-holds that too. **Production showed the scales lockup when this was built**;
-the owner's instruction names the diamond, and the discrepancy went to them.
+**THE LOGO IS THE ONE THE LIVE HEADER SHOWS, BYTE FOR BYTE — AND IT TOOK A
+PICTURE TO SETTLE.** The owner first named the diamond (`logo-white.webp`) and
+then "the logo currently displayed on my live website" — two different files:
+the live header has worn the navy/red scales lockup (`logo-lockup.svg`, in a
+white rounded badge) since `928dd3f` on 2026-08-02, and the diamond appears on
+the live site only as the browser-tab icon. Rendered side by side from master
+and the branch, the owner chose **the scales lockup** (2026-10-10). It is
+SHA-256 pinned (`c1c64244…942ccf`), sized by height only inside the live
+badge's colour, radius, padding and shadow, and a guard fails any header that
+shows the diamond. **When an owner names a file AND a place, check that the two
+agree before building on either** — three mutations (diamond back on one page,
+a changed byte, the badge removed) each fail by name.
 
 **THE PHONE BAR OPENS EACH PAGE'S OWN DOOR.** The first build sent every page's
 "Online Intake" to the private door — on Legal and Insurance too, which breaks
