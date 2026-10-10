@@ -568,6 +568,32 @@ async function sha256(s) {
   CLOCK = null;
 }
 
+// --- the current page is the newest page to OPEN, never the latest check-in.
+// The page being left sends its final check-in as the next page is already
+// opening, so that check-in routinely arrives after the next page's start.
+// Found in the browser on a real custody → intake walk; pinned here because a
+// real browser only sometimes lands the race.
+{
+  clockAt('2026-10-09T15:00:00Z');
+  const env = journeyEnv();
+  const T = tok('gwen');
+  await page(env, T, 'pvGwen0001', '/child-custody-investigations/', { ago: 1500 });
+  tick(30_400);
+  await track(env, T, [eng('pvGwen0001', 25_000)]);                     // arrives at 30.4s
+  tick(300);
+  await page(env, T, 'pvGwen0002', '/intake/', { ago: 700 });           // opened at 30.0s
+  const ses = one(env, 'SELECT current_path FROM visitor_session');
+  ok('JOURNEYS: a late check-in from the page being left does not hold the visit on that page', ses.current_path === '/intake/', JSON.stringify(ses));
+  const list = await (await call(authed('/visitors'), env)).json();
+  const card = (list.visitors || [])[0];
+  ok('and the card says the visitor is on the intake', !!card && card.path === '/intake/' && card.page_label === 'Intake',
+    JSON.stringify(card ? { path: card.path, label: card.page_label } : list));
+  tick(5_000);
+  await track(env, T, [eng('pvGwen0001', 26_000)]);
+  ok('and a later check-in from the page that was left does not move it back', one(env, 'SELECT current_path FROM visitor_session').current_path === '/intake/');
+  CLOCK = null;
+}
+
 // --- engagement: a running total, never more than the wall time, never through KV
 {
   clockAt('2026-10-09T15:00:00Z');

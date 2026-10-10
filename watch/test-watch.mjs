@@ -48,6 +48,17 @@ function ok(name, cond, detail = '') {
   else { failed++; results.push(`  FAIL  ${name}${detail ? ' — ' + detail : ''}`); }
 }
 function section(name) { results.push(`\n${name}`); }
+/** One section. Whatever throws inside it is a FAILURE named for that section
+    and the step it stopped at, and the sections after it still run. A crash
+    names nothing and takes the rest of the run down with it, which is how a
+    mutation walks past a suite that would have caught it. */
+async function run(name, body) {
+  section(name);
+  try { await body(); }
+  catch (e) { ok(`${name}: stopped part-way — ${String((e && e.message) || e).split('\n')[0]}`, false); }
+}
+/** A wait that answers yes or no, for a check that must fail by its own name. */
+const seen = (page, sel, ms = 8000) => page.waitForSelector(sel, { timeout: ms }).then(() => true, () => false);
 function crash(e) {
   results.push(`\n  CRASH  ${e && e.stack ? e.stack : e}`);
   console.log(results.join('\n'));
@@ -151,6 +162,7 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
     user agent, a real time zone. */
 async function person({ width = 1200, height = 900, gpc = false, exclude = false } = {}) {
   const ctx = await browser.newContext({ viewport: { width, height }, userAgent: UA, timezoneId: 'America/New_York' });
+  ctx.setDefaultTimeout(10_000);
   await ctx.addInitScript(([g, x]) => {
     Object.defineProperty(Navigator.prototype, 'webdriver', { get: () => false });
     if (g) Object.defineProperty(Navigator.prototype, 'globalPrivacyControl', { get: () => true });
@@ -167,9 +179,8 @@ const settle = (page, ms = 400) => page.waitForTimeout(ms);
 
 /* ============================================================== the beacon */
 
-section('The beacon on the real pages');
 let walk = null;
-{
+await run('The beacon on the real pages', async () => {
   const env = makeEnv();
   const log = [];
   const ctx = await person();
@@ -267,10 +278,9 @@ let walk = null;
   ok('every check-in is a /t call carrying the token and nothing else of the page', ts.length > 0 && ts.every((t) => Object.keys(t).sort().join() === 'c,id,q'), JSON.stringify(ts.map((t) => Object.keys(t))));
   walk = { env, token };
   await ctx.close();
-}
+});
 
-section('Do Not Track, Global Privacy Control and the owner\'s own browser');
-{
+await run('Do Not Track, Global Privacy Control and the owner\'s own browser', async () => {
   for (const [label, opts] of [['Global Privacy Control', { gpc: true }], ['a browser the owner marked as his own', { exclude: true }]]) {
     const env = makeEnv();
     const log = [];
@@ -288,16 +298,16 @@ section('Do Not Track, Global Privacy Control and the owner\'s own browser');
   // Headless automation, as the existing suites run it: the beacon stays out.
   const env = makeEnv(); const log = [];
   const ctx = await browser.newContext({ userAgent: UA, timezoneId: 'America/New_York' });
+  ctx.setDefaultTimeout(10_000);
   await wire(ctx, env, log);
   const page = await ctx.newPage();
   await page.goto(ORIGIN + '/');
   await humanOn(page); await settle(page, 400);
   ok('an automated browser (navigator.webdriver) sends nothing', log.length === 0);
   await ctx.close();
-}
+});
 
-section('Analytics fails open: the Worker unreachable changes nothing on the site');
-{
+await run('Analytics fails open: the Worker unreachable changes nothing on the site', async () => {
   const env = makeEnv(); const log = [];
   const ctx = await person();
   await wire(ctx, env, log, { fail: 'abort' });
@@ -332,7 +342,7 @@ section('Analytics fails open: the Worker unreachable changes nothing on the sit
   ok('and the client sees their record', /Intake submitted/.test(await page.locator('#app').innerText()));
   ok('and no script error was raised', errors.length === 0, errors.join(' | '));
   await ctx.close();
-}
+});
 
 /* ============================================================== dashboard */
 
@@ -400,6 +410,7 @@ async function seed(env) {
 
 async function dashboard({ width, height = 900, env, fail = '', query = '' }) {
   const ctx = await browser.newContext({ viewport: { width, height }, userAgent: UA, timezoneId: 'America/Los_Angeles' });
+  ctx.setDefaultTimeout(10_000);
   await ctx.addInitScript((p) => { try { localStorage.setItem('apiwatch-token', p); } catch (e) {} }, PASS);
   const log = [];
   await wire(ctx, env, log, { fail });
@@ -424,8 +435,7 @@ const fmt = (ms) => {
   return `${date} · ${time}`;
 };
 
-section('The dashboard on a phone: the list');
-{
+await run('The dashboard on a phone: the list', async () => {
   const { ctx, page, errors } = await dashboard({ width: 390, height: 844, env: dash });
   await shot(page, 'list-390');
   ok('the 30-day ticker, "on the site now" and "visits today" are drawn', /\d/.test(await page.locator('#v30').innerText()) && await page.locator('#online').innerText() === '1');
@@ -488,10 +498,9 @@ section('The dashboard on a phone: the list');
   await page.goBack(); await page.waitForTimeout(300);
   ok('the browser\'s own back also returns to the list', await page.locator('#listcol').isVisible());
   await ctx.close();
-}
+});
 
-section('The dashboard at 320');
-{
+await run('The dashboard at 320', async () => {
   const { ctx, page } = await dashboard({ width: 320, height: 640, env: dash });
   ok('no sideways scroll on the list at 320', await overflow(page) <= 0, String(await overflow(page)));
   await page.locator(`a.vcard[data-v="${ids.A}"]`).click();
@@ -505,10 +514,9 @@ section('The dashboard at 320');
   const clipped = await page.evaluate(() => [...document.querySelectorAll('.badge')].filter((b) => b.getBoundingClientRect().right > document.documentElement.clientWidth).length);
   ok('badges wrap instead of running off the screen', clipped === 0, String(clipped));
   await ctx.close();
-}
+});
 
-section('The dashboard on a desk: list left, journey right');
-{
+await run('The dashboard on a desk: list left, journey right', async () => {
   const { ctx, page, errors } = await dashboard({ width: 1280, height: 900, env: dash });
   await page.waitForSelector('.d-loc');
   await shot(page, 'desk-1280');
@@ -523,18 +531,17 @@ section('The dashboard on a desk: list left, journey right');
   ok('no sideways scroll at 1280', await overflow(page) <= 0);
   ok('no script errors', errors.length === 0, errors.join(' | '));
   await ctx.close();
-}
+});
 
-section('A link from an alert opens that visitor');
-{
+await run('A link from an alert opens that visitor', async () => {
   const { ctx, page } = await dashboard({ width: 390, height: 844, env: dash, query: '?v=' + ids.B });
-  await page.waitForSelector('.d-loc'); await page.waitForTimeout(300);
-  ok('/watch/?v=<id> opens straight on that visitor\'s journey', (await page.locator('.d-loc').innerText()).includes('Lexington, Virginia') && /Interested/i.test(await page.locator('.d-loc').innerText()));
+  const opened = await seen(page, '.d-loc');
+  const loc = opened ? await page.locator('.d-loc').innerText() : '';
+  ok('/watch/?v=<id> opens straight on that visitor\'s journey', opened && loc.includes('Lexington, Virginia') && /Interested/i.test(loc), opened ? loc : 'no journey was drawn');
   await ctx.close();
-}
+});
 
-section('Three states, never a failure drawn as an empty list');
-{
+await run('Three states, never a failure drawn as an empty list', async () => {
   const { ctx, page } = await dashboard({ width: 390, height: 844, env: dash, fail: 'visitors500' });
   const st = await page.locator('#state').innerText();
   ok('a failed read says it could not load, and is not "nobody visited"', /could not be loaded/i.test(st) && !/No visitors/i.test(await page.locator('#listcol').innerText()), st);
@@ -550,16 +557,15 @@ section('Three states, never a failure drawn as an empty list');
   const lt = await l.page.locator('#listcol').innerText();
   ok('without journeys the page-view log is shown, and says why', /not switched on yet/i.test(lt) && lt.includes('Lexington, Virginia'), lt.slice(0, 300));
   await l.ctx.close();
-}
+});
 
-section('This browser: the owner\'s own visits are not leads');
-{
+await run('This browser: the owner\'s own visits are not leads', async () => {
   const { ctx, page } = await dashboard({ width: 390, height: 844, env: dash });
   ok('unlocking the dashboard marks this browser as not counted', await page.evaluate(() => localStorage.getItem('apiv-exclude')) === '1' && /not counted/i.test(await page.locator('#devText').innerText()));
   await page.locator('#devToggle').click();
   ok('one tap counts it again (for testing), and says so', await page.evaluate(() => localStorage.getItem('apiv-exclude')) === '0' && /is counted/i.test(await page.locator('#devText').innerText()));
   await ctx.close();
-}
+});
 
 /* ----------------------------------------------------------------- report */
 await browser.close();
