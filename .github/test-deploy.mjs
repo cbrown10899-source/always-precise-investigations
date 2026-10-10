@@ -15,6 +15,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { stage } from './stage-site.mjs';
 
 let passed = 0, failed = 0;
@@ -678,7 +679,10 @@ section('The manifest describes the site honestly');
   const AUTHORITY = ['infidelity-investigations', 'child-custody-investigations',
                      'insurance-investigations', 'legal-investigations'];
   const localPages = html.filter(f => /private-investigator[\\/]/.test(f));
-  const bodyOf = (f) => readAll(f).split(/<footer[\s>]/)[0];
+  /* The shared header (2026-10-10) links Child Custody and Spouse /
+     Relationship on every page, so the BODY is what sits between the header and
+     the footer — a header link is no more a topical signal than a footer one. */
+  const bodyOf = (f) => readAll(f).split(/<footer[\s>]/)[0].replace(/<header[\s>][\s\S]*?<\/header>/, '');
   for (const rel of AUTHORITY) {
     const noBodyLink = localPages
       .filter(f => !bodyOf(f).includes(`/${rel}/`))
@@ -891,14 +895,153 @@ section('The manifest describes the site honestly');
   /* --- THE HOMEPAGE'S CLAIMS CARD IS A DOOR (owner, 2026-09-24) -------------
      "How we work claims" pointed a carrier at a page ABOUT submitting; the card
      now submits, through the existing carrier door. The Insurance page is still
-     linked from the homepage navigation, which is checked too, so the page does
-     not lose its homepage link in the change. */
+     linked from the homepage, which is checked too, so the page does not lose
+     its homepage link in the change.
+
+     RE-AIMED FOR THE 2026-10-10 REDESIGN, NOT RELAXED. The claims card is now the
+     Insurance block under "Other Investigation Services": the owner's copy gives
+     it "View Services", and the 2026-09-24 door is kept beside it. The redesign
+     brief's six-item header has no Insurance entry, so "linked from the
+     navigation" now means the FOOTER navigation, plus the block's own heading —
+     a change the owner is asked to confirm at review. */
   const home = readAll(path.join(site, 'index.html'));
+  const insBlock = (home.match(/<div class="minor">\s*<h3><a href="\/insurance-investigations\/">Insurance<\/a><\/h3>[\s\S]*?<\/div>\s*<\/div>/) || [''])[0];
   ok('the homepage claims card is Submit an Insurance Assignment, to the carrier door',
-     /<div class="card"><h3>Workers' Comp &amp; Auto Claims<\/h3><p>[^<]*<a href="\/intake\/\?assignment=insurance">Submit an Insurance Assignment &rarr;<\/a><\/p><\/div>/.test(home)
-     && !/How we work claims/i.test(home));
+     /<a [^>]*href="\/intake\/\?assignment=insurance">Submit an Insurance Assignment<\/a>/.test(insBlock)
+     && /href="\/insurance-investigations\/"[^>]*>View Services/.test(insBlock)
+     && !/How we work claims/i.test(home), insBlock.slice(0, 160));
   ok('and the homepage still links the Insurance page from its navigation',
-     /<nav[\s\S]*?href="\/insurance-investigations\/"[\s\S]*?<\/nav>/.test(home));
+     /<nav aria-label="Footer">[\s\S]*?href="\/insurance-investigations\/"[\s\S]*?<\/nav>/.test(home));
+
+  /* ============================ THE 2026-10-10 PUBLIC REDESIGN
+     A development-branch redesign the owner reviews before anything ships. The
+     brief's own rule is "NEVER DEPLOY A PARTIALLY FINISHED WEBSITE", and
+     deploy.yml runs this suite before it uploads — so the rules that make a
+     release finished live here, where a failing one stops the upload. */
+  const rel = f => path.relative(site, f).replace(/\\/g, '/');
+  const marketing = publicPages.filter(f => !/^intake[\\/]/.test(rel(f)));
+  ok('the redesign covers every public marketing page (13 + privacy + 404)',
+     marketing.length === 15, marketing.map(rel).join(' | '));
+
+  /* THE RELEASE GATE. The two homepage cards must carry the owner-approved
+     photographs, and nothing the development build marks as a placeholder may
+     reach the internet. These FAIL until the photographs are supplied, approved,
+     added to the repository and listed in the manifest — which is the point:
+     an early merge cannot publish placeholder cards, because this suite stops
+     deploy.yml before the upload. Do not weaken or skip them to make a build go
+     green; supply the photographs. */
+  for (const photo of ['assets/child-custody-photo.webp', 'assets/spouse-relationship-photo.webp']) {
+    const staged = path.join(site, photo);
+    ok(`RELEASE GATE: the approved photograph ${photo} is published`,
+       fs.existsSync(staged) && fs.statSync(staged).size > 20000,
+       fs.existsSync(staged) ? `${fs.statSync(staged).size} bytes` : 'not in the staged site (not supplied, or not in deploy-manifest.txt)');
+  }
+  const placeholders = marketing.filter(f => /data-dev-placeholder|DEVELOPMENT PLACEHOLDER/.test(readAll(f))).map(rel);
+  ok('RELEASE GATE: no development placeholder reaches the public site', placeholders.length === 0, placeholders.join(' | '));
+
+  /* THE LOGO IS THE OWNER'S, BYTE FOR BYTE (owner, 2026-10-10: "Do not redesign,
+     recreate, replace, recolor, or distort it"). The digest is the file as it
+     has been since it was restored in bdd4a83; a changed file fails here. */
+  const logo = path.join(site, 'assets/logo-white.webp');
+  ok('the approved diamond logo is published unchanged (SHA-256 pinned)',
+     fs.existsSync(logo) && crypto.createHash('sha256').update(fs.readFileSync(logo)).digest('hex')
+       === 'b6ad9122b0b0979450b8dbf8133a1addee352175b210583452eb9c66a84159eb');
+  const LOGO_TAG = '<a class="brand" href="/" aria-label="Always Precise Investigations home"><img src="/assets/logo-white.webp" alt="Always Precise Investigations" width="500" height="116"></a>';
+  const noLogo = marketing.filter(f => !readAll(f).includes(LOGO_TAG)).map(rel);
+  ok('every public page wears that logo in its header, at its own 500x116 proportions', noLogo.length === 0, noLogo.join(' | '));
+  const oldLogo = marketing.filter(f => /logo-lockup/.test(readAll(f))).map(rel);
+  ok('no public page still uses the scales lockup', oldLogo.length === 0, oldLogo.join(' | '));
+  const css = fs.readFileSync(path.join(site, 'assets/site.css'), 'utf8');
+  const brandRule = (css.match(/\.brand img\{[^}]*\}/g) || []).join(' ');
+  ok('the logo is only ever sized by height — no width, filter, recolour or crop',
+     /height:/.test(brandRule) && !/(^|[;{])\s*width:\s*\d/.test(brandRule.replace(/width:auto/g, ''))
+       && !/filter|object-fit|clip|mix-blend|opacity/.test(brandRule), brandRule);
+
+  /* ONE STYLESHEET, ONE VERSION. A page linking an older ?v= keeps a stale
+     copy for the seven days _headers caches /assets/* — the card-photo lesson. */
+  const vers = new Set(), noCss = [];
+  for (const f of marketing) {
+    const m = readAll(f).match(/<link rel="stylesheet" href="\/assets\/site\.css\?v=(\d+)">/);
+    if (m) vers.add(m[1]); else noCss.push(rel(f));
+  }
+  ok('every public page links the shared stylesheet, at one version', noCss.length === 0 && vers.size === 1,
+     `missing: ${noCss.join(' | ')}; versions: ${[...vers].join(',')}`);
+  const inlineStyle = marketing.filter(f => /<body[\s\S]*\sstyle="/.test(readAll(f).replace(/<script[\s\S]*?<\/script>/g, ''))).map(rel);
+  ok('no public page carries an inline style attribute in its body', inlineStyle.length === 0, inlineStyle.join(' | '));
+
+  /* ONE HEADER, ONE FOOTER. build-locations.py writes them; every page carries
+     the same bytes, so the navigation cannot say one thing on one page and
+     another on the next. aria-current is per page, and the phone bar's intake
+     is per door, so those two are normalised out — and checked on their own. */
+  const chrome = (t, re) => ((t.match(re) || [''])[0]).replace(/ aria-current="page"/g, '');
+  const heads = new Set(marketing.map(f => chrome(readAll(f), /<header class="site-head">[\s\S]*?<\/header>/)));
+  ok('every public page carries the identical header', heads.size === 1 && [...heads][0].includes('Contact / Intake'),
+     `${heads.size} variants`);
+  const foots = new Set(marketing.map(f => chrome(readAll(f), /<footer class="site-foot">[\s\S]*?<\/footer>/)));
+  ok('every public page carries the identical footer, with the brand line and the licence', foots.size === 1
+     && [...foots][0].includes('Serving Greater Lynchburg and Central Virginia since 2014') && [...foots][0].includes('Va DCJS #11-9159'),
+     `${foots.size} variants`);
+  const NAV6 = ['Private Investigations', 'Child Custody', 'Spouse / Relationship', 'How It Works', 'Other Services', 'Contact / Intake'];
+  const navText = ([...heads][0].match(/<nav class="site-nav"[\s\S]*?<\/nav>/) || [''])[0].replace(/<[^>]+>/g, '|').split('|').map(x => x.trim()).filter(Boolean);
+  ok("the header navigation is the brief's six, in its order", JSON.stringify(navText) === JSON.stringify(NAV6), navText.join(' / '));
+  const badCurrent = [];
+  for (const f of marketing) {
+    const me = '/' + rel(f).replace(/index\.html$/, '').replace(/\.html$/, '');
+    for (const m of readAll(f).matchAll(/<a href="([^"]+)" aria-current="page">/g))
+      if (m[1] !== me) badCurrent.push(`${rel(f)} -> ${m[1]}`);
+  }
+  ok('aria-current is only ever on a link to the page it is on', badCurrent.length === 0, badCurrent.join(' | '));
+
+  /* THE PHONE BAR OPENS EACH PAGE'S OWN DOOR. A law firm is never routed
+     through the private-client intake and a carrier is never shown the consumer
+     side; the bar is on every page, so it is where that rule is easiest to
+     break. Every page has the bar, and every Call in it is the firm's number. */
+  const DOOR = f => /^legal-investigations/.test(rel(f)) ? 'legal' : /^insurance-investigations/.test(rel(f)) ? 'insurance' : 'private';
+  const wrongDoor = [];
+  for (const f of marketing) {
+    const bar = (readAll(f).match(/<div class="mobile-actions"[\s\S]*?\n<\/div>/) || [''])[0];
+    const doors = [...bar.matchAll(/href="\/intake\/\?assignment=(\w+)"/g)].map(m => m[1]);
+    if (!/href="tel:\+14349070975"/.test(bar) || doors.length !== 1 || doors[0] !== DOOR(f)) wrongDoor.push(`${rel(f)}: ${doors.join(',') || 'no bar'}`);
+  }
+  ok('every page has the phone bar, its Call is the firm, and its intake is that page\'s own door', wrongDoor.length === 0, wrongDoor.join(' | '));
+  const badTel = marketing.filter(f => [...readAll(f).matchAll(/href="tel:([^"]+)"/g)].some(m => m[1] !== '+14349070975')).map(rel);
+  ok('every tel: link on the public site dials (434) 907-0975', badTel.length === 0, badTel.join(' | '));
+
+  /* THE HOMEPAGE IS THE BRIEF'S, AND EACH ACTION GOES WHERE IT SAYS. Both
+     photo cards open the SAME private intake with their answer preselected;
+     the general button opens it with nothing chosen (owner, 2026-10-10). */
+  const txt = t => t.replace(/<script[\s\S]*?<\/script>/g, ' ').replace(/<[^>]+>/g, ' ').replace(/&middot;/g, '·').replace(/\s+/g, ' ');
+  const homeTxt = txt(home);
+  for (const line of ['PRIVATE · PROFESSIONAL · DISCREET', 'When you need answers, start here.',
+    'Get help with child custody concerns, relationship questions, and other private investigation needs.',
+    'Discreet Phone Call', 'Fill Out Online Intake', "Choose the option you're most comfortable with.",
+    'HOW CAN WE HELP?', 'Private Investigations', 'Choose your situation to begin your private online intake.',
+    'FAMILY MATTERS', 'Child Custody', 'Concerns about care or well-being?', 'PERSONAL MATTERS',
+    'Spouse / Relationship', 'Looking for clarity and answers?', 'Start Intake', 'Other Investigation Services',
+    'Getting started is simple.', 'Tell us your concern', 'Discuss your options', 'Choose your next step',
+    'Call Privately', 'Online Intake'])
+    ok(`the homepage carries the approved copy: "${line}"`, homeTxt.toLowerCase().includes(line.toLowerCase()));
+  ok('the homepage H1 is the approved line', /<h1[^>]*>When you need answers, start here\.<\/h1>/.test(home));
+  const card = k => (home.match(new RegExp(`<a class="art art-${k}" href="([^"]+)"`)) || [])[1];
+  ok('the Child Custody card opens the private intake on Child Custody', card('custody') === '/intake/?assignment=private&amp;service=custody', card('custody'));
+  ok('the Spouse / Relationship card opens the same intake on Spouse / Relationship', card('relationship') === '/intake/?assignment=private&amp;service=relationship', card('relationship'));
+  ok('"Fill Out Online Intake" opens the private intake with nothing preselected',
+     /<a class="btn btn-light" href="\/intake\/\?assignment=private">(?:(?!<\/a>)[\s\S])*Fill Out Online Intake<\/a>/.test(home));
+  ok('the hero\'s Discreet Phone Call dials the firm', /<a class="btn btn-gold" href="tel:\+14349070975">(?:(?!<\/a>)[\s\S])*Discreet Phone Call<\/a>/.test(home));
+  ok('the homepage still offers a Legal door', /href="\/intake\/\?assignment=legal"/.test(home));
+
+  /* THE PALETTE'S PAIRS ARE MEASURED (WCAG relative luminance), from the
+     tokens as published. Light gold is never text on the light ground, which
+     is why --gold-ink exists. */
+  const tok = n => (css.match(new RegExp(`--${n}:(#[0-9a-f]{6})`, 'i')) || [])[1];
+  const lum = h => { const c = [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255).map(v => v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4); return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
+  const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+  for (const [fg, bg, min] of [['ink', 'cream', 7], ['muted', 'cream', 4.5], ['gold-ink', 'cream', 4.5], ['muted', 'sand', 4.5],
+                               ['gold', 'navy', 4.5], ['on-navy', 'navy', 7], ['on-navy-dim', 'navy', 4.5], ['gold-ink', 'paper', 4.5]]) {
+    const r = ratio(tok(fg), tok(bg));
+    ok(`--${fg} on --${bg} measures at least ${min}:1`, r >= min, r.toFixed(2));
+  }
+  ok('white on --navy measures at least 7:1', ratio('#ffffff', tok('navy')) >= 7);
 }
 
 /* UNIT 37A — every public content route gets the same header treatment.

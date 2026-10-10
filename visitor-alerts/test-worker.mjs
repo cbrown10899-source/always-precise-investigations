@@ -693,6 +693,43 @@ async function sha256(s) {
   CLOCK = null;
 }
 
+// --- the 2026-10-10 homepage: two photo cards into ONE private intake, and its
+// two newer answers. The Spouse / Relationship card is its own button and its
+// own service; "Other Private Investigation" reads as Private Investigation.
+{
+  clockAt('2026-10-10T15:00:00Z');
+  const env = journeyEnv();
+  await subscribed(env);
+  const R = tok('rhea');
+  await page(env, R, 'pvRhea0001', '/', { ago: 1500 });
+  tick(40_000);
+  await track(env, R, [eng('pvRhea0001', 40_000), act('pvRhea0001', 'cta', { d: 'relationship' })]);
+  tick(1_000);
+  await page(env, R, 'pvRhea0002', '/intake/', { d: { door: 'private', svc: 'relationship' }, ago: 900 });
+  const opened = one(env, "SELECT service FROM visitor_event WHERE name = 'intake_opened'");
+  ok('REDESIGN: the relationship card opens the intake as Spouse / Relationship', opened && opened.service === 'relationship', JSON.stringify(opened));
+  tick(30_000);
+  const cn = caseToday();
+  await track(env, R, [act('pvRhea0002', 'intake_submitted', { n: cn, s: 'relationship' })]);
+  const alert = one(env, "SELECT body FROM visitor_alert WHERE kind = 'intake'");
+  ok('REDESIGN: its NEW INTAKE alert names Spouse / Relationship', alert && /\nSpouse \/ Relationship intake submitted\.$/.test(alert.body), JSON.stringify(alert));
+  const vid = await visitorOf(R, env);
+  const v = (await (await call(authed('/visitor?id=' + vid), env)).json()).visitor;
+  ok('REDESIGN: the journey names the card the visitor pressed', v && v.reasons.some((r) => r.label === 'Clicked “Spouse / Relationship — Start Intake”'), JSON.stringify(v && v.reasons));
+  ok('REDESIGN: and the likely interest is Spouse / Relationship', v && v.interest === 'Spouse / Relationship', v && v.interest);
+  ok('REDESIGN: the intake link carries the service', v && v.intake && v.intake.service === 'Spouse / Relationship', JSON.stringify(v && v.intake));
+
+  const O = tok('otto');
+  await page(env, O, 'pvOtto0001', '/intake/', { d: { door: 'private', svc: 'other' }, ip: '198.51.100.77' });
+  await track(env, O, [act('pvOtto0001', 'intake_submitted', { n: cn.replace(/\d{4}$/, '6161'), s: 'other' })], { ip: '198.51.100.77' });
+  const ovid = await visitorOf(O, env);
+  const other = rows(env, "SELECT service FROM visitor_event WHERE name IN ('intake_opened','intake_submitted') AND visitor_id = ?", ovid).map((x) => x.service);
+  ok('REDESIGN: "Other Private Investigation" is recorded as Private Investigation', other.length === 2 && other.every((x) => x === 'private'), JSON.stringify(other));
+  await page(env, O, 'pvOtto0002', '/intake/', { d: { door: 'private', svc: 'world_domination' }, ip: '198.51.100.77' });
+  const odd = rows(env, "SELECT service FROM visitor_event WHERE name = 'intake_opened' AND visitor_id = ? ORDER BY at DESC, rowid DESC", ovid)[0];
+  ok('REDESIGN: a service the form does not have falls back to its door, never to the raw word', odd && odd.service === 'private', JSON.stringify(odd));
+}
+
 // --- the link to an intake: deterministic, first-party, and nothing typed (§16, §41)
 {
   clockAt('2026-10-10T14:00:00Z');
