@@ -50,6 +50,10 @@ assets/logo-lockup.svg
 assets/review1.webp
 assets/review2.webp
 assets/review3.webp
+# The public site's one stylesheet (redesign, 2026-10-10): header, footer, type
+# and colour for every public page. Linked as site.css?v=N — /assets/* is cached
+# for seven days, so the number goes up whenever the file changes.
+assets/site.css
 # Unit 40 — the hero CTA card artwork. Named one by one like everything above,
 # so replacing one is a deliberate line change here as well as in the CSS.
 # These were SVG placeholder motifs until 2026-08-22; they are owner-supplied
