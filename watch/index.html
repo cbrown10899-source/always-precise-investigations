@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Live Visitors — Always Precise</title>
 <meta name="robots" content="noindex, nofollow, noarchive">
-<meta name="theme-color" content="#0e1a2c">
+<meta name="theme-color" content="#0a1526">
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -14,84 +14,218 @@
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--navy:#0e1a2c;--navy-2:#13273f;--card:#16283f;--line:#26405c;
---ink:#dfe6ef;--muted:#9fb0c4;--teal:#3d97ad;--teal-2:#4fb3cb;--gold:#e6b54a;--green:#4ec77f;
+/* LIVE VISITORS V2 (owner brief 2026-10-10, against the approved mockup).
+   Deep navy, blue-bordered cards, a cyan accent, gold kept for HIGH INTENT,
+   cyan for RETURNING, coral for NEW INTAKE. Every string about a visitor —
+   labels, durations, exact times — arrives composed from the Worker; this page
+   only works out "3h ago", because that changes while the page is open. */
+:root{--bg:#0a1526;--hdr:#0d1b30;--card:#10213a;--card-2:#132842;--line:#21405f;--line-2:#2c5179;
+--ink:#e6edf6;--muted:#a3b3c7;--dim:#8396ad;--cyan:#5cc8ec;--cyan-2:#3fb1d8;--gold:#f2b84b;--green:#55d08a;
+--coral:#ff7b74;--white:#fff;
 /* Home-screen app draws under the status bar (viewport-fit=cover + translucent
    bar), so the header must sit below the notch instead of under it. */
 --safe-top:env(safe-area-inset-top,0px);--safe-bot:env(safe-area-inset-bottom,0px);
 --safe-l:env(safe-area-inset-left,0px);--safe-r:env(safe-area-inset-right,0px)}
-body{background:var(--navy);color:var(--ink);font-family:'Segoe UI',system-ui,-apple-system,Arial,sans-serif;
-line-height:1.55;padding:0 0 calc(40px + var(--safe-bot));-webkit-text-size-adjust:100%}
-.wrap{max-width:640px;margin:0 auto;padding:0 calc(18px + var(--safe-r)) 0 calc(18px + var(--safe-l))}
-header{background:var(--navy-2);border-bottom:1px solid var(--line);
-padding:calc(14px + var(--safe-top)) 0 13px;
+html{background:var(--bg)}
+body{background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif;
+line-height:1.45;padding:0 0 calc(40px + var(--safe-bot));-webkit-text-size-adjust:100%;overflow-x:hidden}
+.wrap{max-width:1280px;margin:0 auto;padding:0 calc(16px + var(--safe-r)) 0 calc(16px + var(--safe-l))}
+header{background:var(--hdr);border-bottom:1px solid var(--line);padding:calc(12px + var(--safe-top)) 0 12px;
 position:sticky;top:0;z-index:5}
-header .wrap{display:flex;align-items:center;justify-content:space-between;gap:12px}
-h1{font-size:17px;font-weight:600;color:#fff}
-.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#5a6b80;margin-right:7px;vertical-align:middle}
-.dot.live{background:var(--green);box-shadow:0 0 0 0 rgba(78,199,127,.7);animation:pulse 2s infinite}
-@keyframes pulse{70%{box-shadow:0 0 0 9px rgba(78,199,127,0)}100%{box-shadow:0 0 0 0 rgba(78,199,127,0)}}
-@media (prefers-reduced-motion:reduce){.dot.live{animation:none}}
-.gate{padding:60px 0}
-.gate h2{font-size:20px;margin-bottom:8px;color:#fff}
+.hdr{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:46px}
+h1{font-size:24px;font-weight:700;color:var(--white);display:flex;align-items:center;gap:12px;letter-spacing:-.01em}
+.dot{display:inline-block;width:12px;height:12px;border-radius:50%;background:#5a6b80;flex:none}
+.dot.live{background:var(--green);box-shadow:0 0 0 0 rgba(85,208,138,.7);animation:pulse 2s infinite}
+@keyframes pulse{70%{box-shadow:0 0 0 9px rgba(85,208,138,0)}100%{box-shadow:0 0 0 0 rgba(85,208,138,0)}}
+button,a.btn{font:inherit;cursor:pointer;border-radius:10px;border:1px solid var(--line-2);background:var(--card);
+color:var(--ink);padding:11px 16px;min-height:44px}
+button:focus-visible,a:focus-visible,input:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+button.primary{background:var(--cyan-2);border-color:var(--cyan-2);color:#06121f;font-weight:700;width:100%}
+button:disabled{opacity:.6;cursor:default}
+.outline{background:transparent;font-size:16px}
+.back{display:none;background:transparent;border:0;color:var(--ink);font-size:19px;padding:8px 6px;gap:10px;align-items:center}
+.back svg{width:22px;height:22px}
+.ico{width:22px;height:22px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* gate */
+.gate{padding:56px 0;max-width:520px}
+.gate h2{font-size:22px;margin-bottom:8px;color:var(--white)}
 .gate p{color:var(--muted);margin-bottom:20px;font-size:15px}
-input[type=password]{width:100%;background:var(--card);border:1px solid var(--line);border-radius:8px;
-color:var(--ink);font:inherit;padding:14px 15px;margin-bottom:12px}
-input[type=password]:focus{outline:none;border-color:var(--teal)}
-button{font:inherit;cursor:pointer;border-radius:8px;border:1px solid var(--line);
-background:var(--card);color:var(--ink);padding:13px 18px}
-button.primary{background:var(--teal);border-color:var(--teal);color:#08131f;font-weight:700;width:100%}
-button:disabled{opacity:.55;cursor:default}
-.bar{display:flex;gap:9px;flex-wrap:wrap;margin:16px 0 4px}
-.bar button{flex:1;min-width:130px;font-size:14px;padding:11px 12px}
-.stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-top:16px;
-display:flex;align-items:center;justify-content:space-between;gap:14px}
-.stat .n{font-size:34px;font-weight:700;color:#fff;line-height:1}
-.stat .l{color:var(--muted);font-size:13px}
-.ticker{background:linear-gradient(135deg,#1a2e4a80,#16283f);border:1px solid var(--gold);border-radius:12px;
-padding:16px 18px;margin-top:16px;display:flex;align-items:center;justify-content:space-between;gap:14px}
-.ticker .n{font-size:38px;font-weight:800;color:var(--teal-2);line-height:1}
-.ticker .l{color:var(--muted);font-size:12px;letter-spacing:.08em;text-transform:uppercase;margin-top:5px}
-.ticker .sub{text-align:right;color:var(--muted);font-size:12.5px;line-height:1.55}
-.ticker .sub b{color:var(--ink)}
-/* On a phone the side-by-side split squeezes the label into two lines; give
-   the headline number the full width and drop the explainer beneath it. */
-@media (max-width:430px){
-  .ticker{flex-direction:column;align-items:flex-start;gap:10px}
-  .ticker .sub{text-align:left}
-}
-.list{margin-top:18px;display:flex;flex-direction:column;gap:9px}
-.v{background:var(--card);border:1px solid var(--line);border-left-width:3px;border-radius:10px;padding:12px 14px}
-.v.now{border-left-color:var(--green)}
-.v.hot{border-left-color:var(--gold)}
-.v .top{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
-.v .path{font-weight:600;color:#fff;font-size:15px;word-break:break-all}
-.v .ago{color:var(--muted);font-size:12px;white-space:nowrap}
-.v .meta{color:var(--muted);font-size:13px;margin-top:3px}
-.tag{display:inline-block;font-size:11px;letter-spacing:.06em;text-transform:uppercase;
-border:1px solid var(--line);border-radius:999px;padding:2px 8px;margin-left:6px;color:var(--muted)}
-.tag.hot{border-color:var(--gold);color:var(--gold)}
-.tag.ret{border-color:var(--teal);color:var(--teal-2)}
-.empty{color:var(--muted);text-align:center;padding:40px 0;font-size:15px}
-.note{color:var(--muted);font-size:12.5px;margin-top:18px;line-height:1.6}
-.filtered{color:#6d8199;font-size:12.5px;margin-top:14px;text-align:center}
+input[type=password]{width:100%;background:var(--card);border:1px solid var(--line-2);border-radius:10px;
+color:var(--ink);font:inherit;font-size:16px;padding:14px 15px;margin-bottom:12px;min-height:48px}
 .faceid{margin-bottom:14px}
-.or{text-align:center;color:var(--muted);font-size:13px;margin:0 0 14px}
-.offer{background:var(--card);border:1px solid var(--teal);border-radius:12px;padding:16px;margin-top:16px}
-.offer b{color:#fff;font-size:15px;display:block;margin-bottom:3px}
-.offer p{color:var(--muted);font-size:13.5px;margin-bottom:12px}
-.offer-btns{display:flex;gap:9px}
-.offer-btns button{flex:1;font-size:14px;padding:11px 12px}
+.or{text-align:center;color:var(--muted);font-size:14px;margin:0 0 14px}
+.err{background:#3a1e22;border:1px solid #7a3540;color:#ffd0d5;border-radius:10px;padding:11px 13px;font-size:14px;margin-bottom:12px}
+
+/* layout */
+main{padding-top:16px}
+.cols{display:block}
+#detail{display:none}
+@media (min-width:980px){
+  .cols{display:grid;grid-template-columns:minmax(360px,440px) minmax(0,1fr);gap:22px;align-items:start}
+  #detail{display:block;position:sticky;top:86px;max-height:calc(100vh - 100px);overflow:auto;padding-bottom:12px;
+  overscroll-behavior:contain}
+}
+@media (max-width:979.98px){
+  body.detail-open #listcol{display:none}
+  body.detail-open #detail{display:block}
+  body.detail-open .back{display:inline-flex}
+  body.detail-open h1,body.detail-open #signout{display:none}
+}
+
+/* summary */
+.ticker{padding:18px 20px 18px}
+.ticker .big{font-size:54px;font-weight:800;color:var(--cyan);line-height:1.05;letter-spacing:-.02em}
+.ticker .cap{font-size:15px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink);margin-top:6px}
+.ticker .sub{color:var(--muted);font-size:15.5px;margin-top:12px;line-height:1.55}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+.stat{padding:14px 18px;min-height:92px;display:flex;flex-direction:column;justify-content:space-between}
+.stat .n{font-size:38px;font-weight:800;color:var(--white);line-height:1}
+.stat .l{color:var(--ink);font-size:15.5px;opacity:.85}
+.stat.r{text-align:right}
+.bar{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+.bar button{display:flex;align-items:center;justify-content:center;gap:10px;font-size:16.5px;min-height:56px;background:var(--card)}
+.offer{padding:16px;margin-top:12px;border-color:var(--cyan-2)}
+.offer b{color:var(--white);font-size:15px;display:block;margin-bottom:3px}
+.offer p{color:var(--muted);font-size:14px;margin-bottom:12px}
+.offer-btns{display:flex;gap:10px;flex-wrap:wrap}
+.offer-btns button{flex:1;min-width:130px;font-size:15px}
 .offer-btns .ghost{background:transparent;color:var(--muted)}
-.err{background:#3a1e22;border:1px solid #6d3038;color:#ffc9cf;border-radius:8px;padding:11px 13px;
-font-size:14px;margin-bottom:12px}
+
+/* list */
+#state{margin-top:14px;color:var(--muted);font-size:14.5px}
+#state .err{margin:0}
+#state button{margin-top:10px}
+.list{margin-top:12px;display:flex;flex-direction:column;gap:12px}
+.vcard{display:block;text-decoration:none;color:inherit;padding:14px 16px;border-radius:14px;background:var(--card);
+border:1px solid var(--line);min-height:44px}
+.vcard:hover{border-color:var(--line-2)}
+.vcard.t-high{border:2px solid var(--gold);padding:13px 15px}
+.vcard.t-intake{border:2px solid var(--coral);padding:13px 15px}
+.vcard.sel{box-shadow:0 0 0 3px rgba(92,200,236,.35)}
+.vc-top{display:flex;align-items:baseline;gap:10px}
+.vc-path{font-weight:700;color:var(--white);font-size:19px;flex:1;min-width:0;overflow-wrap:anywhere}
+.vc-ago{color:var(--muted);font-size:14.5px;white-space:nowrap}
+.chev{width:18px;height:18px;align-self:center;color:var(--muted)}
+.vc-meta{color:var(--muted);font-size:15px;margin-top:4px;overflow-wrap:anywhere}
+.badges{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.badge{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;letter-spacing:.11em;
+text-transform:uppercase;border:1.5px solid var(--dim);color:var(--ink);border-radius:999px;padding:4px 12px;line-height:1.3}
+.badge.high{border-color:var(--gold);color:var(--gold)}
+.badge.ret{border-color:var(--cyan);color:var(--cyan)}
+.badge.interested{border-color:var(--green);color:var(--green)}
+.badge.browsing{border-color:#c8d3e0;color:#dfe6ee}
+.badge.intake{border-color:var(--coral);color:var(--coral)}
+.badge.live{border-color:var(--green);color:var(--green)}
+.badge.live::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--green)}
+.badge svg{width:15px;height:15px}
+.vc-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}
+.m{display:flex;gap:8px;align-items:flex-start;min-width:0}
+.m .ico{width:24px;height:24px;color:var(--ink);opacity:.9;margin-top:2px}
+.m div{min-width:0;font-size:14px;line-height:1.35;color:var(--ink)}
+.m b{display:block;font-weight:500;overflow-wrap:anywhere}
+.m span{display:block;color:var(--muted);overflow-wrap:anywhere}
+.empty{color:var(--muted);text-align:center;padding:30px 0;font-size:15px}
+.filtered{color:var(--dim);font-size:13px;margin-top:14px;text-align:center}
+.note{color:var(--muted);font-size:13px;margin-top:16px;line-height:1.6}
+.device{margin-top:16px;padding:14px 16px;font-size:14px;color:var(--muted)}
+.device b{color:var(--ink)}
+.device button{margin-top:10px;font-size:14.5px}
+.legacy .vcard{cursor:default}
+
+/* detail */
+.d-wrap{display:flex;flex-direction:column;gap:14px}
+.d-loc{padding:18px}
+.d-loc.t-high{border:2px solid var(--gold);padding:17px}
+.d-loc.t-intake{border:2px solid var(--coral);padding:17px}
+.d-loc-top{display:flex;gap:14px;align-items:flex-start}
+.d-loc-top .pin{width:34px;height:34px;color:var(--gold);flex:none;fill:var(--gold);stroke:none}
+.place{font-size:21px;font-weight:700;color:var(--white);overflow-wrap:anywhere}
+.muted{color:var(--muted);font-size:15px}
+.d-ago{margin-left:auto;text-align:right;white-space:nowrap}
+.d-ago b{display:block;font-size:17px;font-weight:500;color:var(--ink)}
+.d-ago span{font-size:14px;color:var(--muted)}
+.live-line{margin-top:12px;color:var(--green);font-size:15px;font-weight:600;overflow-wrap:anywhere}
+.d-score{padding:18px;display:grid;grid-template-columns:auto minmax(0,1fr);gap:18px;align-items:center}
+.d-score h2{font-size:19px;font-weight:700;color:var(--white);display:flex;align-items:center;gap:8px}
+.info{background:transparent;border:0;padding:0;min-height:44px;min-width:44px;color:var(--muted);display:inline-flex;
+align-items:center;justify-content:center}
+.info svg{width:20px;height:20px}
+.score-n{font-size:76px;font-weight:800;line-height:1;color:var(--white);letter-spacing:-.03em}
+.score-n.t-high{color:var(--gold)}
+.score-n.t-interested{color:var(--green)}
+.reasons{list-style:none;display:flex;flex-direction:column;gap:12px;border-left:1px solid var(--line);padding-left:18px}
+.reasons li{display:flex;gap:12px;align-items:center;font-size:15.5px}
+.reasons .ico{color:var(--gold);width:22px;height:22px}
+.reasons .pts{margin-left:auto;color:var(--dim);font-size:13px;white-space:nowrap}
+.reasons .none{color:var(--muted)}
+.rules{grid-column:1/-1;color:var(--muted);font-size:13.5px;line-height:1.6;border-top:1px solid var(--line);padding-top:12px}
+.sec{padding:18px}
+.sec h2{font-size:19px;font-weight:700;color:var(--white);display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.sec h2 .ico{color:var(--cyan);width:24px;height:24px}
+.sec h2 .cnt{font-weight:400;font-size:15px;color:var(--muted)}
+.dgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px 20px}
+.dgrid > div{min-width:0}
+.dgrid dt{color:var(--muted);font-size:14px}
+.dgrid dd{color:var(--ink);font-size:15.5px;margin-top:2px;overflow-wrap:anywhere}
+.dgrid dd.acc{color:var(--cyan)}
+.dgrid dd small{display:block;color:var(--muted);font-size:13px}
+.dcol{display:flex;flex-direction:column;gap:16px}
+.dcol + .dcol{border-left:1px solid var(--line);padding-left:20px}
+.visit-h{color:var(--dim);font-size:13px;margin:4px 0 6px;letter-spacing:.02em}
+.visit-h:not(:first-child){margin-top:16px}
+.journey{list-style:none;position:relative}
+.journey li.j{display:grid;grid-template-columns:22px 92px minmax(0,1fr) auto;gap:8px;align-items:start;padding:9px 0;
+border-bottom:1px solid rgba(33,64,95,.6);position:relative}
+.journey li.j:last-child{border-bottom:0}
+.journey li.j::before{content:"";position:absolute;left:10px;top:0;bottom:0;width:2px;background:var(--cyan-2);opacity:.55}
+.journey li.j:first-of-type::before{top:16px}
+.journey li.j.last::before{bottom:calc(100% - 16px)}
+.jdot{width:14px;height:14px;border-radius:50%;background:var(--cyan);margin:3px 0 0 4px;position:relative;z-index:1;
+box-shadow:0 0 0 3px var(--card)}
+.j.act .jdot{background:var(--gold)}
+.j.done .jdot{background:var(--green);width:18px;height:18px;margin:1px 0 0 2px}
+.jt{font-size:14.5px;color:var(--ink);white-space:nowrap}
+.jl b{display:block;font-weight:500;font-size:15px;color:var(--ink);overflow-wrap:anywhere}
+.jl span{display:block;color:var(--muted);font-size:14px;overflow-wrap:anywhere}
+.jl a{color:var(--cyan)}
+.jd{color:var(--muted);font-size:14px;white-space:nowrap}
+.rows{list-style:none}
+.rows li{display:grid;grid-template-columns:24px minmax(0,1fr) auto auto;gap:10px;align-items:start;padding:10px 0;
+border-bottom:1px solid rgba(33,64,95,.6)}
+.rows li:last-child{border-bottom:0}
+.rows .ico{color:var(--ink);opacity:.85}
+.rows b{display:block;font-weight:500;font-size:15px;overflow-wrap:anywhere}
+.rows span.p{display:block;color:var(--muted);font-size:14px;overflow-wrap:anywhere}
+.rows .d,.rows .t{color:var(--muted);font-size:14px;white-space:nowrap}
+.rows.acts li{grid-template-columns:24px minmax(0,1fr) auto}
+.placeholder{color:var(--muted);padding:40px 20px;text-align:center}
+@media (max-width:430px){
+  .d-score{grid-template-columns:1fr}
+  .reasons{border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:14px}
+  .dgrid{grid-template-columns:1fr}
+  .dcol + .dcol{border-left:0;padding-left:0}
+  .journey li.j{grid-template-columns:22px 84px minmax(0,1fr)}
+  .journey .jd{grid-column:3;justify-self:start;margin-top:-4px}
+}
+@media (max-width:359px){
+  .vc-metrics .ico{display:none}
+  .ticker .big{font-size:46px}
+  .stat .n{font-size:32px}
+  .rows li{grid-template-columns:20px minmax(0,1fr) auto}
+  .rows .d{grid-column:2}
+}
+@media (prefers-reduced-motion:reduce){.dot.live{animation:none}}
 </style>
 </head>
 <body>
 
-<header><div class="wrap">
+<header><div class="wrap hdr">
+  <button class="back" id="back" type="button"><svg class="ico" viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>Live Visitors</button>
   <h1><span class="dot" id="dot"></span><span id="hdr">Live Visitors</span></h1>
-  <button id="signout" style="display:none;font-size:13px;padding:7px 12px">Sign out</button>
+  <button id="signout" class="outline" type="button" style="display:none">Sign out</button>
 </div></header>
 
 <div class="wrap">
@@ -103,51 +237,63 @@ font-size:14px;margin-bottom:12px}
     <div class="err" id="err" style="display:none"></div>
     <button class="primary faceid" id="faceUnlock" style="display:none">Unlock with Face ID</button>
     <div class="or" id="or" style="display:none">or use your passcode</div>
-    <input type="password" id="pw" placeholder="Passcode" autocomplete="current-password" enterkeyhint="go">
+    <input type="password" id="pw" placeholder="Passcode" autocomplete="current-password" enterkeyhint="go" aria-label="Passcode">
     <button class="primary" id="unlock">Unlock</button>
   </div>
 
   <!-- Dashboard -->
-  <div id="app" style="display:none">
-    <!-- 30-day ticker. "Real" = bot-filtered first visits; a repeat visit by
-         the same person on the same day is not counted again (visitor hashes
-         rotate daily, so same-day is the strongest dedupe that exists). -->
-    <div class="ticker">
-      <div><div class="n" id="v30">0</div><div class="l">Real visits &middot; 30 days</div></div>
-      <div class="sub">first-time visits only<br>same-day repeats not counted</div>
-    </div>
-    <div class="stat">
-      <div><div class="n" id="online">0</div><div class="l">on the site now</div></div>
-      <div style="text-align:right"><div class="n" id="today">0</div><div class="l">visits today</div></div>
-    </div>
+  <main id="app" style="display:none">
+    <div class="cols">
+      <section id="listcol" aria-label="Visitors">
+        <!-- 30-day ticker. "Real" = bot-filtered first visits; a repeat visit by
+             the same visitor on the same day is not counted again. -->
+        <div class="card ticker">
+          <div class="big" id="v30">0</div>
+          <div class="cap">Real visits &middot; 30 days</div>
+          <div class="sub">first-time visits only<br>same-day repeats not counted</div>
+        </div>
+        <div class="stats">
+          <div class="card stat"><div class="n" id="online">0</div><div class="l">on the site now</div></div>
+          <div class="card stat r"><div class="n" id="today">0</div><div class="l">visits today</div></div>
+        </div>
 
-    <div class="offer" id="faceOffer" style="display:none">
-      <div>
-        <b>Skip the passcode next time</b>
-        <p>Use Face ID to open this on your phone.</p>
-      </div>
-      <div class="offer-btns">
-        <button id="faceEnable">Turn on Face ID</button>
-        <button id="faceDismiss" class="ghost">Not now</button>
-      </div>
+        <div class="card offer" id="faceOffer" style="display:none">
+          <div>
+            <b>Skip the passcode next time</b>
+            <p>Use Face ID to open this on your phone.</p>
+          </div>
+          <div class="offer-btns">
+            <button id="faceEnable">Turn on Face ID</button>
+            <button id="faceDismiss" class="ghost">Not now</button>
+          </div>
+        </div>
+
+        <div class="bar">
+          <button id="notify" type="button"><svg class="ico" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span>Turn on alerts</span></button>
+          <button id="refresh" type="button"><svg class="ico" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v5h-5"/></svg><span>Refresh</span></button>
+        </div>
+
+        <div id="state" role="status" aria-live="polite"></div>
+        <div class="list" id="list"></div>
+        <p class="filtered" id="filtered"></p>
+
+        <p class="note" id="note">
+          Only real people are shown. Search crawlers, link previews and scanners are
+          filtered out and never alert. You are alerted when someone starts a visit,
+          when a visitor becomes High intent, and when an intake is submitted &mdash;
+          never for a refresh or another page. Locations are approximate (from the
+          network, not the device). Add this page to your Home Screen to keep
+          notifications working when the browser is closed.
+        </p>
+        <div class="card device" id="device">
+          <div id="devText"></div>
+          <button id="devToggle" type="button"></button>
+        </div>
+      </section>
+
+      <section id="detail" aria-label="Visitor journey"></section>
     </div>
-
-    <div class="bar">
-      <button id="notify">Turn on alerts</button>
-      <button id="refresh">Refresh</button>
-    </div>
-
-    <div class="list" id="list"></div>
-    <div class="empty" id="empty">No visits recorded yet.</div>
-    <p class="filtered" id="filtered"></p>
-
-    <p class="note">
-      Only real people are shown. Search crawlers, link previews and scanners are
-      filtered out and never alert. Alerts fire at most once every 15 minutes per
-      visitor — except the intake and contact pages, which always alert. Add this
-      page to your home screen to keep notifications working when the browser is closed.
-    </p>
-  </div>
+  </main>
 </div>
 
 <script>
@@ -172,64 +318,304 @@ function ago(ms) {
   return Math.round(s / 86400) + 'd ago';
 }
 
-function render(data) {
-  // 30-day ticker; `|| 0` keeps the page working if the Worker is briefly
-  // the older version without the counter fields.
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+/* Inline icons, drawn in currentColor so the palette decides them. */
+const I = {
+  person: '<path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>',
+  clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+  doc: '<path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4M9.5 12h6M9.5 15.5h6"/>',
+  chev: '<path d="M9 6l6 6-6 6"/>',
+  info: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8h.01"/>',
+  ret: '<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
+  visits: '<path d="M8 7V3M16 7V3M4 10h16M5 5h14v15H5z"/>',
+  time: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+  pages: '<path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4M9.5 12h6M9.5 15.5h6"/>',
+  intake: '<path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4M9.5 13l2 2 3.5-4"/>',
+  call: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a1 1 0 0 1-1 1A16 16 0 0 1 4 5a1 1 0 0 1 1-1z"/>',
+  mail: '<path d="M4 6h16v12H4z"/><path d="M4 7l8 6 8-6"/>',
+  cta: '<path d="M5 12h12M13 6l6 6-6 6"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  map: '<path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2z"/><path d="M9 4v14M15 6v14"/>',
+  bolt: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
+  target: '<circle cx="12" cy="12" r="7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>',
+  inbox: '<path d="M4 13l2.5-8h11L20 13v6H4z"/><path d="M4 13h5l1 2h4l1-2h5"/>',
+};
+const ico = (k, cls = '') => '<svg class="ico ' + cls + '" viewBox="0 0 24 24" aria-hidden="true">' + (I[k] || I.doc) + '</svg>';
+const PIN = '<svg class="pin" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z"/></svg>';
+const ACT_ICON = { call: 'call', email: 'mail', contact: 'mail', cta: 'cta', intake_opened: 'doc', intake_started: 'intake', intake_submitted: 'intake' };
+const BADGE = { high: 'High intent', interested: 'Interested', browsing: 'Browsing' };
+
+/* ---- state ----
+   Three states for every list, kept apart on purpose: never loaded, failed,
+   and genuinely empty. Only the last may say there is nobody to show — a
+   failed read drawn as an empty list is the reassuring kind of wrong. */
+const ST = {
+  summary: null,            // last /recent
+  journeys: '',             // 'ready' | 'not_set_up' | 'error' | ''
+  visitors: null,           // last /visitors list, null = not loaded
+  listError: false,
+  open: null,               // visitor id whose journey is shown
+  detail: null,             // last /visitor answer for ST.open
+  detailError: false,
+  rulesOpen: false,
+};
+const wide = () => window.matchMedia('(min-width:980px)').matches;
+
+function badgesHtml(v) {
+  let h = '';
+  if (v.live) h += '<span class="badge live">Live now</span>';
+  h += '<span class="badge ' + esc(v.tier) + '">' + esc(BADGE[v.tier] || v.tier_label) + '</span>';
+  if (v.returning) h += '<span class="badge ret">Returning</span>';
+  if (v.new_intake) h += '<span class="badge intake">' + ico('inbox') + 'New intake</span>';
+  return h;
+}
+function tierClass(v) {
+  if (v.tier === 'high') return 't-high';
+  if (v.new_intake) return 't-intake';
+  return '';
+}
+
+function renderSummary(data) {
+  // `|| 0` keeps the page working if the Worker is briefly an older version.
   $('v30').textContent = data.visits30 || 0;
-
-  $('online').textContent = data.online;
+  $('online').textContent = data.online || 0;
   $('dot').className = 'dot' + (data.online > 0 ? ' live' : '');
-  const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
-  $('today').textContent = data.visits.filter((v) => v.t >= midnight.getTime()).length;
-
+  if (data.journeys === 'ready') {
+    $('today').textContent = data.visitsToday || 0;
+  } else {
+    const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
+    $('today').textContent = (data.visits || []).filter((v) => v.t >= midnight.getTime()).length;
+  }
   const f = $('filtered');
   f.textContent = data.botsToday
     ? data.botsToday + ' bot ' + (data.botsToday === 1 ? 'visit' : 'visits') + ' filtered today (search crawlers, link previews, scanners) — not shown above and never alerted.'
     : '';
-
-  const list = $('list');
-  list.innerHTML = '';
-  $('empty').style.display = data.visits.length ? 'none' : 'block';
-
-  for (const v of data.visits) {
-    const live = Date.now() - v.t < 3 * 60000;
-    const hot = /^\/intake|contact/i.test(v.path);
-    const el = document.createElement('div');
-    el.className = 'v' + (live ? ' now' : '') + (hot ? ' hot' : '');
-    const place = [v.city, v.region].filter(Boolean).join(', ') || v.country || 'Unknown location';
-    el.innerHTML =
-      '<div class="top"><span class="path">' + esc(v.path) + '</span>' +
-      '<span class="ago">' + ago(v.t) + '</span></div>' +
-      '<div class="meta">' + esc(place) +
-      (v.ref ? ' &middot; from ' + esc(v.ref) : ' &middot; direct') +
-      (hot ? '<span class="tag hot">high intent</span>' : '') +
-      (v.returning ? '<span class="tag ret">returning</span>' : '') + '</div>';
-    list.appendChild(el);
-  }
 }
 
-function esc(s) {
-  return String(s).replace(/[&<>"']/g, (c) =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+function cardHtml(v) {
+  const sel = ST.open === v.id ? ' sel' : '';
+  const label = 'Visitor, ' + v.place + ', last active ' + ago(v.last_at) + ', ' + (BADGE[v.tier] || '')
+    + (v.returning ? ', returning' : '') + (v.new_intake ? ', new intake' : '') + (v.live ? ', on the site now' : '');
+  return '<a class="vcard ' + tierClass(v) + sel + '" href="?v=' + esc(v.id) + '" data-v="' + esc(v.id) + '" aria-label="' + esc(label) + '">'
+    + '<div class="vc-top"><span class="vc-path">' + esc(v.path) + '</span>'
+    + '<span class="vc-ago" data-at="' + v.last_at + '" title="' + esc(v.last_label) + '">' + ago(v.last_at) + '</span>'
+    + '<svg class="ico chev" viewBox="0 0 24 24" aria-hidden="true">' + I.chev + '</svg></div>'
+    + '<div class="vc-meta">' + esc(v.place) + ' &middot; ' + esc(v.source_line) + '</div>'
+    + '<div class="badges">' + badgesHtml(v) + '</div>'
+    + '<div class="vc-metrics">'
+    + '<div class="m">' + ico('person') + '<div><b>' + esc(v.visits_line) + '</b><span>' + esc(v.visits_sub) + '</span></div></div>'
+    + '<div class="m">' + ico('clock') + '<div><b>' + esc(v.engaged_label) + '</b><span>on site</span></div></div>'
+    + '<div class="m">' + ico('doc') + '<div><b>' + esc(v.activity_line) + '</b><span>' + esc(v.activity_sub) + '</span></div></div>'
+    + '</div></a>';
+}
+
+/* The page-view log, for when journeys are not switched on: the dashboard as
+   it always was, so the server can be behind the page without breaking it. */
+function legacyHtml(data) {
+  const visits = data.visits || [];
+  if (!visits.length) return '<div class="empty">No visits recorded yet.</div>';
+  return visits.map((v) => {
+    const live = Date.now() - v.t < 3 * 60000;
+    const hot = /^\/intake|contact/i.test(v.path);
+    const place = [v.city, v.region].filter(Boolean).join(', ') || v.country || 'Location unavailable';
+    return '<div class="vcard' + (hot ? ' t-high' : '') + '">'
+      + '<div class="vc-top"><span class="vc-path">' + esc(v.path) + '</span><span class="vc-ago" data-at="' + v.t + '">' + ago(v.t) + '</span></div>'
+      + '<div class="vc-meta">' + esc(place) + (v.ref ? ' &middot; from ' + esc(v.ref) : ' &middot; Direct') + '</div>'
+      + '<div class="badges">' + (live ? '<span class="badge live">Live now</span>' : '')
+      + (hot ? '<span class="badge high">High intent</span>' : '') + (v.returning ? '<span class="badge ret">Returning</span>' : '') + '</div>'
+      + '</div>';
+  }).join('');
+}
+
+function renderList() {
+  const list = $('list'), state = $('state');
+  list.classList.toggle('legacy', ST.journeys !== 'ready');
+  if (ST.journeys && ST.journeys !== 'ready') {
+    state.innerHTML = ST.journeys === 'error'
+      ? '<div class="err">Visitor journeys could not be read just now. Showing the page-view log instead.</div>'
+      : 'Visitor journeys are not switched on yet on the server, so this is the page-view log. Once they are, each visitor gets a card with their full journey.';
+    list.innerHTML = legacyHtml(ST.summary || {});
+    return;
+  }
+  if (ST.listError) {
+    state.innerHTML = '<div class="err">Visitors could not be loaded. This is not the same as nobody visiting.</div><button type="button" data-act="retry">Try again</button>';
+    if (!ST.visitors) list.innerHTML = '';
+    return;
+  }
+  if (!ST.visitors) { state.textContent = 'Loading visitors…'; list.innerHTML = ''; return; }
+  state.textContent = '';
+  list.innerHTML = ST.visitors.length
+    ? ST.visitors.map(cardHtml).join('')
+    : '<div class="empty">No visitors in the last 30 days.</div>';
+}
+
+/* ---- detail ---- */
+function reasonsHtml(v) {
+  if (!v.reasons || !v.reasons.length) return '<li class="none">No interest signals yet.</li>';
+  return v.reasons.map((r) => '<li>' + ico(r.icon) + '<span>' + esc(r.label) + '</span><span class="pts">+' + r.pts + '</span></li>').join('');
+}
+function journeyHtml(d) {
+  if (!d.journey.length) return '<p class="muted">No pages recorded.</p>';
+  let h = '';
+  if (d.visitor.earlier_visits) h += '<p class="visit-h">' + d.visitor.earlier_visits + ' earlier visit' + (d.visitor.earlier_visits === 1 ? '' : 's') + ' not shown</p>';
+  d.journey.forEach((vis) => {
+    h += '<p class="visit-h">Visit ' + vis.n + ' &middot; ' + esc(vis.date) + ' &middot; ' + esc(vis.source_line) + ' &middot; times ' + esc(vis.zone) + '</p>';
+    h += '<ol class="journey">';
+    vis.rows.forEach((r, i) => {
+      const last = i === vis.rows.length - 1 ? ' last' : '';
+      const done = r.name === 'intake_submitted' ? ' done' : r.kind === 'action' ? ' act' : '';
+      let sub = r.kind === 'page' ? esc(r.path) + (r.views > 1 ? ' &middot; loaded ' + r.views + ' times' : '') : esc(r.sub || '');
+      if (r.case) sub += (sub ? ' &middot; ' : '') + 'Request ' + esc(r.case) + ' &middot; <a href="/portal/?case=' + encodeURIComponent(r.case) + '">Open in the case portal</a>';
+      h += '<li class="j' + done + last + '"><span class="jdot" aria-hidden="true"></span>'
+        + '<time class="jt" title="' + esc(r.full) + '">' + esc(r.time) + (r.zone ? ' ' + esc(r.zone) : '') + '</time>'
+        + '<div class="jl"><b>' + (r.name === 'intake_submitted' ? '✓ ' : '') + esc(r.label) + '</b>' + (sub ? '<span>' + sub + '</span>' : '') + '</div>'
+        + '<span class="jd">' + (r.kind === 'page' ? esc(r.engaged_label) : r.name === 'intake_submitted' ? '—' : '') + '</span></li>';
+    });
+    h += '</ol>';
+  });
+  return h;
+}
+function detailHtml(d) {
+  const v = d.visitor;
+  const tc = tierClass(v);
+  const intake = v.intake
+    ? '<dd class="acc">Submitted ✓<small>' + esc(v.intake.service || 'Intake') + ' &middot; ' + esc(v.intake.label) + '</small><small>Request ' + esc(v.intake.case) + '</small></dd>'
+    : '<dd>Not submitted</dd>';
+  const interest = v.interest
+    ? '<dd>' + esc(v.interest) + (v.interest_basis.length ? '<small>from: ' + esc(v.interest_basis.join(', ')) + '</small>' : '') + '</dd>'
+    : '<dd>Not determined</dd>';
+  return '<div class="d-wrap">'
+    + '<h2 class="vh" id="dhead" tabindex="-1">Visitor in ' + esc(v.place) + '</h2>'
+    + '<div class="card d-loc ' + tc + '"><div class="d-loc-top">' + PIN
+    + '<div><div class="place">' + esc(v.place) + '</div><div class="muted">Approximate location (IP)</div></div>'
+    + '<div class="d-ago"><b data-at="' + v.last_at + '" title="' + esc(v.last_label) + '">' + ago(v.last_at) + '</b><span>Last active</span></div></div>'
+    + '<div class="badges">' + badgesHtml(v) + '</div>'
+    + (v.live ? '<div class="live-line">● On the site now &middot; ' + esc(v.current_label) + ' (' + esc(v.path) + ')</div>' : '')
+    + '</div>'
+    + '<div class="card d-score"><div><h2>Interest Score <button class="info" type="button" data-act="rules" aria-expanded="' + ST.rulesOpen + '" aria-controls="rules" aria-label="How the score is counted">' + ico('info') + '</button></h2>'
+    + '<div class="score-n t-' + esc(v.tier) + '" aria-label="Interest score ' + v.score + ' of 100">' + v.score + '</div></div>'
+    + '<ul class="reasons">' + reasonsHtml(v) + '</ul>'
+    + '<p class="rules" id="rules"' + (ST.rulesOpen ? '' : ' hidden') + '>' + esc(v.score_rules) + '</p></div>'
+    + '<div class="card sec"><h2>' + ico('user') + 'Visitor Details</h2><dl class="dgrid">'
+    + '<div class="dcol"><div><dt>First seen</dt><dd>' + esc(v.first_label) + '</dd></div>'
+    + '<div><dt>Last active</dt><dd>' + esc(v.last_label) + '</dd></div>'
+    + '<div><dt>Total visits</dt><dd>' + esc(v.visits_detail) + '</dd></div>'
+    + '<div><dt>Time on site</dt><dd>' + esc(v.engaged_total_label) + '<small>this visit ' + esc(v.engaged_visit_label) + '</small></dd></div></div>'
+    + '<div class="dcol"><div><dt>Source</dt><dd class="acc">' + esc(v.source_detail) + '</dd></div>'
+    + '<div><dt>Landing page</dt><dd class="acc">' + esc(v.landing) + '</dd></div>'
+    + '<div><dt>Likely interest</dt>' + interest + '</div>'
+    + '<div><dt>Intake</dt>' + intake + '</div></div>'
+    + '</dl></div>'
+    + '<div class="card sec"><h2>' + ico('map') + 'Visit Journey</h2>' + journeyHtml(d) + '</div>'
+    + '<div class="card sec"><h2>' + ico('doc') + 'Pages Viewed <span class="cnt">(' + d.pages.length + ')</span></h2><ul class="rows">'
+    + (d.pages.length ? d.pages.map((p) => '<li>' + ico('doc') + '<div><b>' + esc(p.label) + '</b><span class="p">' + esc(p.path) + (p.views > 1 ? ' &middot; ×' + p.views : '') + '</span></div>'
+      + '<span class="d">' + esc(p.engaged_label) + '</span><time class="t" title="' + esc(p.full) + '">' + esc(p.time) + '</time></li>').join('') : '<li><span></span><span class="p">No pages recorded.</span></li>')
+    + '</ul></div>'
+    + '<div class="card sec"><h2>' + ico('bolt', '') + 'Actions</h2><ul class="rows acts">'
+    + (d.actions.length || d.facts.length
+      ? d.actions.map((a) => '<li>' + ico(ACT_ICON[a.name]) + '<div><b>' + esc(a.label) + '</b>' + (a.case ? '<span class="p">Request ' + esc(a.case) + '</span>' : '') + '</div><time class="t" title="' + esc(a.full) + '">' + esc(a.time) + '</time></li>').join('')
+        + d.facts.map((f) => '<li>' + ico('ret') + '<div><b>' + esc(f.label) + '</b></div><span class="t">' + esc(f.sub) + '</span></li>').join('')
+      : '<li><span></span><span class="p">No buttons pressed.</span></li>')
+    + '</ul></div>'
+    + '</div>';
+}
+function renderDetail(focus) {
+  const box = $('detail');
+  if (!ST.open) {
+    box.innerHTML = ST.journeys === 'ready' ? '<div class="card placeholder">Choose a visitor to see their journey.</div>' : '';
+    return;
+  }
+  if (ST.detailError && !ST.detail) {
+    box.innerHTML = '<div class="card placeholder"><div class="err">This visitor\'s journey could not be loaded.</div><button type="button" data-act="retry-detail">Try again</button></div>';
+    return;
+  }
+  if (!ST.detail) { box.innerHTML = '<div class="card placeholder">Loading the journey…</div>'; return; }
+  const scroll = box.scrollTop;
+  box.innerHTML = detailHtml(ST.detail);
+  box.scrollTop = scroll;
+  if (focus) { const h = $('dhead'); if (h) h.focus({ preventScroll: true }); }
+}
+
+async function loadDetail(id, focus) {
+  try {
+    const r = await api('/visitor?id=' + encodeURIComponent(id));
+    if (r.status === 401) return lock('That passphrase was not accepted.');
+    const d = await r.json();
+    if (ST.open !== id) return;                 // the person has moved on
+    if (!r.ok || !d.ok) { ST.detailError = true; ST.detail = null; }
+    else { ST.detail = d; ST.detailError = false; }
+  } catch (e) {
+    if (ST.open !== id) return;
+    ST.detailError = true;
+  }
+  renderDetail(focus);
+}
+
+function openVisitor(id, push) {
+  ST.open = id; ST.detail = null; ST.detailError = false;
+  document.body.classList.add('detail-open');
+  if (push) history.pushState({ v: id }, '', '?v=' + encodeURIComponent(id));
+  renderList();
+  renderDetail(false);
+  if (!wide()) window.scrollTo(0, 0);
+  loadDetail(id, true);
+}
+function closeVisitor() {
+  ST.open = null; ST.detail = null;
+  document.body.classList.remove('detail-open');
+  renderList();
+  renderDetail(false);
 }
 
 async function load() {
   try {
     const r = await api('/recent');
     if (r.status === 401) return lock('That passphrase was not accepted.');
-    render(await r.json());
+    const data = await r.json();
+    ST.summary = data;
+    ST.journeys = data.journeys || 'not_set_up';
+    renderSummary(data);
   } catch (e) {
     console.warn('load failed', e);
+    ST.listError = true;
+    renderList();
+    return;
   }
+  if (ST.journeys === 'ready') {
+    try {
+      const r = await api('/visitors');
+      const d = await r.json();
+      if (r.ok && d.ok) { ST.visitors = d.visitors; ST.listError = false; }
+      else ST.listError = true;
+    } catch (e) { ST.listError = true; }
+  }
+  renderList();
+  if (ST.open) loadDetail(ST.open, false);
+  else if (wide() && ST.journeys === 'ready' && ST.visitors && ST.visitors.length && !ST.autoOpened) {
+    ST.autoOpened = true;
+    openVisitor(ST.visitors[0].id, false);
+  } else renderDetail(false);
+}
+
+function tickAgo() {
+  document.querySelectorAll('[data-at]').forEach((el) => { el.textContent = ago(Number(el.dataset.at)); });
 }
 
 function unlockUI() {
   $('gate').style.display = 'none';
   $('app').style.display = 'block';
   $('signout').style.display = 'inline-block';
+  markThisDevice();
+  const want = new URLSearchParams(window.location.search).get('v');
+  if (want && /^[0-9a-f]{32}$/.test(want)) openVisitor(want, false);
   load();
   clearInterval(timer);
-  timer = setInterval(load, 20000);   // keep the open dashboard current
+  // Keep the open dashboard current — but not while nobody is looking at it.
+  timer = setInterval(() => { if (document.visibilityState === 'visible') load(); else tickAgo(); }, 30000);
 }
 
 function lock(msg) {
@@ -240,6 +626,7 @@ function lock(msg) {
   $('gate').style.display = 'block';
   $('app').style.display = 'none';
   $('signout').style.display = 'none';
+  document.body.classList.remove('detail-open');
   if (msg) { $('err').textContent = msg; $('err').style.display = 'block'; }
 }
 
@@ -259,6 +646,59 @@ $('unlock').addEventListener('click', async () => {
 $('pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('unlock').click(); });
 $('signout').addEventListener('click', () => lock(''));
 $('refresh').addEventListener('click', load);
+$('back').addEventListener('click', () => {
+  if (history.state && history.state.v) history.back();
+  else { history.replaceState(null, '', window.location.pathname); closeVisitor(); }
+});
+window.addEventListener('popstate', (e) => {
+  const v = e.state && e.state.v;
+  if (v) openVisitor(v, false); else closeVisitor();
+});
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && token && $('app').style.display === 'block') load(); });
+
+$('list').addEventListener('click', (e) => {
+  const a = e.target.closest('a.vcard[data-v]');
+  if (!a) return;
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;   // a new tab keeps working
+  e.preventDefault();
+  if (wide()) {
+    history.replaceState({ v: a.dataset.v }, '', '?v=' + encodeURIComponent(a.dataset.v));
+    openVisitor(a.dataset.v, false);
+  } else openVisitor(a.dataset.v, true);
+});
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-act]');
+  if (!b) return;
+  if (b.dataset.act === 'retry') load();
+  if (b.dataset.act === 'retry-detail' && ST.open) { ST.detailError = false; renderDetail(false); loadDetail(ST.open, false); }
+  if (b.dataset.act === 'rules') {
+    ST.rulesOpen = !ST.rulesOpen;
+    b.setAttribute('aria-expanded', String(ST.rulesOpen));
+    const p = $('rules'); if (p) p.hidden = !ST.rulesOpen;
+  }
+});
+
+/* ---- this device: the owner's own visits are not leads ----
+   The website and this page share one site, so a mark left here is read by
+   the visitor script on every public page in this browser. */
+const EXCL = 'apiv-exclude';
+function excluded() { try { return localStorage.getItem(EXCL) === '1'; } catch (_) { return false; } }
+function markThisDevice() {
+  try { if (localStorage.getItem(EXCL) === null) localStorage.setItem(EXCL, '1'); } catch (_) {}
+  renderDevice();
+}
+function renderDevice() {
+  const off = excluded();
+  $('devText').innerHTML = off
+    ? '<b>This browser is not counted.</b> Your own visits to the website from it are ignored, so you never show up as a lead.'
+      + ' On iPhone, the Home Screen app and Safari keep separate settings — open this page in Safari once to stop counting Safari too.'
+    : '<b>This browser is counted.</b> Your visits to the website from it appear here like anyone else\'s — useful for testing.';
+  $('devToggle').textContent = off ? 'Count my visits from this browser' : 'Stop counting this browser';
+}
+$('devToggle').addEventListener('click', () => {
+  try { localStorage.setItem(EXCL, excluded() ? '0' : '1'); } catch (_) {}
+  renderDevice();
+});
 
 /* ---- push notifications ---- */
 async function enablePush() {
@@ -285,7 +725,7 @@ async function enablePush() {
     // The service worker fetches details itself, so it needs the passphrase too.
     navigator.serviceWorker.controller?.postMessage({ type: 'token', token, api: API });
     reg.active?.postMessage({ type: 'token', token, api: API });
-    $('notify').textContent = 'Alerts are on';
+    $('notify').querySelector('span').textContent = 'Alerts are on';
     $('notify').disabled = true;
   } else {
     alert('Could not register for alerts.');
@@ -403,10 +843,15 @@ if (token) { unlockUI(); } else { setupGate(); }
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistration().then((reg) => {
     if (reg && Notification.permission === 'granted') {
-      $('notify').textContent = 'Alerts are on';
+      $('notify').querySelector('span').textContent = 'Alerts are on';
       $('notify').disabled = true;
       reg.active?.postMessage({ type: 'token', token, api: API });
     }
+  });
+  // A notification tapped while this page is already open lands on the visitor it was about.
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    const d = e.data || {};
+    if (d.type === 'open' && /^[0-9a-f]{32}$/.test(d.v || '') && token) openVisitor(d.v, !wide());
   });
 }
 </script>
