@@ -358,6 +358,24 @@ const S = { step:0,
                mid-edit. */
             askEmail:false };
 
+/* LIVE VISITORS (owner brief 2026-10-10). The visitor dashboard is told THAT
+   this form was opened and on which door, THAT it was started — once, as a
+   bare fact, the first time any control on the page changes — and, after a
+   submission lands, the request number this page minted and the service
+   chosen. Never a value, a field's name, a keystroke or how far someone got:
+   the listener below does not even look at which element changed. If the
+   visitor script is blocked or switched off these are pushes onto an array
+   nobody reads, so nothing here can delay or fail the form. */
+function visitNote(entry){ try{ (window.APIVisitQ = window.APIVisitQ || []).push(entry); }catch(e){} }
+visitNote(["door", { door: CARRIER_ONLY ? "insurance" : LEGAL_ONLY ? "legal" : PRIVATE_ONLY ? "private" : "bare",
+                     svc: S.svc || "" }]);
+(function(){
+  let said = false;
+  const once = () => { if(said) return; said = true; visitNote(["act", "intake_started"]); };
+  document.addEventListener("input", once, true);
+  document.addEventListener("change", once, true);
+})();
+
 /* ============ Required / optional markers ============
 
    ONE WRITER FOR THE WORDING, so a label cannot say something the form does
@@ -1372,6 +1390,8 @@ async function finish(){
   // The client is told it landed only if the firm can actually act on it:
   // either the details are recorded, or someone has their number to call.
   renderRecord(p, stored || notified, threw, stored);
+  // The dashboard learns the request number only once the firm has it.
+  if(stored || notified) visitNote(["act", "intake_submitted", { n: p.case_no, s: S.svc || "", l: S.lsvc || "" }]);
 }
 
 /* ============ Final record ============ */

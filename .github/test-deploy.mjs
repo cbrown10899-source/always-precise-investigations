@@ -982,6 +982,36 @@ section('The manifest describes the site honestly');
   }
 }
 
+/* LIVE VISITORS V2 (owner brief 2026-10-10): the privacy page is a promise
+   about what the visitor script records, and the script changed. These pin the
+   policy as published — the STAGED bytes — to what the beacon and the Worker
+   actually do, so the next change to either cannot leave it saying less than
+   is true. */
+section('The privacy page tells the truth about Live Visitors');
+{
+  const priv = fs.readFileSync(path.join(tmp, '_site', 'privacy.html'), 'utf8');
+  const text = priv.replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;/g, ' ').replace(/\s+/g, ' ');
+  for (const [what, re] of [
+    ['the random identifier the browser keeps', /random identifier/i],
+    ['that it is not a cookie', /not a cookie/i],
+    ['that reading time is recorded', /how long/i],
+    ['which buttons are recorded', /Call, Email, Contact or intake buttons/],
+    ['that the intake is linked by its request number only after Submit', /request number of your submission/i],
+    ['that typing is never recorded', /never anything you type/i],
+    ['Do Not Track and Global Privacy Control', /Do Not Track.*Global Privacy Control/],
+    ['the 90-day retention', /90 days/],
+  ]) ok(`the published privacy page states ${what}`, re.test(text));
+  ok('it no longer calls the record "a short rolling window" (journeys are kept for 90 days)', !/short rolling window/i.test(text));
+  const w = fs.readFileSync(path.join(ROOT, 'visitor-alerts/worker.js'), 'utf8');
+  const keep = (w.match(/const JOURNEY_KEEP_DAYS = (\d+);/) || [])[1];
+  ok('the retention the page states is the retention the Worker enforces', keep && new RegExp(`${keep} days`).test(text), keep);
+  const beacon = fs.readFileSync(path.join(tmp, '_site', 'beacon.js'), 'utf8');
+  ok('the published beacon keeps its token in local storage and honours GPC',
+     /localStorage\.setItem\('apiv-id'/.test(beacon) && /globalPrivacyControl/.test(beacon) && !/document\.cookie/.test(beacon));
+  ok('the schema and the Live Visitors tests never ship',
+     !files.includes('visitor-alerts/schema.sql') && !files.includes('watch/test-watch.mjs'));
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(results.join('\n'));
 console.log(`\n${passed} passed, ${failed} failed`);

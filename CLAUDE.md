@@ -82,7 +82,24 @@ back to the 30-run default and returned 464 KB. The `resource_id` filter was
 honoured then and is honoured now; the spelling was the whole problem.
 
 So the cheap call is: `resource_id` + `perPage: 3` + a `workflow_runs_filter`
-of `{branch: "master", event: "push"}`. Do not go back to unfiltered listings.
+of `{branch: "master"}` — **branch alone, without `event`** (corrected
+2026-10-03; the next paragraph says why). Do not go back to unfiltered
+listings.
+
+**THE `event` FILTER ONCE ANSWERED WEEKS OUT OF DATE, AND ONLY THE SHA SAID
+SO.** Verifying #348's merge (`e8044d3`) on 2026-10-02, `{branch: "master",
+event: "push"}` with `perPage: 1` returned `total_count: 75` and, as the
+newest run, #388 from 2026-09-08. `{branch: "master"}` alone returned 422 and
+the right one, #422 at `e8044d3`. Re-run on 2026-10-03, the event-filtered
+call returned 417 and #422 — the five it leaves out are `deploy.yml`'s
+dispatched runs, none newer than 2026-08-12 — so the filter is honoured, but
+for a while its answer lagged weeks behind, with nothing in the response to
+mark it as stale. `deploy.yml` runs on pushes to `master` and almost nothing
+else, so `event` buys nothing here and is one more answer that can lag.
+**Whatever the filter, read the newest run's `head_sha` before its
+conclusion**: a newest run older than the merge is a stale listing, not a
+missing deploy, so re-query with `branch` alone before saying a merge did not
+deploy.
 
 What actually works:
 
@@ -110,9 +127,11 @@ with their per-step conclusions and **no commit blob**: roughly 1,500 tokens,
 and it answers the actual question ("did every step pass?") in more detail.
 
 So the cheap pattern for "did my merge deploy?" is: ONE `list_workflow_runs`
-with `resource_id` + `perPage: 1` to learn the run id, then `list_workflow_jobs`
-for that id — and for a workflow you dispatched yourself, poll the JOBS call
-only. Measured 2026-09-07 verifying #299 across three workflows.
+with `resource_id` + `perPage: 1` + `{branch: "master"}` to learn the run id —
+**checking that its `head_sha` is the merge commit** — then
+`list_workflow_jobs` for that id; and for a workflow you dispatched yourself,
+poll the JOBS call only. Measured 2026-09-07 verifying #299 across three
+workflows.
 
 The same caution applies to `get_job_logs` on this repo: `site-health.yml`
 emits a long step summary.
@@ -147,7 +166,7 @@ published. The stager **fails if a listed path is missing**, so a renamed
 directory is caught at build time instead of by someone finding a 404 later.
 
 ```bash
-node .github/test-deploy.mjs   # 127 checks (2026-09-28): what may and may not be published
+node .github/test-deploy.mjs   # 139 checks (2026-10-10): what may and may not be published
 ```
 
 It runs the real stager and asserts both halves — that the site is complete,
@@ -161,19 +180,20 @@ failing the build**, which is the incident itself.
 
 ## Deploy topology
 
-Nine workflows, all in `.github/workflows/`:
+Ten workflows, all in `.github/workflows/`:
 
 | Workflow              | Trigger                              | Does                                       |
 | --------------------- | ------------------------------------ | ------------------------------------------ |
 | `deploy.yml`          | any push to `master`                 | rsyncs the site to Cloudflare Pages        |
 | `build-locations.yml` | push to `master` touching the generator | regenerates location pages, commits, deploys |
-| `deploy-worker.yml`   | push touching `visitor-alerts/worker.js` | uploads the Worker, preserving bindings |
+| `deploy-worker.yml`   | push touching `visitor-alerts/worker.js` | tests, then uploads the Worker, preserving bindings |
 | `deploy-portal.yml`   | push touching `case-portal/worker.js`   | tests, then uploads the portal Worker      |
 | `site-health.yml`     | daily cron, 11:00 UTC                | probes the live domain; opens one issue on failure |
 | `portal-setup.yml`    | manual dispatch                      | one-shot Cloudflare setup for the portal   |
 | `r2-setup.yml`        | manual dispatch                      | probes the token for R2, creates the private evidence bucket |
 | `save-point.yml`      | human push to `master`, or manual    | tags a `save/…` point and cuts a Release   |
 | `harden-check.yml`    | manual, plus weekly Monday 11:30 UTC | runs `verify.sh` live-site security checks |
+| `visitors-setup.yml`  | manual dispatch                      | creates the visitor-journeys D1, attaches it to the visitor Worker, verifies, rolls back on failure |
 
 Every workflow carries a `concurrency` group. They were added after runs
 collided: on 2026-08-07 five runs started in the same minute and two were
@@ -3784,8 +3804,9 @@ know the cap they are working to. The price fields (`package`, `package_price`,
 Tests, which intercept form delivery so a run never reaches the firm's inbox:
 
 ```bash
-node intake/test-intake.mjs      # 934 checks (2026-09-24); needs Playwright, skips cleanly without it
-node visitor-alerts/test-worker.mjs   # 49 checks (2026-09-24)
+node intake/test-intake.mjs      # 934 checks (2026-10-10); needs Playwright, skips cleanly without it
+node visitor-alerts/test-worker.mjs   # 206 checks (2026-10-10): journeys on real SQLite
+node watch/test-watch.mjs        # 74 checks (2026-10-10): the beacon and the dashboard against the real Worker
 ```
 
 Note the payment handles in `FIRM` are still personal accounts — the source
@@ -7238,3 +7259,87 @@ something untrue.
 visitors, installable as a PWA. It is backed by the `api-visitor-alerts`
 Worker in `visitor-alerts/` and is deliberately `noindex` and absent from
 `robots.txt` — keep it that way. `beacon.js` on each page is what feeds it.
+
+## Live Visitors V2 — a visitor is a token, and a lead is a count with its reasons
+
+Owner brief 2026-10-10 (§1–§51), against an approved mockup of the list and the
+expanded visitor screen: *"THIS IS NOT A STATIC UI REDESIGN."* Record, decisions
+D1–D17 and the mutation table in `visitor-alerts/LIVE-VISITORS.md`.
+
+**THE JOURNEY LIVES IN ITS OWN D1, BECAUSE OF THE KV WRITE BUDGET.** The free
+plan allows 1,000 KV writes a day, a page view already spent three or four, and
+the passcode lockout writes to the same namespace — so a feature that ran the
+allowance out would also switch the lockout off. `api-visitor-journeys`
+(binding `VDB`) is bound to the visitor Worker only and is **never the case
+portal's database**, which holds claimant names: the reason the two Workers
+were kept apart in the first place. The event path (`/t`) makes **no KV call at
+all**, and a test counts them.
+
+**A VISITOR IS A RANDOM TOKEN THE BROWSER KEEPS — NEVER THE NETWORK.** 16
+random bytes in the site's own local storage (`apiv-id`); the Worker stores
+only a salted hash. Not a cookie, not an IP, not a user agent, not a
+fingerprint, and **two people behind one address are two visitors** (§40,
+tested). Do Not Track, Global Privacy Control and the owner's own browser
+return before a token is made. A cleared browser, a private window or a second
+browser is a new visitor, and the dashboard never claims otherwise.
+
+**THE INTAKE LINK IS HANDED OVER, NEVER INFERRED (§16).** After the firm has
+the submission, the intake page passes the request number it minted and the
+service key — nothing else — to the visitor script; the Worker accepts it only
+on an intake page view of the same token, dated within three days, once.
+Before submission the record knows *opened* and *started* and nothing typed:
+the browser suite types into every field and searches every request for it.
+The intake hooks are fire-and-forget, and with the Worker unreachable the
+intake still submits (tested).
+
+**THE SCORE IS A COUNT, NOT A PROBABILITY, AND IT PRINTS ITS REASONS.** Points
+per fact over the visitor's last seven days; a homepage-only visit is never
+High intent however long it lasts; reloads, idle time, repeats and bots earn
+nothing. Alerts fire on a tier TRANSITION, one per request, and the lock-screen
+text carries no request number — the portal's text-message rule. Every
+displayed time is composed by the Worker in Eastern; the browser suite renders
+the dashboard on a Pacific laptop to prove a Virginia visit reads in Virginia
+time.
+
+**A MOVING CURSOR IS A HUMAN — A PRODUCTION DEFECT THIS UNIT FOUND.** The
+Worker files a page view whose human signal came under 150ms after load as a
+replayed request. A cursor already moving as the next page paints fires
+`pointermove` at once, so visits arriving mid-browse were being dropped as bots
+before this unit, silently. The beacon waits out the first 200ms; the server
+rule is unchanged, and a regression test moves the mouse the instant a page
+loads.
+
+**THE CURRENT PAGE IS THE NEWEST TO OPEN, NOT THE LATEST CHECK-IN.** The page
+being left sends its final engagement as the next page is already opening, so
+that check-in routinely lands after the next page started. Comparing against
+`last_at` held the visitor on the page they had left. **The browser caught it
+once and then stopped landing the race** — the mutation reverting the fix
+walked past the browser suite — so the race is played deterministically in the
+Worker suite. Pin a timing defect where the timing is yours to choose.
+
+**THE SETUP INHERITS EVERY BINDING, VERIFIES, AND ROLLS BACK.**
+`visitors-setup.yml` is the one manual dispatch: find or create the database,
+apply `schema.sql` through D1's query endpoint, upload the Worker, then PATCH
+the script settings re-listing every existing binding as `inherit` plus the new
+`d1` one — so no secret is read, copied or dropped. It checks every binding is
+still there, `/health` still reports the passcode and push key configured, and
+journeys are ready, and redeploys the recorded version if not. The setup strips
+comments and D1 splits on semicolons, so **no comment in `schema.sql` may carry
+a semicolon** (tested). Until it runs, everything behaves as before: the
+Worker fails open and the dashboard shows the page-view log, saying why.
+`deploy-worker.yml` now runs the Worker suite before uploading.
+
+**THE OWNER'S OWN VISITS ARE NOT LEADS.** Unlocking the dashboard marks that
+browser; a toggle counts it again for testing. On iPhone the Home Screen app
+and Safari keep separate storage, so excluding one does not exclude the other.
+
+**THE PRIVACY PAGE SAYS ALL OF IT**, and a deploy test holds the page's stated
+retention to the Worker's `JOURNEY_KEEP_DAYS` (90 days, swept once a day).
+
+**A CRASH NAMES NOTHING — BOTH SUITES WERE CHANGED SO A BROKEN PROPERTY FAILS
+BY NAME.** Three Worker mutations first crashed the suite on a null read and
+were recorded as misses; the suite now prints what it has before it exits, and
+its journey reads are null-safe. Two dashboard mutations crashed the browser
+suite on a 30-second wait for a screen that never drew; every browser section
+now runs under `run()`, which turns a throw into a FAIL named for its section
+and lets the rest of the run continue. All 48 mutations now fail by name.

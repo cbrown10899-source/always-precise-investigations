@@ -1,0 +1,218 @@
+name: Set up Live Visitors journeys
+
+# One-shot setup for Live Visitors V2, run from the Actions tab after the merge
+# that brings it. Using the CLOUDFLARE_API_TOKEN already on this repository it:
+#
+#   - records the visitor Worker exactly as it is now: its bindings and the
+#     version serving traffic, so there is something to roll back to;
+#   - finds or creates the D1 database `api-visitor-journeys` — its own
+#     database, never the case portal's, which holds claimant data;
+#   - applies visitor-alerts/schema.sql (IF NOT EXISTS throughout, re-runnable);
+#   - uploads worker.js from master (content only, the same upload
+#     deploy-worker.yml makes), so the code that knows the database is live;
+#   - attaches the database as `VDB`. Every binding the Worker already has —
+#     both KV namespaces, the three vars and the three secrets, the passcode
+#     among them — is re-listed as `inherit`, which tells Cloudflare to carry it
+#     over from the current version BY NAME. No value is read, copied or typed;
+#   - checks that every binding is still there, that /health still reports the
+#     passcode and push key configured, and that journeys are ready — and if
+#     any of that is not true, rolls the Worker back to the recorded version.
+#
+# Safe to run more than once: a second run finds the database, re-applies the
+# schema (a no-op) and leaves a binding that is already right alone.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: visitors-setup
+  cancel-in-progress: false
+
+env:
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  CLOUDFLARE_ACCOUNT_ID: 63a4b8fd9efe4137e1f91c49b5e61c6f
+  DB_NAME: api-visitor-journeys
+  SCRIPT: api-visitor-alerts
+  HEALTH: https://api-visitor-alerts.corlinllc.workers.dev/health
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: master }
+
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+
+      - name: Test the Worker before touching anything
+        run: node visitor-alerts/test-worker.mjs
+
+      - name: Preflight — can this token do everything the setup needs?
+        run: |
+          set -uo pipefail
+          AUTH="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          MISSING=0
+          probe() {
+            local name="$1" url="$2" body
+            body=$(curl -sS -H "$AUTH" "$url" 2>/dev/null)
+            if [ "$(printf '%s' "$body" | jq -r '.success // false')" = "true" ]; then
+              echo "  OK       $name"
+            else
+              echo "  MISSING  $name"
+              printf '%s' "$body" | jq -r '.errors[]? | "           [\(.code)] \(.message)"' 2>/dev/null || true
+              MISSING=1
+            fi
+          }
+          echo "What CLOUDFLARE_API_TOKEN is allowed to do:"
+          probe "Account | D1 | Edit" \
+                "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database?per_page=1"
+          probe "Account | Workers Scripts | Edit (read $SCRIPT settings)" \
+                "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT/settings"
+          if [ "$MISSING" -ne 0 ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN is missing permissions — see the list above. Nothing was changed."
+            exit 1
+          fi
+
+      - name: Record the Worker as it is now
+        run: |
+          set -euo pipefail
+          API="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT"
+          AUTH="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          curl -sS -H "$AUTH" "$API/settings" > /tmp/before.json
+          jq -e '.success == true' /tmp/before.json > /dev/null \
+            || { echo "::error::Could not read the Worker's settings. Nothing was changed."; jq -r '.errors[]? | "  [\(.code)] \(.message)"' /tmp/before.json; exit 1; }
+          curl -sS -H "$AUTH" "$API/deployments" > /tmp/deployments.json
+          PREV=$(jq -r '[.result.deployments[]?] | sort_by(.created_on) | last | (.versions // []) | max_by(.percentage) | .version_id // empty' /tmp/deployments.json)
+          [ -n "$PREV" ] || { echo "::error::Could not read the version serving traffic. Nothing was changed."; exit 1; }
+          echo "PREV_VERSION=$PREV" >> "$GITHUB_ENV"
+          echo "Serving version: $PREV"
+          echo "Bindings now:"
+          jq -r '.result.bindings[] | "  \(.type)\t\(.name)"' /tmp/before.json
+          # Anything this setup cannot carry over by name is a reason to stop
+          # before changing a thing, not to find out afterwards.
+          if jq -e '[.result.bindings[] | select(.name == "VDB" and .type != "d1")] | length > 0' /tmp/before.json > /dev/null; then
+            echo "::error::A binding named VDB already exists and is not a D1 database. Nothing was changed."
+            exit 1
+          fi
+          curl -sS --max-time 15 "$HEALTH" > /tmp/health-before.json || echo '{}' > /tmp/health-before.json
+          echo "Health now: $(cat /tmp/health-before.json)"
+
+      - name: Find or create the D1 database
+        run: |
+          set -euo pipefail
+          API="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database"
+          AUTH="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          LIST=$(curl -sS -H "$AUTH" "$API?per_page=100")
+          [ "$(printf '%s' "$LIST" | jq -r '.success // false')" = "true" ] \
+            || { echo "::error::Cloudflare refused to list D1 databases."; printf '%s' "$LIST" | jq -r '.errors[]? | "  [\(.code)] \(.message)"'; exit 1; }
+          ID=$(printf '%s' "$LIST" | jq -r --arg n "$DB_NAME" '.result[]? | select(.name==$n) | .uuid' | head -1)
+          if [ -z "$ID" ] || [ "$ID" = "null" ]; then
+            echo "Creating $DB_NAME"
+            CREATED=$(curl -sS -X POST -H "$AUTH" -H 'Content-Type: application/json' \
+                        -d "$(jq -nc --arg n "$DB_NAME" '{name:$n}')" "$API")
+            [ "$(printf '%s' "$CREATED" | jq -r '.success // false')" = "true" ] \
+              || { echo "::error::Could not create the D1 database."; printf '%s' "$CREATED" | jq -r '.errors[]? | "  [\(.code)] \(.message)"'; exit 1; }
+            ID=$(printf '%s' "$CREATED" | jq -r '.result.uuid')
+          else
+            echo "Found existing $DB_NAME"
+          fi
+          [ -n "$ID" ] && [ "$ID" != "null" ] || { echo "::error::could not resolve the database id"; exit 1; }
+          echo "Database id: $ID"
+          echo "D1_ID=$ID" >> "$GITHUB_ENV"
+
+      - name: Apply the schema
+        run: |
+          set -euo pipefail
+          # Comments stripped, so the only semicolons D1 sees end statements.
+          SQL=$(sed -e 's/--.*$//' visitor-alerts/schema.sql | tr -s '\n')
+          OUT=$(curl -sS -X POST \
+                  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' \
+                  -d "$(jq -nc --arg s "$SQL" '{sql:$s}')" \
+                  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$D1_ID/query")
+          [ "$(printf '%s' "$OUT" | jq -r '.success // false')" = "true" ] \
+            || { echo "::error::schema apply failed"; printf '%s' "$OUT" | jq -r '.errors[]? | "  [\(.code)] \(.message)"'; exit 1; }
+          echo "Schema applied."
+
+      - name: Upload the Worker code from master (settings preserved)
+        run: |
+          set -euo pipefail
+          CODE=$(curl -sS -o /tmp/upload.json -w '%{http_code}' -X PUT \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT/content" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -F 'metadata={"main_module":"worker.js"};type=application/json' \
+            -F 'worker.js=@visitor-alerts/worker.js;type=application/javascript+module')
+          echo "upload HTTP $CODE"
+          [ "$CODE" = "200" ] || { echo "::error::code upload failed"; jq -r '.errors[]? | "  [\(.code)] \(.message)"' /tmp/upload.json || true; exit 1; }
+
+      - name: Attach the database, keeping every existing binding
+        run: |
+          set -euo pipefail
+          API="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT"
+          if jq -e --arg id "$D1_ID" '[.result.bindings[] | select(.name=="VDB" and .type=="d1" and ((.database_id // .id) == $id))] | length == 1' /tmp/before.json > /dev/null; then
+            echo "VDB is already bound to $DB_NAME — nothing to attach."
+            exit 0
+          fi
+          jq -c --arg id "$D1_ID" \
+            '{bindings: ([.result.bindings[] | select(.name != "VDB") | {type: "inherit", name: .name}]
+                         + [{type: "d1", name: "VDB", database_id: $id}])}' /tmp/before.json > /tmp/settings.json
+          echo "Sending:"; jq . /tmp/settings.json
+          curl -sS -X PATCH -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -F "settings=</tmp/settings.json;type=application/json" "$API/settings" > /tmp/patch.json
+          if [ "$(jq -r '.success // false' /tmp/patch.json)" != "true" ]; then
+            echo "::error::Cloudflare refused the binding change. Nothing was changed."
+            jq -r '.errors[]? | "  [\(.code)] \(.message)"' /tmp/patch.json
+            exit 1
+          fi
+          echo "Binding attached."
+
+      - name: Verify — and roll back if anything is missing
+        run: |
+          set -uo pipefail
+          API="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT"
+          AUTH="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          FAIL=""
+          curl -sS -H "$AUTH" "$API/settings" > /tmp/after.json
+          echo "Bindings after:"; jq -r '.result.bindings[]? | "  \(.type)\t\(.name)"' /tmp/after.json
+          LOST=$(jq -r --slurpfile a /tmp/after.json \
+            '[.result.bindings[] | "\(.type) \(.name)"] - [$a[0].result.bindings[]? | "\(.type) \(.name)"] | .[]' /tmp/before.json)
+          [ -z "$LOST" ] || FAIL="bindings missing after the change: $LOST"
+          jq -e --arg id "$D1_ID" '[.result.bindings[]? | select(.name=="VDB" and .type=="d1" and ((.database_id // .id) == $id))] | length == 1' /tmp/after.json > /dev/null \
+            || FAIL="${FAIL:+$FAIL; }VDB is not bound to $DB_NAME"
+          WAS=$(jq -r '.configured // false' /tmp/health-before.json)
+          OK=""
+          for i in 1 2 3 4 5 6 7 8; do
+            BODY=$(curl -sS --max-time 15 "$HEALTH" || true)
+            echo "health attempt $i: ${BODY:-no response}"
+            if printf '%s' "$BODY" | jq -e '.journeys == "ready"' > /dev/null 2>&1; then
+              NOW=$(printf '%s' "$BODY" | jq -r '.configured // false')
+              if [ "$WAS" = "true" ] && [ "$NOW" != "true" ]; then FAIL="${FAIL:+$FAIL; }the passcode or push key stopped reporting configured"; fi
+              OK=1; break
+            fi
+            sleep 10
+          done
+          [ -n "$OK" ] || FAIL="${FAIL:+$FAIL; }/health never reported journeys ready"
+          if [ -z "$FAIL" ]; then
+            echo "Live Visitors journeys are set up."
+            {
+              echo "## Live Visitors journeys are set up"
+              echo ""
+              echo "- Database: \`$DB_NAME\` (\`$D1_ID\`), bound to \`$SCRIPT\` as \`VDB\`"
+              echo "- Every earlier binding carried over by name; the passcode and push key still report configured"
+              echo "- Rolled back to if anything had been missing: version \`$PREV_VERSION\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "::error::$FAIL — rolling the Worker back to $PREV_VERSION"
+          ROLL=$(curl -sS -X POST -H "$AUTH" -H 'Content-Type: application/json' \
+                   -d "$(jq -nc --arg v "$PREV_VERSION" '{strategy:"percentage", versions:[{version_id:$v, percentage:100}]}')" \
+                   "$API/deployments")
+          if [ "$(printf '%s' "$ROLL" | jq -r '.success // false')" = "true" ]; then
+            echo "Rolled back to $PREV_VERSION. The database was left in place; nothing else changed."
+          else
+            echo "::error::ROLLBACK FAILED — restore version $PREV_VERSION from the Cloudflare dashboard (Workers -> $SCRIPT -> Deployments)."
+            printf '%s' "$ROLL" | jq -r '.errors[]? | "  [\(.code)] \(.message)"'
+          fi
+          exit 1
