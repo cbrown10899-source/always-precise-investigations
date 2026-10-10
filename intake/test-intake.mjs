@@ -2140,6 +2140,40 @@ for (const [w, h] of [[320, 568], [360, 740], [390, 844], [430, 932], [768, 1024
   await ctx.close();
 }
 
+/* EVERY PUBLIC PAGE, NOT ONLY THE HOMEPAGE. The vendor page's details table
+   scrolled 32px sideways at 320 after the restyle while every homepage check
+   was green — its cells stacked, its table did not. A class: all fifteen
+   public pages at three widths, no sideways scroll, the live logo in the
+   header, and nothing on the page failing to load except the two development
+   photographs the release gate already names. */
+section('Redesign — all fifteen public pages at 320, 390 and 1280');
+{
+  const PUBLIC = ['', 'child-custody-investigations/', 'infidelity-investigations/', 'legal-investigations/',
+    'insurance-investigations/', 'insurance-investigations/vendor-information/', 'private-investigator/',
+    'private-investigator/lynchburg-va/', 'private-investigator/bedford-va/', 'private-investigator/roanoke-va/',
+    'private-investigator/farmville-va/', 'private-investigator/charlottesville-va/', 'private-investigator/danville-va/',
+    'privacy.html', '404.html'];
+  for (const w of [320, 390, 1280]) {
+    const ctx = await browser.newContext({ viewport: { width: w, height: 800 } });
+    const bad = [], noLogo = [], broken = [];
+    for (const rel of PUBLIC) {
+      const page = await ctx.newPage();
+      page.on('response', r => { if (r.status() >= 400 && !/(child-custody|spouse-relationship)-photo\.webp/.test(r.url())) broken.push(`${rel}: ${r.status()} ${r.url()}`); });
+      await page.goto(HOME + rel);
+      await page.waitForTimeout(150);
+      const m = await page.evaluate(() => ({ over: document.documentElement.scrollWidth - innerWidth,
+        logo: (document.querySelector('.site-head .brand img') || {}).getAttribute?.('src') }));
+      if (m.over > 0) bad.push(`${rel || '/'} +${m.over}px`);
+      if (m.logo !== '/assets/logo-lockup.svg') noLogo.push(`${rel || '/'} ${m.logo}`);
+      await page.close();
+    }
+    ok(`${w}px: no public page scrolls sideways`, bad.length === 0, bad.join(' | '));
+    ok(`${w}px: every public page wears the live logo in its header`, noLogo.length === 0, noLogo.join(' | '));
+    ok(`${w}px: nothing on any public page fails to load (beyond the two photographs the gate names)`, broken.length === 0, broken.join(' | '));
+    await ctx.close();
+  }
+}
+
 section('Redesign — contrast, focus and keyboard on the homepage');
 {
   /* THE TITLE'S BACKDROP IS PAINTED: hide the copy, photograph the strip each
