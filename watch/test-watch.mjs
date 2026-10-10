@@ -458,6 +458,7 @@ section('The dashboard on a phone: the list');
   await shot(page, 'detail-390');
   ok('the list gives way to the journey on a phone', await page.locator('#listcol').isHidden() && await page.locator('#detail').isVisible());
   ok('the header becomes "← Live Visitors"', await page.locator('#back').isVisible() && !(await page.locator('h1').isVisible()));
+  ok('and Sign out gives way to it, as in the mockup', !(await page.locator('#signout').isVisible()));
   const loc = await page.locator('.d-loc').innerText();
   ok('the location card says Approximate location (IP), never exact', loc.includes('Lexington, Virginia') && loc.includes('Approximate location (IP)') && !/exact location/i.test(await page.locator('#detail').innerText()), loc);
   ok('the score is 85, in gold', await page.locator('.score-n').innerText() === '85'
