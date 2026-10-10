@@ -161,6 +161,9 @@ documentation site was not reachable from the build environment.
   the door's service for the journey's wording. Service pages are the
   catalogue's now.
 - **The journey drew "opened intake" twice.**
+- **A late check-in held the visitor on the page they had left** — the same
+  defect as the second bullet, found again by mutation (W23 in §5) after the
+  browser stopped landing the race; now pinned in the Worker suite.
 - **The score card overflowed a phone by 50px**: a heading spanning an
   `auto / 1fr` grid sized the number's track to its own width.
 - **Sign out stayed on the phone's journey screen**: an inline style set by
@@ -169,7 +172,7 @@ documentation site was not reachable from the build environment.
 ## 4. Tests
 
 - `visitor-alerts/test-worker.mjs` — the Worker on real SQLite: 49 checks
-  before this unit, **203** after. The brief's fixtures are named in it: §39
+  before this unit, **206** after. The brief's fixtures are named in it: §39
   Visitor A end to end (score 85, the journey row by row with exact times,
   HIGH INTENT on opening the Child Custody intake, NEW INTAKE on submission);
   §40 same IP/city/device, different tokens → two visitors; §41 nothing typed
@@ -189,7 +192,84 @@ documentation site was not reachable from the build environment.
 
 ## 5. Mutation record
 
-RESULTS_PLACEHOLDER
+Forty-eight mutations, each one string replacement in a `git worktree` that
+breaks one promised property, run against the suites that hold it; the file is
+restored byte for byte after each. A mutation counts as caught only when an
+assertion FAILS BY NAME — a crash names nothing and counts as a miss. (The
+numbering has gaps where a drafted mutation was dropped before the run.)
+
+**All 48 caught by name.** Six needed the tests strengthened first, and each is
+worth keeping:
+
+- **W01, W02** (raw token as the id; every browser one visitor) crashed the
+  Worker suite on a null read, so they named nothing. The suite now prints its
+  results before it exits, and its journey reads are null-safe: 29 and 38 named
+  failures.
+- **W07** (one visitor writing to another's page view) passed because the test
+  sent a smaller engagement total, which is skipped for an unrelated reason. It
+  sends a press too now, and asserts no action row appeared.
+- **W13** (HIGH INTENT alerted on every event) was partly equivalent; the new
+  test keeps a visitor High intent across a week and expects one alert.
+- **W23** (current page compared with `last_at`) walked past the browser suite,
+  which had found the defect once on a real walk and then stopped landing the
+  race. The race is played deterministically in the Worker suite now.
+- **W27, W29** crashed or passed for want of a guarded read and a
+  return-after-three-weeks case; both added.
+- **D08, D09** (the phone's back; the alert deep link) crashed the browser
+  suite on a wait for a screen that never drew. Every browser section now runs
+  under a guard that turns a throw into a FAIL named for the section, and the
+  deep link has a bounded wait of its own.
+
+| id | property broken | failures | first failing assertion |
+| --- | --- | --- | --- |
+| W01 | raw token stored as the visitor id | Worker 29 | no raw token is stored anywhere |
+| W02 | every browser becomes one visitor | Worker 38 | same IP, same browser, same city, different tokens: TWO visitors |
+| W03 | visit gap 5 hours | Worker 3 | 31 minutes of nothing starts a new visit |
+| W04 | reloads earn service-page points | Worker 7 | a reload earns no second service-page point |
+| W05 | engagement not capped at wall time | Worker 2 | a claimed ten hours is cut to the wall time since the page opened |
+| W06 | heartbeats never stop | Worker 1 | a page left running stops spending writes after thirty check-ins |
+| W07 | one visitor writes to another's page view | Worker 1 | one visitor cannot write to another's page view |
+| W08 | any action name accepted | Worker 2 | Call, Email, Contact and an intake button are recorded |
+| W09 | a request can claim *opened intake* | Worker 3 | Call, Email, Contact and an intake button are recorded |
+| W10 | intake actions accepted off the intake page | Worker 5 | Call, Email, Contact and an intake button are recorded |
+| W11 | an old request number links | Worker 1 | an old, malformed or hostile request number links nothing |
+| W12 | a retried action counts as new | Worker 1 | the same submission again links nothing new and wakes nobody |
+| W13 | HIGH INTENT alerted on every event | Worker 1 | §43 and no second HIGH INTENT alert |
+| W14 | homepage-only can be HIGH INTENT | Worker 1 | §42 a homepage-only visitor is never HIGH INTENT |
+| W15 | request number on the lock screen | Worker 2 | the alert reads NEW INTAKE / place / service |
+| W16 | `/t` writes KV | Worker 1 | /t made no KV write and no KV read at all |
+| W17 | a journey failure throws | Worker 2 | a journey write that fails is reported, not thrown |
+| W18 | a journey failure silences the alert | Worker 1 | and the older alert still wakes the phone |
+| W19 | journeys kept 25 years | Worker 3, deploy 1 | a visitor not seen for 90 days is deleted, every row of them |
+| W20 | sweep on every page view | Worker 1 | the sweep runs once a day, not on every page view |
+| W21 | `google.evil.com` called Google | Worker 1 | sources are named only when certain |
+| W22 | times not in Eastern | Worker 9 | §39 first seen is exact, in Eastern time |
+| W23 | current page compared with `last_at` | Worker 3 | a late check-in from the page being left does not hold the visit on that page |
+| W24 | the intake page scored as a service page | Worker 2 | §39 the score is 85, and every point is a reason |
+| W25 | extra request fields stored | Worker 5 | Call, Email, Contact and an intake button are recorded |
+| W26 | *visits today* on UTC midnight | Worker 1 | "visits today" starts at midnight in Virginia |
+| W27 | `/visitors` without the passcode | Worker 12 | /visitors names the missing setup instead of drawing an empty list |
+| W28 | no location says nothing | Worker 2 | the place falls back from city to state to country to "Location unavailable" |
+| W29 | 7-day visit points from all-time visits | Worker 1 | §42 a return three weeks later is "Returning", not "2 visits within 7 days" |
+| W30 | every page view alerts | Worker 6 | /t made no KV write and no KV read at all |
+| B01 | beacon sends before 200ms | browser 9, Worker 1 | a cursor already moving when the page opens still counts |
+| B02 | query string sent | browser 1, Worker 1 | it carries the path and never the query string |
+| B03 | token in a cookie | browser 1, Worker 1 | the token lives in this site's local storage, not a cookie |
+| B04 | Global Privacy Control ignored | browser 2 | with Global Privacy Control: nothing is sent |
+| B05 | the owner's browser counted | browser 2, Worker 1 | with a browser the owner marked as his own: nothing is sent |
+| B07 | typed values captured | browser 2, Worker 1 | §41 nothing typed has left the page for the visitor Worker |
+| B08 | no engagement on hide | browser 1 | engaged time is sent when the page is hidden |
+| I01 | submission announced before the firm has it | Worker 1 | the submission is announced only after the firm has it |
+| I02 | the *started* hook reads the value | Worker 1 | the started hook never looks at what changed |
+| I03 | the whole payload handed over | Worker 1 | the submission is announced only after the firm has it |
+| D01 | a failed read drawn as empty | browser 2 | a failed read says it could not load, and is not "nobody visited" |
+| D02 | Sign out stays on the phone journey | browser 1 | and Sign out gives way to it, as in the mockup |
+| D04 | score card overflows a phone | browser 1 | no sideways scroll on the journey at 390 |
+| D05 | controls under the tap floor | browser 2 | every control on the list clears the 44px tap floor |
+| D06 | HIGH INTENT card not gold | browser 1 | a HIGH INTENT card has the gold border |
+| D07 | the owner's device not excluded by default | browser 2 | unlocking the dashboard marks this browser as not counted |
+| D08 | the phone's back does not return | browser 2 | ← Live Visitors returns to the list |
+| D09 | a link from an alert opens nothing | browser 1 | /watch/?v=<id> opens straight on that visitor's journey |
 
 ## 6. Not proven here — the owner's checks
 
