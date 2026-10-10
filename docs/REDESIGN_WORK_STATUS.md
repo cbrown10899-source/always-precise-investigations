@@ -142,38 +142,57 @@ Production unchanged (yes/no/unknown): YES — nothing merged, nothing dispatche
 - tests: .github/test-deploy.mjs, intake/test-intake.mjs,
   visitor-alerts/test-worker.mjs, portal/test-portal.mjs
 
-## Next actions (the next session, in order)
+## Owner decisions received (2026-10-10, after the pause)
+- APPROVED: one shared Private Client Intake with Child Custody /
+  Spouse / Relationship / Other Private Investigation.
+- KEEP the release safeguards. The three RELEASE GATE checks must not be
+  weakened, skipped or edited to pass while the photographs are missing.
+- LOGO: "the logo currently displayed on my live website is the correct,
+  approved API logo. Preserve that exact logo."
+  **FACT FROM THE REPOSITORY, NOT YET RECONCILED:** master `daa7b54` (the commit
+  live production was deployed from, run 15:15 UTC 2026-10-10) serves
+  `assets/logo-lockup.svg` in every header. That is the navy/red SCALES OF
+  JUSTICE lockup, shown inside a white rounded badge (`.brand-badge`,
+  alt "Always Precise Investigations — scales of justice logo"). This branch
+  currently uses the DIAMOND `assets/logo-white.webp`, per the owner's earlier
+  message. The two instructions name different files. The live site cannot be
+  fetched from the container (egress proxy denies the domain), so the next
+  session must show the owner BOTH, side by side, before release. If the live
+  one is confirmed: switch `site_header()` in build-locations.py back to the
+  live markup (`logo-lockup.svg` in its white badge, same 240x68 attributes),
+  copy it to the hand-written pages, and re-pin the deploy guard's
+  LOGO_TAG/SHA to that file. Either way, redraw or recolour nothing.
+
+## Next actions (the next session, in order — owner's priorities)
 1. `git fetch origin claude/app-crashes-lockups-debug-psf6zd && git checkout
    claude/app-crashes-lockups-debug-psf6zd`. Read this file, then CLAUDE.md
-   "The 2026-10-10 public redesign".
-2. Run the portal suite ALONE, detached, output to a file:
-   `nohup setsid node portal/test-portal.mjs > /tmp/portal.txt 2>&1 &`
-   (about 35 minutes). Fix any failure the "Investigation type" line caused.
-   Do not weaken assertions.
-3. Take the review screenshots (local preview only:
-   `python3 -m http.server 8090 --bind 127.0.0.1` from the repo root). Cover
-   phone 320/390/430, tablet 768, desktop 1280/1440, plus the intake opened on
-   Spouse / Relationship.
-4. Give the owner the review report: screenshots, test results, this checklist.
-   Readiness stays **NOT READY** until the photographs are installed.
-5. When the owner supplies and approves the two photographs:
-   add `assets/child-custody-photo.webp` and
-   `assets/spouse-relationship-photo.webp` (realistic, gender-neutral; the
-   custody one hands-only, the relationship one two empty chairs and two mugs),
-   list both in `.github/deploy-manifest.txt`, delete the two
-   `<span class="art-dev" data-dev-placeholder …>` badges in index.html, and
-   re-run all suites (the painted-pixel contrast checks then measure the real
-   photos). The release gate then passes.
-6. **Only after the owner writes "GO LIVE":** open a PR, merge, and verify the
-   deploy (`/.well-known/build.txt` SHA). Never dispatch deploy.yml from the
-   branch.
+   "The 2026-10-10 public redesign". Nothing is merged; master is `daa7b54`.
+2. PHOTOGRAPHS, if supplied: add `assets/child-custody-photo.webp` and
+   `assets/spouse-relationship-photo.webp` (realistic, gender-neutral; custody
+   = hands only, relationship = two empty chairs and two mugs; owner-approved,
+   commercially usable), list both in `.github/deploy-manifest.txt`, delete the
+   two `<span class="art-dev" data-dev-placeholder …>` badges in index.html,
+   bump `?v=` on both `--art` URLs if a file is ever replaced. If not supplied:
+   leave the gate failing and say so.
+3. SCREENSHOTS for the owner from the local preview only
+   (`python3 -m http.server 8090 --bind 127.0.0.1` at the repo root; script at
+   scratchpad `rd/review.mjs` may be gone — it shot 320/390/430/768/1280/1440,
+   the open phone menu, and the intake on Spouse / Relationship). Send them.
+4. PORTAL VERIFICATION with a time limit: run `portal/test-portal.mjs` alone,
+   detached, to a file (`nohup setsid node portal/test-portal.mjs >
+   <file> 2>&1 &`); check progress by `grep -c '^>> '` on the file (it prints
+   results only at the end, ~35 min); give it at most ~45 min. Fix any failure
+   caused by the "Investigation type" line without weakening assertions.
+   Never run another Playwright suite beside it.
+5. LOGO against production — see "Owner decisions received". Show both.
+6. CONSISTENCY across all 15 public pages: re-run `.github/test-deploy.mjs`
+   (identical header/footer guard) and screenshot each page at 390 and 1280.
+7. Report: screenshots, results, readiness (NOT READY while photos are
+   missing or the logo is unreconciled). STOP. Merge/deploy ONLY after the
+   owner writes "GO LIVE"; never dispatch deploy.yml from the branch.
 
 ## Open questions for the owner (decide at review)
-- Logo: the redesign uses the diamond `logo-white.webp`, unchanged, as
-  instructed. The headers on master (therefore probably on the live site) show
-  the SCALES lockup `logo-lockup.svg`. Which one is "the logo on my live
-  website"? Switching is one line in `build-locations.py` (`site_header`),
-  copied to the pages, plus the deploy guard's pinned tag.
+- Logo: see "Owner decisions received" — to be reconciled visually.
 - Process Serving kept as a 4th answer; Surveillance folded into "Other".
 - The new H1 replaces the local-SEO headline (title, meta and JSON-LD unchanged).
 - Header nav has no Insurance or Legal link (brief's six); they are reached via
