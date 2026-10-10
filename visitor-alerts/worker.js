@@ -217,12 +217,26 @@ async function affTotalValue(env, days) {
   return Object.values(days).reduce((s, x) => s + (x.a || 0), 0);
 }
 
+/* The salt behind every hash here that could otherwise be walked back to an
+   address. The live secret was created as "SALT " — a trailing space in its
+   NAME — so env.SALT was undefined in production and every salted key fell
+   back to the constant below, which this public repository publishes. Found
+   2026-10-10, when visitors-setup.yml printed the Worker's bindings. It is
+   read by its trimmed name, so renaming the secret later changes nothing, and
+   this is the only reader: a second copy of `env.SALT || ...` is how a
+   missing secret goes unnoticed twice. */
+function saltOf(env) {
+  if (env.SALT) return env.SALT;
+  for (const k of Object.keys(env)) if (k.trim() === 'SALT' && env[k]) return env[k];
+  return 'api';
+}
+
 /** Stable per-client key used for rate limiting and lockout (never stored raw). */
 async function clientKey(request, env) {
   return (await sha256Hex(
     [request.headers.get('cf-connecting-ip') || '',
      new Date().toISOString().slice(0, 10),
-     env.SALT || 'api'].join('|')
+     saltOf(env)].join('|')
   )).slice(0, 20);
 }
 
@@ -527,7 +541,7 @@ const parseJson = (s) => { try { return s ? JSON.parse(s) : null; } catch (_) { 
 
 async function visitorIdFor(token, env) {
   if (typeof token !== 'string' || !TOKEN_RE.test(token)) return '';
-  return (await sha256Hex(`vid|${token}|${env.SALT || 'api'}`)).slice(0, 32);
+  return (await sha256Hex(`vid|${token}|${saltOf(env)}`)).slice(0, 32);
 }
 
 /* The browser's clock is not ours. Each request carries the client's "now";
@@ -1135,11 +1149,11 @@ async function handleHit(request, env) {
      one — and from the address and user agent only for an older beacon that
      sends no token, which is the daily hash this has always used. */
   const vkey = token
-    ? (await sha256Hex(['day', token, day, env.SALT || 'api'].join('|'))).slice(0, 16)
+    ? (await sha256Hex(['day', token, day, saltOf(env)].join('|'))).slice(0, 16)
     : (await sha256Hex([
       request.headers.get('cf-connecting-ip') || '',
       request.headers.get('user-agent') || '',
-      day, env.SALT || 'api',
+      day, saltOf(env),
     ].join('|'))).slice(0, 16);
 
   /* Per-visitor flood control — keyed on the ADDRESS, not the visitor key
@@ -1148,7 +1162,7 @@ async function handleHit(request, env) {
      2026-09-02). The dedup and "returning" semantics keep `vkey` as it was. */
   const rlKey = 'rl:' + (await sha256Hex([
     request.headers.get('cf-connecting-ip') || '',
-    day, env.SALT || 'api',
+    day, saltOf(env),
   ].join('|'))).slice(0, 16);
   const count = Number((await env.HITS.get(rlKey)) || 0);
   if (count >= HIT_LIMIT) return json({ ok: false, error: 'rate limited' }, 429);
@@ -1253,7 +1267,7 @@ async function handleTrack(request, env) {
   if (!env.VDB) return json({ ok: true, journey: 'not_set_up' });
 
   const now = Date.now();
-  const bucket = (await sha256Hex(`t|${request.headers.get('cf-connecting-ip') || ''}|${env.SALT || 'api'}`)).slice(0, 16);
+  const bucket = (await sha256Hex(`t|${request.headers.get('cf-connecting-ip') || ''}|${saltOf(env)}`)).slice(0, 16);
   if (!tAllowed(bucket, now)) return json({ ok: false, error: 'rate limited' }, 429);
   const vid = await visitorIdFor(body.id, env);
   if (!vid) return json({ ok: true, applied: 0 });

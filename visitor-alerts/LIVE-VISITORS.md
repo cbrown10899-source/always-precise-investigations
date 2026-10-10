@@ -297,3 +297,26 @@ worth keeping:
 - **A visit header in the journey** ("Visit 2 · Oct 9, 2026 · Direct · times
   EDT"), because a journey that spans days needs the date and zone beside the
   times.
+
+## 8. Found after shipping — the salt was never read
+
+`visitors-setup.yml` prints the Worker's bindings, and on its first run
+(2026-10-10, run 38062428707) the secret printed as `SALT ` — **a trailing
+space in its name**. The Worker read `env.SALT`, which was therefore undefined,
+and every salted hash — the lockout key, the rate limiter, the day pseudonym
+for a beacon without a token, and now the visitor id — fell back to the
+constant `'api'`, which this public repository publishes. Nothing said so,
+because the fallback is exactly what made it work.
+
+What it meant: a visitor id is a hash of 128 random bits, so it cannot be
+walked back whatever the salt. The IP-and-browser day hashes could be, by
+anyone holding the KV contents or the dashboard log, because the salt that
+was meant to stop that was public.
+
+The fix reads the salt by its trimmed name through one function, `saltOf`, the
+only reader left (a test counts them). The live secret works as it is. The cost
+is one change of every salted key at deploy: today's 30-day dedupe starts over
+(a visitor seen before and after the deploy counts twice today), and the
+handful of visitors recorded in the first hour of journeys appear again as new
+visitors if they return. Doing it on the day journeys began is why that cost is
+a handful rather than a history.
