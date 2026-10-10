@@ -590,7 +590,10 @@ function scoreOf({ visitsTotal, sessions, events }) {
   const add = (pts, icon, label) => reasons.push({ pts, icon, label });
   if (visitsTotal >= 2) add(10, 'return', 'Returning visitor');
   if (sessions.length >= 2) add(10, 'visits', `${sessions.length} visits within 7 days`);
-  const services = new Set(events.filter((e) => e.kind === 'page' && e.service).map((e) => e.path));
+  /* A service page is one the CATALOGUE says is about a service. The intake
+     page view carries its door's service for the journey's wording, but it is
+     the intake, not a service page — counting it here scored it twice. */
+  const services = new Set(events.filter((e) => e.kind === 'page' && pageInfo(e.path).service).map((e) => e.path));
   if (services.size) {
     add(Math.min(services.size, 3) * 5 + (services.size >= 2 ? 5 : 0), 'pages',
       `Viewed ${services.size} service page${services.size === 1 ? '' : 's'}`);
@@ -634,9 +637,10 @@ function interestOf(events) {
     if (why && !basis[svc].includes(why)) basis[svc].push(why);
   };
   for (const e of events) {
-    if (e.kind === 'page' && e.service) {
-      bump(e.service, 10 + Math.min(10, Math.floor((Number(e.engaged_ms) || 0) / 30_000)), e.at,
-        `${pageInfo(e.path).label} page`);
+    const info = e.kind === 'page' ? pageInfo(e.path) : null;
+    if (info && info.service) {
+      bump(info.service, 10 + Math.min(10, Math.floor((Number(e.engaged_ms) || 0) / 30_000)), e.at,
+        `${info.label} page`);
     } else if (e.kind === 'action' && e.service) {
       const label = SERVICE_LABEL[e.service] || '';
       if (e.name === 'intake_submitted') bump(e.service, 100, e.at, `${label} intake submitted`);
@@ -1002,10 +1006,10 @@ function journeyRows(visit, events, zone) {
       });
       first = false;
     } else if (e.kind === 'action') {
+      if (e.name === 'intake_opened') continue;   // the intake page's own row already says it
       const svc = SERVICE_LABEL[e.service] || '';
       let label = ACTIONS[e.name] || e.name, sub = '';
       if (e.name === 'cta') label = `Clicked “${(CTA[e.detail] || CTA.intake).label}”`;
-      if (e.name === 'intake_opened') label = `Opened intake page${svc ? ' — ' + svc : ''}`;
       if (e.name === 'intake_started') label = 'Started intake';
       if (e.name === 'intake_submitted') {
         label = 'Intake submitted';
