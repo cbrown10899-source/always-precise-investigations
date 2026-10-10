@@ -746,7 +746,8 @@ let VISITOR_A = null;
   const d0 = await (await call(authed('/visitor?id=' + vid), env)).json();
   ok('§39 the journey of that visitor can be opened', d0.ok === true && !!d0.visitor, JSON.stringify(d0).slice(0, 200));
   const d = { visitor: { reasons: [], interest_basis: [] }, journey: [], pages: [], actions: [], facts: [], ...d0 };
-  if (!d.journey.length) d.journey = [{ rows: [] }, { rows: [{}, {}, {}, {}, {}] }];
+  // A refused read still lets every §39 assertion run and fail by name.
+  if (d.journey.length < 2) d.journey = [{ rows: [{}, {}] }, { rows: [{}, {}, {}, {}, {}] }];
   VISITOR_A = d;
   const v = { reasons: [], interest_basis: [], ...d.visitor };
   ok('§39 first seen is exact, in Eastern time', v.first_label === 'Oct 7, 2026 · 9:12:00 PM EDT', v.first_label);
@@ -795,14 +796,14 @@ let VISITOR_A = null;
   ok('§42 five calls count as one', (h.reasons.match(/Clicked Call/g) || []).length === 1);
   const R = tok('reloader');
   for (let i = 0; i < 10; i++) { tick(3_000); await page(env, R, 'pvRel' + String(i).padStart(5, '0'), '/infidelity-investigations/', { ip: '198.51.100.43' }); }
-  const r = one(env, 'SELECT score FROM visitor WHERE id = ?', await visitorOf(R, env));
+  const r = one(env, 'SELECT score FROM visitor WHERE id = ?', await visitorOf(R, env)) || {};
   ok('§42 ten reloads of one service page earn five points, not fifty', r.score === 5, String(r.score));
   // Returning after three weeks is a returning visitor — not two visits in a week.
   const W = tok('weeksLater');
   await page(env, W, 'pvWeeks001', '/legal-investigations/', { ip: '198.51.100.44' });
   tick(21 * 86_400_000);
   await page(env, W, 'pvWeeks002', '/legal-investigations/', { ip: '198.51.100.44' });
-  const w = JSON.parse(one(env, 'SELECT reasons FROM visitor WHERE id = ?', await visitorOf(W, env)).reasons).map((r) => r.label);
+  const w = JSON.parse((one(env, 'SELECT reasons FROM visitor WHERE id = ?', await visitorOf(W, env)) || {}).reasons || '[]').map((r) => r.label);
   ok('§42 a return three weeks later is "Returning", not "2 visits within 7 days"', w.includes('Returning visitor') && !w.some((l) => /visits within 7 days/.test(l)), JSON.stringify(w));
   const bot = await (await page(env, tok('crawler'), 'pvBot00001', '/legal-investigations/', { ua: 'Googlebot/2.1 (+http://www.google.com/bot.html)', ip: '66.249.66.1' })).json();
   ok('§42 a bot never becomes a visitor', bot.filtered === 'known-bot-ua' && one(env, 'SELECT COUNT(*) AS n FROM visitor').n === 3);
@@ -934,7 +935,7 @@ let VISITOR_A = null;
   const T = tok('winter');
   await page(env, T, 'pvWinter01', '/', { ago: 1000 });
   const d = await (await call(authed('/visitor?id=' + await visitorOf(T, env)), env)).json();
-  ok('JOURNEYS: a January visit is stamped EST', d.visitor.first_label === 'Jan 14, 2026 · 10:00:00 PM EST', d.visitor.first_label);
+  ok('JOURNEYS: a January visit is stamped EST', (d.visitor || {}).first_label === 'Jan 14, 2026 · 10:00:00 PM EST', (d.visitor || {}).first_label);
   CLOCK = null;
 }
 
