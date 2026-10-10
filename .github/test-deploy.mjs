@@ -1025,8 +1025,13 @@ section('The manifest describes the site honestly');
   const card = k => (home.match(new RegExp(`<a class="art art-${k}" href="([^"]+)"`)) || [])[1];
   ok('the Child Custody card opens the private intake on Child Custody', card('custody') === '/intake/?assignment=private&amp;service=custody', card('custody'));
   ok('the Spouse / Relationship card opens the same intake on Spouse / Relationship', card('relationship') === '/intake/?assignment=private&amp;service=relationship', card('relationship'));
-  ok('"Fill Out Online Intake" opens the private intake with nothing preselected',
-     /<a class="btn btn-light" href="\/intake\/\?assignment=private">(?:(?!<\/a>)[\s\S])*Fill Out Online Intake<\/a>/.test(home));
+  /* EVERY link with that label — the hero's and the contact section's. Checking
+     that one well-formed copy exists passed a mutation that preselected the
+     other (the M12 lesson, 2026-10-10). */
+  const fillHrefs = [...home.matchAll(/<a\b[^>]*href="([^"]+)"[^>]*>((?:(?!<\/a>)[\s\S])*)<\/a>/g)]
+    .filter(m => m[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() === 'Fill Out Online Intake').map(m => m[1]);
+  ok('every "Fill Out Online Intake" opens the private intake with nothing preselected',
+     fillHrefs.length >= 1 && fillHrefs.every(h => h === '/intake/?assignment=private'), JSON.stringify(fillHrefs));
   ok('the hero\'s Discreet Phone Call dials the firm', /<a class="btn btn-gold" href="tel:\+14349070975">(?:(?!<\/a>)[\s\S])*Discreet Phone Call<\/a>/.test(home));
   ok('the homepage still offers a Legal door', /href="\/intake\/\?assignment=legal"/.test(home));
 

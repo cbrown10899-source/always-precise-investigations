@@ -258,7 +258,9 @@ body.b2b .hero{text-align:center;padding-left:20px;padding-right:20px}
     color:#fff;font-weight:800;font-size:.98rem;text-decoration:none}
   .mobile-actions a.ma-intake{background:var(--gold);color:var(--navy)}
   .mobile-actions svg{width:18px;height:18px;flex:none}
-  body.has-actions{padding-bottom:calc(56px + max(0px,env(safe-area-inset-bottom)))}
+  /* 57 = the 56px row plus the bar's 1px top border; measured, because 56 left
+     the page's last pixel row underneath the bar. */
+  body.has-actions{padding-bottom:calc(57px + max(0px,env(safe-area-inset-bottom)))}
   .pg .hero{padding:40px 0 34px}
   .pg section{padding:32px 0}
 }

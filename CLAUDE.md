@@ -7253,6 +7253,76 @@ non-refundable portion and no hourly minimum on a carrier's or a law firm's
 send, and a record copy naming one would be the office's own file asserting
 something untrue.
 
+## The 2026-10-10 public redesign — built on a branch, gated until "GO LIVE"
+
+Owner brief 2026-10-10 (*"NEVER DEPLOY A PARTIALLY FINISHED WEBSITE"*) plus
+three clarifications the same day: keep the diamond logo exactly, one private
+intake with one new question, and nothing merges or deploys until the owner
+says **GO LIVE**. Record and owner checklist in `docs/REDESIGN_WORK_STATUS.md`
+(internal — `docs/` is in no manifest line).
+
+**THE RELEASE GATE IS IN THE DEPLOY SUITE, BECAUSE THAT IS WHAT CAN STOP AN
+UPLOAD.** `deploy.yml` runs `.github/test-deploy.mjs` before it publishes, so
+three RELEASE GATE checks fail while either approved photograph
+(`assets/child-custody-photo.webp`, `assets/spouse-relationship-photo.webp`) is
+missing from the staged site or any `data-dev-placeholder` remains. An early
+merge therefore publishes nothing. **Do not skip or weaken them to make a build
+go green — supply the photographs**, add both to `deploy-manifest.txt`, and
+remove the two `.art-dev` badges. The rejected silhouette SVGs are never the
+answer, and a test says so. **Never dispatch `deploy.yml` from a branch**: it
+uploads with `--branch=main`, so a branch dispatch IS production.
+
+**ONE HEADER, ONE FOOTER, ONE WRITER.** `build-locations.py`'s `site_header()`
+and `site_footer()` write the chrome; the seven generated pages are composed
+from them and the eight hand-written public pages carry the same bytes. A deploy
+guard holds all fifteen identical (aria-current and the phone bar's door
+normalised out, then checked on their own), the header nav is the brief's six in
+order, and every page links `assets/site.css` at one `?v=`. **Change the chrome
+in the generator, then copy it** — the guard fails the first page that drifts.
+
+**THE LOGO IS THE OWNER'S DIAMOND, BYTE FOR BYTE.** `assets/logo-white.webp`,
+SHA-256 pinned (`b6ad9122…159eb`, identical to its restore in `bdd4a83`), sized
+by height only — a guard refuses a width, filter, crop or blend on `.brand img`.
+The scales lockup (`logo-lockup.svg`) is used by no public page, and a guard
+holds that too. **Production showed the scales lockup when this was built**;
+the owner's instruction names the diamond, and the discrepancy went to them.
+
+**THE PHONE BAR OPENS EACH PAGE'S OWN DOOR.** The first build sent every page's
+"Online Intake" to the private door — on Legal and Insurance too, which breaks
+two standing rules at once (a law firm never through the private intake, a
+carrier never shown the consumer side). `site_footer(current, door)` takes the
+door; Legal gets the legal door, Insurance and Vendor the carrier door, all
+labelled *Submit Assignment*. Found by looking at the phone screenshot, not by a
+suite; it is a guard now.
+
+**THE PRIVATE QUESTION IS THE EXISTING SERVICE FIELD.** *What type of private
+investigation do you need?* — Child Custody / Spouse / Relationship / Other
+Private Investigation — is the private door's service step, same `S.svc`, same
+`payload.service`, same `?service=` preselect. `FEES` gained `relationship` and
+`other`; **Surveillance was folded into Other** (`SVC_ALIAS` keeps an old
+`?service=surveillance` link working) and **Process Serving stays a fourth
+answer** — both flagged to the owner. `keepSvcInUrl()` writes the answer into the
+address with `replaceState`, so a reload keeps it with no storage. The portal
+shows it as *Investigation type* on the Intakes card and the intake summary,
+read from the column it already had.
+
+**A BODY LINK IS STILL THE TOPICAL SIGNAL — THE HEADER DOES NOT COUNT.** The
+shared header links Child Custody and Spouse / Relationship on every page, which
+would have made the 2026-09-14 body-link guard trivially true. `bodyOf` now cuts
+the header as well as the footer; mutation M10 (a Bedford body with no
+Infidelity link) fails it by name.
+
+**THIRTEEN DEPLOY-GUARD MUTATIONS, AND THE ONE THAT WALKED PAST WAS THE TEST.**
+M12 preselected Child Custody on the hero's *Fill Out Online Intake* and passed,
+because the contact section carries a second link with that label and the guard
+found the good one. Both suites now check EVERY link with the label — the
+`[].every()` lesson in its "one good copy exists" form.
+
+**THE PHONE BAR IS 57px, NOT 56.** The intake suite measured the bar at 57 (the
+row plus its 1px top border) against 56px of body padding, so the page's last
+pixel row sat under it at every phone width. The padding is 57; the assertion
+compares the two live values.
+
 ## The /watch/ dashboard
 
 `watch/` is a private, passcode- and Face ID-gated dashboard showing live site

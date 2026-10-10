@@ -914,7 +914,9 @@ section('The private door — /intake/?assignment=private');
   await set(page, 'c_name', 'Riley Caller');
   await set(page, 'c_phone', '4345550199');
   await advance(page);
-  ok('the service step is still a choice', await heading(page) === 'What do you need?');
+  /* Still a choice — now asked as the owner's own question on this door
+     (2026-10-10); the bare door keeps "What do you need?". */
+  ok('the service step is still a choice', await heading(page) === 'What type of private investigation do you need?');
   const services = await page.locator('.card').innerText();
   ok('surveillance is offered', services.includes('Surveillance'));
   ok('process serving is offered', services.includes('Process Serving'));
@@ -1139,8 +1141,8 @@ section('The homepage leads with the private paths and keeps every door');
   ok('Submit a Legal Assignment goes through the LEGAL door',
      legDoors.length >= 1 && legDoors.every(a => a.href === '/intake/?assignment=legal'), JSON.stringify(legDoors.map(a => a.href)));
   const fill = all('Fill Out Online Intake');
-  ok('Fill Out Online Intake opens the private door with nothing preselected',
-     fill.length === 1 && fill[0].href === '/intake/?assignment=private', JSON.stringify(fill.map(a => a.href)));
+  ok('every Fill Out Online Intake opens the private door with nothing preselected',
+     fill.length >= 1 && fill.every(a => a.href === '/intake/?assignment=private'), JSON.stringify(fill.map(a => a.href)));
   const starts = all('Start Intake').map(a => a.href);
   ok('the two photo cards open the SAME private intake, each on its own answer',
      JSON.stringify(starts) === JSON.stringify(['/intake/?assignment=private&service=custody', '/intake/?assignment=private&service=relationship']),
