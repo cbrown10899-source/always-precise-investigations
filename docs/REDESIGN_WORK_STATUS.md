@@ -35,18 +35,18 @@ Production unchanged (yes/no/unknown): YES — nothing merged, nothing dispatche
       build-locations.py (857a57d)
 - [x] Existing intake preselection — the owner's three-answer question on the
       existing service field (2c8fd19)
-- [ ] Child Custody final photo installed — BLOCKED: not supplied
-- [ ] Spouse / Relationship final photo installed — BLOCKED: not supplied
+- [x] Child Custody final photo installed — owner-supplied 2026-10-11 (hands only)
+- [x] Spouse / Relationship final photo installed — owner-supplied 2026-10-11
+      (two empty chairs, two mugs)
 - [x] Secondary Insurance and Legal cards
 - [x] Sticky mobile actions (business pages open their own door)
 - [x] Analytics integration (beacon + Worker vocabulary; Worker tests)
 - [x] Accessibility and responsive checks — automated in the intake suite
       (320/360/390/430/768/1024/1280; 44px targets, tab order, gold focus,
       painted-pixel contrast, no sideways scroll) — PASSING
-- [ ] Automated tests — all PASS except the portal suite (not completed) and
-      the three RELEASE GATE checks (fail by design) — see "Tests run"
-- [ ] Mobile screenshots
-- [ ] Desktop screenshots
+- [x] Automated tests — all PASS, release gate included — see "Tests run"
+- [x] Mobile screenshots (with the final photographs)
+- [x] Desktop screenshots (with the final photographs)
 
 ## Discovery facts (from the repository, not assumed)
 
@@ -107,23 +107,47 @@ Production unchanged (yes/no/unknown): YES — nothing merged, nothing dispatche
   Insurance and Vendor → carrier door, all consumer pages → private door.
 
 ## In progress
-- Nothing running. Session paused at the owner's request (usage limit),
-  2026-10-10, with every change committed and pushed.
+- Nothing running. Every change committed and pushed. Waiting for the owner's
+  review.
 
 ## Blockers
-- **The two photographs are not in the package** (`assets/ASSETS_REQUIRED.md`
-  says so). Needed: `assets/child-custody-photo.webp`,
-  `assets/spouse-relationship-photo.webp`, owner-approved, commercially usable.
-  Until they are installed the build is NOT READY and the release gate fails.
+- None in the build. What remains is the owner's review and, only then, the
+  owner's written "GO LIVE".
 
-## Tests run (latest: second session, 2026-10-10, on the live-logo build)
-- `.github/test-deploy.mjs`: **191 passed, 3 failed** — the 3 are the RELEASE
-  GATE checks (both photographs missing, placeholders present). Expected; this
-  is what stops deploy.yml. Not weakened.
-- `intake/test-intake.mjs`: **957 passed, 0 failed** (adds a 15-page check at
-  320/390/1280: no sideways scroll, the live logo in every header, nothing
-  failing to load except the two photographs).
-- `portal/test-portal.mjs`: **5,202 passed, 0 failed** — run ALONE, detached,
+## Photographs (third session, 2026-10-11)
+- Supplied by the owner as one 1536x1024 composite. Split at the white divider
+  (columns 762–772), each panel kept whole (760x1024 and 761x1024, ~3:4 — the
+  card's own shape, so the cover crop takes about 6px), re-encoded as WebP q84
+  with NO metadata (no EXIF, XMP or ICC chunk): child-custody-photo.webp 77 KB,
+  spouse-relationship-photo.webp 58 KB. Listed in the deploy manifest; both
+  `.art-dev` placeholder badges and their CSS removed.
+- **The real photographs exposed a contrast defect the placeholder gradient
+  hid.** On a phone the copy fills more of the card and rose to where the
+  bottom gradient is thinnest. Measured over the real photographs before the
+  fix: titles 2.8:1 (custody) and 2.4:1 (relationship) at 390px — the intake
+  suite's own run caught both — and the gold kicker as low as 0.6:1. Fix: the
+  copy block carries its own soft navy fade (transparent → 0.78 over 56px, 40px
+  on phones). After: the weakest line on either card is 5.2:1 against the
+  lightest pixel behind it, at every width 320–1280. 0.84 was also measured and
+  passes; 0.78 was chosen because it keeps more of each photograph visible.
+- The painted-pixel test now measures EVERY line of card copy (kicker, title,
+  line, action) against its own colour, at 1280/1024/768/430/390/360/320, with
+  the card centred instantly and the sticky header and phone bar hidden. It was
+  title-only at two widths, which is how the kicker went unmeasured.
+- Trade-off the owner should look at: on phones the fade covers the lower part
+  of each photograph (the clasped hands and the mugs sit under the copy); the
+  upper half of each photo stays clear. On desktop both subjects read fully.
+- **Rights:** the photographs were supplied by the owner; please confirm at
+  review that they are approved and commercially usable on the public site.
+
+## Tests run (latest: third session, 2026-10-11, with the final photographs)
+- `.github/test-deploy.mjs`: **194 passed, 0 failed** — the RELEASE GATE now
+  passes because the photographs are real and no placeholder remains. The gate
+  itself was not edited.
+- `intake/test-intake.mjs`: **1,009 passed, 0 failed** (957 before; the 52 new
+  checks are the per-line card contrast at seven widths).
+- `portal/test-portal.mjs` (second session, `portal/` unchanged since):
+  **5,202 passed, 0 failed** — run ALONE, detached,
   finished in ~38 min inside the 45-min limit. (The first run that session
   failed 3: all three were the new "Investigation type" test reading the wrong
   element — the card's first sub-line, and an uppercase label via innerText;
@@ -141,7 +165,11 @@ header and footer, the live scales logo at 205x58 on desktop (the live site's
 exact size), 162x46 on phones; zero sideways scroll on every page (the vendor
 table overflowed 16px at 320 and was fixed); the phone bar opens the legal door
 on Legal and the carrier door on Insurance/Vendor; no page has a broken
-resource except the two not-yet-supplied photographs on the homepage.
+resource (the two photographs load since 2026-10-11).
+
+## Screenshots (third session: scratchpad `rd/final/`, with the photographs)
+Homepage at 320/390/430/768/1280/1440, the phone menu, the cards, the intake on
+Spouse / Relationship, and four other public pages. Sent to the owner.
 
 ## Screenshots (second session, local preview only)
 Scratchpad `rd/out/` and `rd/review/`: homepage at 320/390/430/768/1280/1440,
@@ -173,18 +201,15 @@ are installed.
   ≤360px; proportions always the file's own 240x68. Commit `dfaf2ec`.
 
 ## Next actions (remaining)
-1. PHOTOGRAPHS — still not supplied. When they are: add
-   `assets/child-custody-photo.webp` and `assets/spouse-relationship-photo.webp`
-   (realistic, gender-neutral; custody = hands only, relationship = two empty
-   chairs and two mugs; owner-approved, commercially usable; subject in the
-   central 60% of the frame), list both in `.github/deploy-manifest.txt`, delete
-   the two `<span class="art-dev" data-dev-placeholder …>` badges in index.html,
-   re-run all suites (the painted-pixel contrast checks then measure the real
-   photos) and re-shoot the screenshots. The release gate then passes.
-2. Owner review of the finished site with photos. Readiness stays NOT READY
-   until then.
-3. Only after the owner writes "GO LIVE": PR, merge, verify the deploy
+1. Owner review of the finished site with the photographs (screenshots sent).
+   **Note: with the photographs in, the release gate no longer blocks a deploy
+   — the only thing standing between this branch and production is that
+   nothing is merged to master.** No PR exists; none will be opened before
+   "GO LIVE".
+2. Only after the owner writes "GO LIVE": open the PR, merge, verify the deploy
    (`/.well-known/build.txt` SHA). Never dispatch deploy.yml from the branch.
+3. If a photograph is ever replaced: same filename, bump `?v=` in index.html,
+   re-run the intake suite (the contrast checks measure the real pixels).
 
 ## Open questions for the owner (decide at review)
 - Process Serving kept as a 4th answer; Surveillance folded into "Other".
@@ -194,7 +219,8 @@ are installed.
 - Insurance and Legal blocks keep a direct "Submit…" link beside "View Services".
 
 ## Owner approval
-Final photo approval: NOT YET RECEIVED
+Final photos: SUPPLIED by the owner 2026-10-11 and installed; owner to confirm
+at review (including commercial usability)
 Release approval: NOT YET RECEIVED
 Production launch: PROHIBITED UNTIL EXPLICIT "GO LIVE"
 

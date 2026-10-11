@@ -166,7 +166,7 @@ published. The stager **fails if a listed path is missing**, so a renamed
 directory is caught at build time instead of by someone finding a 404 later.
 
 ```bash
-node .github/test-deploy.mjs   # 194 checks (2026-10-10, redesign branch: 3 RELEASE GATE checks fail until the photos land): what may and may not be published
+node .github/test-deploy.mjs   # 194 checks (2026-10-11, redesign branch, photographs installed): what may and may not be published
 ```
 
 It runs the real stager and asserts both halves — that the site is complete,
@@ -3804,7 +3804,7 @@ know the cap they are working to. The price fields (`package`, `package_price`,
 Tests, which intercept form delivery so a run never reaches the firm's inbox:
 
 ```bash
-node intake/test-intake.mjs      # 957 checks (2026-10-10, redesign branch); needs Playwright, skips cleanly without it
+node intake/test-intake.mjs      # 1009 checks (2026-10-11, redesign branch); needs Playwright, skips cleanly without it
 node visitor-alerts/test-worker.mjs   # 217 checks (2026-10-10, redesign branch): journeys on real SQLite
 node watch/test-watch.mjs        # 74 checks (2026-10-10): the beacon and the dashboard against the real Worker
 ```
@@ -7271,6 +7271,21 @@ go green — supply the photographs**, add both to `deploy-manifest.txt`, and
 remove the two `.art-dev` badges. The rejected silhouette SVGs are never the
 answer, and a test says so. **Never dispatch `deploy.yml` from a branch**: it
 uploads with `--branch=main`, so a branch dispatch IS production.
+
+**THE PHOTOGRAPHS LANDED 2026-10-11, SO THE GATE IS GREEN — AND NO LONGER STOPS
+ANYTHING.** From here the only thing between the branch and production is that
+nothing is merged before the owner writes GO LIVE.
+
+**A PLACEHOLDER GRADIENT IS NOT A PHOTOGRAPH, AND THE CONTRAST CHECK ONLY
+MEASURED THE TITLE.** Over the real photographs the phone titles fell to
+2.8:1 / 2.4:1 and the gold kicker to 0.6:1 — on a phone the copy fills more of
+the card and rises to where the bottom gradient is thinnest. The copy carries
+its own navy fade now (weakest line 5.2:1, 320–1280), and the painted-pixel
+check measures every line against its own colour at seven widths, hiding only
+the TEXT so the fade counts as backdrop. Two instrument traps on the way:
+**this site scrolls smoothly**, so a box read straight after a scroll call is a
+box of the page behind it (scroll with `behavior:'instant'`); and the sticky
+header and phone bar must be hidden or they become the "lightest pixel".
 
 **ONE HEADER, ONE FOOTER, ONE WRITER.** `build-locations.py`'s `site_header()`
 and `site_footer()` write the chrome; the seven generated pages are composed
