@@ -2176,33 +2176,48 @@ section('Redesign — all fifteen public pages at 320, 390 and 1280');
 
 section('Redesign — contrast, focus and keyboard on the homepage');
 {
-  /* THE TITLE'S BACKDROP IS PAINTED: hide the copy, photograph the strip each
-     title occupied, and take the LIGHTEST pixel — the one white text is least
-     visible against. With the development gradient today; with the approved
-     photographs once they land, which is when this check matters most. On its
-     own page because hiding text removes it from the accessibility tree. */
+  /* THE COPY'S BACKDROP IS PAINTED: hide the copy, photograph the strip each
+     LINE of it occupied, and take the LIGHTEST pixel — the one the text is least
+     visible against. Every line, not only the title: on a phone the copy fills
+     more of the card and the gold kicker rises to where the overlay is thinnest,
+     which is exactly what the first look at the real photographs showed while a
+     title-only check was green. Each line is measured against its OWN computed
+     colour. On its own page because hiding text removes it from the
+     accessibility tree. */
+  const LINES = [['kicker', '.kicker'], ['title', '.art-title'], ['line', '.art-line'], ['action', '.art-go']];
   for (const [k, title] of CARDS) {
-    for (const w of [1280, 390]) {
-      const { ctx: c4, page: p4 } = await homePage(w, w === 390 ? 844 : 900);
-      await p4.locator(`a.art-${k}`).scrollIntoViewIfNeeded();
-      const box = await p4.evaluate(k => {
-        const r = document.querySelector(`a.art-${k} .art-title`).getBoundingClientRect();
-        return { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) };
-      }, k);
-      await p4.addStyleTag({ content: '.art-copy,.art-dev{visibility:hidden!important}' });
-      const strip = (await p4.screenshot({ clip: { x: box.x, y: box.y, width: box.w, height: box.h } })).toString('base64');
-      const worst = await p4.evaluate(async b64 => {
-        const img = new Image();
-        await new Promise(res => { img.onload = res; img.src = 'data:image/png;base64,' + b64; });
-        const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
-        c.getContext('2d').drawImage(img, 0, 0);
-        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
-        const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
-        let hi = -1;
-        for (let i = 0; i < d.length; i += 4) hi = Math.max(hi, 0.2126 * f(d[i]) + 0.7152 * f(d[i + 1]) + 0.0722 * f(d[i + 2]));
-        return 1.05 / (hi + 0.05);
-      }, strip);
-      ok(`${w}px: the ${title} title clears 4.5:1 against the LIGHTEST pixel behind it`, worst >= 4.5, `${worst.toFixed(2)}:1`);
+    for (const w of [1280, 1024, 768, 430, 390, 360, 320]) {
+      /* Tall enough that the whole card is on screen, centred INSTANTLY (the site
+         scrolls smoothly, and a box read mid-scroll is a box of the page behind),
+         with the sticky header and the phone bar hidden so neither can be the
+         pixel measured. */
+      const { ctx: c4, page: p4 } = await homePage(w, 1400);
+      await p4.evaluate(k => document.querySelector(`a.art-${k}`).scrollIntoView({ block: 'center', behavior: 'instant' }), k);
+      const boxes = await p4.evaluate(([k, LINES]) => LINES.map(([n, sel]) => {
+        const e = document.querySelector(`a.art-${k} ${sel}`);
+        const r = e.getBoundingClientRect();
+        const m = getComputedStyle(e).color.match(/[\d.]+/g).map(Number);
+        return { n, x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height), rgb: m.slice(0, 3) };
+      }), [k, LINES]);
+      /* Only the TEXT is hidden: the copy's own fade is part of the backdrop. */
+      await p4.addStyleTag({ content: '.art-copy *,.site-head,.mobile-actions{visibility:hidden!important}' });
+      for (const b of boxes) {
+        const strip = (await p4.screenshot({ clip: { x: b.x, y: b.y, width: b.w, height: b.h } })).toString('base64');
+        const worst = await p4.evaluate(async ([b64, rgb]) => {
+          const img = new Image();
+          await new Promise(res => { img.onload = res; img.src = 'data:image/png;base64,' + b64; });
+          const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+          c.getContext('2d').drawImage(img, 0, 0);
+          const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+          const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+          const L = (r, g, bl) => 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(bl);
+          const ink = L(...rgb);
+          let hi = -1;
+          for (let i = 0; i < d.length; i += 4) hi = Math.max(hi, L(d[i], d[i + 1], d[i + 2]));
+          return (ink + 0.05) / (hi + 0.05);
+        }, [strip, b.rgb]);
+        ok(`${w}px: the ${title} card's ${b.n} clears 4.5:1 against the LIGHTEST pixel behind it`, worst >= 4.5, `${worst.toFixed(2)}:1`);
+      }
       await c4.close();
     }
   }

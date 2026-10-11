@@ -63,6 +63,11 @@ assets/site.css
 assets/card-insurance.webp
 assets/card-legal.webp
 assets/card-private.webp
+# Redesign (2026-10-10) — the two homepage private-service cards. Owner-supplied
+# photographs (2026-10-11), gender-neutral by the brief: hands only, and two
+# empty chairs. Bump the ?v= in index.html whenever either file is replaced.
+assets/child-custody-photo.webp
+assets/spouse-relationship-photo.webp
 
 # --- service pages -----------------------------------------------------------
 insurance-investigations/index.html

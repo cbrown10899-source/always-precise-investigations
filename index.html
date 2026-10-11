@@ -135,7 +135,14 @@
      photograph: the text's contrast is the overlay's, whatever is behind it. */
   .art-img::after{content:"";position:absolute;inset:0;
     background:linear-gradient(180deg,rgba(7,19,32,0) 30%,rgba(7,19,32,.55) 55%,rgba(7,19,32,.94) 100%)}
-  .art-copy{position:absolute;left:0;right:0;bottom:0;padding:26px 26px 24px}
+  /* The copy carries its own soft navy fade, so every line of it — the gold kicker
+     included — sits on a dark ground however tall the copy grows. On a phone the
+     copy fills more of the card and the kicker rose to where the bottom gradient
+     is thinnest: measured 0.7:1 over the real photographs at 390px. With this,
+     the weakest line on either card is 5.2:1 at the lightest pixel behind it, at
+     every width from 320 to 1280 (intake suite: the redesign contrast section). */
+  .art-copy{--fade:56px;position:absolute;left:0;right:0;bottom:0;padding:calc(var(--fade) + 8px) 26px 24px;
+    background:linear-gradient(180deg,rgba(7,19,32,0) 0,rgba(7,19,32,.78) var(--fade))}
   .art-copy .kicker{color:var(--gold);margin-bottom:8px}
   .art-title{display:block;font-family:var(--serif);font-size:clamp(28px,3.4vw,40px);line-height:1.1;color:#fff}
   .art-line{display:block;margin-top:8px;font-size:1rem;color:#e4ebf0}
@@ -143,11 +150,6 @@
     border-top:1px solid rgba(255,255,255,.35);font-weight:800;color:var(--gold);font-size:1rem}
   .art:hover{transform:translateY(-3px);box-shadow:0 16px 38px rgba(16,36,59,.28)}
   .art:focus-visible{outline:3px solid var(--gold);outline-offset:4px}
-  /* DEVELOPMENT-ONLY. Marks the card whose approved photograph has not been
-     supplied. The deploy suite's RELEASE GATE fails while any data-dev-placeholder
-     remains in the published page, so this label cannot reach production. */
-  .art-dev{position:absolute;top:12px;left:12px;right:12px;z-index:2;background:#fff2d6;color:#573b0c;border-radius:6px;
-    font-size:.72rem;font-weight:800;letter-spacing:.04em;text-align:center;padding:7px 8px}
 
   /* ---- other services: smaller and visually subordinate */
   .minor-head{font-family:var(--sans);font-size:1.05rem;font-weight:800;margin:44px 0 14px;color:var(--ink)}
@@ -230,12 +232,11 @@
     .sec{padding:44px 0}
     .art-grid{gap:12px}
     .art{border-radius:12px}
-    .art-copy{padding:14px 12px 12px}
+    .art-copy{--fade:40px;padding:calc(var(--fade) + 4px) 12px 12px}
     .art-copy .kicker{font-size:.62rem;letter-spacing:.1em;margin-bottom:5px}
     .art-title{font-size:clamp(20px,5.6vw,27px)}
     .art-line{font-size:.82rem;line-height:1.4;margin-top:5px}
     .art-go{font-size:.86rem;margin-top:10px;padding-top:9px}
-    .art-dev{font-size:.6rem;left:6px;right:6px;top:6px;padding:5px}
     .minor-grid{grid-template-columns:minmax(0,1fr)}
   }
   @media (max-width:359px){
@@ -305,7 +306,6 @@
     <div class="art-grid">
       <a class="art art-custody" href="/intake/?assignment=private&amp;service=custody">
         <span class="art-img" aria-hidden="true"></span>
-        <span class="art-dev" data-dev-placeholder aria-hidden="true">DEVELOPMENT PLACEHOLDER — FINAL PHOTO REQUIRED</span>
         <span class="art-copy">
           <span class="kicker">Family Matters</span>
           <span class="art-title">Child Custody</span>
@@ -315,7 +315,6 @@
       </a>
       <a class="art art-relationship" href="/intake/?assignment=private&amp;service=relationship">
         <span class="art-img" aria-hidden="true"></span>
-        <span class="art-dev" data-dev-placeholder aria-hidden="true">DEVELOPMENT PLACEHOLDER — FINAL PHOTO REQUIRED</span>
         <span class="art-copy">
           <span class="kicker">Personal Matters</span>
           <span class="art-title">Spouse / Relationship</span>
