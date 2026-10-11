@@ -218,11 +218,28 @@ are installed.
   "Other Investigation Services", the cards and the footer.
 - Insurance and Legal blocks keep a direct "Submit…" link beside "View Services".
 
+## RELEASED — 2026-10-11 (owner GO LIVE)
+- PR #351 squash-merged to master as `bedcd03`. deploy.yml run 38108473491:
+  every step success, "Deployment complete", 52 files. Visitor Worker
+  redeployed (tests + health `{"ok":true,"configured":true,"journeys":"ready"}`),
+  location rebuild found nothing to change, save point cut.
+- Live verification from GitHub's runners (this container cannot reach the
+  domain): one-off Playwright check, run 38108707647, **63 passed, 0 failed** —
+  build.txt `bedcd03`, logo and both photos byte-identical to the approved files,
+  no placeholder, all 13 sitemap URLs 200, card preselects (custody,
+  relationship), general intake nothing preselected, Insurance → Secure
+  Assignment Intake, Legal → Legal Investigation Assignment, Call Privately
+  tel:+14349070975, no overflow and every image loaded at 1280/768/390/320,
+  portal health `schema_missing: 0`, and one homepage visit accepted by Live
+  Visitors (`/hit` 200, `/t` 200). site-health.yml dispatched: success.
+- Rollback, if ever needed: `git revert bedcd03` and push (last known-good
+  master `daa7b54`, deploy run #424).
+
 ## Owner approval
 Final photos: SUPPLIED by the owner 2026-10-11 and installed; owner to confirm
 at review (including commercial usability)
-Release approval: NOT YET RECEIVED
-Production launch: PROHIBITED UNTIL EXPLICIT "GO LIVE"
+Release approval: RECEIVED 2026-10-11 ("GO LIVE")
+Production launch: DONE 2026-10-11, master `bedcd03`
 
 ## Notes
 Never mark the build ready while final images or critical tests are missing.
