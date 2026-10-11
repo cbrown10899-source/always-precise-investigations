@@ -401,12 +401,16 @@ function botReason(request, body) {
 const SERVICE_LABEL = Object.freeze({
   custody: 'Child Custody', infidelity: 'Infidelity', surveillance: 'Surveillance',
   process: 'Process Serving', private: 'Private Investigation', insurance: 'Insurance', legal: 'Legal',
+  relationship: 'Spouse / Relationship',
 });
 /* The intake form's own service keys (FEES in intake/index.html), mapped into
    that vocabulary, and its doors (?assignment=) for an intake opened before a
    service is chosen. */
 const INTAKE_SERVICE = Object.freeze({
   surveillance: 'surveillance', custody: 'custody', process: 'process', claims: 'insurance', legal: 'legal',
+  /* The private question's two newer answers (owner, 2026-10-10). "Other" is
+     the general private choice, so it reads as Private Investigation. */
+  relationship: 'relationship', other: 'private',
 });
 const INTAKE_DOOR = Object.freeze({ private: 'private', insurance: 'insurance', legal: 'legal' });
 /* Legal's five services (LEGAL_SVCS there), carried as detail on a legal submission. */
@@ -417,8 +421,9 @@ const LEGAL_SERVICE = Object.freeze({
 /* The intake buttons, in the site's own words. The beacon sends the key; the
    wording is decided here. */
 const CTA = Object.freeze({
-  private:   { label: 'Request a Private Investigation', service: 'private' },
+  private:   { label: 'Fill Out Online Intake', service: 'private' },
   custody:   { label: 'Request a Child Custody Investigation', service: 'custody' },
+  relationship: { label: 'Spouse / Relationship — Start Intake', service: 'relationship' },
   insurance: { label: 'Submit an Insurance Assignment', service: 'insurance' },
   legal:     { label: 'Submit a Legal Assignment', service: 'legal' },
   intake:    { label: 'Start an intake', service: null },

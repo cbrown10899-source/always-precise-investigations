@@ -152,13 +152,14 @@ section('Consumer path — no price is ever shown');
   await advance(page);
 
   const services = await page.locator('.card').innerText();
-  ok('step 2 offers the services', services.includes('Surveillance'));
+  ok('step 2 offers the services', services.includes('Child Custody') && services.includes('Spouse / Relationship')
+     && services.includes('Other Private Investigation') && services.includes('Surveillance'));
   ok('no price is attached to surveillance', !/\$\s?\d/.test(services), services);
   ok('the client is told a fee sheet comes in writing', /fee sheet/i.test(services));
 
-  await page.locator('#opt-surveillance').click();
+  await page.locator('#opt-other').click();
   await page.waitForTimeout(80);
-  ok('choosing surveillance does not add a pricing step', await dots(page) === 5);
+  ok('choosing Other Private Investigation does not add a pricing step', await dots(page) === 5);
   await advance(page);
 
   ok('step 3 is the subject step', await heading(page) === 'Subject of the investigation');
@@ -646,7 +647,7 @@ section('A private client who knows only the basics');
   await set(page, 'c_name', 'Jane Client');
   await set(page, 'c_phone', '4345550111');
   await advance(page);
-  await page.locator('#opt-surveillance').click();
+  await page.locator('#opt-other').click();
   await page.waitForTimeout(80);
   await advance(page);
 
@@ -913,7 +914,9 @@ section('The private door — /intake/?assignment=private');
   await set(page, 'c_name', 'Riley Caller');
   await set(page, 'c_phone', '4345550199');
   await advance(page);
-  ok('the service step is still a choice', await heading(page) === 'What do you need?');
+  /* Still a choice — now asked as the owner's own question on this door
+     (2026-10-10); the bare door keeps "What do you need?". */
+  ok('the service step is still a choice', await heading(page) === 'What type of private investigation do you need?');
   const services = await page.locator('.card').innerText();
   ok('surveillance is offered', services.includes('Surveillance'));
   ok('process serving is offered', services.includes('Process Serving'));
@@ -1105,75 +1108,61 @@ section('Carrier pages link to the carrier door');
      /\/insurance-investigations\/submit\/\*\s+\/intake\/\?assignment=insurance/.test(red));
 }
 
-/* MASTER §29 — the homepage speaks to all three audiences and offers the two
+/* MASTER §29 — the homepage speaks to all three audiences and offers the
    client paths, each through its OWN door of the intake. Guarded here so a
-   redesign cannot quietly drop a door or point both paths at the picker. */
-section('The homepage leads with the two client paths');
+   redesign cannot quietly drop a door or point both paths at the picker.
+
+   RE-AIMED FOR THE 2026-10-10 REDESIGN (owner brief + intake clarification),
+   NOT RELAXED. The page is private-client-first now: the hero carries the
+   private intake and the call, the two photo cards open that same intake on
+   their own answer, and Insurance and Legal sit under "Other Investigation
+   Services" with their own doors. The property is unchanged — every audience
+   has its own door, every label goes where it says, nothing reaches a door
+   meant for someone else — so it reads the page down to the end of the
+   "Other Investigation Services" block, which is where the three doors live. */
+section('The homepage leads with the private paths and keeps every door');
 {
   const src = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
-  /* OWNER, 2026-09-14: the H1 is now the local-SEO headline
-     ("Private Investigator & Surveillance Services in Lynchburg and
-     Surrounding Areas"), so the three audiences are named by the supporting
-     line and the three CTA cards instead of by the headline. The PROPERTY this
-     guards is unchanged — a redesign must not quietly drop an audience — so it
-     reads the whole HERO rather than the H1 alone. Narrowing it back to the H1
-     would make it assert a shape the owner has replaced; deleting it would stop
-     guarding the doors. */
-  const hero = (src.match(/<div class="hero"[\s\S]*?<\/div>\s*(?=<section)/) || [src.slice(src.indexOf('<div class="hero"'))])[0]
+  const top = src.slice(src.indexOf('<main id="main">'), src.indexOf('<section class="sec sec-sand" id="how">'))
                  .replace(/<!--[\s\S]*?-->/g, ' ');   // comments are not content
-  /* IT CHECKS THE DOORS, NOT THE WORDS. The first version of this widening
-     matched the word "legal" anywhere in the hero and was TRIVIALLY TRUE:
-     removing the Legal card entirely still passed, because Unit 40's own
-     explanatory COMMENT says `pickSvc` refuses `legal`. That is this project's
-     recorded comment-matching failure, caught by negative-testing rather than
-     by the run. Each audience is now proven by its own intake door, which is
-     the property the section comment above actually claims. */
-  const doors = ['insurance', 'legal', 'private']
-    .filter(k => hero.includes(`/intake/?assignment=${k}`));
-  ok('the hero names insurance, legal and private clients',
+  /* IT CHECKS THE DOORS, NOT THE WORDS — the lesson of the first widening,
+     which matched the word "legal" in a comment and passed with the Legal card
+     removed. Each audience is proven by its own intake door. */
+  const doors = ['insurance', 'legal', 'private'].filter(k => top.includes(`/intake/?assignment=${k}`));
+  ok('the top of the page offers insurance, legal and private clients their own doors',
      doors.length === 3, `doors found: ${doors.join(', ') || 'none'}`);
-  /* WIDENED AND LOOSENED IN UNIT 40, on purpose.
-
-     These asserted the LABEL immediately followed the href — `href="…">Submit
-     an Insurance Assignment`. That is a claim about markup shape, not about
-     routing, and the hero CTA cards broke it while routing correctly: the
-     label now sits in a nested span. The guard fired, which is what it is for.
-
-     What it should pin is the PAIRING — this label goes to this door — so it
-     reads the anchor's whole inner markup instead, and covers all THREE doors
-     now that the homepage offers Legal as well. */
   const anchors = [...src.matchAll(/<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g)]
-    .map(m => ({ href: m[1], text: m[2].replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() }));
-  const doorFor = label => (anchors.find(a => a.text.includes(label)) || {}).href;
-  ok('Submit an Insurance Assignment goes through the carrier door',
-     doorFor('Submit an Insurance Assignment') === '/intake/?assignment=insurance',
-     String(doorFor('Submit an Insurance Assignment')));
-  /* EVERY link carrying that label, not only the first (owner, 2026-09-24):
-     the services grid's claims card says it too now, and `find` above would
-     pass while a second copy pointed anywhere at all. */
-  const insDoors = anchors.filter(a => a.text.includes('Submit an Insurance Assignment'));
-  ok('every homepage link saying Submit an Insurance Assignment goes through the carrier door — the hero card and the services grid',
-     insDoors.length >= 2 && insDoors.every(a => a.href === '/intake/?assignment=insurance'),
-     JSON.stringify(insDoors.map(a => a.href)));
+    .map(m => ({ href: m[1].replace(/&amp;/g, '&'), text: m[2].replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() }));
+  const all = label => anchors.filter(a => a.text.includes(label));
+  const insDoors = all('Submit an Insurance Assignment');
+  ok('every homepage link saying Submit an Insurance Assignment goes through the carrier door',
+     insDoors.length >= 1 && insDoors.every(a => a.href === '/intake/?assignment=insurance'), JSON.stringify(insDoors.map(a => a.href)));
+  const legDoors = all('Submit a Legal Assignment');
   ok('Submit a Legal Assignment goes through the LEGAL door',
-     doorFor('Submit a Legal Assignment') === '/intake/?assignment=legal',
-     String(doorFor('Submit a Legal Assignment')));
-  ok('Request a Private Investigation goes through the private door',
-     doorFor('Request a Private Investigation') === '/intake/?assignment=private',
-     String(doorFor('Request a Private Investigation')));
+     legDoors.length >= 1 && legDoors.every(a => a.href === '/intake/?assignment=legal'), JSON.stringify(legDoors.map(a => a.href)));
+  const fill = all('Fill Out Online Intake');
+  ok('every Fill Out Online Intake opens the private door with nothing preselected',
+     fill.length >= 1 && fill.every(a => a.href === '/intake/?assignment=private'), JSON.stringify(fill.map(a => a.href)));
+  const starts = all('Start Intake').map(a => a.href);
+  ok('the two photo cards open the SAME private intake, each on its own answer',
+     JSON.stringify(starts) === JSON.stringify(['/intake/?assignment=private&service=custody', '/intake/?assignment=private&service=relationship']),
+     JSON.stringify(starts));
+  ok('Online Intake on the phone bar opens the private door',
+     all('Online Intake').filter(a => a.text === 'Online Intake').every(a => a.href === '/intake/?assignment=private'));
   ok('and no homepage label reaches a door meant for another audience',
-     doorFor('Submit a Legal Assignment') !== '/intake/?assignment=private'
-     && doorFor('Submit a Legal Assignment') !== '/intake/?assignment=insurance');
-  ok('no bare /intake/ link on the homepage either',
-     (src.match(/href="\/intake\/"/g) || []).length === 0);
-  ok('phone and contact remain, one row down',
-     src.includes('tel:+14349070975') && src.includes('openContact()'));
-  const how = (src.match(/<section id="how-it-works">[\s\S]*?<\/section>/) || [''])[0];
-  ok('How an Assignment Works walks four steps', (how.match(/<h3>/g) || []).length === 4);
+     [...insDoors, ...legDoors].every(a => !a.href.includes('assignment=private'))
+     && [...fill, ...all('Start Intake')].every(a => a.href.startsWith('/intake/?assignment=private')));
+  ok('no bare /intake/ link on the homepage either', (src.match(/href="\/intake\/"/g) || []).length === 0);
+  ok('the Discreet Phone Call and the phone bar both dial the firm',
+     all('Discreet Phone Call').every(a => a.href === 'tel:+14349070975') && all('Call Privately').every(a => a.href === 'tel:+14349070975')
+     && all('Discreet Phone Call').length === 1 && all('Call Privately').length === 1);
+  ok('contact remains', src.includes('openContact()'));
+  const how = (src.match(/<section class="sec sec-sand" id="how">[\s\S]*?<\/section>/) || [''])[0];
+  ok('Getting started is simple walks three steps', (how.match(/<li>/g) || []).length === 3);
   ok('and quotes nothing', !how.includes('$'));
-  ok('the services grid leads with the claims work',
-     src.indexOf("Workers' Comp &amp; Auto Claims") < src.indexOf('<h3>Surveillance</h3>'));
-  ok('while every consumer service is still on it',
+  ok('the private paths lead, and Insurance and Legal follow as Other Investigation Services',
+     src.indexOf('id="private"') > 0 && src.indexOf('id="private"') < src.indexOf('id="other"'));
+  ok('while every consumer service is still on the page',
      ['Infidelity', 'Child Custody', 'Surveillance', 'Process Serving']
        .every(t => src.includes(`<h3>${t}</h3>`)));
 }
@@ -1331,7 +1320,7 @@ section('Every field marked (optional) really can be left blank');
     await set(page, 'c_email', 'only@required.example');
     if (door === 'insurance') await need(page, 'k_carrier', 'Required Carrier', 'insurance door, contact step');   // marked *, on this step
     await advance(page);
-    if (door === 'private') { await page.locator('#opt-surveillance').click(); await page.waitForTimeout(80); await advance(page); }
+    if (door === 'private') { await page.locator('#opt-other').click(); await page.waitForTimeout(80); await advance(page); }
     if (door === 'legal') {
       /* The legal service is a required radio step, like the main picker —
          chosen, never defaulted (LEGAL-SERVICES.md D9). */
@@ -1494,7 +1483,7 @@ section('The bare door asks a carrier for the email its shared step did not');
   await set(p2, 'c_name', 'Private Person');
   await set(p2, 'c_phone', '4345550112');
   await advance(p2);
-  await p2.locator('#opt-surveillance').click();
+  await p2.locator('#opt-other').click();
   await p2.waitForTimeout(80);
   await advance(p2);
   ok('a private client with only a phone still reaches the subject step',
@@ -1860,7 +1849,7 @@ section('Each intake door announces its own name');
   await advance(page);
   for (const [id, want] of [['#opt-legal', 'Legal Investigation Assignment'],
                             ['#opt-claims', 'Secure Assignment Intake'],
-                            ['#opt-surveillance', 'Client Intake']]) {
+                            ['#opt-other', 'Client Intake']]) {
     await page.locator(id).click();
     await page.waitForTimeout(120);
     const t = await page.title();
@@ -2015,135 +2004,98 @@ async function homePage(width, height = 900) {
   return { ctx, page };
 }
 
-section('Unit 40 — three cards, three doors');
+/* ============ THE 2026-10-10 REDESIGN — TWO PHOTO CARDS, ONE INTAKE ============
+
+   SUPERSEDES the Unit 40 three-card hero (owner brief and intake clarification,
+   2026-10-10). The properties Unit 40 pinned are kept and re-aimed rather than
+   dropped: every card is one anchor and one tab stop, each reaches the door it
+   names, its name is its own words and never the artwork, the title is measured
+   against the PAINTED pixels behind it, the focus ring is gold, nothing scrolls
+   sideways, and no price appears. What changed is the shape: two cards, both
+   into the SAME private intake with their answer preselected, and Insurance and
+   Legal below them with their own doors. */
+const CARDS = [['custody', 'Child Custody', 'Concerns about care or well-being?', 'Family Matters'],
+               ['relationship', 'Spouse / Relationship', 'Looking for clarity and answers?', 'Personal Matters']];
+
+section('Redesign — two photo cards into one private intake');
 {
   const { ctx, page } = await homePage(1280);
-
-  const cards = await page.evaluate(() =>
-    [...document.querySelectorAll('.cta-cards .cta-card')].map(a => ({
-      href: a.getAttribute('href'),
-      name: (a.textContent || '').replace(/\s+/g, ' ').trim(),
-      tag: a.tagName,
-    })));
-  ok('there are exactly three cards', cards.length === 3, JSON.stringify(cards.map(c => c.href)));
-
-  /* THE OWNER'S ORDER, 2026-09-15: Private, Legal, Insurance — Private
-     Investigation is the primary public-client action, superseding the
-     Insurance-first order of 2026-08-22. It is pinned ONCE, here, as its own
-     decision. The routing assertions below used to carry it implicitly by
-     reading cards[0], cards[1], cards[2], which meant a reorder failed three
-     routing checks that were not about order at all. */
-  const ORDER = ['Request a Private Investigation', 'Submit a Legal Assignment',
-                 'Submit an Insurance Assignment'];
-  ok('the cards are in the owner\'s order: Private, Legal, Insurance',
-     cards.map(c => c.name.replace(/ Get Started$/, '')).join(' | ') === ORDER.join(' | '),
-     cards.map(c => c.name).join(' | '));
-
-  /* ROUTING — the whole point of the unit, and the one thing that must not be
-     got wrong: a law firm routed through the private door lands somewhere
-     `pickSvc` refuses outright. KEYED BY TITLE, so it states the property it
-     means — each named card reaches its own door — and survives the next
-     reorder instead of failing beside it. */
-  const byTitle = (t) => cards.find(c => c.name.startsWith(t));
-  for (const [title, door] of [['Submit an Insurance Assignment', 'insurance'],
-                               ['Submit a Legal Assignment', 'legal'],
-                               ['Request a Private Investigation', 'private']]) {
-    const card = byTitle(title);
-    ok(`"${title}" reaches the ${door} door`,
-       !!card && card.href === `/intake/?assignment=${door}`, card && card.href);
+  const cards = await page.evaluate(() => [...document.querySelectorAll('.art-grid a.art')].map(a => ({
+    href: a.getAttribute('href'), tag: a.tagName,
+    title: (a.querySelector('.art-title') || {}).textContent || '',
+    focusables: a.querySelectorAll('a, button, input, select, textarea, [tabindex]').length,
+    art: (a.querySelector('.art-img') || {}).getAttribute ? a.querySelector('.art-img').getAttribute('aria-hidden') : null,
+    imgs: a.querySelectorAll('img').length,
+  })));
+  ok('there are exactly two photo cards', cards.length === 2, JSON.stringify(cards.map(c => c.href)));
+  ok('Child Custody first, then Spouse / Relationship (the brief\'s order)',
+     cards.map(c => c.title).join(' | ') === 'Child Custody | Spouse / Relationship', cards.map(c => c.title).join(' | '));
+  for (const [k, title] of CARDS) {
+    const c = cards.find(x => x.title === title) || {};
+    ok(`"${title}" opens the private intake with its own answer chosen`,
+       c.href === `/intake/?assignment=private&service=${k}`, c.href);
   }
-  ok('and the Legal card is NOT routed through private or carrier',
-     byTitle('Submit a Legal Assignment').href !== '/intake/?assignment=private'
-     && byTitle('Submit a Legal Assignment').href !== '/intake/?assignment=insurance',
-     byTitle('Submit a Legal Assignment').href);
-
-  /* Each is a real link, not a div with a handler. */
-  ok('each card is a real anchor', cards.every(c => c.tag === 'A'));
-
-  /* ACCESSIBLE NAMES. The title carries the meaning; "Get Started" is
-     aria-hidden so it does not pad every name with the same two words, and the
-     icons and artwork are decorative. */
-  const names = await page.evaluate(() =>
-    [...document.querySelectorAll('.cta-cards .cta-card')].map(a => {
-      const clone = a.cloneNode(true);
-      clone.querySelectorAll('[aria-hidden="true"]').forEach(n => n.remove());
-      return clone.textContent.replace(/\s+/g, ' ').trim();
-    }));
-  /* The accessible name of each card is its own title — checked as a SET
-     against the pinned order, so the three titles are all present, all exact,
-     and in the order the assertion above already fixed. */
-  ok('each card announces itself by its own title, in that order',
-     names.join(' | ') === ORDER.join(' | '), names.join(' | '));
-
-  /* NOT RELIANT ON THE BACKGROUND IMAGE. The art is a CSS background on an
-     aria-hidden span; strip every decorative node and the meaning survives,
-     which the assertion above already proves. This pins the mechanism. */
-  const decorative = await page.evaluate(() => ({
-    art: [...document.querySelectorAll('.cta-art')].every(n => n.getAttribute('aria-hidden') === 'true'),
-    artCount: document.querySelectorAll('.cta-art').length,
-    icons: document.querySelectorAll('.cta-icon').length,
-    iconCss: null,
-    inImg: document.querySelectorAll('.cta-cards img').length,
-  }));
-  /* COUNTED, not `.every()`. The icons were removed on the owner's decision of
-     2026-08-22, and `[].every()` is TRUE — so the old assertion would have gone
-     on passing over a card that had lost its art as well. It asserts the count
-     it expects in both directions now. */
-  ok('the artwork is marked decorative, on all three cards',
-     decorative.art && decorative.artCount === 3, JSON.stringify(decorative));
-  ok('and no meaning is carried by an <img> in a card', decorative.inImg === 0);
-  /* NO ICON, by owner decision: the card art says what the card is, and an icon
-     over a photograph of the same thing said it twice. Asserted so a later
-     unit does not quietly put one back. */
-  ok('no card carries an icon', decorative.icons === 0, String(decorative.icons));
-  ok('and no dead .cta-icon rule is left behind in the stylesheet',
-     !fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8').includes('.cta-icon'));
-
-  /* ONE TAB STOP PER CARD — a button nested in a link would give two, for one
-     destination. */
-  const stops = await page.evaluate(() =>
-    document.querySelectorAll('.cta-cards a, .cta-cards button, .cta-cards [tabindex]').length);
-  ok('one focusable control per card, not two', stops === 3, String(stops));
-
+  ok('each card is a real anchor with nothing focusable inside it', cards.every(c => c.tag === 'A' && c.focusables === 0));
+  ok('the artwork is decorative on both, and no meaning rides on an <img>',
+     cards.length === 2 && cards.every(c => c.art === 'true' && c.imgs === 0), JSON.stringify(cards));
+  /* THE NAME THE BROWSER REPORTS, not the markup — kicker, title, line and the
+     action, and never the development badge or an arrow glyph. */
+  for (const [k, title, line, kicker] of CARDS) {
+    const h = await page.locator(`a.art-${k}`).elementHandle();
+    const snap = await page.accessibility.snapshot({ root: h });
+    const want = `${kicker} ${title} ${line} Start Intake`;
+    ok(`the ${title} card announces itself as a link named by its own words`,
+       snap && snap.role === 'link' && snap.name.replace(/\s+/g, ' ').trim().toLowerCase() === want.toLowerCase(), JSON.stringify(snap && snap.name));
+  }
+  const src = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const artUrls = [...src.matchAll(/--art:url\('([^']+)'\)/g)].map(m => m[1]);
+  ok('each card names a local asset, never an external host', artUrls.length === 2
+     && artUrls.every(u => /^\/assets\/(child-custody|spouse-relationship)-photo\.webp\?v=\d+$/.test(u)), JSON.stringify(artUrls));
+  ok('and each carries a cache-busting version token (assets are cached seven days)', artUrls.every(u => /\?v=\d+$/.test(u)));
+  ok('the rejected silhouette illustrations are not used', !/silhouette|card-custody\.svg|card-relationship\.svg/i.test(src));
   await ctx.close();
 }
 
-section('Unit 40 — each card actually opens the door it names');
+section('Redesign — each action opens the door it names');
 {
-  /* THE BRIEF'S OWN TEST LINE, end to end: click the card a person would click
-     and read the page it lands on. Everything above this asserts the HREF,
-     which is a claim about a string; this asserts the OUTCOME, which is what
-     "do not route Legal through Private" is actually about. The two doors are
-     told apart by the heading the page gives itself — Unit 37A's `pageName()`,
-     which is the one writer of that name and is keyed off the service.
-
-     The dollar check rides along deliberately: the public-pricing rule has to
-     hold down the whole path a card opens, not merely on the homepage. */
-  for (const [label, url, heading] of [
-        ['Submit an Insurance Assignment', '/intake/?assignment=insurance', 'Secure Assignment Intake'],
-        ['Submit a Legal Assignment',      '/intake/?assignment=legal',     'Legal Investigation Assignment'],
-        ['Request a Private Investigation','/intake/?assignment=private',   'Client Intake']]) {
+  for (const [k, title] of CARDS) {
     const { ctx, page } = await homePage(1280);
-    await page.getByRole('link', { name: label, exact: true }).click();
+    await page.locator(`a.art-${k}`).click();
     await page.waitForLoadState('networkidle');
-    const landed = await page.evaluate(() => ({
-      url: location.pathname + location.search,
-      title: document.title,
+    const landed = await page.evaluate(() => ({ url: location.pathname + location.search, svc: S.svc,
       h1: ((document.querySelector('h1') || {}).textContent || '').trim(),
-      dollars: (document.body.innerText.match(/\$\s?\d[\d,]*/g) || []).slice(0, 3),
-    }));
-    ok(`"${label}" lands on ${url}`, landed.url === url, JSON.stringify(landed));
-    ok(`  and the page names itself "${heading}"`,
-       landed.h1 === heading && landed.title.startsWith(heading), JSON.stringify(landed));
-    ok('  with no price anywhere on the door it opened',
-       landed.dollars.length === 0, JSON.stringify(landed.dollars));
+      dollars: (document.body.innerText.match(/\$\s?\d[\d,]*/g) || []).slice(0, 3) }));
+    ok(`"${title}" lands on the private intake with ${k} chosen`,
+       landed.url === `/intake/?assignment=private&service=${k}` && landed.svc === k && landed.h1 === 'Client Intake', JSON.stringify(landed));
+    ok('  with no price anywhere on the door it opened', landed.dollars.length === 0, JSON.stringify(landed.dollars));
+    await set(page, 'c_name', 'Card Visitor');
+    await set(page, 'c_phone', '4345550177');
+    await advance(page);
+    const q = await page.evaluate((k) => ({ head: (document.querySelector('#app h2') || {}).textContent || '',
+      ticked: !!(document.querySelector(`#opt-${k} input`) || {}).checked }), k);
+    ok(`  and the private question is shown with ${title} already ticked`,
+       q.head.trim() === 'What type of private investigation do you need?' && q.ticked, JSON.stringify(q));
     await ctx.close();
   }
-  /* AND THE ONE THAT MATTERS MOST: the legal card must not reach the private
-     door's name. Stated as its own assertion so a regression reads as the rule
-     it broke rather than as a heading mismatch. */
+  for (const [label, url, heading] of [
+        ['Fill Out Online Intake', '/intake/?assignment=private', 'Client Intake'],
+        ['Submit an Insurance Assignment', '/intake/?assignment=insurance', 'Secure Assignment Intake'],
+        ['Submit a Legal Assignment', '/intake/?assignment=legal', 'Legal Investigation Assignment']]) {
+    const { ctx, page } = await homePage(1280);
+    await page.getByRole('link', { name: label, exact: true }).first().click();
+    await page.waitForLoadState('networkidle');
+    const landed = await page.evaluate(() => ({ url: location.pathname + location.search, svc: S.svc,
+      h1: ((document.querySelector('h1') || {}).textContent || '').trim(), title: document.title,
+      dollars: (document.body.innerText.match(/\$\s?\d[\d,]*/g) || []).slice(0, 3) }));
+    ok(`"${label}" lands on ${url}, which names itself "${heading}"`,
+       landed.url === url && landed.h1 === heading && landed.title.startsWith(heading), JSON.stringify(landed));
+    if (label === 'Fill Out Online Intake')
+      ok('  with no answer preselected', landed.svc === null || landed.svc === undefined, String(landed.svc));
+    ok('  with no price anywhere on it', landed.dollars.length === 0, JSON.stringify(landed.dollars));
+    await ctx.close();
+  }
   const { ctx, page } = await homePage(1280);
-  await page.getByRole('link', { name: 'Submit a Legal Assignment', exact: true }).click();
+  await page.getByRole('link', { name: 'Submit a Legal Assignment', exact: true }).first().click();
   await page.waitForLoadState('networkidle');
   const legal = await page.evaluate(() => ((document.querySelector('h1') || {}).textContent || '').trim());
   ok('a legal visitor is never routed through the private-client intake',
@@ -2151,439 +2103,156 @@ section('Unit 40 — each card actually opens the door it names');
   await ctx.close();
 }
 
-section('Unit 40 — the layout at three widths');
-{
-  /* DESKTOP: one balanced row. Measured, not assumed — three cards on one row
-     means three distinct x positions and one shared y. */
-  const { ctx, page } = await homePage(1280);
-  const desk = await page.evaluate(() => {
-    const r = [...document.querySelectorAll('.cta-cards .cta-card')].map(a => a.getBoundingClientRect());
-    return { tops: r.map(x => Math.round(x.top)), lefts: r.map(x => Math.round(x.left)),
-             widths: r.map(x => Math.round(x.width)), heights: r.map(x => Math.round(x.height)),
-             doc: Math.round(document.documentElement.scrollWidth - window.innerWidth) };
+section('Redesign — the homepage at 320, 360, 390, 430, 768, 1024 and 1280');
+for (const [w, h] of [[320, 568], [360, 740], [390, 844], [430, 932], [768, 1024], [1024, 768], [1280, 800]]) {
+  const { ctx, page } = await homePage(w, h);
+  const m = await page.evaluate(() => {
+    const R = el => el ? el.getBoundingClientRect() : null;
+    const cards = [...document.querySelectorAll('.art-grid a.art')].map(R);
+    const hero = [...document.querySelectorAll('.hero-actions .btn')].map(R);
+    const logo = R(document.querySelector('.site-head .brand img'));
+    const badge = getComputedStyle(document.querySelector('.site-head .brand')).backgroundColor;
+    const bar = document.querySelector('.mobile-actions');
+    const barShown = bar && getComputedStyle(bar).display !== 'none';
+    return { vw: innerWidth, doc: document.documentElement.scrollWidth - innerWidth,
+      cardTops: cards.map(r => Math.round(r.top)), cardLefts: cards.map(r => Math.round(r.left)),
+      cardRight: Math.max(...cards.map(r => r.right)), cardW: cards.map(r => Math.round(r.width)),
+      heroH: hero.map(r => Math.round(r.height)), heroRight: Math.max(...hero.map(r => r.right)),
+      logo: logo && { w: logo.width, h: logo.height }, badge,
+      barShown, barH: barShown ? Math.round(R(bar).height) : 0,
+      barBtns: barShown ? [...bar.querySelectorAll('a')].map(a => Math.round(R(a).height)) : [],
+      bodyPad: parseFloat(getComputedStyle(document.body).paddingBottom) };
   });
-  ok('desktop draws all three on one row', new Set(desk.tops).size === 1, JSON.stringify(desk.tops));
-  ok('in three distinct columns', new Set(desk.lefts).size === 3, JSON.stringify(desk.lefts));
-  ok('at equal widths', new Set(desk.widths).size === 1, JSON.stringify(desk.widths));
-  ok('and equal heights', new Set(desk.heights).size === 1, JSON.stringify(desk.heights));
-  /* GET STARTED IS CENTRED AND LOW (owner, 2026-08-22). Measured as the
-     difference between its left and right gaps inside the card, because that
-     is what "centred" means and it survives the card changing width. `low` is
-     the gap from the card's foot being small and EQUAL across the three — the
-     button is placed by `margin-top:auto`, so an unequal gap would mean one
-     card's content had grown into it. */
-  const go = await page.evaluate(() => [...document.querySelectorAll('.cta-card')].map(c => {
-    const cr = c.getBoundingClientRect(), g = c.querySelector('.cta-go').getBoundingClientRect();
-    return { off: Math.round(((g.left - cr.left) - (cr.right - g.right)) * 10) / 10,
-             foot: Math.round(cr.bottom - g.bottom) };
-  }));
-  ok('Get Started is horizontally centred on every card',
-     go.every(g => Math.abs(g.off) <= 1), JSON.stringify(go.map(g => g.off)));
-  ok('and sits low, the same distance off the foot on all three',
-     new Set(go.map(g => g.foot)).size === 1 && go[0].foot <= 32, JSON.stringify(go.map(g => g.foot)));
-  ok('with no horizontal overflow', desk.doc <= 0, String(desk.doc));
-  /* DESKTOP DID NOT MOVE. The 2026-09-15 compaction is scoped to <=640px and
-     the owner's rule is that desktop changes only when it must. Measured
-     before and after: card 236, button 147.9x52.1, identical. Only the ORDER
-     changed up here, which is the one thing the owner asked to be the same on
-     both surfaces. */
-  ok('desktop card height is unchanged at 236', desk.heights.every(h => h === 236),
-     JSON.stringify(desk.heights));
-  const deskGo = await page.evaluate(() => [...document.querySelectorAll('.cta-go')]
-    .map(g => Math.round(g.getBoundingClientRect().height * 10) / 10));
-  ok('and the desktop button is unchanged at 52.1', deskGo.every(h => h === 52.1),
-     JSON.stringify(deskGo));
+  ok(`${w}px: the page does not scroll sideways`, m.doc <= 0, String(m.doc));
+  ok(`${w}px: both cards are whole on screen`, m.cardRight <= m.vw + 0.5 && m.cardW.every(x => x > 120), JSON.stringify(m.cardW));
+  if (w < 360) ok(`${w}px: the cards stack`, m.cardTops[0] < m.cardTops[1] && m.cardLefts[0] === m.cardLefts[1], JSON.stringify(m));
+  else ok(`${w}px: the cards sit side by side, the same size`, m.cardTops[0] === m.cardTops[1] && m.cardW[0] === m.cardW[1], JSON.stringify(m));
+  ok(`${w}px: the hero's two actions clear the 44px floor and stay on screen`,
+     m.heroH.length === 2 && m.heroH.every(x => x >= 44) && m.heroRight <= m.vw + 0.5, JSON.stringify(m.heroH));
+  ok(`${w}px: the logo keeps its own 240x68 proportions, in its white badge`,
+     m.logo && Math.abs(m.logo.w / m.logo.h - 240 / 68) < 0.03 && m.badge === 'rgb(255, 255, 255)', JSON.stringify(m.logo) + ' ' + m.badge);
+  if (w <= 720) {
+    ok(`${w}px: the Call Privately / Online Intake bar is shown, both targets ≥44px`,
+       m.barShown && m.barBtns.length === 2 && m.barBtns.every(x => x >= 44), JSON.stringify(m.barBtns));
+    ok(`${w}px: and the page is padded by the bar's height, so it covers nothing at the bottom`,
+       m.bodyPad >= m.barH - 0.5, `${m.bodyPad} vs ${m.barH}`);
+  } else ok(`${w}px: the phone bar is not drawn`, !m.barShown);
   await ctx.close();
-
-  /* PHONE: one column, in the owner's order, still no sideways scroll. */
-  for (const w of [390, 360, 320]) {
-    const { ctx: c2, page: p2 } = await homePage(w, 844);
-    const m = await p2.evaluate(() => {
-      const els = [...document.querySelectorAll('.cta-cards .cta-card')];
-      const r = els.map(a => a.getBoundingClientRect());
-      return { lefts: r.map(x => Math.round(x.left)), tops: r.map(x => Math.round(x.top)),
-               order: els.map(a => a.getAttribute('href')),
-               go: [...document.querySelectorAll('.cta-go')].map(n => Math.round(n.getBoundingClientRect().height)),
-               doc: Math.round(document.documentElement.scrollWidth - window.innerWidth),
-               widest: Math.max(...r.map(x => Math.round(x.right))), vw: window.innerWidth };
-    });
-    ok(`${w}px: the cards stack in one column`, new Set(m.lefts).size === 1, JSON.stringify(m.lefts));
-    ok(`${w}px: each below the last`, m.tops[0] < m.tops[1] && m.tops[1] < m.tops[2], JSON.stringify(m.tops));
-    /* THE SAME ORDER ON A PHONE AS ON A DESKTOP, and it is the SOURCE order —
-       the owner's 2026-09-15 decision, Private first. Nothing here reorders
-       anything, which is what keeps the visual order and the tab order the
-       same walk (asserted for real, by tabbing, further down). */
-    ok(`${w}px: Private, Legal, Insurance in that order`,
-       m.order.join('|') === '/intake/?assignment=private|/intake/?assignment=legal|/intake/?assignment=insurance',
-       m.order.join('|'));
-    /* THE CARDS' OWN EDGE, not the whole document, and the difference matters.
-       At 320px this page ALREADY overflowed before Unit 40, and BOTH numbers
-       were measured rather than assumed — master's tree and this one, served
-       and rendered side by side:
-
-         master  320px  scrollWidth 335  overflow 15px  widest: a.call-btn
-                        "Submit an Insurance Assignment"   <- the OLD hero button
-         branch  320px  scrollWidth 325  overflow  5px  widest: a.call-btn
-                        "Call for a Free Consultation"     <- untouched, elsewhere
-
-       So the cards did not cause it — they HALVED it, by replacing the button
-       that was the widest thing on the page. The 5px that remains is a `tel:`
-       link in a section this brief forbids redesigning, identical on both
-       trees.
-
-       The assertion is therefore what this unit owns: no card crosses the
-       viewport edge. The document-level check runs from 360px up, where the
-       page is genuinely clean, and the residue is reported to the owner rather
-       than silently absorbed into a passing test. */
-    ok(`${w}px: no card crosses the viewport edge`, m.widest <= m.vw + 1, JSON.stringify(m));
-    if (w >= 360) ok(`${w}px: and the page does not scroll sideways`, m.doc <= 0, String(m.doc));
-    /* Under 640px the button is width:100%, so "centred" is the label inside a
-       full-width box rather than the box inside the card. Both readings are
-       checked: the box has no side bias, and the text is centred in it. */
-    const goN = await p2.evaluate(() => [...document.querySelectorAll('.cta-card')].map(c => {
-      const cr = c.getBoundingClientRect(), g = c.querySelector('.cta-go');
-      const r = g.getBoundingClientRect();
-      return { off: Math.round(((r.left - cr.left) - (cr.right - r.right)) * 10) / 10,
-               align: getComputedStyle(g).textAlign };
-    }));
-    ok(`${w}px: Get Started is centred, box and label alike`,
-       goN.every(g => Math.abs(g.off) <= 1 && g.align === 'center'), JSON.stringify(goN));
-    ok(`${w}px: the Get Started target clears Apple's 44px floor`,
-       m.go.every(h => h >= 44), JSON.stringify(m.go));
-
-    /* ---- 2026-09-15: the owner's mobile compaction, pinned as numbers ----
-       Every one of these was measured before and after; they are here so the
-       next unit cannot undo the trade without saying so.
-
-       THE BUTTON'S WEIGHT CAME OFF ITS WIDTH. The owner called it "oversized"
-       and named 50–54px, but it was already at the 44px floor — what made it
-       look oversized was spanning 316 of a 350px card as a full-bleed bar. So
-       the property asserted is that there is REAL CARD ON BOTH SIDES of it:
-       ≥24px a side, against the 17px it had when it was width:100%. Height
-       lands in the owner's own band. */
-    const shape = await p2.evaluate(() => [...document.querySelectorAll('.cta-card')].map(c => {
-      const cr = c.getBoundingClientRect(), g = c.querySelector('.cta-go');
-      const r = g.getBoundingClientRect(), t = c.querySelector('.cta-title').getBoundingClientRect();
-      return { card: Math.round(cr.height), h: Math.round(r.height),
-               side: Math.round(Math.min(r.left - cr.left, cr.right - r.right)),
-               px: parseFloat(getComputedStyle(g).fontSize),
-               weight: getComputedStyle(g).fontWeight,
-               overlaps: r.top < t.bottom - 0.5,
-               inside: r.bottom <= cr.bottom + 0.5 && r.right <= cr.right + 0.5 };
-    }));
-    ok(`${w}px: the button sits in the owner's 50–54px band`,
-       shape.every(x => x.h >= 50 && x.h <= 54), JSON.stringify(shape.map(x => x.h)));
-    ok(`${w}px: and is no longer a full-bleed bar — real card either side`,
-       shape.every(x => x.side >= 24), JSON.stringify(shape.map(x => x.side)));
-    /* THE TYPE IS NOT A LEVER AND NEVER WILL BE. White on --teal is 3.37:1,
-       which clears AA only as LARGE text, which for bold starts at 18.66px.
-       Shrinking this label to buy height would put it under a rule it cannot
-       meet — so the height came from padding and the size is pinned here. */
-    ok(`${w}px: the label stays above the 18.66px bold large-text line`,
-       shape.every(x => x.px >= 18.66 && Number(x.weight) >= 700),
-       JSON.stringify(shape.map(x => `${x.px}/${x.weight}`)));
-    /* THE CARD IS COMPACTED, NOT CRAMPED: 186 → 155 is 16.7%, inside the
-       owner's 15–20%, and the button still clears the title and stays inside
-       the card at every width including 320, where two of the three titles
-       wrap to a second line. */
-    ok(`${w}px: the card is in the compacted 150–160px band`,
-       shape.every(x => x.card >= 150 && x.card <= 160), JSON.stringify(shape.map(x => x.card)));
-    ok(`${w}px: nothing overlaps and nothing escapes the card`,
-       shape.every(x => !x.overlaps && x.inside), JSON.stringify(shape));
-    await c2.close();
-  }
-
-  /* TABLET: two across rather than three squeezed or one wasted. */
-  const { ctx: c3, page: p3 } = await homePage(820, 1100);
-  const tab = await p3.evaluate(() => {
-    const r = [...document.querySelectorAll('.cta-cards .cta-card')].map(a => a.getBoundingClientRect());
-    return { rows: new Set(r.map(x => Math.round(x.top))).size,
-             doc: Math.round(document.documentElement.scrollWidth - window.innerWidth) };
-  });
-  ok('820px puts them on two rows rather than three-across', tab.rows === 2, String(tab.rows));
-  ok('and still does not scroll sideways', tab.doc <= 0, String(tab.doc));
-  await c3.close();
 }
 
-section('Unit 40 — contrast, focus, and what the hero kept');
+/* EVERY PUBLIC PAGE, NOT ONLY THE HOMEPAGE. The vendor page's details table
+   scrolled 32px sideways at 320 after the restyle while every homepage check
+   was green — its cells stacked, its table did not. A class: all fifteen
+   public pages at three widths, no sideways scroll, the live logo in the
+   header, and nothing on the page failing to load except the two development
+   photographs the release gate already names. */
+section('Redesign — all fifteen public pages at 320, 390 and 1280');
 {
-  const { ctx, page } = await homePage(1280);
+  const PUBLIC = ['', 'child-custody-investigations/', 'infidelity-investigations/', 'legal-investigations/',
+    'insurance-investigations/', 'insurance-investigations/vendor-information/', 'private-investigator/',
+    'private-investigator/lynchburg-va/', 'private-investigator/bedford-va/', 'private-investigator/roanoke-va/',
+    'private-investigator/farmville-va/', 'private-investigator/charlottesville-va/', 'private-investigator/danville-va/',
+    'privacy.html', '404.html'];
+  for (const w of [320, 390, 1280]) {
+    const ctx = await browser.newContext({ viewport: { width: w, height: 800 } });
+    const bad = [], noLogo = [], broken = [];
+    for (const rel of PUBLIC) {
+      const page = await ctx.newPage();
+      page.on('response', r => { if (r.status() >= 400 && !/(child-custody|spouse-relationship)-photo\.webp/.test(r.url())) broken.push(`${rel}: ${r.status()} ${r.url()}`); });
+      await page.goto(HOME + rel);
+      await page.waitForTimeout(150);
+      const m = await page.evaluate(() => ({ over: document.documentElement.scrollWidth - innerWidth,
+        logo: (document.querySelector('.site-head .brand img') || {}).getAttribute?.('src') }));
+      if (m.over > 0) bad.push(`${rel || '/'} +${m.over}px`);
+      if (m.logo !== '/assets/logo-lockup.svg') noLogo.push(`${rel || '/'} ${m.logo}`);
+      await page.close();
+    }
+    ok(`${w}px: no public page scrolls sideways`, bad.length === 0, bad.join(' | '));
+    ok(`${w}px: every public page wears the live logo in its header`, noLogo.length === 0, noLogo.join(' | '));
+    ok(`${w}px: nothing on any public page fails to load (beyond the two photographs the gate names)`, broken.length === 0, broken.join(' | '));
+    await ctx.close();
+  }
+}
 
-  /* CONTRAST. The overlay is a separate layer above the art precisely so the
-     text does not depend on the image — so the check is that the overlay is
-     there and the title is white on a dark card. */
-  const look = await page.evaluate(() => {
-    const card = document.querySelector('.cta-card');
-    const art = card.querySelector('.cta-art');
-    const title = card.querySelector('.cta-title');
-    const go = card.querySelector('.cta-go');
-    const over = getComputedStyle(art, '::after');
-    return { titleColor: getComputedStyle(title).color,
-             goBg: getComputedStyle(go).backgroundColor,
-             goColor: getComputedStyle(go).color,
-             overlay: over.backgroundImage, art: getComputedStyle(art).backgroundImage };
-  });
-  ok('the card carries a dark overlay above its artwork',
-     /gradient/.test(look.overlay), look.overlay.slice(0, 80));
-  /* getComputedStyle RESOLVES the url to absolute, so every background reads
-     as `http://…` under a local server and a naive "does not start with http"
-     check fails on a perfectly local file. The rendered value proves it
-     RESOLVED to our own assets path; the SOURCE proves it was written
-     relative, which is the half that would catch a hotlink. */
-  ok('the artwork resolves to this site\'s own assets path',
-     /\/assets\/card-[a-z]+\.(webp|jpg|png|svg)(\?v=\d+)?"\)$/.test(look.art), look.art.slice(0, 90));
-  const cssSrc = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
-  const artUrls = [...cssSrc.matchAll(/--cta-art:\s*url\('([^']+)'\)/g)].map(m => m[1]);
-  ok('and every card names a RELATIVE local asset, never an external host',
-     artUrls.length === 3 && artUrls.every(u => /^assets\/card-/.test(u)), JSON.stringify(artUrls));
-  /* EVERY art URL CARRIES A VERSION TOKEN. `_headers` caches /assets/* for
-     seven days and these files are replaced in place, so without one a
-     returning visitor keeps the previous photograph behind current markup —
-     which is indistinguishable from a deploy that never happened, and was
-     reported as exactly that on 2026-08-22. */
-  ok('and each carries a cache-busting version token',
-     artUrls.every(u => /\?v=\d+$/.test(u)), JSON.stringify(artUrls));
-  ok('the title is white', look.titleColor === 'rgb(255, 255, 255)', look.titleColor);
-  ok('and Get Started is the site teal on white', look.goColor === 'rgb(255, 255, 255)'
-     && look.goBg === 'rgb(61, 151, 173)', JSON.stringify(look));
-
-  /* CONTRAST, COMPUTED — the brief asks for sufficient contrast and "the title
-     is white" is not that. WCAG AA is 4.5:1 for normal text and 3:1 for large,
-     where large means >=24px, or >=18.66px when bold. So the SIZE decides which
-     bar applies and both have to be read off the rendered element.
-
-     This matters here for a specific reason worth keeping: white on --teal is
-     3.37:1 — the site's own button colour, on every button it has — which
-     clears the large bar and fails the normal one. The label is sized above
-     18.66px deliberately so the rule that applies is the one it passes. If
-     someone shrinks it back, THIS is the test that fails, and it fails naming
-     the ratio rather than the pixel size. */
-  const wcag = await page.evaluate(() => {
-    const lum = ([r, g, b]) => {
-      const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
-      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
-    };
-    const rgb = s => s.match(/\d+/g).slice(0, 3).map(Number);
-    const go = document.querySelector('.cta-go'), cs = getComputedStyle(go);
-    const fg = rgb(cs.color), bg = rgb(cs.backgroundColor);
-    const L = [lum(fg), lum(bg)];
-    const size = parseFloat(cs.fontSize), weight = Number(cs.fontWeight);
-    const large = size >= 24 || (size >= 18.66 && weight >= 700);
-    return { ratio: (Math.max(...L) + 0.05) / (Math.min(...L) + 0.05),
-             size, weight, large, need: large ? 3 : 4.5 };
-  });
-  ok('the Get Started label meets WCAG AA for the size it is drawn at',
-     wcag.ratio >= wcag.need,
-     `${wcag.ratio.toFixed(2)}:1 needs ${wcag.need}:1 at ${wcag.size}px/${wcag.weight}`);
-
-  /* THE TITLE'S BACKDROP IS PAINTED, NOT DECLARED — a gradient over an image,
-     which no computed style can answer. So the pixels are read: hide the text,
-     photograph the strip it occupied, and take the LIGHTEST pixel in it, since
-     that is the one white text has the least contrast against. Sampling an
-     average would hide a bright spot in the artwork, which is the whole failure
-     mode a dark overlay exists to prevent. */
-  /* ON ITS OWN PAGE, and that is not tidiness. Hiding the text to photograph
-     what is behind it uses `visibility:hidden`, which also removes those
-     elements from the ACCESSIBILITY TREE — so doing it on the shared page left
-     every later accessible-name assertion reading "". The measurement has to
-     destroy the thing it measures, so it gets a page nothing else uses. */
-  const { ctx: cx4, page: p4 } = await homePage(1280);
-  /* EVERY CARD, not just the first. Each carries a DIFFERENT photograph now,
-     so one measurement says nothing about the other two — and the brightest
-     of the three is the one that decides whether the overlay is dark enough. */
-  for (const door of ['insurance', 'legal', 'private']) {
-    const sel = `.cta-card[href="/intake/?assignment=${door}"]`;
-    const box = await p4.evaluate(s => {
-      const r = document.querySelector(s + ' .cta-title').getBoundingClientRect();
-      return { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) };
-    }, sel);
-    await p4.addStyleTag({ content: '.cta-title,.cta-go{visibility:hidden!important;}' });
-    const strip = (await p4.screenshot({ clip: { x: box.x, y: box.y, width: box.w, height: box.h } })).toString('base64');
-    const worst = await p4.evaluate(async b64 => {
-      const img = new Image();
-      await new Promise(res => { img.onload = res; img.src = 'data:image/png;base64,' + b64; });
-      const c = document.createElement('canvas');
-      c.width = img.width; c.height = img.height;
-      c.getContext('2d').drawImage(img, 0, 0);
-      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
-      const lum = (r, g, b) => {
-        const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
-        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
-      };
-      let hi = -1, at = null;
-      for (let i = 0; i < d.length; i += 4) {
-        const L = lum(d[i], d[i + 1], d[i + 2]);
-        if (L > hi) { hi = L; at = [d[i], d[i + 1], d[i + 2]]; }
+section('Redesign — contrast, focus and keyboard on the homepage');
+{
+  /* THE COPY'S BACKDROP IS PAINTED: hide the copy, photograph the strip each
+     LINE of it occupied, and take the LIGHTEST pixel — the one the text is least
+     visible against. Every line, not only the title: on a phone the copy fills
+     more of the card and the gold kicker rises to where the overlay is thinnest,
+     which is exactly what the first look at the real photographs showed while a
+     title-only check was green. Each line is measured against its OWN computed
+     colour. On its own page because hiding text removes it from the
+     accessibility tree. */
+  const LINES = [['kicker', '.kicker'], ['title', '.art-title'], ['line', '.art-line'], ['action', '.art-go']];
+  for (const [k, title] of CARDS) {
+    for (const w of [1280, 1024, 768, 430, 390, 360, 320]) {
+      /* Tall enough that the whole card is on screen, centred INSTANTLY (the site
+         scrolls smoothly, and a box read mid-scroll is a box of the page behind),
+         with the sticky header and the phone bar hidden so neither can be the
+         pixel measured. */
+      const { ctx: c4, page: p4 } = await homePage(w, 1400);
+      await p4.evaluate(k => document.querySelector(`a.art-${k}`).scrollIntoView({ block: 'center', behavior: 'instant' }), k);
+      const boxes = await p4.evaluate(([k, LINES]) => LINES.map(([n, sel]) => {
+        const e = document.querySelector(`a.art-${k} ${sel}`);
+        const r = e.getBoundingClientRect();
+        const m = getComputedStyle(e).color.match(/[\d.]+/g).map(Number);
+        return { n, x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height), rgb: m.slice(0, 3) };
+      }), [k, LINES]);
+      /* Only the TEXT is hidden: the copy's own fade is part of the backdrop. */
+      await p4.addStyleTag({ content: '.art-copy *,.site-head,.mobile-actions{visibility:hidden!important}' });
+      for (const b of boxes) {
+        const strip = (await p4.screenshot({ clip: { x: b.x, y: b.y, width: b.w, height: b.h } })).toString('base64');
+        const worst = await p4.evaluate(async ([b64, rgb]) => {
+          const img = new Image();
+          await new Promise(res => { img.onload = res; img.src = 'data:image/png;base64,' + b64; });
+          const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+          c.getContext('2d').drawImage(img, 0, 0);
+          const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+          const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+          const L = (r, g, bl) => 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(bl);
+          const ink = L(...rgb);
+          let hi = -1;
+          for (let i = 0; i < d.length; i += 4) hi = Math.max(hi, L(d[i], d[i + 1], d[i + 2]));
+          return (ink + 0.05) / (hi + 0.05);
+        }, [strip, b.rgb]);
+        ok(`${w}px: the ${title} card's ${b.n} clears 4.5:1 against the LIGHTEST pixel behind it`, worst >= 4.5, `${worst.toFixed(2)}:1`);
       }
-      return { ratio: 1.05 / (hi + 0.05), pixel: at };
-    }, strip);
-    ok(`the ${door} title clears 4.5:1 against the LIGHTEST pixel behind it`,
-       worst.ratio >= 4.5, `${worst.ratio.toFixed(2)}:1 at rgb(${worst.pixel})`);
-    /* The hidden text has to come back before the next card is measured — and
-       it cannot, because addStyleTag accumulates. So this page is reloaded, and
-       that is cheaper than the alternative: reading a card whose neighbours are
-       still hidden would measure a DIFFERENT layout from the one that ships. */
-    await p4.reload({ waitUntil: 'networkidle' });
-  }
-  /* THE OVERLAY IS NEUTRAL, and that is asserted rather than left to a comment.
-     It was navy and tinted every photograph blue; the owner asked for it not to
-     (2026-08-22). A navy overlay would put a blue channel well above the red. */
-  const ov = await p4.evaluate(() => getComputedStyle(document.querySelector('.cta-art'), '::after').backgroundImage);
-  const ovStops = [...ov.matchAll(/rgba?\((\d+),\s*(\d+),\s*(\d+)/g)].map(m => m.slice(1, 4).map(Number));
-  ok('the overlay is a neutral dark, not a navy tint',
-     ovStops.length >= 2 && ovStops.every(([r, g, b]) => b - r <= 8 && b - g <= 8),
-     JSON.stringify(ovStops));
-
-  /* THE HERO TRUST LINE IS MEASURED THE SAME WAY (owner, 2026-09-14). It is
-     small, dim text over the same photographic hero, so it is exactly the shape
-     that passes on a declared colour and fails on a bright spot in the picture.
-
-     TWO THINGS DIFFER FROM THE CARDS ABOVE, and both matter.
-
-     The ink is NOT white, so the cards' `1.05 / (hi + 0.05)` shortcut would be
-     wrong here — the general ratio is computed from both luminances.
-
-     And the rectangle is the GLYPHS', taken from a Range, not the element box.
-     `.hero p` is 640px wide and the sentence is short and centred, so the <p>
-     box samples hundreds of pixels the text never covers; the brightest of
-     THOSE rejected a colour the text is never drawn on. Measuring the wrong
-     rectangle is how this check would have demanded a near-white line and
-     destroyed the hierarchy the owner asked for. */
-  await p4.reload({ waitUntil: 'networkidle' });
-  const tBox = await p4.evaluate(() => {
-    const t = document.querySelector('.hero p.hero-trust');
-    const rg = document.createRange(); rg.selectNodeContents(t);
-    const r = rg.getBoundingClientRect();
-    return { x: Math.round(r.left), y: Math.round(r.top),
-             w: Math.round(r.width), h: Math.round(r.height),
-             ink: getComputedStyle(t).color, size: parseFloat(getComputedStyle(t).fontSize),
-             lede: parseFloat(getComputedStyle(document.querySelector('.hero p')).fontSize) };
-  });
-  ok('the trust line is smaller than the supporting line it sits under',
-     tBox.size < tBox.lede, `${tBox.size}px vs ${tBox.lede}px`);
-  await p4.addStyleTag({ content: '.hero p.hero-trust{visibility:hidden!important;}' });
-  const tStrip = (await p4.screenshot({ clip: { x: tBox.x, y: tBox.y, width: tBox.w, height: tBox.h } })).toString('base64');
-  const tWorst = await p4.evaluate(async ({ b64, ink }) => {
-    const img = new Image();
-    await new Promise(res => { img.onload = res; img.src = 'data:image/png;base64,' + b64; });
-    const c = document.createElement('canvas');
-    c.width = img.width; c.height = img.height;
-    c.getContext('2d').drawImage(img, 0, 0);
-    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
-    const lum = (r, g, b) => {
-      const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
-      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
-    };
-    let hi = -1, at = null;
-    for (let i = 0; i < d.length; i += 4) {
-      const L = lum(d[i], d[i + 1], d[i + 2]);
-      if (L > hi) { hi = L; at = [d[i], d[i + 1], d[i + 2]]; }
+      await c4.close();
     }
-    const [ir, ig, ib] = ink.match(/\d+/g).map(Number);
-    const li = lum(ir, ig, ib);
-    return { ratio: (Math.max(li, hi) + 0.05) / (Math.min(li, hi) + 0.05), pixel: at, ink: [ir, ig, ib] };
-  }, { b64: tStrip, ink: tBox.ink });
-  ok('the trust line clears 4.5:1 against the LIGHTEST pixel behind its glyphs',
-     tWorst.ratio >= 4.5,
-     `${tWorst.ratio.toFixed(2)}:1 — rgb(${tWorst.ink}) on rgb(${tWorst.pixel})`);
-  await cx4.close();
-
-  /* KEYBOARD. Focus must land on each card and be visibly marked. */
-  const focus = await page.evaluate(() => {
-    const out = [];
-    for (const a of document.querySelectorAll('.cta-cards .cta-card')) {
-      a.focus();
-      const s = getComputedStyle(a);
-      out.push({ focused: document.activeElement === a,
-                 outline: s.outlineWidth, style: s.outlineStyle });
-    }
-    return out;
-  });
-  ok('every card takes keyboard focus', focus.every(f => f.focused), JSON.stringify(focus));
-  const rule = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
-  ok('and a focus-visible ring is defined for them',
-     /\.cta-card:focus-visible\{[^}]*outline:\s*3px/.test(rule));
-
-  /* THE ACCESSIBLE NAME, computed by the BROWSER rather than inferred from the
-     markup. The brief asks for proper accessible text that does not rely on
-     the background image for meaning, and the only honest way to check that is
-     to ask the accessibility tree what it reports. `aria-hidden` on the art,
-     the icon and "Get Started" is the mechanism; this is the outcome.
-
-     EQUALITY, not inclusion, and that is the half that does the work. Run as a
-     control with `aria-hidden` stripped from the "Get Started" span, the name
-     becomes "Submit an Insurance Assignment Get Started" — so an inclusion
-     check would still have passed. `children` stays 0 either way: a link's
-     descendant text contributes to its NAME rather than appearing as a child,
-     so that clause guards a different regression (a nested control), not this
-     one. Both were measured; neither was assumed. */
-  for (const [door, name] of [['insurance', 'Submit an Insurance Assignment'],
-                              ['legal',     'Submit a Legal Assignment'],
-                              ['private',   'Request a Private Investigation']]) {
-    const h = await page.locator(`.cta-card[href="/intake/?assignment=${door}"]`).elementHandle();
-    const snap = await page.accessibility.snapshot({ root: h });
-    ok(`the ${door} card announces itself as a link named exactly its title`,
-       snap && snap.role === 'link' && snap.name === name && (snap.children || []).length === 0,
-       JSON.stringify(snap));
   }
-
-  /* ONE TAB STOP PER CARD, in the owner's order. A "Get Started" <button>
-     inside the <a> would have been invalid nesting AND given each card two
-     stops for one destination; this is the assertion that would fail if
-     someone made it a real button later. Tabbing is done for real rather than
-     counting focusables, because that is what a keyboard user does. */
+  const { ctx, page } = await homePage(1280);
+  /* TABBED FOR REAL: each card takes one stop, in order, under the gold ring. */
   const stops = [];
   await page.evaluate(() => (document.activeElement || document.body).blur());
-  for (let i = 0; i < 40 && stops.length < 4; i++) {
+  for (let i = 0; i < 60 && stops.length < 3; i++) {
     await page.keyboard.press('Tab');
     const f = await page.evaluate(() => {
       const a = document.activeElement;
-      if (!a || !a.classList || !a.classList.contains('cta-card')) return null;
-      return { href: a.getAttribute('href'), ring: getComputedStyle(a).outlineWidth + ' ' + getComputedStyle(a).outlineColor };
+      if (!a || !a.classList || !a.classList.contains('art')) return null;
+      const s = getComputedStyle(a);
+      return { href: a.getAttribute('href'), ring: s.outlineWidth + ' ' + s.outlineStyle + ' ' + s.outlineColor };
     });
     if (f) stops.push(f); else if (stops.length) break;
   }
-  ok('tabbing reaches each card exactly once, Private then Legal then Insurance',
-     stops.length === 3 && stops.map(s => s.href).join('|') ===
-     '/intake/?assignment=private|/intake/?assignment=legal|/intake/?assignment=insurance',
+  ok('tabbing reaches each card exactly once, Child Custody then Spouse / Relationship',
+     stops.map(s => s.href).join('|') === '/intake/?assignment=private&service=custody|/intake/?assignment=private&service=relationship',
      JSON.stringify(stops.map(s => s.href)));
-  /* THE RING IS GOLD, not the teal it sits beside — measured on the focused
-     element, because a rule that exists is not a rule that applies. */
-  ok('and the ring that appears is the 3px gold one',
-     stops.length === 3 && stops.every(s => s.ring === '3px rgb(230, 181, 74)'),
+  ok('and the ring that appears is the 3px gold one', stops.length === 2 && stops.every(s => s.ring === '3px solid rgb(220, 186, 126)'),
      JSON.stringify(stops.map(s => s.ring)));
-
-  /* WHAT THE BRIEF SAID NOT TO TOUCH. */
+  const src = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  ok('the card hover lift is switched off under reduced motion', /prefers-reduced-motion:reduce\)\{\.art\{transition:none\}\.art:hover\{transform:none\}/.test(src));
   const kept = await page.evaluate(() => ({
-    h1: (document.querySelector('.hero h1') || {}).textContent || '',
-    lede: (document.querySelector('.hero p') || {}).textContent || '',
-    contact: !!document.querySelector('.hero [onclick*="openContact"]'),
-    call: !!document.querySelector('.hero a[href="tel:+14349070975"]'),
-    stars: (document.querySelector('.hero .stars') || {}).textContent || '',
-    nav: document.querySelectorAll('nav a').length,
-  }));
-  /* THESE TWO PINNED UNIT 40's HEADLINE AND LEDE, and the owner replaced both
-     on 2026-09-14 with exact wording for local search. The pin is RE-AIMED, not
-     dropped: it still fails if the hero copy drifts from what the owner
-     approved — which is the whole job — and now records the current approved
-     strings rather than the superseded ones. */
-  ok('the hero headline is the owner-approved local headline',
-     /^Private Investigator & Surveillance Services in Lynchburg and Surrounding Areas$/.test(kept.h1.trim()), kept.h1);
-  ok('the hero supporting line is the owner-approved one',
-     /^Serving private clients, attorneys and insurance companies throughout Greater Lynchburg and Central Virginia\.$/.test(kept.lede.trim()), kept.lede);
-  ok('Contact Us is still there and still wired', kept.contact === true);
-  ok('Call (434) 907-0975 is still there', kept.call === true);
-  ok('the 5-star / DCJS line is still there',
-     /5-Star Rated/.test(kept.stars) && /11-9159/.test(kept.stars), kept.stars);
-  ok('and the navigation is untouched', kept.nav >= 4, String(kept.nav));
-
-  /* NO PUBLIC PRICING INTRODUCED — the standing rule, checked on the rendered
-     page rather than only on the source. */
-  const text = await page.evaluate(() => document.body.innerText);
-  ok('the new cards introduce no dollar figure', !/\$\s?\d/.test(text),
-     (text.match(/\$\s?\d[\d,]*/g) || []).slice(0, 3).join(' '));
-  ok('and no rate-sheet or pricing language',
-     !/rate sheet|pricing sheet|view rates|our rates|price list/i.test(text));
+    notice: (document.querySelector('.notice') || {}).textContent || '',
+    contact: !!document.querySelector('[onclick*="openContact"]'),
+    skip: !!document.querySelector('a.skip[href="#main"]') && !!document.getElementById('main'),
+    h1s: document.querySelectorAll('h1').length,
+    text: document.body.innerText }));
+  ok('the standing notice is kept (no cyber-stalking, nothing from anyone else\'s phone)', /cyber-stalking/.test(kept.notice) && /strictly within the law/.test(kept.notice));
+  ok('Contact Us is still there and still wired', kept.contact);
+  ok('a skip link reaches the main content, and there is exactly one h1', kept.skip && kept.h1s === 1, String(kept.h1s));
+  ok('the homepage introduces no dollar figure', !/\$\s?\d/.test(kept.text), (kept.text.match(/\$\s?\d[\d,]*/g) || []).join(' '));
+  ok('and no rate-sheet or pricing language', !/rate sheet|pricing sheet|view rates|our rates|price list/i.test(kept.text));
   await ctx.close();
 }
 
@@ -2795,8 +2464,8 @@ section('Child Custody is a private service the public form offers');
 
   const services = await page.locator('.card').innerText();
   ok('the service step offers Child Custody', services.includes('Child Custody'));
-  ok('and still offers Surveillance and Process Serving beside it',
-     services.includes('Surveillance') && services.includes('Process Serving'));
+  ok('and still offers the other private answers beside it',
+     services.includes('Spouse / Relationship') && services.includes('Other Private Investigation') && services.includes('Process Serving'));
   ok('it is offered exactly once',
      await page.locator('#opt-custody').count() === 1);
   ok('and no price is attached to it', !/\$\s?\d/.test(services), services);
@@ -2912,16 +2581,19 @@ section('Child Custody on the private door, and the preselect');
   await advance(p2);
   ok('and the picker is still shown, already on that choice',
      await p2.evaluate(() => !!(document.querySelector('#opt-custody input') || {}).checked)
-     && await p2.locator('#opt-surveillance').count() === 1);
+     && await p2.locator('#opt-other').count() === 1);
   ok('the visitor can still change it',
-     await p2.evaluate(async () => { pickSvc('surveillance'); return S.svc === 'surveillance'; }));
+     await p2.evaluate(async () => { pickSvc('other'); return S.svc === 'other'; }));
   await p2.close();
 
   /* THE SET IS DERIVED BY SUBTRACTION, so the two halves are asserted: every
      private service preselects, and no billed one can. A parameter that could
      open the private door on a carrier or legal service would be a route past
      `pickSvc`'s own refusal. */
-  for (const [q, want] of [['surveillance', 'surveillance'], ['process', 'process'],
+  /* `surveillance` was a service of its own until the owner's three-answer
+     question (2026-10-10) folded it into Other; a link still carrying it opens
+     on Other rather than on nothing. */
+  for (const [q, want] of [['surveillance', 'other'], ['process', 'process'], ['relationship', 'relationship'], ['other', 'other'],
                            ['custody', 'custody'], ['CUSTODY', 'custody'],
                            ['claims', null], ['legal', null], ['nonsense', null]]) {
     const p3 = await newPage();
@@ -2979,10 +2651,11 @@ section('Child Custody reads and fits on a phone');
     ok(`at ${w} the page does not scroll sideways`, m.scroll <= m.doc + 0.5, JSON.stringify(m));
     ok(`at ${w} the card clears the 44px tap floor`, m.h >= 44, String(m.h));
     ok(`at ${w} its label is on one line and readable`, m.labelH > 0 && m.labelH < 44, String(m.labelH));
-    /* The BARE door offers all five — the three private services plus the
-       carrier and legal doors. The first draft of this assertion said four and
-       was wrong about the product, not about the page. */
-    ok(`at ${w} the bare door still offers all five services`, m.opts === 5, String(m.opts));
+    /* The BARE door offers all six — the four private answers (Child Custody,
+       Spouse / Relationship, Other, Process Serving) plus the carrier and legal
+       doors. It was five until the owner's private question of 2026-10-10 added
+       Spouse / Relationship and folded Surveillance into Other. */
+    ok(`at ${w} the bare door still offers all six services`, m.opts === 6, String(m.opts));
     ok(`at ${w} Child Custody appears exactly once`, m.custody === 1, String(m.custody));
     await page.close(); await ctx.close();
   }
@@ -3060,7 +2733,7 @@ section('Child Custody page → CTA → private intake, preselected');
   ok('the service step still renders, already on Child Custody',
      await page.evaluate(() => !!(document.querySelector('#opt-custody input') || {}).checked));
   ok('and the visitor can still choose something else',
-     await page.locator('#opt-surveillance').count() === 1
+     await page.locator('#opt-other').count() === 1
      && await page.locator('#opt-process').count() === 1);
   ok('the carrier and legal doors are not offered on this path',
      await page.locator('#opt-claims').count() === 0
@@ -3093,6 +2766,99 @@ section('Child Custody page → CTA → private intake, preselected');
   const rec = await page.locator('.record').innerText();
   ok('the review the client signs displays Child Custody', rec.includes('Child Custody'));
   await page.close();
+}
+
+/* ============ THE PRIVATE QUESTION (owner, 2026-10-10) ============
+   "Add one simple required question near the top of the existing private-client
+   intake: What type of private investigation do you need? Child Custody /
+   Spouse / Relationship / Other Private Investigation … extend the existing
+   service-type field rather than creating duplicate questions." It IS the
+   existing service step: same field (`S.svc`), same payload key (`service`),
+   same `?service=` preselect — three answers in the owner's words, kept through
+   a validation error and a reload, and stored with the submission. */
+section('The private question: three answers, preselected, kept, stored');
+{
+  const qPage = async (q) => {
+    const page = await newPage();
+    await page.goto(BASE + '?assignment=private' + q);
+    await page.waitForTimeout(120);
+    return page;
+  };
+  /* The general door: the question is asked, nothing is chosen, and an empty
+     answer is refused in the question's own words. */
+  {
+    const page = await qPage('');
+    ok('the general private door opens with no answer chosen', await page.evaluate(() => S.svc) === null);
+    await set(page, 'c_name', 'Quinn Visitor');
+    await set(page, 'c_phone', '4345550188');
+    await advance(page);
+    const step = await page.evaluate(() => ({
+      head: ((document.querySelector('#app h2') || {}).textContent || '').trim(),
+      opts: [...document.querySelectorAll('.opt')].map(o => o.id),
+      labels: [...document.querySelectorAll('.opt b')].map(b => b.textContent.trim()),
+      ticked: [...document.querySelectorAll('.opt input')].filter(i => i.checked).length }));
+    ok('the step asks "What type of private investigation do you need?"', step.head === 'What type of private investigation do you need?', step.head);
+    ok("the owner's three answers lead, in the owner's order",
+       JSON.stringify(step.labels.slice(0, 3)) === JSON.stringify(['Child Custody', 'Spouse / Relationship', 'Other Private Investigation']),
+       JSON.stringify(step.labels));
+    ok('no answer is ticked yet', step.ticked === 0, String(step.ticked));
+    ok('the carrier and legal answers are not on the private door', !step.opts.includes('opt-claims') && !step.opts.includes('opt-legal'), JSON.stringify(step.opts));
+    await advance(page);
+    const err = await page.evaluate(() => ((document.querySelector('#err') || {}).textContent || '').trim());
+    ok('Continue with no answer is refused in the question\'s own words', err === 'Please choose the type of private investigation you need.', err);
+    ok('and the visitor is still on the question', (await heading(page)) === 'What type of private investigation do you need?');
+    await page.close();
+  }
+  /* Preselected, changeable, and kept through a reload and a validation error. */
+  {
+    const page = await qPage('&service=relationship');
+    ok('?service=relationship opens on Spouse / Relationship', await page.evaluate(() => S.svc) === 'relationship');
+    await advance(page);    // step 1 is empty: a validation error
+    ok('a validation error on the first step keeps the answer', await page.evaluate(() => S.svc) === 'relationship'
+       && ((await page.evaluate(() => (document.querySelector('#err') || {}).textContent || '')).length > 0));
+    await page.reload(); await page.waitForTimeout(120);
+    ok('a reload keeps it', await page.evaluate(() => S.svc) === 'relationship');
+    await set(page, 'c_name', 'Rae Visitor');
+    await set(page, 'c_phone', '4345550199');
+    await advance(page);
+    ok('the question shows it already ticked', await page.evaluate(() => !!(document.querySelector('#opt-relationship input') || {}).checked));
+    await page.locator('#opt-other').click();
+    await page.waitForTimeout(80);
+    ok('the visitor can change it', await page.evaluate(() => S.svc) === 'other');
+    ok('and the address follows the answer, so a reload keeps the NEW one',
+       new URL(page.url()).searchParams.get('service') === 'other' && new URL(page.url()).searchParams.get('assignment') === 'private', page.url());
+    await page.reload(); await page.waitForTimeout(120);
+    ok('after that reload the answer is still Other', await page.evaluate(() => S.svc) === 'other');
+    await page.close();
+  }
+  /* Stored with the submission, exactly as the owner's portal will read it. */
+  for (const [k, label] of [['relationship', 'Spouse / Relationship'], ['other', 'Other Private Investigation']]) {
+    submitted = null; stored = null;
+    const page = await qPage('&service=' + k);
+    await set(page, 'c_name', 'Sam Stored');
+    await set(page, 'c_phone', '4345550122');
+    await advance(page);
+    await page.evaluate((k) => pickSvc(k), k);
+    await page.waitForTimeout(80);
+    await advance(page);
+    ok(`${label}: the flow is the ordinary private one (no new step, no price)`, await dots(page) === 5);
+    await set(page, 's_name', 'Some Subject');
+    await advance(page);
+    await set(page, 'o_goal', 'Understand what is happening.');
+    await advance(page);
+    await page.locator('[data-k="a_consent"]').check();
+    await set(page, 'a_typed', 'Sam Stored');
+    await sign(page);
+    await advance(page);
+    await page.waitForTimeout(500);
+    ok(`${label}: the intake reached the portal`, stored !== null);
+    ok(`${label}: stored as exactly "${label}" in the existing service field`, stored && stored.service === label, stored && String(stored.service));
+    ok(`${label}: an ordinary private case — no carrier, no claim, not legal`,
+       stored && !stored.carrier && !stored.claim_number && stored.assignment !== 'legal');
+    const rec = await page.locator('.record').innerText();
+    ok(`${label}: the review the client signs names it`, rec.includes(label));
+    await page.close();
+  }
 }
 
 section('The Child Custody door at 1200, 390 and 320');

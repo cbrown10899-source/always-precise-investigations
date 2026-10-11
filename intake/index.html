@@ -227,7 +227,20 @@ const authPreset = id => AUTH_PRESETS.find(a => a.id === id) || null;
 
 /* Labels only. Every one of these used to carry a figure; none does now. */
 const FEES = {
-  surveillance: { label:"Surveillance" },
+  /* THE PRIVATE QUESTION IS THE OWNER'S (2026-10-10): "What type of private
+     investigation do you need? Child Custody / Spouse / Relationship / Other
+     Private Investigation." It EXTENDS this existing service field rather than
+     adding a second question: same picker, same `svc`, same `payload.service`
+     the portal already reads, so the office sees the answer on the submission
+     exactly where it always saw the service. Like Child Custody below, each is
+     a LABEL and nothing more — `steps()` branches only on claims and legal, so
+     no private choice forces a step, a fee, a retainer or different wording.
+
+     "Other Private Investigation" took the place of the old "Surveillance"
+     choice, which named the method rather than the client's situation. The old
+     key is still accepted from a link (`?service=surveillance` opens on Other),
+     so nothing that pointed at it breaks. */
+  other:        { label:"Other Private Investigation" },
   /* A PRIVATE SERVICE LABEL AND NOTHING MORE (owner, 2026-09-14). The portal's
      Quick private intake has offered "Child custody" since Unit 36; the public
      form did not, so a client whose matter is a custody case had to file it as
@@ -236,6 +249,7 @@ const FEES = {
      day, no fee, no retainer, no extra step and no different wording. What it
      changes is the one string the office reads off the submission. */
   custody:      { label:"Child Custody" },
+  relationship: { label:"Spouse / Relationship" },
   process:      { label:"Process Serving" },
   claims:       { label:"Insurance Claim Assignment", billed:true },
   legal:        { label:"Legal Investigation Assignment", billed:true }
@@ -345,8 +359,9 @@ const DOC_REF = (r => /^DOC-[0-9a-f]{32}$/.test(r) ? r : null)(
    visitor can still change it, and an unknown or billed value is ignored —
    which leaves the form exactly as it opens with no parameter at all. */
 const PRIVATE_SVCS = Object.keys(FEES).filter(k => !FEES[k].billed);
+const SVC_ALIAS = { surveillance:"other" };   // a retired key a link may still carry
 const PRIVATE_SVC_PARAM = (k => PRIVATE_SVCS.includes(k) ? k : null)(
-  String(new URLSearchParams(location.search).get("service") || "").toLowerCase());
+  (k => SVC_ALIAS[k] || k)(String(new URLSearchParams(location.search).get("service") || "").toLowerCase()));
 
 const S = { step:0,
             svc:CARRIER_ONLY ? "claims" : LEGAL_ONLY ? "legal" : PRIVATE_SVC_PARAM,
@@ -629,18 +644,22 @@ function view(step){
   </div>`;
 
   if(step==="service") return `<div class="card">
-    <h2>What do you need?</h2>
-    <p class="lead">Select the service. We send you a written fee sheet before anything is agreed &mdash; no surprises and no obligation.</p>
-    <label class="opt" id="opt-surveillance" onclick="pickSvc('surveillance')">
-      <input type="radio" name="svc" ${S.svc==="surveillance"?"checked":""}><b>Surveillance</b>
-      <div class="desc">Documented surveillance for personal or legal matters. We confirm the fee with you in writing before any work begins.</div>
-    </label>
+    <h2>${PRIVATE_ONLY ? "What type of private investigation do you need?" : "What do you need?"}</h2>
+    <p class="lead">${PRIVATE_ONLY ? "Choose the one closest to your situation &mdash; you can describe the details later." : "Select the service."} We send you a written fee sheet before anything is agreed &mdash; no surprises and no obligation.</p>
     <label class="opt" id="opt-custody" onclick="pickSvc('custody')">
       <input type="radio" name="svc" ${S.svc==="custody"?"checked":""}><b>${FEES.custody.label}</b>
       <div class="desc">Documentation of conditions, conduct and third-party contact relevant to custody proceedings. We confirm the fee with you in writing before any work begins.</div>
     </label>
+    <label class="opt" id="opt-relationship" onclick="pickSvc('relationship')">
+      <input type="radio" name="svc" ${S.svc==="relationship"?"checked":""}><b>${FEES.relationship.label}</b>
+      <div class="desc">Questions about a spouse or partner. Discreet, documented observation &mdash; we confirm the fee with you in writing before any work begins.</div>
+    </label>
+    <label class="opt" id="opt-other" onclick="pickSvc('other')">
+      <input type="radio" name="svc" ${S.svc==="other"?"checked":""}><b>${FEES.other.label}</b>
+      <div class="desc">Surveillance, locating a person, background research or another private matter. We confirm the fee with you in writing before any work begins.</div>
+    </label>
     <label class="opt" id="opt-process" onclick="pickSvc('process')">
-      <input type="radio" name="svc" ${S.svc==="process"?"checked":""}><b>Process Serving</b>
+      <input type="radio" name="svc" ${S.svc==="process"?"checked":""}><b>${FEES.process.label}</b>
       <div class="desc">Process service is available throughout Greater Lynchburg and nearby Central Virginia communities, with additional locations considered based on distance and availability. We confirm the fee with you before we go.</div>
     </label>
     ${PRIVATE_ONLY ? "" : `<label class="opt" id="opt-claims" onclick="pickSvc('claims')">
@@ -1098,7 +1117,22 @@ function pickSvc(k){
   // too means a stale link or a hand-typed value cannot reach them either.
   if(!FEES[k]) return;
   if(PRIVATE_ONLY && (k === "claims" || k === "legal")) return;
-  capture(); S.svc=k; render();
+  capture(); S.svc=k; keepSvcInUrl(); render();
+}
+/* THE CHOICE SURVIVES A REFRESH BY LIVING IN THE ADDRESS, not in storage. The
+   cards open this page with `?service=`, and the form reads it on load; a
+   visitor who changes their answer has the address follow, so reloading the
+   page opens on what they last chose. Nothing they TYPED is kept anywhere —
+   only the service key, which is already what the link carried. A billed
+   service (claims, legal) has its own door and is never written here. */
+function keepSvcInUrl(){
+  try {
+    if(CARRIER_ONLY || LEGAL_ONLY || !history.replaceState) return;
+    const u = new URL(location.href);
+    if(S.svc && PRIVATE_SVCS.includes(S.svc)) u.searchParams.set("service", S.svc);
+    else u.searchParams.delete("service");
+    history.replaceState(history.state, "", u.pathname + u.search + u.hash);
+  } catch(e) {}
 }
 function pickLsvc(k){ if(!legalSvcById(k)) return; capture(); S.lsvc=k; render(); }
 function pickAuth(k){ capture(); val.z_auth=k; render(); }
@@ -1135,7 +1169,7 @@ function validate(step){
     }
     else if(!(val.c_phone||"").trim() && !(val.c_email||"").trim()) return "Add a phone number or email so we can reach you.";
   }
-  if(step==="service" && !S.svc) return "Please choose a service.";
+  if(step==="service" && !S.svc) return PRIVATE_ONLY ? "Please choose the type of private investigation you need." : "Please choose a service.";
   if(step==="lsvc" && !S.lsvc) return "Please choose the service the firm needs.";
   if(step==="firm"){
     if(!(val.lf_firm||"").trim()) return "Please name the law firm.";

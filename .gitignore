@@ -10,3 +10,6 @@ _site/
 # site or the Worker, and nothing should be able to commit it by accident.
 .wrangler/
 portal/ceo-gate-report.json
+
+# Python bytecode from importing build-locations.py
+__pycache__/

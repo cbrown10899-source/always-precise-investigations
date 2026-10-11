@@ -18,7 +18,7 @@
 <meta name="twitter:description" content="Licensed private investigator serving Greater Lynchburg and Central Virginia since 2014. Surveillance, background checks, infidelity and custody cases.">
 <meta name="twitter:image" content="https://alwayspreciseinvestigations.net/assets/banner1.webp">
 <meta name="robots" content="max-image-preview:large">
-<meta name="theme-color" content="#0e1a2c">
+<meta name="theme-color" content="#10243b">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%230e1a2c'/%3E%3Ctext x='32' y='45' font-family='Georgia,serif' font-size='40' font-weight='700' fill='%233d97ad' text-anchor='middle'%3EA%3C/text%3E%3C/svg%3E">
 <script type="application/ld+json">
 {
@@ -88,434 +88,292 @@
   }
 }
 </script>
+<link rel="stylesheet" href="/assets/site.css?v=1">
 <style>
-  :root{
-    --navy:#13233c; --navy-2:#1a2f4e; --card:#1d3251; --line:#31517a;
-    --ink:#dfe6ef; --muted:#9fb0c4; --white:#ffffff;
-    --teal:#3d97ad; --teal-2:#4fb3cb; --gold:#e6b54a; --red:#c8483f;
+  /* THE HOMEPAGE'S OWN LAYOUT. Header, footer, type, colour and the sticky phone
+     bar come from /assets/site.css, shared with every public page. Approved
+     copy and order: the owner's redesign package of 2026-10-10. */
+
+  /* ---- hero */
+  .home-hero{background:radial-gradient(ellipse at 90% 15%,rgba(60,83,105,.95) 0%,transparent 58%),
+    linear-gradient(130deg,var(--navy-2),var(--navy-3));color:#fff;padding:72px 0 64px}
+  .home-hero h1{color:#fff;font-size:clamp(36px,5.6vw,62px);max-width:720px;margin-bottom:20px}
+  .home-hero .lede{font-size:1.12rem;line-height:1.7;color:var(--on-navy);max-width:600px}
+  .hero-actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:28px}
+  .hero-actions .btn{min-height:54px;font-size:1.04rem;padding:15px 22px}
+  .hero-support{margin-top:14px;font-size:.95rem;color:var(--on-navy)}
+  .hero-trust{margin-top:22px;font-size:.88rem;color:var(--on-navy-dim);letter-spacing:.01em}
+
+  /* ---- sections */
+  .sec{padding:64px 0}
+  .sec h2{font-size:clamp(30px,4.2vw,42px);margin-bottom:10px}
+  .sec .sub{color:var(--muted);font-size:1.04rem;max-width:640px;margin-bottom:28px}
+  .sec-sand{background:var(--sand)}
+  .sec-paper{background:var(--paper)}
+
+  /* ---- the two photographic cards. EQUAL SIZE, ONE ANCHOR EACH: the whole card
+     is one link, one tab stop and one destination, and every word on it is
+     real HTML above the photograph — nothing is baked into the image, and
+     nothing depends on the image loading. */
+  .art-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px}
+  @media (min-width:1000px){
+    .private-layout{display:grid;grid-template-columns:minmax(240px,1fr) minmax(0,2.1fr);gap:44px;align-items:center}
   }
-  *{margin:0;padding:0;box-sizing:border-box;}
-  html{scroll-behavior:smooth;}
-  body{font-family:Georgia,'Times New Roman',serif;color:var(--ink);background:var(--navy);line-height:1.7;-webkit-text-size-adjust:100%;}
-  h1,h2,h3,.sans{font-family:'Segoe UI',Arial,Helvetica,sans-serif;}
-  h1,h2,h3{line-height:1.18;color:var(--white);}
-  a{color:var(--teal-2);}
-  img{max-width:100%;display:block;}
-  .wrap{max-width:1040px;margin:0 auto;padding:0 20px;}
+  .art{position:relative;display:block;aspect-ratio:3/4;width:100%;border-radius:16px;overflow:hidden;
+    text-decoration:none;color:#fff;background:var(--navy-2);box-shadow:0 10px 30px rgba(16,36,59,.18);
+    transition:transform .18s ease, box-shadow .18s ease}
+  /* THE PHOTOGRAPH IS ONE CUSTOM PROPERTY PER CARD, as the Unit 40 cards were —
+     installing the approved photo is that url() and a manifest line, and the
+     layout does not move. Every url() carries ?v= because /assets/* is cached for
+     seven days. Under the url() sits a navy-slate gradient, so a missing file is
+     a dark card with readable text, never a broken one. */
+  .art-custody{--art:url('/assets/child-custody-photo.webp?v=1')}
+  .art-relationship{--art:url('/assets/spouse-relationship-photo.webp?v=1')}
+  .art-img{position:absolute;inset:0;background:var(--art) center/cover no-repeat,linear-gradient(150deg,#8b9aa3 0%,#3a566c 55%,#12263b 100%)}
+  .art-relationship .art-img{background:var(--art) center/cover no-repeat,linear-gradient(150deg,#7c8389 0%,#33495e 55%,#12263b 100%)}
+  /* The bottom navy gradient the brief asks for, a separate layer above the
+     photograph: the text's contrast is the overlay's, whatever is behind it. */
+  .art-img::after{content:"";position:absolute;inset:0;
+    background:linear-gradient(180deg,rgba(7,19,32,0) 30%,rgba(7,19,32,.55) 55%,rgba(7,19,32,.94) 100%)}
+  /* The copy carries its own soft navy fade, so every line of it — the gold kicker
+     included — sits on a dark ground however tall the copy grows. On a phone the
+     copy fills more of the card and the kicker rose to where the bottom gradient
+     is thinnest: measured 0.7:1 over the real photographs at 390px. With this,
+     the weakest line on either card is 5.2:1 at the lightest pixel behind it, at
+     every width from 320 to 1280 (intake suite: the redesign contrast section). */
+  .art-copy{--fade:56px;position:absolute;left:0;right:0;bottom:0;padding:calc(var(--fade) + 8px) 26px 24px;
+    background:linear-gradient(180deg,rgba(7,19,32,0) 0,rgba(7,19,32,.78) var(--fade))}
+  .art-copy .kicker{color:var(--gold);margin-bottom:8px}
+  .art-title{display:block;font-family:var(--serif);font-size:clamp(28px,3.4vw,40px);line-height:1.1;color:#fff}
+  .art-line{display:block;margin-top:8px;font-size:1rem;color:#e4ebf0}
+  .art-go{display:flex;justify-content:space-between;align-items:center;margin-top:18px;padding-top:14px;
+    border-top:1px solid rgba(255,255,255,.35);font-weight:800;color:var(--gold);font-size:1rem}
+  .art:hover{transform:translateY(-3px);box-shadow:0 16px 38px rgba(16,36,59,.28)}
+  .art:focus-visible{outline:3px solid var(--gold);outline-offset:4px}
 
-  .notice{background:#1a2f4e;border-bottom:1px solid var(--line);color:var(--ink);font-family:'Segoe UI',Arial,sans-serif;font-size:.82rem;line-height:1.5;text-align:center;padding:10px 18px;}
-  .notice b{color:var(--gold);}
-  header{background:rgba(20,34,56,.97);backdrop-filter:blur(6px);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20;}
-  header .wrap{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 20px;flex-wrap:wrap;}
-  header img{height:34px;width:auto;}
-  .brand-badge{background:#fff;border-radius:12px;padding:9px 16px;display:inline-flex;align-items:center;box-shadow:0 1px 6px rgba(0,0,0,.35);}
-  .brand-badge img{height:58px;width:auto;}
-  nav{display:flex;align-items:center;gap:22px;flex-wrap:wrap;}
-  nav a{font-family:'Segoe UI',Arial,sans-serif;color:var(--ink);text-decoration:none;font-size:.86rem;letter-spacing:.06em;text-transform:uppercase;}
-  nav a:hover{color:var(--teal-2);}
-  .call-btn{font-family:'Segoe UI',Arial,sans-serif;font-weight:700;text-decoration:none;background:var(--teal);color:var(--white);padding:11px 20px;border-radius:5px;white-space:nowrap;letter-spacing:.03em;transition:background .15s;}
-  .call-btn:hover{background:var(--teal-2);}
-  nav .call-btn{color:var(--white);}
+  /* ---- other services: smaller and visually subordinate */
+  .minor-head{font-family:var(--sans);font-size:1.05rem;font-weight:800;margin:44px 0 14px;color:var(--ink)}
+  .minor-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+  .minor{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:20px 22px}
+  .minor h3{font-family:var(--sans);font-size:1.12rem;font-weight:800;margin-bottom:4px}
+  .minor h3 a{color:var(--ink);text-decoration:none}
+  .minor p{color:var(--muted);font-size:.95rem;margin-bottom:10px}
+  .minor-links{display:flex;flex-wrap:wrap;gap:4px 18px}
+  .minor-links a{display:inline-flex;align-items:center;min-height:44px;font-weight:700;font-size:.95rem;text-decoration:none}
+  .minor-links .go{color:var(--gold-ink)}
+  .minor-links .sub2{color:var(--navy-2);text-decoration:underline;text-underline-offset:3px}
 
-  .hero{position:relative;color:var(--white);text-align:center;padding:96px 20px 92px;background:linear-gradient(180deg,rgba(19,35,60,.55),rgba(14,26,46,.82)),url('assets/banner1.webp') center/cover no-repeat;}
-  .hero h1{font-size:clamp(1.9rem,5vw,3rem);max-width:860px;margin:0 auto 16px;}
-  .hero .tag{color:var(--teal-2);font-family:'Segoe UI',Arial,sans-serif;letter-spacing:.14em;text-transform:uppercase;font-size:.9rem;margin-bottom:20px;}
-  .hero p{max-width:640px;margin:0 auto 30px;font-size:1.12rem;color:#e6ebf2;}
-  /* THE TRUST LINE IS THE HERO'S QUIET THIRD LINE (owner, 2026-09-14). It pays
-     for its own space out of the supporting line's 30px bottom margin rather
-     than adding a second one, so the gap down to the CTA cards is UNCHANGED and
-     the hero grows by the line itself rather than by a line plus a margin.
-     No badge, box or icon — it is smaller, dimmer text and nothing else. */
-  .hero p.hero-lede{margin-bottom:8px;}
-  /* THE INK IS #ccd6e1 AND IT WAS MEASURED AGAINST PAINTED PIXELS, because the
-     hero is a gradient over a PHOTOGRAPH and no computed style can say what is
-     behind the glyphs. Measured over the text's own rectangle (a Range, not the
-     640px <p> box -- the sentence is short and centred, so the paragraph box
-     samples hundreds of pixels the text never covers), taking the LIGHTEST
-     pixel, which is the one light text has least contrast against:
+  /* ---- how it works */
+  .steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin-top:26px;list-style:none}
+  .steps li{background:var(--paper);border-radius:12px;padding:24px 22px;text-align:center}
+  .steps .num{width:40px;height:40px;border:1.5px solid var(--gold-ink);color:var(--gold-ink);border-radius:50%;
+    display:grid;place-items:center;margin:0 auto 12px;font-weight:800}
+  .steps b{display:block;font-family:var(--serif);font-weight:400;font-size:1.3rem;color:var(--ink);margin-bottom:6px}
+  .steps span{display:block;color:var(--muted);font-size:.95rem}
 
-       --muted #9fb0c4   3.45:1 @1280   4.01:1 @390   FAILS AA
-       #b6c3d2           4.27          4.96          FAILS at 1280
-       #c3cedb           4.80          5.57          clears by 0.30 -- thin
-       #ccd6e1           5.20          6.04          <= chosen
-       #e6ebf2 (lede)    6.38          7.42          no separation at all
+  /* ---- more services, reviews, about, areas, contact */
+  .svc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+  .svc{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+  .svc h3{font-family:var(--sans);font-size:1.05rem;font-weight:800;margin-bottom:4px}
+  .svc p{color:var(--muted);font-size:.95rem}
+  .svc a{font-weight:700}
+  .reviews{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+  .review{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:22px}
+  .rstars{color:var(--gold-ink);letter-spacing:2px}
+  .verified{font-size:.82rem;color:var(--muted);letter-spacing:0}
+  .verified a{color:inherit}
+  .review blockquote{font-family:var(--serif);font-size:1.08rem;margin:12px 0 14px;color:var(--ink)}
+  .review .who{font-weight:800}
+  .review .when{color:var(--muted);font-size:.85rem}
+  .reviews-cta{margin-top:22px}
+  .about-flags{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-top:22px}
+  .flag{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:14px 18px}
+  .flag b{display:block}
+  .flag span{color:var(--muted);font-size:.92rem}
+  .areas-list{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}
+  .areas-list a{background:var(--paper);border:1px solid var(--line);border-radius:999px;padding:9px 16px;min-height:44px;
+    display:inline-flex;align-items:center;text-decoration:none;font-size:.92rem;font-weight:600;color:var(--navy-2)}
+  .areas-list a.all{background:var(--navy);color:#fff;border-color:var(--navy)}
+  .contact{background:var(--navy);color:var(--on-navy);text-align:center}
+  .contact h2{color:#fff}
+  .contact p{max-width:600px;margin:0 auto 18px}
+  .contact .phone{font-size:clamp(28px,5vw,40px);font-weight:800;margin:8px 0 2px}
+  .contact .phone a{color:#fff;text-decoration:none}
+  .contact .email a{color:var(--gold)}
+  .contact-actions{display:flex;flex-wrap:wrap;justify-content:center;gap:12px;margin-top:22px}
+  .contact .btn-ghost{color:#fff;border-color:rgba(255,255,255,.6)}
+  .contact .btn-ghost:hover{background:rgba(255,255,255,.08)}
 
-     So the SIZE carries most of the hierarchy (15.2px against the lede's
-     17.92px) and the colour only 20% of the lede's luminance -- dimmer text
-     than this cannot clear AA over this photograph at this size. Do not dim it
-     further without re-running the measurement; a brighter photograph would
-     eat the margin. */
-  .hero p.hero-trust{font-size:.95rem;color:#ccd6e1;margin-bottom:30px;}
-  .hero .call-btn{font-size:1.15rem;padding:15px 30px;display:inline-block;}
-  .hero .stars{color:var(--gold);letter-spacing:3px;margin-top:22px;font-size:1.1rem;}
-  .hero .stars small{display:block;color:var(--muted);font-family:'Segoe UI',Arial,sans-serif;letter-spacing:.08em;font-size:.78rem;text-transform:uppercase;margin-top:4px;}
+  /* ---- the contact message dialog (unchanged behaviour, new look) */
+  .modal-back{position:fixed;inset:0;background:rgba(6,12,22,.74);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;z-index:60;overflow:auto}
+  .modal-back[hidden]{display:none}
+  .modal{background:var(--paper);border-radius:14px;max-width:460px;width:100%;padding:24px;color:var(--ink)}
+  .modal h3{font-size:1.5rem;margin-bottom:4px}
+  .modal .msub{color:var(--muted);font-size:.92rem;margin-bottom:16px}
+  .modal .x{float:right;background:none;border:none;color:var(--muted);font-size:1.8rem;line-height:1;cursor:pointer;min-width:44px;min-height:44px}
+  .field{display:block;margin-bottom:12px}
+  .field span{display:block;font-size:.85rem;font-weight:700;margin-bottom:5px}
+  .field input,.field textarea{width:100%;font-size:16px;font-family:var(--sans);background:#fff;color:var(--ink);border:1px solid #b9b1a3;border-radius:8px;padding:11px 12px}
+  .field textarea{min-height:94px;resize:vertical}
+  .modal .send{width:100%}
+  #c-status{font-size:.92rem;margin-top:12px;text-align:center}
 
-  section{padding:64px 0;border-top:1px solid var(--line);}
-  .eyebrow{font-family:'Segoe UI',Arial,sans-serif;color:var(--teal-2);letter-spacing:.16em;text-transform:uppercase;font-size:.78rem;margin-bottom:10px;}
-  section h2{font-size:clamp(1.5rem,3.6vw,2rem);margin-bottom:14px;}
-  .lede{max-width:720px;color:var(--ink);margin-bottom:34px;font-size:1.06rem;}
-
-  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px;}
-  .card{background:var(--card);border:1px solid var(--line);border-top:3px solid var(--teal);border-radius:6px;padding:22px 22px 24px;}
-  .card h3{font-size:1.08rem;margin-bottom:7px;color:var(--white);}
-  .card p{color:var(--muted);font-size:.96rem;}
-
-  .band{background:var(--navy-2);}
-  .reviews{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px;}
-  .review{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:22px;}
-  .review .rstars{color:var(--gold);letter-spacing:2px;font-size:1.05rem;}
-  .review blockquote{font-size:1.04rem;color:var(--ink);margin:12px 0 16px;}
-  .review .who{font-family:'Segoe UI',Arial,sans-serif;font-weight:700;color:var(--white);}
-  .review .when{font-family:'Segoe UI',Arial,sans-serif;color:var(--muted);font-size:.82rem;}
-  .verified{color:var(--teal-2);font-family:'Segoe UI',Arial,sans-serif;font-size:.8rem;letter-spacing:.05em;}
-
-  .about-flags{display:flex;gap:16px;flex-wrap:wrap;margin-top:26px;}
-  .flag{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:14px 18px;font-family:'Segoe UI',Arial,sans-serif;flex:1 1 180px;}
-  .flag b{display:block;color:var(--white);font-size:1.05rem;}
-  .flag span{color:var(--muted);font-size:.9rem;}
-
-  .cta{text-align:center;background:var(--navy-2);}
-  .cta h2{margin-bottom:8px;}
-  .cta p{max-width:560px;margin:0 auto 26px;color:var(--ink);}
-  .cta .phone{font-family:'Segoe UI',Arial,sans-serif;font-size:clamp(1.7rem,5vw,2.4rem);font-weight:800;margin:6px 0 4px;}
-  .cta .phone a{color:var(--white);text-decoration:none;}
-  .cta .email a{color:var(--teal-2);font-family:'Segoe UI',Arial,sans-serif;}
-  .cta .call-btn{display:inline-block;margin-top:22px;font-size:1.1rem;padding:14px 30px;}
-
-  footer{background:#0a1420;color:var(--muted);text-align:center;font-family:'Segoe UI',Arial,sans-serif;font-size:.88rem;padding:34px 20px;border-top:1px solid var(--line);}
-  footer .fname{color:var(--white);font-weight:700;font-size:1.02rem;letter-spacing:.04em;}
-  footer .lic{color:var(--gold);}
-  footer a{color:var(--teal-2);text-decoration:none;}
-  footer .row{margin:6px 0;}
-
-  button.call-btn{border:0;cursor:pointer;font-family:'Segoe UI',Arial,sans-serif;font-size:1rem;}
-  .btn-outline{background:transparent;border:1.5px solid var(--teal);color:#fff;font-family:'Segoe UI',Arial,sans-serif;font-weight:700;text-decoration:none;padding:13px 26px;border-radius:5px;display:inline-block;cursor:pointer;transition:background .15s;}
-  .btn-outline:hover{background:rgba(61,151,173,.18);}
-  /* ---------------------------------------- UNIT 40: the hero CTA cards */
-  /* THREE EQUAL CARDS, one row on a desktop and one column on a phone. The
-     grid is `1fr` per card rather than fixed widths, so "consistent height and
-     width" is a property of the layout rather than three numbers kept in step
-     by hand. */
-  .cta-cards{list-style:none;margin:34px auto 30px;padding:0;max-width:1020px;
-    display:grid;grid-template-columns:repeat(3,1fr);gap:18px;text-align:left;}
-  .cta-card{position:relative;display:flex;min-height:236px;border-radius:12px;
-    overflow:hidden;text-decoration:none;color:var(--white);
-    border:1px solid var(--line);background:var(--navy-2);
-    transition:transform .16s ease, border-color .16s ease, box-shadow .16s ease;}
-  /* ?v= IS NOT DECORATION — IT IS REQUIRED, AND THIS COST A ROUND TO LEARN.
-     `_headers` caches `/assets/*` for SEVEN DAYS (max-age=604800), and these
-     three files are replaced IN PLACE at stable URLs. On 2026-08-22
-     card-insurance.webp was three different photographs at one URL inside an
-     hour, and the owner correctly reported the site as not updating: every
-     deploy was green, index.html is `no-cache` so the HTML was current, and
-     the browser went on serving the FIRST image it had cached. A stale asset
-     behind fresh markup looks exactly like a failed deploy.
-
-     BUMP THE NUMBER WHENEVER ONE OF THESE FILES CHANGES. Renaming the file
-     would work too but costs a manifest line as well; the query string is one
-     character and the manifest is untouched. A test fails if any `--cta-art`
-     loses its version token. */
-
-  /* THE ART IS ONE CUSTOM PROPERTY PER CARD, and that is the whole swap.
-     Unit 40 shipped with three locally authored SVG motifs as placeholders and
-     was built so photographs could replace them WITHOUT the layout moving. On
-     2026-08-22 that is exactly what happened: three owner-supplied photographs
-     went in, and the change was these three url()s, three lines in the deploy
-     manifest, and nothing else. The sizing, the grid, the text and the tests
-     did not move. Keep it that way — a per-card background-position or a
-     bespoke height for one card would end that property. */
-  .cta-ins{--cta-art:url('assets/card-insurance.webp?v=2');}
-  .cta-leg{--cta-art:url('assets/card-legal.webp?v=2');}
-  .cta-pri{--cta-art:url('assets/card-private.webp?v=2');}
-  .cta-art{position:absolute;inset:0;background:var(--cta-art) center/cover no-repeat;}
-  /* THE DARK OVERLAY IS A SEPARATE LAYER, above the art and below the text, so
-     the contrast the text relies on does not depend on which image is behind
-     it — including no image at all.
-
-     IT IS NEUTRAL, NOT NAVY, and that was measured rather than chosen. The
-     first version was rgba(19,35,60,.62)/rgba(12,22,38,.88) and it tinted every
-     photograph blue whatever the photograph looked like (owner, 2026-08-22:
-     the cards should "not be so blue hued"). Neutral black at the SAME alpha
-     is darker than navy, so going neutral both removed the cast and bought
-     contrast headroom — which then paid for lightening it as well.
-
-     Measured, white title against the LIGHTEST pixel behind it, on the two
-     photographs that existed at the time:
-
-       navy    .62/.88   5.87 / 6.07   the blue cast
-       neutral .58/.86   6.58 / 6.78   no cast, same darkness
-       neutral .50/.82   5.16 / 5.25   <- this one
-       neutral .46/.80   4.53 / 4.66   clears 4.5 by 0.03 — too thin
-
-     .46/.80 was rejected on purpose: a later photograph one shade brighter
-     would put it under AA, and the failure would be invisible. Do not lighten
-     this without re-running the measurement over ALL THREE cards. */
-  .cta-art::after{content:"";position:absolute;inset:0;
-    background:linear-gradient(180deg,rgba(6,8,11,.50),rgba(4,6,9,.82));}
-  .cta-body{position:relative;display:flex;flex-direction:column;align-items:flex-start;
-    gap:10px;padding:22px 20px;width:100%;}
-  .cta-title{font-family:Georgia,'Times New Roman',serif;font-size:1.34rem;line-height:1.3;
-    font-weight:700;color:var(--white);}
-  /* THE LABEL SIZE IS A CONTRAST DECISION, not a typographic one, and it was
-     measured. White on --teal is 3.37:1 — the site's own button colour, on
-     every button it has — which clears WCAG AA for LARGE text (3:1) and does
-     not clear it for normal text (4.5:1). Large, for bold, starts at 18.66px.
-     At the .95rem this began as, 15.2px, the label was below that line and
-     therefore below AA. It is 1.18rem = 18.88px now, so the rule that applies
-     is the one it passes — WITHOUT inventing a teal this site does not
-     already use, which the brief's "restrained navy/teal/gold" rules out.
-     The title moved with it so the hierarchy is unchanged.
-
-     The 3.37:1 itself is site-wide and NOT this unit's to change: --teal on
-     white is every button on the page. It is reported to the owner rather
-     than fixed here by darkening one control out of step with the rest. */
-  /* CENTRED, and still low. `margin-top:auto` is what keeps it at the foot of
-     the card; `align-self:center` is what centres it. They are different axes:
-     .cta-body is a flex COLUMN with align-items:flex-start, so the button is
-     shrink-wrapped to its label and the horizontal one is the CROSS axis.
-     text-align would do nothing here — the box is already only as wide as its
-     text. Owner, 2026-08-22. */
-  .cta-go{margin-top:auto;align-self:center;background:var(--teal);color:var(--white);
-    font-family:'Segoe UI',Arial,sans-serif;font-weight:700;font-size:1.18rem;
-    letter-spacing:.03em;padding:10px 20px;border-radius:5px;
-    transition:background .15s;}
-  .cta-card:hover{transform:translateY(-2px);border-color:var(--teal);
-    box-shadow:0 10px 26px rgba(6,14,26,.45);}
-  .cta-card:hover .cta-go{background:var(--teal-2);}
-  /* VISIBLE FOCUS, and it has to survive a dark card — gold on navy rather
-     than the teal it sits next to. */
-  .cta-card:focus-visible{outline:3px solid var(--gold);outline-offset:3px;
-    border-color:var(--gold);}
-  @media (prefers-reduced-motion:reduce){
-    .cta-card,.cta-go{transition:none;}
-    .cta-card:hover{transform:none;}
-  }
-
-  .hero .btn-row{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;}
-  .hero .btn-row .call-btn,.hero .btn-row .btn-outline{font-size:1.1rem;padding:14px 28px;}
-
-  .modal-back{position:fixed;inset:0;background:rgba(6,12,22,.74);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;z-index:60;overflow:auto;}
-  .modal-back[hidden]{display:none;}
-  .modal{background:var(--card);border:1px solid var(--line);border-top:3px solid var(--teal);border-radius:8px;max-width:460px;width:100%;padding:24px;}
-  .modal h3{font-size:1.35rem;margin-bottom:4px;}
-  .modal .sub{color:var(--muted);font-family:'Segoe UI',Arial,sans-serif;font-size:.9rem;margin-bottom:16px;}
-  .modal .x{float:right;background:none;border:none;color:var(--muted);font-size:1.6rem;line-height:1;cursor:pointer;}
-  .field{display:block;margin-bottom:12px;font-family:'Segoe UI',Arial,sans-serif;}
-  .field span{display:block;font-size:.82rem;color:var(--ink);margin-bottom:5px;}
-  .field input,.field textarea{width:100%;font-size:16px;font-family:'Segoe UI',Arial,sans-serif;background:var(--navy);color:#fff;border:1px solid var(--line);border-radius:6px;padding:11px 12px;}
-  .field textarea{min-height:94px;resize:vertical;}
-  .field input:focus,.field textarea:focus{outline:2px solid var(--teal);}
-  .modal .send{width:100%;background:var(--teal);color:#fff;font-family:'Segoe UI',Arial,sans-serif;font-weight:700;font-size:1rem;border:0;border-radius:6px;padding:13px;cursor:pointer;margin-top:4px;}
-  .modal .send:hover{background:var(--teal-2);}
-  .modal .send:disabled{opacity:.6;cursor:default;}
-  #c-status{font-family:'Segoe UI',Arial,sans-serif;font-size:.9rem;margin-top:12px;text-align:center;color:var(--ink);}
-  #c-status b{color:var(--teal-2);}
-
-  @media (max-width:640px){
-    nav{gap:14px;font-size:.8rem;width:100%;justify-content:center;order:3;}
-    header .wrap{justify-content:center;}
-    section{padding:52px 0;}
-  }
-.areas-list{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}
-.areas-list a{background:var(--card);border:1px solid var(--line);border-radius:999px;padding:8px 15px;
-text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;font-size:14px;color:var(--teal-2)}
-.areas-list a:hover{border-color:var(--teal)}
-.areas-list a.all{background:var(--teal);color:#08131f;font-weight:700}
-.verified a{color:inherit;text-decoration:none;border-bottom:1px dotted currentColor}
-.reviews-cta{text-align:center;margin-top:22px}
-.gbtn{display:inline-block;background:var(--card);border:1px solid var(--line);border-radius:6px;
-padding:11px 22px;text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;font-size:15px}
-.gbtn:hover{border-color:var(--teal)}
-
-  /* ------------------------- UNIT 40: the CTA cards on a narrower screen.
-     AT THE END OF THE STYLESHEET, deliberately. This file has one earlier
-     `max-width:640px` block, and a rule written above the base it overrides is
-     dead — a source-order casualty this project has recorded four times in the
-     portal. These sit after everything they override.
-
-     TWO STEPS, NOT ONE. Three cards side by side stop being readable well
-     before a phone: at tablet widths they go to two, and only then to one. A
-     single jump straight to a column wastes an iPad, and a single jump to
-     three-across squeezes the titles. */
+  @media (prefers-reduced-motion:reduce){.art{transition:none}.art:hover{transform:none}}
   @media (max-width:900px){
-    .cta-cards{grid-template-columns:repeat(2,1fr);max-width:680px;}
+    .steps{grid-template-columns:minmax(0,1fr)}
   }
-  @media (max-width:640px){
-    /* ONE COLUMN, in the owner's order — Private, Legal, Insurance (2026-09-15,
-       superseding the Insurance-first order of 2026-08-22) — which is the
-       SOURCE order, so nothing here reorders anything. Reordering with flex
-       `order` would put the visual order and the focus order out of step, which
-       is the defect rather than the fix. `minmax(0,1fr)` rather than `1fr`: a
-       grid track's default minimum is its content, which is how a long title
-       pushes a card wider than the screen and starts the page scrolling
-       sideways. */
-    .cta-cards{grid-template-columns:minmax(0,1fr);max-width:420px;gap:14px;
-      margin:20px auto 24px;}
-    /* 13B — COMPACTION, MEASURED. 186 → 155 is 16.7%, inside the owner's
-       15–20%. The content stack is 14+14 padding + a 25px title + the 10px gap
-       + a 50px button = 113, so 155 leaves 42px of photograph showing above the
-       title rather than a cramped card: `margin-top:auto` on the button means
-       the free space collects between the title and the button, which is where
-       the art is meant to read. Do not take this below ~150 without
-       re-measuring — under it the free space closes and the card stops looking
-       like a photograph. */
-    .cta-card{min-height:155px;}
-    .cta-body{padding:14px 16px;}
-    /* 1.2rem = 19.2px, still above the 18.66px bold large-text line the
-       contrast decision above depends on. Shrinking this below it would put
-       the label back under the 4.5:1 rule it cannot meet. */
-    .cta-title{font-size:1.2rem;}
-    /* 13C — THE BUTTON'S WEIGHT CAME OFF ITS WIDTH, NOT ITS TYPE.
-       The owner reported these as "visually oversized on phones" and named a
-       50–54px height. MEASURED FIRST, and the two do not agree: the phone
-       button was already at the 44px floor — shorter than the desktop's 52.1 —
-       while spanning 316 of a 350px card as a full-bleed cyan bar. A bar that
-       wide reads as oversized whatever its height, so the width is what was
-       carrying the complaint.
-
-       So it is shrink-wrapped with real horizontal padding, exactly as it is on
-       a desktop, and set to the owner's own 50px. Area goes 316×44 = 13,904px²
-       to about 157×50 = 7,850px² — roughly halved — while the target grows
-       taller, stays well clear of Apple's 44px floor, keeps the cyan and keeps
-       the 18.88px bold type the AA decision above depends on. The font size is
-       NOT a lever here and never will be: below 18.66px bold, white on --teal
-       falls under the 4.5:1 rule it cannot meet.
-
-       `text-align:center` is kept although the box now shrink-wraps: it costs
-       nothing and it is what keeps the label centred if this ever goes
-       full-width again. */
-    .cta-go{text-align:center;min-height:50px;line-height:24px;padding:13px 26px;}
-    /* 13D — GETTING TO THE FIRST ACTION SOONER, by spacing only. Nothing is
-       removed, no tap target drops below 44, the logo's own pixels are
-       untouched — the white badge's frame is thinner, not the artwork inside
-       it — and the navigation keeps every item it had. */
-    header .wrap{padding:8px 20px;gap:10px;}
-    .brand-badge{padding:6px 14px;}
-    /* THE NAV ROW GAP WAS TIGHTENED AND THEN PUT BACK, and the measurement is
-       why. 14 → 10 saved 8px of header, and it bought that by bringing rows of
-       23px-tall text links — already under the 44px floor, which is
-       pre-existing and not this unit's to fix — 4px closer together. The brief
-       forbids reducing tap targets; shrinking the space BETWEEN sub-floor
-       targets is the same defect wearing a different name. 8px is not worth
-       it. The 18px this block does save comes from the wrap's own padding and
-       the badge's frame, neither of which is anything a thumb aims at. */
-    /* The hero's 96/92 is a desktop figure and it was the single largest thing
-       between the header and the first card on a phone. The headline, the
-       supporting line and the trust line are owner-approved copy and are
-       untouched; this is the padding around them. */
-    .hero{padding:56px 20px 48px;}
+  /* PHONES. The two photo cards stay side by side where the text still reads,
+     as the brief asks, and stack below 360px where it would not. */
+  @media (max-width:720px){
+    .home-hero{padding:40px 0 36px}
+    .home-hero .lede{font-size:1rem}
+    .hero-actions{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
+    .hero-actions .btn{padding:12px 10px;font-size:.95rem;min-height:56px;text-align:center}
+    .sec{padding:44px 0}
+    .art-grid{gap:12px}
+    .art{border-radius:12px}
+    .art-copy{--fade:40px;padding:calc(var(--fade) + 4px) 12px 12px}
+    .art-copy .kicker{font-size:.62rem;letter-spacing:.1em;margin-bottom:5px}
+    .art-title{font-size:clamp(20px,5.6vw,27px)}
+    .art-line{font-size:.82rem;line-height:1.4;margin-top:5px}
+    .art-go{font-size:.86rem;margin-top:10px;padding-top:9px}
+    .minor-grid{grid-template-columns:minmax(0,1fr)}
+  }
+  @media (max-width:359px){
+    .art-grid{grid-template-columns:minmax(0,1fr)}
+    .art{aspect-ratio:4/3}
+    .hero-actions{grid-template-columns:minmax(0,1fr)}
   }
 </style>
 </head>
-<body>
+<body class="home has-actions">
+<a class="skip" href="#main">Skip to content</a>
 
 <div class="notice"><b>Please note:</b> We do not take cyber-stalking cases, and we have no way to access, hack, or pull information from anyone else's phone, accounts, or devices. All investigations are conducted strictly within the law.</div>
 
-<header>
-  <div class="wrap">
-    <nav>
-      <a href="#areas">Areas</a><a href="#services">Services</a>
-      <a href="#reviews">Reviews</a>
-      <a href="#about">About</a>
-      <a href="/insurance-investigations/">Insurance</a>
-      <a href="/legal-investigations/">Legal</a>
-      <a href="#" onclick="openContact();return false;">Contact</a>
-      <a class="call-btn" href="tel:+14349070975">Call (434) 907-0975</a>
+<header class="site-head">
+  <div class="head-in">
+    <a class="brand" href="/" aria-label="Always Precise Investigations home"><img src="/assets/logo-lockup.svg" alt="Always Precise Investigations — scales of justice logo" width="240" height="68"></a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="/#private">Private Investigations</a>
+      <a href="/child-custody-investigations/">Child Custody</a>
+      <a href="/infidelity-investigations/">Spouse / Relationship</a>
+      <a href="/#how">How It Works</a>
+      <a href="/#other">Other Services</a>
+      <a class="nav-cta" href="/#contact">Contact / Intake</a>
     </nav>
-    <a class="brand-badge" href="#top" aria-label="Always Precise Investigations home"><img src="assets/logo-lockup.svg" alt="Always Precise Investigations — scales of justice logo" width="240" height="68"></a>
+    <details class="menu">
+      <summary><span class="bars" aria-hidden="true"></span>Menu</summary>
+      <nav aria-label="Main">
+        <a href="/#private">Private Investigations</a>
+        <a href="/child-custody-investigations/">Child Custody</a>
+        <a href="/infidelity-investigations/">Spouse / Relationship</a>
+        <a href="/#how">How It Works</a>
+        <a href="/#other">Other Services</a>
+        <a class="nav-cta" href="/#contact">Contact / Intake</a>
+      </nav>
+    </details>
   </div>
 </header>
 
-<div class="hero" id="top">
-  <div class="tag">Serving Greater Lynchburg and Central Virginia since 2014</div>
-  <h1>Private Investigator &amp; Surveillance Services in Lynchburg and Surrounding Areas</h1>
-  <p class="hero-lede">Serving private clients, attorneys and insurance companies throughout Greater Lynchburg and Central Virginia.</p>
-  <p class="hero-trust">Licensed, insured, and discreet.</p>
-  <!-- THE THREE CLIENT PATHS (Unit 40, owner-approved direction). Each lands on
-       its OWN door of the secure intake: a carrier is never shown the consumer
-       picker, a private client is never offered carrier work, and a law firm is
-       never routed through the private door — `pickSvc` refuses `legal` there,
-       so a mis-route would be a dead end as well as wrong.
+<main id="main">
 
-       ONE ANCHOR PER CARD, wrapping the whole card. "Get Started" is a styled
-       span, not a button: a button inside a link is invalid nesting and would
-       give every card two tab stops for one destination. It is aria-hidden
-       because the title already says what the card does, so the accessible name
-       stays the sentence a screen reader should hear.
-
-       The artwork is decorative and lives in CSS. Nothing here depends on an
-       image loading — the title carries the meaning, and the overlay that
-       makes the text readable sits above the art whether or not the art is
-       there. There is deliberately NO ICON: the card art says what the card
-       is, and an icon over a photograph of the same thing was saying it
-       twice (owner, 2026-08-22). -->
-  <ul class="cta-cards">
-    <li><a class="cta-card cta-pri" href="/intake/?assignment=private">
-      <span class="cta-art" aria-hidden="true"></span>
-      <span class="cta-body">
-        <span class="cta-title">Request a Private Investigation</span>
-        <span class="cta-go" aria-hidden="true">Get Started</span>
-      </span>
-    </a></li>
-    <li><a class="cta-card cta-leg" href="/intake/?assignment=legal">
-      <span class="cta-art" aria-hidden="true"></span>
-      <span class="cta-body">
-        <span class="cta-title">Submit a Legal Assignment</span>
-        <span class="cta-go" aria-hidden="true">Get Started</span>
-      </span>
-    </a></li>
-    <li><a class="cta-card cta-ins" href="/intake/?assignment=insurance">
-      <span class="cta-art" aria-hidden="true"></span>
-      <span class="cta-body">
-        <span class="cta-title">Submit an Insurance Assignment</span>
-        <span class="cta-go" aria-hidden="true">Get Started</span>
-      </span>
-    </a></li>
-  </ul>
-  <div class="btn-row">
-    <button class="btn-outline" onclick="openContact()">Contact Us</button>
-    <a class="btn-outline" href="tel:+14349070975">Call (434) 907-0975</a>
-  </div>
-  <div class="stars">★★★★★<small>5-Star Rated · Va DCJS #11-9159</small></div>
-</div>
-
-<section id="services">
+<section class="home-hero on-navy" id="top">
   <div class="wrap">
-    <div class="eyebrow">What We Do</div>
-    <h2>Investigative Services</h2>
-    <p class="lede">Every case is handled by licensed investigators using surveillance, research, public-record analysis and documented observation to obtain accurate, well-documented information. Serving Greater Lynchburg and Central Virginia — call for a free, confidential quote.</p>
-    <div class="grid">
-      <div class="card"><h3>Workers' Comp &amp; Auto Claims</h3><p>Claims investigation and surveillance for insurers, attorneys, and employers. <a href="/intake/?assignment=insurance">Submit an Insurance Assignment &rarr;</a></p></div>
-      <div class="card"><h3>Legal Support for Law Firms</h3><p>Investigative support for attorneys, paralegals and legal departments — surveillance, locate and process support, and court-ready reporting. <a href="/legal-investigations/">How we support counsel &rarr;</a></p></div>
-      <div class="card"><h3>Surveillance</h3><p>Discreet, documented surveillance for personal and legal matters — no hidden mileage or travel fees.</p></div>
-      <div class="card"><h3>Infidelity</h3><p>Sensitive, confidential investigations when you need clarity and honest answers. <a href="/infidelity-investigations/">How we document it &rarr;</a></p></div>
-      <div class="card"><h3>Child Custody</h3><p>Documented evidence to support custody and family-court proceedings. <a href="/child-custody-investigations/">What we document &rarr;</a></p></div>
-      <div class="card"><h3>Background Checks</h3><p>For employers, volunteer agencies, and personal peace of mind.</p></div>
-      <div class="card"><h3>Process Serving</h3><p>Process service is available throughout Greater Lynchburg and nearby Central Virginia communities, with additional locations considered based on distance and availability.</p></div>
-      <div class="card"><h3>Locate a Person</h3><p>Find a loved one, a lost contact, or a subject in a legal matter.</p></div>
+    <div class="kicker">Private · Professional · Discreet</div>
+    <h1>When you need answers, start here.</h1>
+    <p class="lede">Get help with child custody concerns, relationship questions, and other private investigation needs.</p>
+    <div class="hero-actions">
+      <a class="btn btn-gold" href="tel:+14349070975"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/></svg>Discreet Phone Call</a>
+      <a class="btn btn-light" href="/intake/?assignment=private"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>Fill Out Online Intake</a>
+    </div>
+    <p class="hero-support">Choose the option you're most comfortable with.</p>
+    <p class="hero-trust">Licensed &amp; insured · Va DCJS #11-9159 · Serving Greater Lynchburg and Central Virginia since 2014</p>
+  </div>
+</section>
+
+<section class="sec" id="private">
+  <div class="wrap">
+    <div class="private-layout">
+    <div class="private-intro">
+      <div class="kicker">How can we help?</div>
+      <h2>Private Investigations</h2>
+      <p class="sub">Choose your situation to begin your private online intake.</p>
+    </div>
+    <!-- TWO EQUAL CARDS, each ONE anchor onto the SAME existing private intake,
+         with its own situation already chosen (?service=). The visitor can still
+         change the answer on the form. -->
+    <div class="art-grid">
+      <a class="art art-custody" href="/intake/?assignment=private&amp;service=custody">
+        <span class="art-img" aria-hidden="true"></span>
+        <span class="art-copy">
+          <span class="kicker">Family Matters</span>
+          <span class="art-title">Child Custody</span>
+          <span class="art-line">Concerns about care or well-being?</span>
+          <span class="art-go">Start Intake <span aria-hidden="true">→</span></span>
+        </span>
+      </a>
+      <a class="art art-relationship" href="/intake/?assignment=private&amp;service=relationship">
+        <span class="art-img" aria-hidden="true"></span>
+        <span class="art-copy">
+          <span class="kicker">Personal Matters</span>
+          <span class="art-title">Spouse / Relationship</span>
+          <span class="art-line">Looking for clarity and answers?</span>
+          <span class="art-go">Start Intake <span aria-hidden="true">→</span></span>
+        </span>
+      </a>
+    </div>
+    </div>
+
+    <h3 class="minor-head" id="other">Other Investigation Services</h3>
+    <div class="minor-grid">
+      <div class="minor">
+        <h3><a href="/insurance-investigations/">Insurance</a></h3>
+        <p>Workers' comp and auto claim surveillance for insurers, TPAs, employers and defense counsel.</p>
+        <div class="minor-links"><a class="go" href="/insurance-investigations/">View Services <span aria-hidden="true">→</span></a><a class="sub2" href="/intake/?assignment=insurance">Submit an Insurance Assignment</a></div>
+      </div>
+      <div class="minor">
+        <h3><a href="/legal-investigations/">Legal</a></h3>
+        <p>Investigative support for attorneys, paralegals and legal departments.</p>
+        <div class="minor-links"><a class="go" href="/legal-investigations/">View Services <span aria-hidden="true">→</span></a><a class="sub2" href="/intake/?assignment=legal">Submit a Legal Assignment</a></div>
+      </div>
     </div>
   </div>
 </section>
 
-<section id="how-it-works">
+<section class="sec sec-sand" id="how">
   <div class="wrap">
-    <div class="eyebrow">How an Assignment Works</div>
-    <h2>A Clear Process From First Contact to Final Report</h2>
-    <p class="lede">A straightforward process for private clients, attorneys, and insurance assignments.</p>
-    <div class="grid">
-      <div class="card"><h3>1 · Tell Us What You Need</h3><p>Tell us what's going on and what you need help with. If you do not have every detail yet, that is okay — send what you know and add more later.</p></div>
-      <div class="card"><h3>2 · We Confirm the Work and Price</h3><p>Before any work begins, you receive the agreed service and price in writing. Nothing starts until you approve it.</p></div>
-      <div class="card"><h3>3 · We Conduct the Investigation</h3><p>Licensed investigators complete the agreed work and document relevant activity, observations, photos, video, and evidence as appropriate.</p></div>
-      <div class="card"><h3>4 · You Receive the Results</h3><p>You receive a written investigative report and supporting evidence when applicable. Testimony about our own observations can be arranged when needed.</p></div>
+    <div class="kicker">How it works</div>
+    <h2>Getting started is simple.</h2>
+    <ol class="steps">
+      <li><div class="num">1</div><b>Tell us your concern</b><span>Call, or use the private online intake. Share what you know — you do not need every detail yet.</span></li>
+      <li><div class="num">2</div><b>Discuss your options</b><span>We talk through what is possible and confirm the work and the price in writing.</span></li>
+      <li><div class="num">3</div><b>Choose your next step</b><span>Nothing starts until you approve it.</span></li>
+    </ol>
+  </div>
+</section>
+
+<section class="sec" id="services">
+  <div class="wrap">
+    <div class="kicker">What we do</div>
+    <h2>More ways we can help</h2>
+    <p class="sub">Every case is handled by licensed investigators using surveillance, research, public-record analysis and documented observation.</p>
+    <div class="svc-grid">
+      <div class="svc"><h3>Surveillance</h3><p>Discreet, documented surveillance for personal and legal matters — no hidden mileage or travel fees.</p></div>
+      <div class="svc"><h3>Infidelity</h3><p>Sensitive, confidential investigations when you need clarity and honest answers. <a href="/infidelity-investigations/">How we document it &rarr;</a></p></div>
+      <div class="svc"><h3>Child Custody</h3><p>Documented evidence to support custody and family-court proceedings. <a href="/child-custody-investigations/">What we document &rarr;</a></p></div>
+      <div class="svc"><h3>Background Checks</h3><p>For employers, volunteer agencies, and personal peace of mind.</p></div>
+      <div class="svc"><h3>Locate a Person</h3><p>Find a loved one, a lost contact, or a subject in a legal matter.</p></div>
+      <div class="svc"><h3>Process Serving</h3><p>Process service is available throughout Greater Lynchburg and nearby Central Virginia communities, with additional locations considered based on distance and availability.</p></div>
     </div>
   </div>
 </section>
 
-<section id="reviews" class="band">
+<section class="sec sec-paper" id="reviews">
   <div class="wrap">
-    <div class="eyebrow">Customer Reviews</div>
+    <div class="kicker">Customer reviews</div>
     <h2>What Clients Say</h2>
-    <p class="lede">Real 5-star reviews left by clients on Google. <a href="https://www.google.com/search?q=Always+Precise+Investigations+Virginia+reviews" target="_blank" rel="noopener">Read them on Google &rarr;</a></p>
+    <p class="sub">Real 5-star reviews left by clients on Google. <a href="https://www.google.com/search?q=Always+Precise+Investigations+Virginia+reviews" target="_blank" rel="noopener">Read them on Google &rarr;</a></p>
     <div class="reviews">
       <div class="review">
         <div class="rstars">★★★★★ <span class="verified"><a href="https://www.google.com/search?q=Always+Precise+Investigations+Virginia+reviews" target="_blank" rel="noopener">Verified Google review</a></span></div>
@@ -536,15 +394,15 @@ padding:11px 22px;text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;f
         <div class="when">Aug 11, 2018</div>
       </div>
     </div>
-    <p class="reviews-cta"><a class="gbtn" href="https://www.google.com/search?q=Always+Precise+Investigations+Virginia+reviews" target="_blank" rel="noopener">See all reviews on Google</a></p>
+    <p class="reviews-cta"><a class="btn btn-ghost" href="https://www.google.com/search?q=Always+Precise+Investigations+Virginia+reviews" target="_blank" rel="noopener">See all reviews on Google</a></p>
   </div>
 </section>
 
-<section id="about">
+<section class="sec" id="about">
   <div class="wrap">
-    <div class="eyebrow">About</div>
+    <div class="kicker">About</div>
     <h2>Always Precise Investigations</h2>
-    <p class="lede">At Always Precise Investigations (API) we offer each client the highest standards of professional discretion and integrity. API is dedicated to providing the results you need. Our investigators specialize in gathering detailed information through the use of surveillance, research, public-record analysis and documented observation to obtain accurate information on the subject or situation in question.</p>
+    <p class="sub">At Always Precise Investigations (API) we offer each client the highest standards of professional discretion and integrity. API is dedicated to providing the results you need. Our investigators specialize in gathering detailed information through the use of surveillance, research, public-record analysis and documented observation to obtain accurate information on the subject or situation in question.</p>
     <div class="about-flags">
       <div class="flag"><b>Since 2014</b><span>Greater Lynchburg &amp; Central Virginia</span></div>
       <div class="flag"><b>Va DCJS #11-9159</b><span>Licensed &amp; insured</span></div>
@@ -554,22 +412,11 @@ padding:11px 22px;text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;f
   </div>
 </section>
 
-<section id="contact" class="cta">
-  <div class="wrap">
-    <div class="eyebrow" style="text-align:center;">Take Action</div>
-    <h2>Ready to take the next step?</h2>
-    <p>Contact us today for a free, confidential consultation or any questions about our services. We're available to help across Greater Lynchburg and Central Virginia.</p>
-    <div class="phone"><a href="tel:+14349070975">434-907-0975</a></div>
-    <div class="email"><a href="mailto:AlwaysPreciseInvestigations@gmail.com">AlwaysPreciseInvestigations@gmail.com</a></div>
-    <a class="call-btn" href="tel:+14349070975">Call for a Free Consultation</a>
-  </div>
-</section>
-
-<section id="areas" style="padding:34px 0;border-top:1px solid var(--line)">
+<section class="sec sec-sand" id="areas">
   <div class="wrap">
     <h2>Private Investigator Near You — Central Virginia</h2>
-    <p class="lede">Always Precise Investigations serves Lynchburg and surrounding Central Virginia communities, including Forest, Rustburg, Bedford, Amherst, Appomattox, Altavista, and the Smith Mountain Lake area. Process service is available throughout Greater Lynchburg and nearby Central Virginia communities, with additional locations considered based on distance and availability.</p>
-    <p class="lede">Pick your area for local detail on surveillance, cheating-spouse and adultery
+    <p class="sub">Always Precise Investigations serves Lynchburg and surrounding Central Virginia communities, including Forest, Rustburg, Bedford, Amherst, Appomattox, Altavista, and the Smith Mountain Lake area. Process service is available throughout Greater Lynchburg and nearby Central Virginia communities, with additional locations considered based on distance and availability.</p>
+    <p class="sub">Pick your area for local detail on surveillance, cheating-spouse and adultery
     documentation, custody evidence and process serving.</p>
     <div class="areas-list">
       <a href="/private-investigator/lynchburg-va/">Private Investigator Lynchburg</a>
@@ -583,24 +430,62 @@ padding:11px 22px;text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;f
   </div>
 </section>
 
-<footer>
-  <div class="row fname">Always Precise Investigations, LLC</div>
-  <div class="row"><a href="tel:+14349070975">434-907-0975</a> &nbsp;·&nbsp; <a href="mailto:AlwaysPreciseInvestigations@gmail.com">AlwaysPreciseInvestigations@gmail.com</a></div>
-  <div class="row lic">Va DCJS #11-9159 · Licensed and Insured</div>
-  <div class="row"><a href="/privacy" style="color:#9fb0c4">Privacy Policy</a></div>
-  <div class="row">Serving Greater Lynchburg and Central Virginia since 2014</div>
+<section class="sec contact on-navy" id="contact">
+  <div class="wrap">
+    <div class="kicker">Contact / Intake</div>
+    <h2>Ready to take the next step?</h2>
+    <p>Contact us for a free, confidential consultation or any questions about our services. We're available to help across Greater Lynchburg and Central Virginia.</p>
+    <div class="phone"><a href="tel:+14349070975">434-907-0975</a></div>
+    <div class="email"><a href="mailto:AlwaysPreciseInvestigations@gmail.com">AlwaysPreciseInvestigations@gmail.com</a></div>
+    <div class="contact-actions">
+      <a class="btn btn-gold" href="tel:+14349070975">Call for a Free Consultation</a>
+      <a class="btn btn-light" href="/intake/?assignment=private">Fill Out Online Intake</a>
+      <button type="button" class="btn btn-ghost" onclick="openContact()">Send a Message</button>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <div>
+      <div class="fname">Always Precise Investigations, LLC</div>
+      <div class="row"><a href="tel:+14349070975">(434) 907-0975</a></div>
+      <div class="row"><a href="mailto:AlwaysPreciseInvestigations@gmail.com">AlwaysPreciseInvestigations@gmail.com</a></div>
+      <div class="row lic">Va DCJS #11-9159 · Licensed and Insured</div>
+      <div class="row">Serving Greater Lynchburg and Central Virginia since 2014</div>
+    </div>
+    <nav aria-label="Footer">
+      <a href="/#private">Private Investigations</a>
+      <a href="/child-custody-investigations/">Child Custody</a>
+      <a href="/infidelity-investigations/">Spouse / Relationship</a>
+      <a href="/insurance-investigations/">Insurance</a>
+      <a href="/legal-investigations/">Legal</a>
+      <a href="/private-investigator/">Service Areas</a>
+      <a href="/#about">About</a>
+      <a href="/#contact">Contact</a>
+      <a href="/privacy">Privacy Policy</a>
+    </nav>
+    <div class="base">All investigations are conducted strictly within the law.</div>
+  </div>
 </footer>
+
+<div class="mobile-actions" aria-label="Quick contact">
+  <a href="tel:+14349070975"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/></svg>Call Privately</a>
+  <a class="ma-intake" href="/intake/?assignment=private"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>Online Intake</a>
+</div>
 
 <div class="modal-back" id="contactModal" hidden onclick="if(event.target===this)closeContact()">
   <div class="modal" role="dialog" aria-modal="true" aria-label="Contact Always Precise Investigations">
     <button class="x" onclick="closeContact()" aria-label="Close">&times;</button>
     <h3>Contact Us</h3>
-    <p class="sub">Send a brief message with your name and number, and we'll call you back. Confidential, no obligation.</p>
+    <p class="msub">Send a brief message with your name and number, and we'll call you back. Confidential, no obligation.</p>
     <form onsubmit="sendContact(event)">
       <label class="field"><span>Your name</span><input type="text" name="name" autocomplete="name" required></label>
       <label class="field"><span>Phone number</span><input type="tel" name="phone" autocomplete="tel" required></label>
       <label class="field"><span>How can we help?</span><textarea name="message" placeholder="Briefly describe what you need…" required></textarea></label>
-      <button type="submit" class="send">Send message</button>
+      <button type="submit" class="btn btn-navy send">Send message</button>
       <div id="c-status"></div>
     </form>
   </div>

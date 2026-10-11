@@ -50,6 +50,10 @@ assets/logo-lockup.svg
 assets/review1.webp
 assets/review2.webp
 assets/review3.webp
+# The public site's one stylesheet (redesign, 2026-10-10): header, footer, type
+# and colour for every public page. Linked as site.css?v=N — /assets/* is cached
+# for seven days, so the number goes up whenever the file changes.
+assets/site.css
 # Unit 40 — the hero CTA card artwork. Named one by one like everything above,
 # so replacing one is a deliberate line change here as well as in the CSS.
 # These were SVG placeholder motifs until 2026-08-22; they are owner-supplied
@@ -59,6 +63,11 @@ assets/review3.webp
 assets/card-insurance.webp
 assets/card-legal.webp
 assets/card-private.webp
+# Redesign (2026-10-10) — the two homepage private-service cards. Owner-supplied
+# photographs (2026-10-11), gender-neutral by the brief: hands only, and two
+# empty chairs. Bump the ?v= in index.html whenever either file is replaced.
+assets/child-custody-photo.webp
+assets/spouse-relationship-photo.webp
 
 # --- service pages -----------------------------------------------------------
 insurance-investigations/index.html

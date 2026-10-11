@@ -24380,6 +24380,51 @@ section('API ASSISTANT Unit 4 — the intake dry-run workbench, on the real page
    tap the card and be looking at what the client entered and signed, with NO
    intermediate case Overview.
    ========================================================================= */
+/* THE PRIVATE QUESTION'S ANSWER IS ON THE OWNER'S FIRST SCREEN (owner,
+   2026-10-10: "Store the selected investigation type with the existing intake
+   submission so I can immediately see what the client needs in my owner
+   portal"). It rides the existing `service` column — no new field, no table —
+   so the desk card and the submitted-intake summary both read it from there.
+   A carrier and a legal intake carry their own type line already, and do not
+   gain this one. */
+section('The owner sees the investigation type a private client chose');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  for (const [no, svc, who] of [['API-QTYPE-1', 'Spouse / Relationship', 'Riley Question'],
+                                 ['API-QTYPE-2', 'Other Private Investigation', 'Owen Question']])
+    await post('/ingest', { case_no: no, service: svc, client_name: who, client_phone: '4345550133',
+      subject_name: 'A Subject', objective: 'Understand what is happening' }, { 'X-Ingest-Key': 'e2e-ingest-key' });
+  await page.evaluate(() => { TAB = 'leads'; VIEW = 'list'; render(); });
+  await page.waitForTimeout(900);
+  for (const [svc, who] of [['Spouse / Relationship', 'Riley Question'], ['Other Private Investigation', 'Owen Question']]) {
+    const line = await page.evaluate((who) => {
+      const c = [...document.querySelectorAll('.pcard')].find(x => x.innerText.includes(who));
+      /* The card carries several sub-lines (Subject first); read the one that is
+         the investigation type, by its own words, not by position. */
+      const s = c && [...c.querySelectorAll('.uihead-s')].find(x => /^Investigation type:/.test(x.textContent.trim()));
+      return s ? s.textContent.trim() : null;
+    }, who);
+    ok(`the Intakes card for ${who} reads "Investigation type: ${svc}"`, line === `Investigation type: ${svc}`, String(line));
+  }
+  const carrierLine = await page.evaluate(() => {
+    const c = [...document.querySelectorAll('.pcard')].find(x => x.innerText.includes('Pat Coleman') || x.innerText.includes('Example Mutual'));
+    return c ? /Investigation type:/.test(c.innerText) : null;
+  });
+  ok('a carrier assignment does not gain a private investigation-type line', carrierLine === false, String(carrierLine));
+  await page.evaluate(() => openCase('API-QTYPE-1', 'details'));
+  await page.waitForTimeout(900);
+  /* Read the summary CELL, not the page's innerText: the label is styled
+     text-transform:uppercase, so innerText reports "INVESTIGATION TYPE" and a
+     case-sensitive match of the page text misses a correct screen. */
+  const cellVal = await page.evaluate(() => {
+    const c = [...document.querySelectorAll('.isum-c')].find(x => (x.querySelector('.isum-k') || {}).textContent === 'Investigation type');
+    return c ? c.textContent.replace('Investigation type', '').trim() : null;
+  });
+  ok('the submitted-intake summary names it too', cellVal === 'Spouse / Relationship', String(cellVal));
+  await page.close();
+}
+
 section('Intakes: tapping a submitted intake opens what the client signed');
 {
   const page = await newPage();

@@ -166,7 +166,7 @@ published. The stager **fails if a listed path is missing**, so a renamed
 directory is caught at build time instead of by someone finding a 404 later.
 
 ```bash
-node .github/test-deploy.mjs   # 139 checks (2026-10-10): what may and may not be published
+node .github/test-deploy.mjs   # 194 checks (2026-10-11, redesign branch, photographs installed): what may and may not be published
 ```
 
 It runs the real stager and asserts both halves — that the site is complete,
@@ -3804,8 +3804,8 @@ know the cap they are working to. The price fields (`package`, `package_price`,
 Tests, which intercept form delivery so a run never reaches the firm's inbox:
 
 ```bash
-node intake/test-intake.mjs      # 934 checks (2026-10-10); needs Playwright, skips cleanly without it
-node visitor-alerts/test-worker.mjs   # 210 checks (2026-10-10): journeys on real SQLite
+node intake/test-intake.mjs      # 1009 checks (2026-10-11, redesign branch); needs Playwright, skips cleanly without it
+node visitor-alerts/test-worker.mjs   # 217 checks (2026-10-10, redesign branch): journeys on real SQLite
 node watch/test-watch.mjs        # 74 checks (2026-10-10): the beacon and the dashboard against the real Worker
 ```
 
@@ -3939,7 +3939,7 @@ Tests:
 
 ```bash
 node case-portal/test-worker.mjs   # 4393 checks (2026-09-28): auth, invites, roles, redaction, rates, ingest
-node portal/test-portal.mjs        # 5198 checks (2026-10-02): the page against the real Worker
+node portal/test-portal.mjs        # 5202 checks (2026-10-10, redesign branch): the page against the real Worker
 ```
 
 **A FULL RUN'S TOTAL MOVES WITH THE CLOCK, BY A CHECK OR TWO.** *A surveillance
@@ -7252,6 +7252,97 @@ history back and asserts the office appears in it nowhere.
 non-refundable portion and no hourly minimum on a carrier's or a law firm's
 send, and a record copy naming one would be the office's own file asserting
 something untrue.
+
+## The 2026-10-10 public redesign — built on a branch, gated until "GO LIVE"
+
+Owner brief 2026-10-10 (*"NEVER DEPLOY A PARTIALLY FINISHED WEBSITE"*) plus
+three clarifications the same day: keep the live logo exactly, one private
+intake with one new question, and nothing merges or deploys until the owner
+says **GO LIVE**. Record and owner checklist in `docs/REDESIGN_WORK_STATUS.md`
+(internal — `docs/` is in no manifest line).
+
+**THE RELEASE GATE IS IN THE DEPLOY SUITE, BECAUSE THAT IS WHAT CAN STOP AN
+UPLOAD.** `deploy.yml` runs `.github/test-deploy.mjs` before it publishes, so
+three RELEASE GATE checks fail while either approved photograph
+(`assets/child-custody-photo.webp`, `assets/spouse-relationship-photo.webp`) is
+missing from the staged site or any `data-dev-placeholder` remains. An early
+merge therefore publishes nothing. **Do not skip or weaken them to make a build
+go green — supply the photographs**, add both to `deploy-manifest.txt`, and
+remove the two `.art-dev` badges. The rejected silhouette SVGs are never the
+answer, and a test says so. **Never dispatch `deploy.yml` from a branch**: it
+uploads with `--branch=main`, so a branch dispatch IS production.
+
+**THE PHOTOGRAPHS LANDED 2026-10-11, SO THE GATE IS GREEN — AND NO LONGER STOPS
+ANYTHING.** From here the only thing between the branch and production is that
+nothing is merged before the owner writes GO LIVE.
+
+**A PLACEHOLDER GRADIENT IS NOT A PHOTOGRAPH, AND THE CONTRAST CHECK ONLY
+MEASURED THE TITLE.** Over the real photographs the phone titles fell to
+2.8:1 / 2.4:1 and the gold kicker to 0.6:1 — on a phone the copy fills more of
+the card and rises to where the bottom gradient is thinnest. The copy carries
+its own navy fade now (weakest line 5.2:1, 320–1280), and the painted-pixel
+check measures every line against its own colour at seven widths, hiding only
+the TEXT so the fade counts as backdrop. Two instrument traps on the way:
+**this site scrolls smoothly**, so a box read straight after a scroll call is a
+box of the page behind it (scroll with `behavior:'instant'`); and the sticky
+header and phone bar must be hidden or they become the "lightest pixel".
+
+**ONE HEADER, ONE FOOTER, ONE WRITER.** `build-locations.py`'s `site_header()`
+and `site_footer()` write the chrome; the seven generated pages are composed
+from them and the eight hand-written public pages carry the same bytes. A deploy
+guard holds all fifteen identical (aria-current and the phone bar's door
+normalised out, then checked on their own), the header nav is the brief's six in
+order, and every page links `assets/site.css` at one `?v=`. **Change the chrome
+in the generator, then copy it** — the guard fails the first page that drifts.
+
+**THE LOGO IS THE ONE THE LIVE HEADER SHOWS, BYTE FOR BYTE — AND IT TOOK A
+PICTURE TO SETTLE.** The owner first named the diamond (`logo-white.webp`) and
+then "the logo currently displayed on my live website" — two different files:
+the live header has worn the navy/red scales lockup (`logo-lockup.svg`, in a
+white rounded badge) since `928dd3f` on 2026-08-02, and the diamond appears on
+the live site only as the browser-tab icon. Rendered side by side from master
+and the branch, the owner chose **the scales lockup** (2026-10-10). It is
+SHA-256 pinned (`c1c64244…942ccf`), sized by height only inside the live
+badge's colour, radius, padding and shadow, and a guard fails any header that
+shows the diamond. **When an owner names a file AND a place, check that the two
+agree before building on either** — three mutations (diamond back on one page,
+a changed byte, the badge removed) each fail by name.
+
+**THE PHONE BAR OPENS EACH PAGE'S OWN DOOR.** The first build sent every page's
+"Online Intake" to the private door — on Legal and Insurance too, which breaks
+two standing rules at once (a law firm never through the private intake, a
+carrier never shown the consumer side). `site_footer(current, door)` takes the
+door; Legal gets the legal door, Insurance and Vendor the carrier door, all
+labelled *Submit Assignment*. Found by looking at the phone screenshot, not by a
+suite; it is a guard now.
+
+**THE PRIVATE QUESTION IS THE EXISTING SERVICE FIELD.** *What type of private
+investigation do you need?* — Child Custody / Spouse / Relationship / Other
+Private Investigation — is the private door's service step, same `S.svc`, same
+`payload.service`, same `?service=` preselect. `FEES` gained `relationship` and
+`other`; **Surveillance was folded into Other** (`SVC_ALIAS` keeps an old
+`?service=surveillance` link working) and **Process Serving stays a fourth
+answer** — both flagged to the owner. `keepSvcInUrl()` writes the answer into the
+address with `replaceState`, so a reload keeps it with no storage. The portal
+shows it as *Investigation type* on the Intakes card and the intake summary,
+read from the column it already had.
+
+**A BODY LINK IS STILL THE TOPICAL SIGNAL — THE HEADER DOES NOT COUNT.** The
+shared header links Child Custody and Spouse / Relationship on every page, which
+would have made the 2026-09-14 body-link guard trivially true. `bodyOf` now cuts
+the header as well as the footer; mutation M10 (a Bedford body with no
+Infidelity link) fails it by name.
+
+**THIRTEEN DEPLOY-GUARD MUTATIONS, AND THE ONE THAT WALKED PAST WAS THE TEST.**
+M12 preselected Child Custody on the hero's *Fill Out Online Intake* and passed,
+because the contact section carries a second link with that label and the guard
+found the good one. Both suites now check EVERY link with the label — the
+`[].every()` lesson in its "one good copy exists" form.
+
+**THE PHONE BAR IS 57px, NOT 56.** The intake suite measured the bar at 57 (the
+row plus its 1px top border) against 56px of body padding, so the page's last
+pixel row sat under it at every phone width. The padding is 57; the assertion
+compares the two live values.
 
 ## The /watch/ dashboard
 

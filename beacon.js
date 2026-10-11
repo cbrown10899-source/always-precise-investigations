@@ -215,7 +215,7 @@
     if (/^\/intake(\/|$)/.test(u.pathname)) {
       var as = (u.searchParams.get('assignment') || '').toLowerCase();
       var sv = (u.searchParams.get('service') || '').toLowerCase();
-      act('cta', { d: sv === 'custody' ? 'custody'
+      act('cta', { d: sv === 'custody' ? 'custody' : sv === 'relationship' ? 'relationship'
         : /^(insurance|carrier|claims)$/.test(as) ? 'insurance'
         : as === 'legal' ? 'legal' : as === 'private' ? 'private' : 'intake' });
     }

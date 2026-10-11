@@ -8682,6 +8682,11 @@ function leadsView(){
             ${legal && c.legal_attorney ? `<span class="uihead-s">${esc(c.legal_attorney)}</span>` : ""}
             ${legal && c.client_name && c.legal_firm ? `<span class="uihead-s">Client: ${esc(c.client_name)}</span>` : ""}
             ${c.subject_name ? `<span class="uihead-s">${claim ? "Claimant" : "Subject"}: ${esc(c.subject_name)}</span>` : ""}
+            ${/* WHAT THE CLIENT NEEDS, on the card (owner, 2026-10-10): the public
+                 form's private question — Child Custody, Spouse / Relationship,
+                 Other Private Investigation — is the submission's own `service`,
+                 already on this row. Display only; nothing new is read. */""}
+            ${!claim && !legal && c.service ? `<span class="uihead-s">Investigation type: ${esc(c.service)}</span>` : ""}
           </span>
         </span>
         ${legal && c.legal_arrangement ? `<span class="pc-arr"><span class="tag lead-quoted">${
@@ -31654,6 +31659,11 @@ function intakeSummaryHtml(s, p, claim){
     ${cell(claim ? "Claimant" : "Subject", esc(p.subject_name || s.subject_name || "&mdash;"))}
     ${cell("Intake type", esc(claim ? "Insurance claim assignment"
       : (WS && WS.legal_badge) || s.legal ? "Legal assignment" : "Private client"))}
+    ${/* The private intake's answer to "What type of private investigation do
+          you need?" — the submission's own service, shown where the office reads
+          the intake first (owner, 2026-10-10). */""}
+    ${!claim && !((WS && WS.legal_badge) || s.legal) && (p.service || s.service)
+      ? cell("Investigation type", esc(p.service || s.service)) : ""}
     ${cell("Received", esc(when(s.created_at)))}
     ${cell("Signed", signed ? "Yes" : "No")}
     ${/* THE PAYING SIDE IS ADMIN-ONLY, AND SO ARE ITS WORDS. The section below
