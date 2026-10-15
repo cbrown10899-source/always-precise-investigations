@@ -24713,6 +24713,12 @@ section('The private send wizard offers a 4, 6 or 8-hour minimum');
   await page.waitForTimeout(250);
   ok('choosing 8 keeps the choice on screen across the repaint',
      await page.evaluate(() => document.getElementById('wiz_mh').value) === '8');
+  /* A BACKGROUND REPAINT MUST NOT SNAP IT BACK. The wizard repaints when its
+     payment and sheet reads land, rebuilding the select from state — so the
+     choice has to be in state the moment it is made, which is the select's
+     own handler's job. Without it this reads 4 again. */
+  ok('and a background repaint (a read landing) does not snap it back to 4',
+     await page.evaluate(() => { paint(); return document.getElementById('wiz_mh').value; }) === '8');
   ok('and keeps what was already typed', await page.evaluate(() => document.getElementById('wiz_to').value) === 'mh-8@example.com');
   await page.locator('.amsheet .btn', { hasText: 'Preview' }).click();
   await page.waitForTimeout(800);

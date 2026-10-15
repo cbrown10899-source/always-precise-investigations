@@ -1853,6 +1853,39 @@ ledger says so.
 FIXED legal case read *Retainer paid*, *Retainer received* and *Investigation
 Retainer*. See *A flat fee is received, never held* below.
 
+## The minimum per surveillance day is a per-send choice
+
+Owner, 2026-10-12: *"a drop down on private client intake for 4-Hour Minimum,
+to be able to select 6 and 8 Hour minimums also."* The private Prepare & Send
+wizard carries **Minimum per surveillance day** — 4-Hour Minimum (standard),
+6-Hour Minimum, 8-Hour Minimum — beside the retainer and the non-refundable
+amount. Private only: the legal wizard (same sheet, law firm's terms) and Full
+Custom (its own minimum term) do not draw it.
+
+**`minHoursFor` is the one reader and `MIN_HOURS_CHOICES` the one list.** Blank
+is the standard four; anything else outside 4/6/8 is refused by name
+(`bad_min_hours`), never rounded. `minHoursForSend` is the send's AND the
+Assistant rehearsal's shared reading — `min_hours_not_private` on a legal or
+insurance send, `min_hours_not_custom` beside a Full Custom agreement — so the
+pinned mirror cannot accept what the sender refuses. `/sheets` publishes the
+list (`min_hours_choices`, `min_hours_default`), so the page holds no copy.
+
+**THE MINIMUM IS STATED TWICE ON A PRIVATE SHEET, AND ONE WRITER COVERS BOTH.**
+The bold engagement term and the *Investigative rate* line both said
+`PERSONAL.minHours`; `engagementBlock(…, minHours)` and `privateRateLine(minHours)`
+take the choice, so an 8-hour sheet cannot say four hours one paragraph up. The
+LEGAL card is built from the standard product's lines and keeps four hours
+(asserted). **Nothing is stored on the case and no schema changed** —
+`sent_document` keeps the bytes and the engagement lines that were sent, which
+is the record of what was quoted.
+
+**An untouched dropdown sends nothing**: the collector records the standard
+choice as no choice, so the Worker states the standard minimum itself and the
+standard document stays byte-identical (the GOLDEN pins pass untouched). The
+first page test caught the collector posting `"4"` from the select's displayed
+default — harmless to the document, untrue to the comment, fixed in the
+collector rather than the test.
+
 ## The exact document a client received, and what they signed
 
 Owner brief 2026-09-07; derived decisions D1–D14 in
@@ -2634,8 +2667,10 @@ Pricing lives in the portal as two rate sheets an admin opens and emails
   `case_retainer.retainer_amount` holds what a particular client actually
   agreed, an admin picks it from $1,500 / $2,000 / $3,000 / Custom on the
   private send wizard, and `agreedRetainer()` is the single read that feeds the
-  sheet, the subject line, the payment block and the preview. **The rate and the
-  4-hour minimum are not per-case** — only the retainer is. A retainer of zero
+  sheet, the subject line, the payment block and the preview. **The rate is not
+  per-case**, and the minimum per surveillance day is chosen PER SEND (4, 6 or 8
+  hours, owner 2026-10-12 — see *The minimum per surveillance day is a per-send
+  choice*); only the retainer is stored on the case. A retainer of zero
   is refused, because `rateSheets()` falls back to the standard for anything not
   above zero and the record would then disagree with the client's own sheet.
 
@@ -3938,7 +3973,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 4393 checks (2026-09-28): auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 4421 checks (2026-10-12): auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 5202 checks (2026-10-10, redesign branch): the page against the real Worker
 ```
 
