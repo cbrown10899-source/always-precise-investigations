@@ -19396,7 +19396,18 @@ function asstSheetAmounts(text) {
   /* Whatever figure is left. A sentence naming neither leaves both blank and
      the form opens on the standard, which is the ordinary case. */
   const ret = rest.match(new RegExp(AMT));
-  return { retainer: ret ? num(ret[1]) : '', nonRefundable };
+
+  /* THE MINIMUM PER SURVEILLANCE DAY (owner, 2026-10-12) — "with an 8-hour
+     minimum". It carries no dollar sign, so the amount patterns above cannot
+     claim it. Only a figure the dropdown actually offers is seeded, and the
+     standard one is left blank for the reason the non-refundable amount is:
+     blank means "the standard". A figure outside the list seeds nothing and
+     the form opens on the standard, where the person sees it. */
+  const WORDS = { four: 4, six: 6, eight: 8 };
+  const mh = String(text || '').match(/\b(\d{1,2}|four|six|eight)[-\s]?(?:hours?|hrs?)[-\s]+min(?:imum)?\b/i);
+  const mhN = mh ? (WORDS[mh[1].toLowerCase()] || Number(mh[1])) : null;
+  const minHours = mhN && MIN_HOURS_CHOICES.includes(mhN) && mhN !== PERSONAL.minHours ? String(mhN) : '';
+  return { retainer: ret ? num(ret[1]) : '', nonRefundable, minHours };
 }
 
 async function assistantCommandCore(body, env, user) {
@@ -19480,12 +19491,13 @@ async function assistantCommandCore(body, env, user) {
        non-refundable amount and a law firm keeps the firm, because the words
        about the audience are the more explicit of the two. The Worker refuses
        the pairing on that path by name, which is the honest answer. */
-    const ctx = ctxGuess || (amounts.nonRefundable ? 'private' : '');
+    const ctx = ctxGuess || (amounts.nonRefundable || amounts.minHours ? 'private' : '');
     return json({ ok: true, kind: 'prepare_sheet',
       text: 'Pick the audience, then preview the exact sheet email. Send emails it; '
           + `Simulate rehearses it instead and records ${ASSISTANT_SIM_OUTCOME}.`,
       form: { context: ctx, to: mail || '', case_no: caseNo || '',
-              retainer: amounts.retainer, non_refundable: amounts.nonRefundable } });
+              retainer: amounts.retainer, non_refundable: amounts.nonRefundable,
+              min_hours: amounts.minHours } });
   }
 
   /* ---- THE THIRD LIVE PRODUCT — PAYMENT INSTRUCTIONS ON THEIR OWN, the

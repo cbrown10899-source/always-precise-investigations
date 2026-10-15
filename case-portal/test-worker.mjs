@@ -20511,6 +20511,28 @@ section('The private rate sheet carries a non-refundable portion, from one sourc
   ok('but naming the law firm keeps the legal audience — the Worker refuses the pairing by name',
      a.form.context === 'legal', JSON.stringify(a.form));
 
+  /* THE MINIMUM PER SURVEILLANCE DAY (owner, 2026-10-12) seeds the same way:
+     a figure the dropdown offers lands in the form, the standard stays blank,
+     anything else seeds nothing, and a dollar amount is never mistaken for it. */
+  mailed = null;
+  a = await jsonOf(await say('Prepare a $1,500 rate sheet with an 8-hour minimum'));
+  ok('"…with an 8-hour minimum" seeds 8 beside the retainer, and the audience as private',
+     a.form.min_hours === '8' && a.form.retainer === '1500' && a.form.context === 'private',
+     JSON.stringify(a.form));
+  a = await jsonOf(await say('Send a private rate sheet with a six hour minimum'));
+  ok('the minimum may be spelled out', a.form.min_hours === '6', JSON.stringify(a.form));
+  a = await jsonOf(await say('Send a private rate sheet with a 4 hr minimum'));
+  ok('the standard minimum seeds BLANK, so the form tracks the standard',
+     a.form.min_hours === '', JSON.stringify(a.form));
+  a = await jsonOf(await say('Send a private rate sheet with a 7 hour minimum'));
+  ok('a minimum the dropdown does not offer seeds nothing', a.form.min_hours === '', JSON.stringify(a.form));
+  a = await jsonOf(await say('Send a $1,500 rate sheet'));
+  ok('a sentence naming no minimum seeds none', a.form.min_hours === '', JSON.stringify(a.form));
+  a = await jsonOf(await say('Prepare a law firm rate sheet with an 8 hour minimum'));
+  ok('naming the law firm keeps the legal audience, as for the non-refundable amount',
+     a.form.context === 'legal', JSON.stringify(a.form));
+  ok('and none of those sentences sent anything', mailed === null);
+
   /* ---- READING A SUBMITTED INTAKE (owner, from a real iPhone 2026-09-06).
      The complaint was the DISTANCE: Intakes -> Review -> the case Overview ->
      scroll -> Intake details. `details` is now a destination the Assistant can

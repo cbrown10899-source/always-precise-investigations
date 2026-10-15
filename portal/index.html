@@ -5082,6 +5082,7 @@ async function asstSend(text){
                     case_no: r.form.case_no || "", legal_service: "", flat_fee: "",
                     retainer: r.form.retainer || "",
                     non_refundable: r.form.non_refundable || "",
+                    min_hours: r.form.min_hours || "",
                     include_intake: false, include_payment: false,
                     preview: null, previewBody: null, err: "", busy: false };
       legalSvcsLoad();
@@ -5550,8 +5551,12 @@ function asstPrepCollect(){
   if(p.mode === "sheet"){
     const c = read("asst_sctx"), to = read("asst_sto"), cs = read("asst_scase"),
           sv = read("asst_ssvc"), fe = read("asst_sfee"), rt = read("asst_sret"),
-          nr = read("asst_snr");
+          nr = read("asst_snr"), mh = read("asst_smh");
     if(nr !== null) p.non_refundable = nr;
+    /* The standard choice is stored as no choice — the send wizard's rule —
+       so an untouched dropdown posts nothing and the standard document stays
+       byte-identical. */
+    if(mh !== null) p.min_hours = SHEETS_MH && mh === String(SHEETS_MH.std) ? "" : mh;
     if(c !== null) p.context = c;
     if(to !== null) p.to = to;
     if(cs !== null) p.case_no = cs;
@@ -5602,6 +5607,9 @@ function asstPrepBody(){
     if(p.context === "private" && (p.non_refundable || "") !== "") {
       body.non_refundable = p.non_refundable;
     }
+    /* The minimum per surveillance day, on the same terms: private only, and
+       blank (the standard) sends nothing. */
+    if(p.context === "private" && (p.min_hours || "") !== "") body.min_hours = p.min_hours;
     if(p.include_payment && p.context && p.context !== "private") body.methods = ["mail_check"];
     return body;
   }
@@ -5776,6 +5784,13 @@ function asstPrepHtml(){
         <input id="asst_snr" data-act-input="asstPrep" value="${esc(p.non_refundable || "")}"
           placeholder="${esc(SHEETS_NR_DEFAULT != null ? String(SHEETS_NR_DEFAULT) : "")}"
           inputmode="decimal" autocomplete="off"></label>` : ""}
+      ${/* THE MINIMUM PER SURVEILLANCE DAY (owner, 2026-10-12) — the send
+            wizard's dropdown, from the same published list, private only. */
+        p.context === "private" && SHEETS_MH ? `<label class="cap">Minimum per surveillance day
+        <select id="asst_smh" data-act-input="asstPrep">
+          ${SHEETS_MH.choices.map(h => `<option value="${h}"${String((p.min_hours || "") !== "" ? p.min_hours : SHEETS_MH.std) === String(h) ? " selected" : ""}
+            >${h}-Hour Minimum${h === SHEETS_MH.std ? " (standard)" : ""}</option>`).join("")}
+        </select></label>` : ""}
       <label class="cap">Recipient email
         <input id="asst_sto" data-act-input="asstPrep" value="${esc(p.to)}" autocomplete="off"></label>
       <label class="cap">Case (optional)

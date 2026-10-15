@@ -1879,6 +1879,13 @@ LEGAL card is built from the standard product's lines and keeps four hours
 `sent_document` keeps the bytes and the engagement lines that were sent, which
 is the record of what was quoted.
 
+**The Assistant's Prepare a Rate Sheet form carries the same dropdown**, from
+the same `/sheets` list, private only, collected the same way — and a sentence
+seeds it (*"…with an 8-hour minimum"*, digits or words) through
+`asstSheetAmounts`, which seeds only a figure the list offers and leaves the
+standard blank, the non-refundable amount's rule. Naming a minimum resolves an
+unstated audience to private; naming a law firm keeps the firm.
+
 **An untouched dropdown sends nothing**: the collector records the standard
 choice as no choice, so the Worker states the standard minimum itself and the
 standard document stays byte-identical (the GOLDEN pins pass untouched). The
@@ -3973,7 +3980,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 4421 checks (2026-10-12): auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 4428 checks (2026-10-15): auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 5202 checks (2026-10-10, redesign branch): the page against the real Worker
 ```
 

@@ -26482,6 +26482,115 @@ section('Assistant rate sheet: the custom retainer field, on the products that h
 }
 
 /* ============================================================================
+   THE MINIMUM PER SURVEILLANCE DAY ON THE ASSISTANT'S RATE-SHEET FORM (owner,
+   2026-10-12). The send wizard's dropdown, from the same published list, so
+   the two doors that send a private sheet offer the same choice.
+   ========================================================================= */
+section('Assistant rate sheet: the 4, 6 or 8-hour minimum, private only');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.waitForFunction(() => typeof SHEETS_MH !== 'undefined' && SHEETS_MH, null, { timeout: 15000 })
+    .catch(() => {});
+  const openAs = ctx => page.evaluate(async (c) => {
+    await asstOpen('');
+    ASST.prep = { mode: 'sheet', context: c, to: 'client@example.com', case_no: '',
+                  legal_service: '', flat_fee: '', retainer: '', non_refundable: '',
+                  min_hours: '', include_intake: false, include_payment: false,
+                  preview: null, previewBody: null, err: '', busy: false };
+    paint();
+    const el = document.getElementById('asst_smh');
+    return el ? { opts: [...el.options].map(o => o.textContent.trim()), value: el.value } : null;
+  }, ctx);
+
+  const priv = await openAs('private');
+  ok('Private Client offers the minimum as 4 (standard), 6 and 8',
+     !!priv && priv.opts.join('|') === '4-Hour Minimum (standard)|6-Hour Minimum|8-Hour Minimum',
+     JSON.stringify(priv));
+  ok('and it opens on the standard four', !!priv && priv.value === '4', JSON.stringify(priv));
+  ok('an untouched dropdown sends no minimum, so the standard document is unchanged',
+     !('min_hours' in await page.evaluate(() => { asstPrepCollect(); return asstPrepBody(); })));
+  ok('Legal does not offer it — the legal card keeps the standard minimum', (await openAs('legal')) === null);
+  ok('nor does Insurance', (await openAs('insurance')) === null);
+
+  /* DRIVEN, NOT SIMULATED: the real select, and the repaint it causes. */
+  await openAs('private');
+  if (await page.$('#asst_smh')) await page.selectOption('#asst_smh', '8');
+  await page.waitForTimeout(200);
+  const after = await page.evaluate(() => {
+    paint();
+    const el = document.getElementById('asst_smh');
+    return { draft: ASST.prep.min_hours, shown: el && el.value, body: asstPrepBody() };
+  });
+  ok('choosing 8 is held in the draft and survives a repaint',
+     after.draft === '8' && after.shown === '8', JSON.stringify(after));
+  ok('and rides to the sender as min_hours', after.body.min_hours === '8', JSON.stringify(after.body));
+  const ctxSwitch = await page.evaluate(() => { ASST.prep.context = 'legal'; return asstPrepBody(); });
+  ok('a minimum left in the draft is not sent once the audience is a law firm',
+     !('min_hours' in ctxSwitch), JSON.stringify(ctxSwitch));
+
+  /* THE PREVIEW IS THE WORKER'S, and it is the text Send emails. */
+  await page.evaluate(() => { ASST.prep.context = 'private'; paint(); });
+  if (await page.$('#asst_smh')) await page.selectOption('#asst_smh', '8');
+  await page.evaluate(() => asstPrepPrev());
+  await page.waitForFunction(() => ASST.prep && !ASST.prep.busy, null, { timeout: 15000 }).catch(() => {});
+  const pv = await page.evaluate(() => ({ text: ASST.prep && ASST.prep.preview && ASST.prep.preview.body_text || '',
+                                          err: ASST.prep && ASST.prep.err,
+                                          sent: ASST.prep && ASST.prep.previewBody }));
+  ok('the preview states the 8-hour minimum', /8-HOUR MINIMUM PER SURVEILLANCE DAY/.test(pv.text),
+     JSON.stringify({ err: pv.err, text: pv.text.slice(0, 300) }));
+  ok('and no four-hour minimum anywhere in it', !/4-HOUR MINIMUM|4-hour minimum/i.test(pv.text));
+  ok('and the body Send will post carries the same choice',
+     !!pv.sent && pv.sent.min_hours === '8', JSON.stringify(pv.sent));
+
+  /* Back to the standard: stored as no choice. */
+  await page.evaluate(() => { ASST.prep.preview = null; ASST.prep.previewBody = null; paint(); });
+  if (await page.$('#asst_smh')) await page.selectOption('#asst_smh', '4');
+  ok('choosing the standard again sends nothing',
+     !('min_hours' in await page.evaluate(() => asstPrepBody())));
+
+  /* A sentence's seed lands in the dropdown. */
+  const seeded = await page.evaluate(async () => {
+    await asstOpen('');
+    ASST.prep = { mode: 'sheet', context: 'private', to: '', case_no: '', legal_service: '',
+                  flat_fee: '', retainer: '', non_refundable: '', min_hours: '6',
+                  include_intake: false, include_payment: false,
+                  preview: null, previewBody: null, err: '', busy: false };
+    paint();
+    const el = document.getElementById('asst_smh');
+    return el && el.value;
+  });
+  ok('a seeded 6-hour minimum opens the dropdown on 6', seeded === '6', String(seeded));
+
+  /* AND THE SEED ARRIVES FROM A TYPED SENTENCE, through the Assistant's own
+     send path — the Worker reads it, the page carries it into the form. */
+  const typed = await page.evaluate(async () => {
+    await asstOpen('');
+    ASST.prep = null;
+    await asstSend('Prepare a private rate sheet with an 8-hour minimum');
+    const el = document.getElementById('asst_smh');
+    return { draft: ASST.prep && ASST.prep.min_hours, shown: el && el.value };
+  });
+  ok('typing "…with an 8-hour minimum" opens the form on 8',
+     typed.draft === '8' && typed.shown === '8', JSON.stringify(typed));
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(200);
+  const m = await page.evaluate(() => {
+    paint();
+    const el = document.getElementById('asst_smh');
+    if (!el) return null;
+    return { h: Math.round(el.getBoundingClientRect().height), fs: parseFloat(getComputedStyle(el).fontSize),
+             overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth };
+  });
+  ok('on a phone the dropdown is at least 44px tall and 16px text',
+     !!m && m.h >= 44 && m.fs >= 16, JSON.stringify(m));
+  ok('and causes no sideways scroll', !!m && m.overflow === false, JSON.stringify(m));
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.close();
+}
+
+/* ============================================================================
    MOBILE UNIT A — the bottom nav is a PHONE thing, and the desktop-style
    portal is untouched. That second half is the owner's standing rule and is
    asserted at both the tablet and the desktop width, not assumed from a
