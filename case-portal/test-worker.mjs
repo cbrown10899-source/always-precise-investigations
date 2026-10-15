@@ -20567,6 +20567,128 @@ section('The private rate sheet carries a non-refundable portion, from one sourc
   globalThis.fetch = realFetch;
 }
 
+/* ============================================================================
+   THE MINIMUM PER SURVEILLANCE DAY IS CHOSEN PER SEND (owner, 2026-10-12:
+   "a drop down ... for 4-Hour Minimum, to be able to select 6 and 8 Hour
+   minimums also"). Asserted against the RENDERED EMAIL — both parts — because
+   what matters is the figure a client reads, and a 6-hour sheet that still
+   says four hours one paragraph up is the defect the one writer prevents.
+   ========================================================================= */
+section('The private rate sheet minimum is 4, 6 or 8 hours, chosen per send');
+{
+  const realFetch = globalThis.fetch;
+  let mails = [];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com')) { mails.push(JSON.parse(init.body)); return new Response('{"id":"re_1"}', { status: 200 }); }
+    return realFetch(url, init);
+  };
+  const env = freshEnv();
+  env.INGEST_PER_MINUTE = '50';
+  env.MAIL_PER_MINUTE = '80';
+  env.RESEND_API_KEY = 'test-resend-key';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const send = body => call(env, '/sheets/private_retainer/email',
+    { method: 'POST', cookie: admin, body });
+  const prep = body => call(env, '/assistant/prepare-sheet',
+    { method: 'POST', cookie: admin, body });
+  const client = () => mails.find(m => [].concat(m.to).some(t => !/office@/.test(t))) || null;
+  const both = m => m ? `${m.text}\n${m.html}` : '';
+
+  /* ---- THE STANDARD IS UNTOUCHED. No choice, and the document is four hours
+     everywhere — the GOLDEN byte pins hold the rest of it. ---- */
+  mails = [];
+  let r = await jsonOf(await send({ to: 'a@example.com', retainer_amount: 1500 }));
+  ok('with no minimum chosen, the sheet states the standard four hours',
+     r.min_hours === 4 && /4-HOUR MINIMUM PER SURVEILLANCE DAY/.test(both(client()))
+     && /4-hour minimum per surveillance day/.test(both(client())), String(r.min_hours));
+  mails = [];
+  const four = await jsonOf(await send({ to: 'a@example.com', retainer_amount: 1500, min_hours: 4 }));
+  const fourText = client() && client().text;
+  mails = [];
+  await send({ to: 'a@example.com', retainer_amount: 1500 });
+  ok('choosing 4 explicitly emails exactly what leaving it alone does',
+     four.min_hours === 4 && fourText === client().text);
+
+  /* ---- 6 AND 8 REACH BOTH PLACES THE MINIMUM IS STATED, AND FOUR IS GONE. ---- */
+  for (const h of [6, 8]) {
+    mails = [];
+    r = await jsonOf(await send({ to: `c${h}@example.com`, retainer_amount: 1500, min_hours: h }));
+    const doc = both(client());
+    ok(`${h} hours: the bold term says ${h}-HOUR MINIMUM PER SURVEILLANCE DAY`,
+       r.min_hours === h && new RegExp(`font-weight:700">${h}-HOUR MINIMUM PER SURVEILLANCE DAY<`).test(doc)
+       && new RegExp(`${h}-HOUR MINIMUM PER SURVEILLANCE DAY`).test(client().text), String(r.min_hours));
+    ok(`${h} hours: the Investigative rate line says ${h}-hour minimum too`,
+       new RegExp(`${h}-hour minimum per surveillance day`).test(client().text)
+       && new RegExp(`${h}-hour minimum per surveillance day`).test(client().html));
+    ok(`${h} hours: and four hours appears nowhere in the document`,
+       !/4-hour minimum|4-HOUR MINIMUM/i.test(doc), (doc.match(/.{0,40}4-hour.{0,40}/i) || [''])[0]);
+    ok(`${h} hours: nothing else on the sheet moved — the retainer, the $500 and the rate`,
+       /Retainer: \$1,500/.test(doc) && /NON-REFUNDABLE PORTION: \$500/.test(doc)
+       && /\$100\/hr/.test(doc));
+  }
+
+  /* ---- ONE FIGURE ACROSS EVERY PATH: the rehearsal, the screen, the send. ---- */
+  const previewed = await jsonOf(await prep({ id: 'private_retainer', to: 'p@example.com',
+    send_context: 'private', retainer_amount: 1500, min_hours: 6 }));
+  mails = [];
+  await send({ to: 'p@example.com', retainer_amount: 1500, min_hours: 6 });
+  ok('the Assistant rehearsal resolves the same minimum',
+     previewed.min_hours === 6
+     && previewed.engagement.lines.some(l => l.text === '6-HOUR MINIMUM PER SURVEILLANCE DAY'));
+  ok('and its body is byte-identical to what the send emailed', previewed.body_text === client().text);
+  const screen = await jsonOf(await call(env, '/sheets?retainer=1500&mh=8', { cookie: admin }));
+  const priv = screen.sheets.find(c => c.key === 'private');
+  const legal = screen.sheets.find(c => c.key === 'legal');
+  ok('the Rate Sheets read resolves it and publishes the owner\'s three choices',
+     screen.min_hours === 8 && JSON.stringify(screen.min_hours_choices) === '[4,6,8]'
+     && screen.min_hours_default === 4 && priv.min_hours === 8);
+  ok('the private card\'s line and term both say 8',
+     priv.engagement.lines.some(l => l.text === '8-HOUR MINIMUM PER SURVEILLANCE DAY')
+     && priv.lines.some(l => l.label === 'Investigative rate' && /^8-hour minimum/.test(l.sub)
+       && /^8-hour minimum/.test(l.note)));
+  ok('and the LEGAL card built from the same product keeps the standard four hours',
+     legal.lines.some(l => l.label === 'Investigative rate' && /^4-hour minimum/.test(l.sub))
+     && !/8-hour/i.test(JSON.stringify(legal)));
+  ok('a minimum outside the three is refused on the screen too',
+     (await call(env, '/sheets?retainer=1500&mh=7', { cookie: admin })).status === 400);
+
+  /* ---- REFUSED BY NAME, NEVER ROUNDED, NEVER QUIETLY DROPPED. ---- */
+  for (const bad of [5, 7, 10, 0, -4, 'six', 6.5]) {
+    mails = [];
+    const res = await send({ to: 'x@example.com', retainer_amount: 1500, min_hours: bad });
+    ok(`a minimum of ${JSON.stringify(bad)} is refused by name and emails nobody`,
+       res.status === 400 && (await jsonOf(res)).code === 'bad_min_hours' && mails.length === 0);
+  }
+  mails = [];
+  let res = await send({ to: 'firm@example.com', send_context: 'legal', retainer_amount: 1500, min_hours: 8 });
+  ok('a minimum on a LEGAL send is refused by name — a law firm keeps the standard product',
+     res.status === 400 && (await jsonOf(res)).code === 'min_hours_not_private' && mails.length === 0);
+  res = await call(env, '/sheets/insurance_assignment/email',
+    { method: 'POST', cookie: admin, body: { to: 'adj@example.com', min_hours: 6 } });
+  ok('and on an insurance send', res.status === 400 && (await jsonOf(res)).code === 'min_hours_not_private');
+  res = await send({ to: 'y@example.com', min_hours: 6, custom_agreement: { hourly_rate: 75 } });
+  ok('and beside a Full Custom agreement, which carries its own minimum term',
+     res.status === 400 && (await jsonOf(res)).code === 'min_hours_not_custom');
+  res = await prep({ id: 'private_retainer', to: 'firm@example.com', send_context: 'legal',
+                     retainer_amount: 1500, min_hours: 6 });
+  ok('the rehearsal refuses the same thing by the same name',
+     res.status === 400 && (await jsonOf(res)).code === 'min_hours_not_private');
+
+  /* ---- THE OFFICE'S RECORD COPY CARRIES THE CHOSEN MINIMUM, because it is
+     handed the document's own engagement lines. ---- */
+  await call(env, '/billing-settings', { method: 'POST', cookie: admin,
+    body: { owner_record_email: 'office@alwaysprecise.example' } });
+  mails = [];
+  r = await jsonOf(await send({ to: 'z@example.com', retainer_amount: 1500, min_hours: 8 }));
+  const office = mails.find(m => [].concat(m.to).some(t => /office@/.test(t)));
+  ok('the office record copy states the 8-hour minimum the client was sent',
+     r.record_copy === true && office && /8-HOUR MINIMUM PER SURVEILLANCE DAY/.test(both(office))
+     && !/4-HOUR MINIMUM/.test(both(office)), r.record_copy);
+
+  globalThis.fetch = realFetch;
+}
+
 section('Case closeout: a refund is its own event and the payment is never touched');
 {
   /* THE OWNER'S ONE ACCOUNTING RULE, in their own words: "Do NOT modify the
@@ -23643,8 +23765,15 @@ section('FULL CUSTOM: §14/§21 — one document system, one record copy, one pa
 section('FULL CUSTOM: the source is one builder, and the standard one is untouched');
 {
   const src = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
-  ok('the standard engagement block still reads the standard minimum',
-     /function engagementBlock\([^)]*\)[\s\S]{0,900}PERSONAL\.minHours/.test(src));
+  /* Re-aimed 2026-10-12 at the owner's decision that the standard sheet's
+     minimum is chosen per send (4, 6 or 8): the standard block still OPENS on
+     the standard minimum — its default parameter — and states the figure it is
+     handed, which only `minHoursFor`'s list can supply. Not loosened: a block
+     that defaulted to anything else, or a resolver with no standard default,
+     fails here. */
+  ok('the standard engagement block still defaults to the standard minimum',
+     /function engagementBlock\([^)]*minHours = PERSONAL\.minHours\)/.test(src)
+     && /function minHoursFor[\s\S]{0,400}return \{ hours: PERSONAL\.minHours, source: 'default' \}/.test(src));
   /* THESE TWO FIRED ON MY OWN COMMENTS, which say in prose that the standard
      minimum and the standard default are deliberately NOT consulted here. The
      property the pin protects is that the builder does not READ them, and a

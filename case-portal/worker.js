@@ -1093,6 +1093,61 @@ function nonRefundableFor(retainer, offered) {
   return { amount: Math.round(n * 100) / 100, source: 'custom' };
 }
 
+/* THE MINIMUM PER SURVEILLANCE DAY ON THE STANDARD PRIVATE SHEET (owner,
+   2026-10-12: "a drop down ... for 4-Hour Minimum, to be able to select 6 and
+   8 Hour minimums also").
+
+   It was a fixed term — `PERSONAL.minHours`, the same four hours on every
+   private sheet — and it is now chosen PER SEND, the way the retainer and the
+   non-refundable portion already are. Nothing about a case or the product
+   changes: the rate, the retainer rule and `PERSONAL` are exactly as they
+   were, and the figure lives in the document that was sent (`sent_document`
+   keeps its bytes), never in a new column.
+
+   `minHoursFor` IS THE ONE READER OF THE CHOICE, for the `nonRefundableFor`
+   reason: the send, the Assistant's rehearsal and the Rate Sheets screen all
+   resolve through it, so three callers cannot accept three different lists.
+   A blank choice is the standard four — the untouched dropdown sends nothing,
+   and a send that leaves it alone is byte-identical to one made before this
+   existed. Anything outside the owner's three figures is REFUSED BY NAME,
+   never rounded to the nearest: a sheet quoting a minimum nobody chose is the
+   thing the dropdown exists to prevent. */
+const MIN_HOURS_CHOICES = [4, 6, 8];
+
+function minHoursFor(offered) {
+  const raw = offered === undefined || offered === null || String(offered).trim() === ''
+    ? null : String(offered).trim();
+  if (raw === null) return { hours: PERSONAL.minHours, source: 'default' };
+  const n = Number(raw);
+  if (!MIN_HOURS_CHOICES.includes(n)) {
+    return { error: `The minimum per surveillance day can be ${MIN_HOURS_CHOICES.join(', ')} `
+                  + 'hours. Choose one of those, or leave it on the standard minimum.',
+             code: 'bad_min_hours' };
+  }
+  return { hours: n, source: n === PERSONAL.minHours ? 'default' : 'chosen' };
+}
+
+/* The send's and the rehearsal's ONE reading of `body.min_hours`, so the two
+   cannot accept and refuse different things (the pinned-mirror rule). Private
+   only, and refused BY NAME elsewhere — a minimum silently dropped because it
+   arrived on a legal or insurance send is a screen that accepted something it
+   did not use (the `non_refundable` precedent). A Full Custom agreement carries
+   its own minimum term, so one beside it is refused too, exactly as the
+   standard non-refundable amount is. */
+function minHoursForSend(body, sendCtx) {
+  const asked = body.min_hours !== undefined && body.min_hours !== null
+    && String(body.min_hours).trim() !== '';
+  if (asked && sendCtx !== SEND_CONTEXT.PRIVATE) {
+    return { error: 'A minimum per surveillance day is a private-client term, and this send is '
+      + `${sendCtx}. Leave it out, or send from the private card.`, code: 'min_hours_not_private' };
+  }
+  if (asked && body.custom_agreement !== undefined && body.custom_agreement !== null) {
+    return { error: 'A full custom agreement carries its own minimum-hours term. Set it inside '
+      + 'the agreement, not beside it.', code: 'min_hours_not_custom' };
+  }
+  return minHoursFor(body.min_hours);
+}
+
 /* Whole dollars where the figure is whole, cents where it is not — the sheet's
    own formatting, so $500 does not print as $500.00 beside a $1,500 retainer. */
 function nrMoney(n) {
@@ -1121,7 +1176,7 @@ function nrMoney(n) {
    product decision and not a contrast one. Do not reintroduce a second tone
    to "distinguish" the money from the minimum: they are two stated terms and
    the client reads both. */
-function engagementBlock(retainer, nonRefundable) {
+function engagementBlock(retainer, nonRefundable, minHours = PERSONAL.minHours) {
   return {
     lines: [
       { text: `Retainer: ${nrMoney(retainer)}` },
@@ -1133,7 +1188,7 @@ function engagementBlock(retainer, nonRefundable) {
          wording let a client read one four-hour minimum across a three-day
          case. One writer, so the sheet, the preview, the email, the Assistant
          rehearsal and the owner's record copy cannot say different things. */
-      { text: `${PERSONAL.minHours}-HOUR MINIMUM PER SURVEILLANCE DAY`, tone: 'term' },
+      { text: `${minHours}-HOUR MINIMUM PER SURVEILLANCE DAY`, tone: 'term' },
     ],
     note: 'A minimum portion of the retainer is non-refundable upon engagement and '
         + 'reservation of investigative services. Additional terms are governed by the '
@@ -1738,6 +1793,22 @@ function resolvedRetainer(retainer) {
   return Number(retainer) > 0 ? Number(retainer) : PERSONAL.retainer;
 }
 
+/* The private sheet's "Investigative rate" line — the other place a private
+   document states the minimum. One writer for it, so the per-send choice
+   reaches the line and the engagement block together and a 6-hour sheet can
+   never say four hours one paragraph up. Called with the standard figure it
+   is exactly the line `rateSheets()` always built. */
+function privateRateLine(minHours) {
+  const money = n => '$' + Number(n).toLocaleString('en-US');
+  return { label: 'Investigative rate', value: `${money(PERSONAL.hourly)}/hr`, big: true,
+          sub: `${minHours}-hour minimum per surveillance day`,
+          note: `${minHours}-hour minimum per surveillance day. Investigative time is deducted `
+              + `from the retainer at the same ${money(PERSONAL.hourly)}-per-hour rate. Field `
+              + 'investigation, necessary video review, case documentation and report '
+              + 'preparation are handled at this rate and applied against your authorized '
+              + 'retainer.' };
+}
+
 function rateSheets(retainer) {
   const money = n => '$' + Number(n).toLocaleString('en-US');
   const ret = resolvedRetainer(retainer);
@@ -1756,13 +1827,7 @@ function rateSheets(retainer) {
           sub: 'Applied to the work — not an extra fee',
           note: 'Applied in full toward authorized investigative services. It is not a '
               + 'separate fee — your retainer funds the work performed on your case.' },
-        { label: 'Investigative rate', value: `${money(PERSONAL.hourly)}/hr`, big: true,
-          sub: `${PERSONAL.minHours}-hour minimum per surveillance day`,
-          note: `${PERSONAL.minHours}-hour minimum per surveillance day. Investigative time is deducted `
-              + `from the retainer at the same ${money(PERSONAL.hourly)}-per-hour rate. Field `
-              + 'investigation, necessary video review, case documentation and report '
-              + 'preparation are handled at this rate and applied against your authorized '
-              + 'retainer.' },
+        privateRateLine(PERSONAL.minHours),
         { label: 'If additional time is needed', value: `${money(PERSONAL.hourly)}/hr`, big: true,
           sub: 'Only with your approval',
           note: 'We contact you before exceeding the authorized retainer. Additional '
@@ -1846,14 +1911,14 @@ function sheetById(id, retainer) { return rateSheets(retainer).find(s => s.id ==
 /* The card a send should be WRITTEN from: the one whose product and context
    both match. Falls back to the product itself, so an unknown context still
    produces the ordinary sheet rather than nothing. */
-function sheetForContext(sheetId, ctx, retainer, nonRefundable) {
-  const cards = sheetCards(retainer, nonRefundable);
+function sheetForContext(sheetId, ctx, retainer, nonRefundable, minHours) {
+  const cards = sheetCards(retainer, nonRefundable, minHours);
   return cards.find(c => c.id === sheetId && c.context === ctx)
       || cards.find(c => c.id === sheetId)
       || sheetById(sheetId, retainer);
 }
 
-function sheetCards(retainer, nonRefundable) {
+function sheetCards(retainer, nonRefundable, minHours) {
   const sheets = rateSheets(retainer);
   const by = id => sheets.find(s => s.id === id);
   const priv = by('private_retainer');
@@ -1873,8 +1938,18 @@ function sheetCards(retainer, nonRefundable) {
   const nr = Number.isFinite(Number(nonRefundable)) && Number(nonRefundable) >= 0
     ? Number(nonRefundable)
     : nonRefundableFor(ret, null).amount;
-  if (priv) cards.push({ ...priv, key: 'private', context: SEND_CONTEXT.PRIVATE,
-                         engagement: engagementBlock(ret, nr), non_refundable: nr });
+  /* THE CHOSEN MINIMUM IS THE PRIVATE CARD'S ALONE, for the same structural
+     reason as the engagement block: the legal card below is built from `priv`
+     and keeps the standard product's lines, so a private client's 8-hour
+     choice cannot reach a law firm's sheet. Absent or standard, the private
+     card's lines are `priv.lines` themselves — not a rebuilt copy — so the
+     standard document is the same object it always was. */
+  const mh = minHoursFor(minHours).hours || PERSONAL.minHours;
+  const privLines = mh === PERSONAL.minHours ? priv && priv.lines
+    : priv && priv.lines.map(l => l.label === 'Investigative rate' ? privateRateLine(mh) : l);
+  if (priv) cards.push({ ...priv, lines: privLines, key: 'private', context: SEND_CONTEXT.PRIVATE,
+                         engagement: engagementBlock(ret, nr, mh), non_refundable: nr,
+                         min_hours: mh });
   if (ins) cards.push({ ...ins, key: 'insurance', context: SEND_CONTEXT.INSURANCE });
   if (priv) {
     cards.push({
@@ -3081,6 +3156,10 @@ async function emailSheet(request, env, user, id) {
   }
   const nonRef = nonRefundableFor(retainer, body.non_refundable);
   if (nonRef.error) return json({ error: nonRef.error, code: nonRef.code }, 400);
+  /* THE MINIMUM PER SURVEILLANCE DAY (owner, 2026-10-12) — 4, 6 or 8 hours,
+     the standard four when the choice is left alone. */
+  const minHrs = minHoursForSend(body, sendCtx);
+  if (minHrs.error) return json({ error: minHrs.error, code: minHrs.code }, 400);
 
   /* ================= THE FULL CUSTOM PRIVATE AGREEMENT (owner, 2026-09-23) ==
      A per-send DOCUMENT variant, resolved exactly where `legalFixedSheet` is
@@ -3140,7 +3219,7 @@ async function emailSheet(request, env, user, id) {
   const sheet = customSpec ? privateCustomSheet(customSpec)
     : legalSvc && legalSvc.model === 'fixed'
     ? legalFixedSheet(legalSvc, flatFee)
-    : sheetForContext(id, sendCtx, retainer, nonRef.amount);
+    : sheetForContext(id, sendCtx, retainer, nonRef.amount, minHrs.hours);
 
   /* The Options step (UIBUILD P18): include the intake, or not. Which intake
      is never the caller's choice.
@@ -3383,6 +3462,9 @@ async function emailSheet(request, env, user, id) {
        because there is no such portion on one. */
     non_refundable: customSpec ? (customSpec.non_refundable == null ? undefined : customSpec.non_refundable)
       : sendCtx === SEND_CONTEXT.PRIVATE ? nonRef.amount : undefined,
+    /* The minimum the standard private document stated, observable for the
+       same reason — absent on every other send, which states none of its own. */
+    min_hours: !customSpec && sendCtx === SEND_CONTEXT.PRIVATE ? minHrs.hours : undefined,
     /* THE AGREEMENT THE DOCUMENT WAS BUILT FROM — observable and asserted, the
        `send_context` / `legal_service` / `flat_fee` rule applied to the fourth
        per-send resolution. The figures come back from the RESOLVED spec, so a
@@ -18363,6 +18445,9 @@ async function assistantSheetPlan(env, body) {
   }
   const nonRef = nonRefundableFor(retainer, body.non_refundable);
   if (nonRef.error) return { fail: json({ error: nonRef.error, code: nonRef.code }, 400) };
+  /* The minimum, through the SAME reading the sender uses. */
+  const minHrs = minHoursForSend(body, sendCtx);
+  if (minHrs.error) return { fail: json({ error: minHrs.error, code: minHrs.code }, 400) };
 
   /* ================= THE FULL CUSTOM PRIVATE AGREEMENT (owner, 2026-09-23) ==
      A per-send DOCUMENT variant, resolved exactly where `legalFixedSheet` is
@@ -18404,7 +18489,7 @@ async function assistantSheetPlan(env, body) {
   const sheet = customSpec ? privateCustomSheet(customSpec)
     : legalSvc && legalSvc.model === 'fixed'
     ? legalFixedSheet(legalSvc, flatFee)
-    : sheetForContext(id, sendCtx, retainer, nonRef.amount);
+    : sheetForContext(id, sendCtx, retainer, nonRef.amount, minHrs.hours);
   const includeIntake = body.include_intake === true || body.include_intake === 1 || body.include_intake === '1';
   const baseDoor = includeIntake ? (intakeForContext(sendCtx) || null) : null;
   const intakeDoor = baseDoor && legalSvc
@@ -18438,7 +18523,7 @@ async function assistantSheetPlan(env, body) {
     ? `${sheet.name} — Always Precise Investigations (case ${caseNo})`
     : `${sheet.name} — Always Precise Investigations`;
   return { to, subject, text, sendCtx, legalSvc, flatFee, sheet, intakeDoor,
-           payment, npPicked, linkedCase, caseNo, nonRef, customSpec };
+           payment, npPicked, linkedCase, caseNo, nonRef, minHrs, customSpec };
 }
 
 /* POST /assistant/prepare-sheet — what WOULD go, priced by the real
@@ -18449,6 +18534,7 @@ async function assistantPrepareSheet(request, env) {
   return json({ ok: true, dry_run: true, to: plan.to, case_no: plan.linkedCase,
     send_context: plan.sendCtx, sheet: plan.sheet.id, sheet_name: plan.sheet.name,
     non_refundable: plan.sendCtx === SEND_CONTEXT.PRIVATE ? plan.nonRef.amount : undefined,
+    min_hours: !plan.customSpec && plan.sendCtx === SEND_CONTEXT.PRIVATE ? plan.minHrs.hours : undefined,
     legal_service: plan.legalSvc
       ? { id: plan.legalSvc.id, label: plan.legalSvc.label, model: plan.legalSvc.model } : undefined,
     flat_fee: plan.legalSvc && plan.legalSvc.model === 'fixed' ? plan.flatFee : undefined,
@@ -21045,7 +21131,12 @@ async function route(request, env) {
     const nrAsked = url.searchParams.get('nr');
     const nrRead = nonRefundableFor(retainer, nrAsked);
     if (nrRead.error) return json({ error: nrRead.error, code: nrRead.code }, 400);
-    return json({ sheets: sheetCards(retainer, nrRead.amount).map(c =>
+    /* `?mh=` is the minimum chosen on a send, read by the same one function —
+       so the preview states the minimum the email will, and a figure the
+       sender would refuse is refused here too. */
+    const mhRead = minHoursFor(url.searchParams.get('mh'));
+    if (mhRead.error) return json({ error: mhRead.error, code: mhRead.code }, 400);
+    return json({ sheets: sheetCards(retainer, nrRead.amount, mhRead.hours).map(c =>
                     c.context === SEND_CONTEXT.PRIVATE ? c : withBillcomLine(c, billcom.ready)),
                   retainer,
                   /* Observable, like `send_context`: the screen states the
@@ -21054,6 +21145,12 @@ async function route(request, env) {
                      blank box means so the page never hard-codes 500. */
                   non_refundable: nrRead.amount,
                   non_refundable_default: nonRefundableFor(retainer, null).amount,
+                  /* The choices the private wizard's minimum dropdown offers,
+                     and which one is standard — published so the page holds
+                     no second copy of the owner's list. */
+                  min_hours: mhRead.hours,
+                  min_hours_choices: MIN_HOURS_CHOICES,
+                  min_hours_default: PERSONAL.minHours,
                   /* LEGAL-SERVICES.md — the catalogue the legal send wizard
                      offers. price_label is COMPOSED HERE so no figure ever
                      lives in the page source (the no-dollar guard), and

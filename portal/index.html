@@ -4264,6 +4264,9 @@ let LAST_SEND = null;
    answered; the placeholder is simply empty until then rather than guessing,
    and no figure is written into this file. */
 let SHEETS_NR_DEFAULT = null;
+/* The private sheet's minimum-per-day choices and the standard one, as the
+   Worker publishes them on /sheets — the page holds no copy of the list. */
+let SHEETS_MH = null;
 /* Three states, not two: an empty SHEETS is both "never loaded" and "failed",
    and the view drew both as a spinner that never resolves. */
 let SHEETS_OK = false, SHEETS_ERR = "";
@@ -9861,7 +9864,7 @@ function wizSetType(id){
   w.pay = id === "private";
   w.payMethods = []; w.payTouched = false;
   w.mailCheck = false; w.billcom = false;
-  w.nonRef = "";
+  w.nonRef = ""; w.minHours = "";
   /* THE CUSTOM AGREEMENT BELONGS TO THE PRIVATE PRODUCT, so switching type
      drops it rather than carrying it across — the rule this function already
      applies to a legal service, a flat fee and a consumer payment option.
@@ -10171,6 +10174,32 @@ function wizNonRefHtml(w){
       retainer above.</span></label>`;
 }
 
+/* THE MINIMUM PER SURVEILLANCE DAY (owner, 2026-10-12: "a drop down ... for
+   4-Hour Minimum, to be able to select 6 and 8 Hour minimums also").
+
+   Private only, gated exactly as the non-refundable amount is — on the
+   CONTEXT, because a legal send takes the private sheet and must keep the
+   standard product's terms. It opens on the standard minimum, and an
+   untouched dropdown sends nothing, so the Worker's one function supplies the
+   standard figure and the document is byte-what-it-was. The choice changes
+   the "Investigative rate" line and the bold term together, in the preview
+   and the email alike, because both are built by the Worker from it.
+
+   The list comes from the Worker (`min_hours_choices` on /sheets); with no
+   list loaded the control is simply not drawn and the send carries the
+   standard minimum, which is the honest reading of a choice nobody made. */
+function wizMinHoursHtml(w){
+  if(w.sheet !== "private_retainer" || wizContext(w) !== "private" || !SHEETS_MH) return "";
+  const pick = (w.minHours || "") !== "" ? String(w.minHours) : String(SHEETS_MH.std);
+  return `<label class="f" style="margin:8px 0 0"><span>Minimum per surveillance day</span>
+    <select id="wiz_mh" data-act="wizMinPick">
+      ${SHEETS_MH.choices.map(h => `<option value="${h}"${pick === String(h) ? " selected" : ""}
+        >${h}-Hour Minimum${h === SHEETS_MH.std ? " (standard)" : ""}</option>`).join("")}
+    </select>
+    <span class="hint">Stated on the sheet as the minimum billed for each day of
+      surveillance.</span></label>`;
+}
+
 /* ============ THE FULL CUSTOM PRIVATE AGREEMENT (owner, 2026-09-23) ========
    An OWNER-ONLY mode inside the existing private Prepare & Send wizard, for
    the engagements the standard product does not describe. Choosing it is
@@ -10455,6 +10484,7 @@ function wizRetainerHtml(w){
       <input id="wiz_retc" inputmode="decimal" placeholder="e.g. 2500"
         data-act-input="wizRetDirty" value="${esc(w.retainerCustom || "")}"></label>` : ""}
     ${wizNonRefHtml(w)}
+    ${wizMinHoursHtml(w)}
     <p class="hint">${w.retainerUnrecorded
       /* Said plainly, because the difference is invisible otherwise: the client
          is quoted this figure and the office cannot look it up afterwards. */
@@ -10565,14 +10595,19 @@ async function wizSheetLoad(){
      no case, no chosen retainer — so a custom amount previewed as the standard
      one while the email would have carried what was typed. Exactly the split
      the comment above describes, arriving through a third door. */
-  if(!w || (!w.caseNo && w.retainerOffered == null && (w.nonRef || "") === "")) return;
+  if(!w || (!w.caseNo && w.retainerOffered == null && (w.nonRef || "") === ""
+             && (w.minHours || "") === "")) return;
   try{
     const q = `case=${encodeURIComponent(w.caseNo || "")}`
       + (w.retainerOffered != null ? `&retainer=${encodeURIComponent(w.retainerOffered)}` : "")
       /* The typed non-refundable amount rides the read, so the PREVIEW is
          built by the Worker from the same figure the send will carry. The page
          never computes it — that is the whole point of the one function. */
-      + ((w.nonRef || "") !== "" ? `&nr=${encodeURIComponent(w.nonRef)}` : "");
+      + ((w.nonRef || "") !== "" ? `&nr=${encodeURIComponent(w.nonRef)}` : "")
+      /* The chosen minimum rides the read for the same reason: the preview is
+         the Worker's document built from the figure the send will carry. */
+      + (wizContext(w) === "private" && (w.minHours || "") !== ""
+        ? `&mh=${encodeURIComponent(w.minHours)}` : "");
     const r = await api(`/sheets?${q}`);
     if(SHEET_WIZ === w){
       /* MATCHED ON ID **AND** CONTEXT. Three cards share `private_retainer`,
@@ -10588,6 +10623,8 @@ async function wizSheetLoad(){
       /* What a blank box means, straight from the Worker — the placeholder
          shows it, and no figure is written into this file. */
       if(r.non_refundable_default != null) w.nrDefault = r.non_refundable_default;
+      if(Array.isArray(r.min_hours_choices))
+        SHEETS_MH = {choices: r.min_hours_choices, std: r.min_hours_default};
       if(!LEGAL_SVCS.length && (r.legal_services || []).length) LEGAL_SVCS = r.legal_services;
       /* The case's own service marker preselects the selector — but never on
          top of a choice the admin has made, the retainerTouched rule. The
@@ -24002,6 +24039,8 @@ async function render(){
     jobs.push((async () => {
       try{ const d = await api("/sheets"); SHEETS = d.sheets; SHEETS_OK = true; SHEETS_ERR = "";
            if(d.non_refundable_default != null) SHEETS_NR_DEFAULT = d.non_refundable_default;
+           if(Array.isArray(d.min_hours_choices))
+             SHEETS_MH = {choices: d.min_hours_choices, std: d.min_hours_default};
         BILLCOM_READY = !!d.billcom_ready;
            LEGAL_SVCS = d.legal_services || []; }
       catch(e){ SHEETS = []; SHEETS_OK = false; SHEETS_ERR = e.message; }
@@ -33335,6 +33374,11 @@ function wizCollect(){
   if($("wiz_ret")) SHEET_WIZ.retainerPick = $("wiz_ret").value;
   if($("wiz_retc")) SHEET_WIZ.retainerCustom = $("wiz_retc").value.trim();
   if($("wiz_nr")) SHEET_WIZ.nonRef = $("wiz_nr").value.trim();
+  /* The standard choice is recorded as no choice, so an untouched dropdown —
+     or one moved to 8 and back — sends nothing and the Worker states the
+     standard minimum itself. Only a non-standard figure rides the send. */
+  if($("wiz_mh")) SHEET_WIZ.minHours = SHEETS_MH && $("wiz_mh").value === String(SHEETS_MH.std)
+    ? "" : $("wiz_mh").value;
   /* THE CUSTOM BUILDER'S FIELDS. Collected the same way every other control
      here is — read off the DOM into the state object before any repaint, the
      EDIT_DRAFT rule, because every paint rebuilds these inputs from `w`. */
@@ -33420,6 +33464,11 @@ async function wizSend(){
            every caller and not just this screen. */
         ...(wizContext(w) === "private" && !wizCustomOn(w) && (w.nonRef || "") !== ""
           ? {non_refundable: w.nonRef} : {}),
+        /* The chosen minimum, sent only on a standard private send and only
+           once it was chosen — the untouched dropdown sends nothing and the
+           Worker states the standard minimum, as before. */
+        ...(wizContext(w) === "private" && !wizCustomOn(w) && (w.minHours || "") !== ""
+          ? {min_hours: w.minHours} : {}),
         /* THE CUSTOM AGREEMENT, sent as the ONE object the preview was
            resolved from (`wizCustomSpec`) rather than re-read from the DOM
            here — so the document that was rehearsed and the document that
@@ -35429,6 +35478,9 @@ document.addEventListener("input", ev => {
   }
   if(ev.target.dataset && ev.target.dataset.act === "wizRetPick" && SHEET_WIZ){
     wizCollect(); SHEET_WIZ.retainerTouched = true; SHEET_WIZ.err = ""; paint();
+  }
+  if(ev.target.dataset && ev.target.dataset.act === "wizMinPick" && SHEET_WIZ){
+    wizCollect(); SHEET_WIZ.err = ""; paint();
   }
   if(ev.target.dataset && ev.target.dataset.act === "wizLegalSvcPick" && SHEET_WIZ){
     wizCollect(); SHEET_WIZ.lsvcTouched = true; SHEET_WIZ.err = ""; paint();
