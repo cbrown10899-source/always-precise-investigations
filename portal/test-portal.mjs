@@ -24647,6 +24647,117 @@ section('The send wizard offers the non-refundable amount, on Private only');
   await page.close();
 }
 
+/* THE MINIMUM PER SURVEILLANCE DAY IS A DROPDOWN ON THE PRIVATE SEND (owner,
+   2026-10-12). Driven through the real control — Playwright's selectOption,
+   never a hand-built event — because a select wired to the wrong event is the
+   "draws but does not work" defect this suite has caught twice. The Worker
+   suite reads the email a given body produces; this reads the body the page
+   posts, so the two halves meet at the wire. */
+section('The private send wizard offers a 4, 6 or 8-hour minimum');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button', { hasText: 'Rate Sheets' }).click();
+  await page.waitForTimeout(400);
+  const openWiz = async label => {
+    await page.evaluate(() => { SHEET_WIZ = null; OPEN_SHEET = null; paint(); });
+    await page.waitForTimeout(150);
+    await page.locator('.sheet-card', { hasText: label }).click();
+    await page.waitForTimeout(250);
+    await page.locator('.btn', { hasText: 'Send this sheet' }).click();
+    await page.waitForSelector('.amsheet', { timeout: 4000 });
+  };
+  const posted = () => page.evaluate(async () => {
+    let body = null; const real = window.fetch;
+    window.fetch = async (url, init) => {
+      if (String(url).includes('/sheets/') && init && init.method === 'POST') { body = JSON.parse(init.body);
+        return new Response(JSON.stringify({ ok: true, sent_to: 'x', send_context: 'private',
+          included: { rate_sheet: 'x', payment_methods: [] } }),
+          { status: 200, headers: { 'content-type': 'application/json' } }); }
+      return real(url, init);
+    };
+    await wizSend(); window.fetch = real;
+    return body;
+  });
+
+  await openWiz('Private Client — $1,500');
+  const ctl = await page.evaluate(() => {
+    const el = document.getElementById('wiz_mh');
+    return el ? { opts: [...el.options].map(o => [o.value, o.textContent.trim()]),
+                  value: el.value,
+                  label: el.closest('label').innerText.replace(/\s+/g, ' ').trim() } : null;
+  });
+  ok('the private wizard draws a minimum dropdown', !!ctl, JSON.stringify(ctl));
+  ok('it offers exactly 4, 6 and 8 hours, in that order, from the Worker\'s list',
+     ctl && JSON.stringify(ctl.opts.map(o => o[0])) === '["4","6","8"]', JSON.stringify(ctl && ctl.opts));
+  ok('it opens on the standard 4-Hour Minimum, which says it is standard',
+     ctl && ctl.value === '4' && /^4-Hour Minimum \(standard\)$/.test(ctl.opts[0][1])
+     && ctl.opts[1][1] === '6-Hour Minimum' && ctl.opts[2][1] === '8-Hour Minimum', JSON.stringify(ctl));
+  ok('and its label names what it sets', ctl && /Minimum per surveillance day/.test(ctl.label), ctl && ctl.label);
+
+  /* UNTOUCHED, IT SENDS NOTHING — the Worker supplies the standard minimum and
+     the document is byte-what-it-was. */
+  await page.locator('#wiz_to').fill('mh-std@example.com');
+  await page.locator('.amsheet .btn', { hasText: 'Preview' }).click();
+  await page.waitForTimeout(700);
+  ok('left alone, the preview states the standard four hours',
+     await page.evaluate(() => /4-HOUR MINIMUM PER SURVEILLANCE DAY/.test(document.querySelector('.amsheet').innerText)));
+  let body = await posted();
+  ok('and the send carries no minimum at all', body && !('min_hours' in body), JSON.stringify(body));
+
+  /* CHOSEN: 8 hours, through the real control, reaches the preview's line and
+     term and the body the page posts. */
+  await openWiz('Private Client — $1,500');
+  await page.locator('#wiz_to').fill('mh-8@example.com');
+  await page.selectOption('#wiz_mh', '8');
+  await page.waitForTimeout(250);
+  ok('choosing 8 keeps the choice on screen across the repaint',
+     await page.evaluate(() => document.getElementById('wiz_mh').value) === '8');
+  /* A BACKGROUND REPAINT MUST NOT SNAP IT BACK. The wizard repaints when its
+     payment and sheet reads land, rebuilding the select from state — so the
+     choice has to be in state the moment it is made, which is the select's
+     own handler's job. Without it this reads 4 again. */
+  ok('and a background repaint (a read landing) does not snap it back to 4',
+     await page.evaluate(() => { paint(); return document.getElementById('wiz_mh').value; }) === '8');
+  ok('and keeps what was already typed', await page.evaluate(() => document.getElementById('wiz_to').value) === 'mh-8@example.com');
+  await page.locator('.amsheet .btn', { hasText: 'Preview' }).click();
+  await page.waitForTimeout(800);
+  const prev = await page.evaluate(() => document.querySelector('.amsheet').innerText.replace(/\s+/g, ' '));
+  ok('the preview\'s bold term says 8-HOUR MINIMUM PER SURVEILLANCE DAY',
+     /8-HOUR MINIMUM PER SURVEILLANCE DAY/.test(prev), prev.slice(0, 300));
+  ok('the preview\'s rate line says 8-hour minimum too, and four hours is gone',
+     /8-hour minimum per surveillance day/i.test(prev) && !/4-hour minimum/i.test(prev));
+  body = await posted();
+  ok('the page posts min_hours 8 with the standard private send',
+     body && String(body.min_hours) === '8' && !body.custom_agreement, JSON.stringify(body));
+
+  /* PRIVATE ONLY. A law firm takes the private SHEET and keeps its terms; the
+     Full Custom document carries its own minimum term. */
+  await openWiz('Legal / Law Firm');
+  ok('the legal wizard draws no minimum dropdown',
+     await page.evaluate(() => !document.getElementById('wiz_mh')));
+  await openWiz('Private Client — $1,500');
+  await page.selectOption('#wiz_mh', '6');
+  await page.selectOption('#wiz_mode', 'custom');
+  await page.waitForTimeout(300);
+  ok('switching to Full Custom withdraws it — that document has its own minimum term',
+     await page.evaluate(() => !document.getElementById('wiz_mh')));
+
+  /* ---- 390px: the phone the owner uses ---- */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openWiz('Private Client — $1,500');
+  const phone = await page.evaluate(() => {
+    const el = document.getElementById('wiz_mh'); const cs = getComputedStyle(el);
+    return { font: parseFloat(cs.fontSize), h: Math.round(el.getBoundingClientRect().height),
+             overflow: document.documentElement.scrollWidth > window.innerWidth };
+  });
+  ok(`on a phone it is at least 16px so iOS does not zoom (${phone.font}px)`, phone.font >= 16);
+  ok(`and clears the 44px tap floor (${phone.h}px)`, phone.h >= 44);
+  ok('and the wizard does not scroll sideways at 390px', phone.overflow === false);
+
+  await page.close();
+}
+
 section('API ASSISTANT — sending is live, and only from under a preview');
 {
   const page = await newPage();
@@ -26366,6 +26477,115 @@ section('Assistant rate sheet: the custom retainer field, on the products that h
   ok('and at least 16px, so focusing it does not zoom iOS', m && m.fs >= 16, JSON.stringify(m));
   ok('and adding it caused no horizontal overflow', m && m.overflow === false);
 
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.close();
+}
+
+/* ============================================================================
+   THE MINIMUM PER SURVEILLANCE DAY ON THE ASSISTANT'S RATE-SHEET FORM (owner,
+   2026-10-12). The send wizard's dropdown, from the same published list, so
+   the two doors that send a private sheet offer the same choice.
+   ========================================================================= */
+section('Assistant rate sheet: the 4, 6 or 8-hour minimum, private only');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.waitForFunction(() => typeof SHEETS_MH !== 'undefined' && SHEETS_MH, null, { timeout: 15000 })
+    .catch(() => {});
+  const openAs = ctx => page.evaluate(async (c) => {
+    await asstOpen('');
+    ASST.prep = { mode: 'sheet', context: c, to: 'client@example.com', case_no: '',
+                  legal_service: '', flat_fee: '', retainer: '', non_refundable: '',
+                  min_hours: '', include_intake: false, include_payment: false,
+                  preview: null, previewBody: null, err: '', busy: false };
+    paint();
+    const el = document.getElementById('asst_smh');
+    return el ? { opts: [...el.options].map(o => o.textContent.trim()), value: el.value } : null;
+  }, ctx);
+
+  const priv = await openAs('private');
+  ok('Private Client offers the minimum as 4 (standard), 6 and 8',
+     !!priv && priv.opts.join('|') === '4-Hour Minimum (standard)|6-Hour Minimum|8-Hour Minimum',
+     JSON.stringify(priv));
+  ok('and it opens on the standard four', !!priv && priv.value === '4', JSON.stringify(priv));
+  ok('an untouched dropdown sends no minimum, so the standard document is unchanged',
+     !('min_hours' in await page.evaluate(() => { asstPrepCollect(); return asstPrepBody(); })));
+  ok('Legal does not offer it — the legal card keeps the standard minimum', (await openAs('legal')) === null);
+  ok('nor does Insurance', (await openAs('insurance')) === null);
+
+  /* DRIVEN, NOT SIMULATED: the real select, and the repaint it causes. */
+  await openAs('private');
+  if (await page.$('#asst_smh')) await page.selectOption('#asst_smh', '8');
+  await page.waitForTimeout(200);
+  const after = await page.evaluate(() => {
+    paint();
+    const el = document.getElementById('asst_smh');
+    return { draft: ASST.prep.min_hours, shown: el && el.value, body: asstPrepBody() };
+  });
+  ok('choosing 8 is held in the draft and survives a repaint',
+     after.draft === '8' && after.shown === '8', JSON.stringify(after));
+  ok('and rides to the sender as min_hours', after.body.min_hours === '8', JSON.stringify(after.body));
+  const ctxSwitch = await page.evaluate(() => { ASST.prep.context = 'legal'; return asstPrepBody(); });
+  ok('a minimum left in the draft is not sent once the audience is a law firm',
+     !('min_hours' in ctxSwitch), JSON.stringify(ctxSwitch));
+
+  /* THE PREVIEW IS THE WORKER'S, and it is the text Send emails. */
+  await page.evaluate(() => { ASST.prep.context = 'private'; paint(); });
+  if (await page.$('#asst_smh')) await page.selectOption('#asst_smh', '8');
+  await page.evaluate(() => asstPrepPrev());
+  await page.waitForFunction(() => ASST.prep && !ASST.prep.busy, null, { timeout: 15000 }).catch(() => {});
+  const pv = await page.evaluate(() => ({ text: ASST.prep && ASST.prep.preview && ASST.prep.preview.body_text || '',
+                                          err: ASST.prep && ASST.prep.err,
+                                          sent: ASST.prep && ASST.prep.previewBody }));
+  ok('the preview states the 8-hour minimum', /8-HOUR MINIMUM PER SURVEILLANCE DAY/.test(pv.text),
+     JSON.stringify({ err: pv.err, text: pv.text.slice(0, 300) }));
+  ok('and no four-hour minimum anywhere in it', !/4-HOUR MINIMUM|4-hour minimum/i.test(pv.text));
+  ok('and the body Send will post carries the same choice',
+     !!pv.sent && pv.sent.min_hours === '8', JSON.stringify(pv.sent));
+
+  /* Back to the standard: stored as no choice. */
+  await page.evaluate(() => { ASST.prep.preview = null; ASST.prep.previewBody = null; paint(); });
+  if (await page.$('#asst_smh')) await page.selectOption('#asst_smh', '4');
+  ok('choosing the standard again sends nothing',
+     !('min_hours' in await page.evaluate(() => asstPrepBody())));
+
+  /* A sentence's seed lands in the dropdown. */
+  const seeded = await page.evaluate(async () => {
+    await asstOpen('');
+    ASST.prep = { mode: 'sheet', context: 'private', to: '', case_no: '', legal_service: '',
+                  flat_fee: '', retainer: '', non_refundable: '', min_hours: '6',
+                  include_intake: false, include_payment: false,
+                  preview: null, previewBody: null, err: '', busy: false };
+    paint();
+    const el = document.getElementById('asst_smh');
+    return el && el.value;
+  });
+  ok('a seeded 6-hour minimum opens the dropdown on 6', seeded === '6', String(seeded));
+
+  /* AND THE SEED ARRIVES FROM A TYPED SENTENCE, through the Assistant's own
+     send path — the Worker reads it, the page carries it into the form. */
+  const typed = await page.evaluate(async () => {
+    await asstOpen('');
+    ASST.prep = null;
+    await asstSend('Prepare a private rate sheet with an 8-hour minimum');
+    const el = document.getElementById('asst_smh');
+    return { draft: ASST.prep && ASST.prep.min_hours, shown: el && el.value };
+  });
+  ok('typing "…with an 8-hour minimum" opens the form on 8',
+     typed.draft === '8' && typed.shown === '8', JSON.stringify(typed));
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(200);
+  const m = await page.evaluate(() => {
+    paint();
+    const el = document.getElementById('asst_smh');
+    if (!el) return null;
+    return { h: Math.round(el.getBoundingClientRect().height), fs: parseFloat(getComputedStyle(el).fontSize),
+             overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth };
+  });
+  ok('on a phone the dropdown is at least 44px tall and 16px text',
+     !!m && m.h >= 44 && m.fs >= 16, JSON.stringify(m));
+  ok('and causes no sideways scroll', !!m && m.overflow === false, JSON.stringify(m));
   await page.setViewportSize({ width: 1200, height: 900 });
   await page.close();
 }
