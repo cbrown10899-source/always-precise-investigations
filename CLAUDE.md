@@ -3982,7 +3982,23 @@ Tests:
 ```bash
 node case-portal/test-worker.mjs   # 4428 checks (2026-10-15): auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 5218 checks (2026-10-15): the page against the real Worker
+node case-portal/test-verify.mjs   # 37 checks (2026-10-22): verify.sh against the real Worker, and zero DB writes
 ```
+
+**THE LIVE PROBE WRITES NOTHING, AND THAT IS TESTED RATHER THAN CLAIMED.**
+`verify.sh` called itself read-only while its sign-in probe posted a wrong
+password for `__verify__` — a name inside the account alphabet, so every weekly
+`harden-check.yml` run left a `login_fails` row on the production database. A
+wrong password for a name an account could have cannot be probed without that
+write (recording it IS the lockout), so the live probe now covers what can be
+checked without one: a forged session cookie is refused (a read of
+`sessions`/`users`, which doubles as the schema check), a name outside the
+alphabet is refused before `login_fails`, and a foreign Origin is refused before
+any route. `test-verify.mjs` runs the unmodified script with real curl against
+the real Worker and the staged site, and asserts zero writes by SQLite's change
+counter, a hash of every table and the statement log; `harden-check.yml` runs it
+before the live probe. The `__verify__` row already in production is harmless and
+was deliberately left alone. **Never add a probe the Worker would remember.**
 
 **A FULL RUN'S TOTAL MOVES WITH THE CLOCK, BY A CHECK OR TWO.** *A surveillance
 date is the date where the investigator is standing* asserts once for every

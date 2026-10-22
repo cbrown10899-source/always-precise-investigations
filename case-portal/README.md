@@ -296,11 +296,15 @@ real account — which is the remaining 🔴 in `RECONCILIATION.md`.
 ./case-portal/verify.sh
 ```
 
-Read-only, creates nothing, sends no real data. It checks the Worker is
-answering on the site's own domain, the D1 binding and ingest key are set, the
-schema is applied, ingest refuses an unkeyed submission, case data is refused
-to anyone not signed in, the portal page is served with its noindex and CSP
-headers, and the intake form no longer carries the placeholder.
+Read-only, creates nothing, sends no real data and writes nothing to the
+database. It checks the Worker is answering on the site's own domain, the D1
+binding and ingest key are set, the schema is applied, a session cookie the
+server never issued is refused, sign-in answers and refuses a name no account
+can have, a sign-in from another site is refused, ingest refuses an unkeyed
+submission, case data is refused to anyone not signed in, the portal page is
+served with its noindex and CSP headers, and the intake form no longer carries
+the placeholder. `node case-portal/test-verify.mjs` runs it against the real
+Worker locally and fails on any database write.
 
 Run it after setup and after any deploy that touches the Worker. Two things it
 cannot check are printed at the end: that you deleted `BOOTSTRAP_TOKEN`, and
