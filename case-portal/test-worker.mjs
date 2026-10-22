@@ -352,6 +352,56 @@ section('Login throttling');
   ok('a successful login clears the failure count', after.res.status === 401);
 }
 
+/* THE LIVE CHECK'S LOGIN PROBE WRITES NOTHING (2026-10-22). verify.sh runs
+   weekly against PRODUCTION and says it is read-only; its old probe name,
+   "__verify__", sat inside the account alphabet, so every run reached the
+   password check and upserted a login_fails row. The body is read out of
+   verify.sh itself, so the test holds the probe that actually runs — and the
+   Worker's database is wrapped to count every statement, because "no row
+   appeared" alone would pass a probe that read the table. */
+section('The live check\'s login probe never touches the database');
+{
+  const verifySh = fs.readFileSync(path.join(HERE, 'verify.sh'), 'utf8');
+  const m = verifySh.match(/auth\/login"[^\n]*\\\n\s*-d '(\{[^']*\})'/);
+  ok('verify.sh still carries a login probe this test can read', Boolean(m));
+  const probe = m ? JSON.parse(m[1]) : {};
+
+  const counted = env => {
+    const seen = [];
+    const real = env.DB;
+    env.DB = { ...real,
+      prepare(sql) { seen.push(sql); return real.prepare(sql); },
+      batch(st) { seen.push('batch'); return real.batch(st); } };
+    return seen;
+  };
+  const failRows = env => env.DB.prepare('SELECT COUNT(*) AS n FROM login_fails').first('n');
+
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const seen = counted(env);
+  const res = await call(env, '/auth/login', { method: 'POST', body: probe });
+  const statements = seen.length;
+  ok('the probe is answered 401', res.status === 401, `got ${res.status}`);
+  ok('the probe reaches the database zero times — no read, no write',
+     statements === 0, `${statements} statement(s): ${seen.join(' | ').slice(0, 200)}`);
+  ok('and leaves login_fails empty', (await failRows(env)) === 0);
+
+  // With no schema at all it is still 401 — which is why verify.sh now leaves
+  // the schema to schema_missing (2b) rather than to this probe.
+  const bare = { ...freshEnv(), DB: d1(new DatabaseSync(':memory:')) };
+  const res2 = await call(bare, '/auth/login', { method: 'POST', body: probe });
+  ok('the probe answers 401 even on a database with no tables', res2.status === 401, `got ${res2.status}`);
+
+  // The instrument can see a write: the OLD probe name is inside the alphabet
+  // and does write a row, which is the defect this section exists for.
+  const old = freshEnv();
+  await bootstrapAdmin(old);
+  await call(old, '/auth/login', { method: 'POST',
+    body: { username: '__verify__', password: '__not-a-real-password__' } });
+  ok('the old "__verify__" probe did write a login_fails row (why it was replaced)',
+     (await failRows(old)) === 1);
+}
+
 /* ------------------------------------------------------------------ ingest */
 
 section('Submission ingest');

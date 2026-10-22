@@ -3980,7 +3980,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 4428 checks (2026-10-15): auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 4434 checks (2026-10-22): auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 5218 checks (2026-10-15): the page against the real Worker
 ```
 

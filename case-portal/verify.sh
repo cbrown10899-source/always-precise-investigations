@@ -71,16 +71,26 @@ else
   fi
 fi
 
-# 3. The database really has its tables. A missing schema shows up as a 500
-#    here rather than at the moment a client submits something.
+# 3. Login is answering — and this probe writes nothing.
+#
+#    The probe's username is OUTSIDE the account alphabet ([a-z0-9._-], 3-32),
+#    so the Worker refuses it with 401 before it reads or writes any table.
+#    Until 2026-10-22 it sent "__verify__", which IS inside the alphabet: the
+#    request reached the password check and upserted a login_fails row on the
+#    production database every week — while this file and harden-check.yml
+#    both said the checks were read-only. A Worker test reads the body below
+#    out of this file and asserts it reaches the database zero times.
+#
+#    This check therefore no longer says anything about the schema, and does
+#    not need to: 2b reads schema_missing, which covers every expected table
+#    rather than the two a login touches. (A missing table answers 503
+#    schema_out_of_date anyway, never the 500 this check used to look for.)
 LOGIN=$(code -X POST "$API/auth/login" -H 'Content-Type: application/json' \
-  -d '{"username":"__verify__","password":"__not-a-real-password__"}')
+  -d '{"username":"verify-probe!","password":"__not-a-real-password__"}')
 case "$LOGIN" in
-  401) ok "the schema is applied and login is answering" ;;
-  500) bad "the schema is applied and login is answering" \
-           "500 — the tables are missing. Run: npx wrangler d1 execute api-case-portal --remote --file=case-portal/schema.sql" ;;
-  000) bad "the schema is applied and login is answering" "no response from $API/auth/login" ;;
-  *)   bad "the schema is applied and login is answering" "expected 401 for bad credentials, got $LOGIN" ;;
+  401) ok "login is answering (probed with a name no account can have, so nothing is written)" ;;
+  000) bad "login is answering" "no response from $API/auth/login" ;;
+  *)   bad "login is answering" "expected 401 for a username no account can have, got $LOGIN" ;;
 esac
 
 # 4. Ingest is closed to anyone without the key.
