@@ -16744,8 +16744,16 @@ section('Timestamp Video RHYTHM: one encoder configuration a run, a keyframe exa
     /* an encoder that boosts every 10th frame by itself, and one that only wobbles while it settles */
     const boost = vstRhythm(mk(300, i => i % 60 === 0 ? 50000 : (i % 10 === 0 ? 80000 : 10000)));
     const settling = vstRhythm(mk(300, i => i % 60 === 0 ? 50000 : (i < 40 && i % 2 ? 200 : i < 40 ? 15000 : 10000)));
+    /* THE TWO SHAPES THIS BROWSER'S REAL VP9 PRODUCED ON ALTERNATE RUNS (2026-10-22): the
+       every-10th boost, plus — mid-clip, frames 229 to 265 — a rate-control burst of
+       frames 3.5× the rest on every other frame. Read as gaps between boosted frames that
+       burst hid the boost on one run and not the next; and the burst ALONE read as "every
+       2nd". Built here so the property does not depend on which run the encoder has. */
+    const burst = i => i >= 229 && i <= 265 && i % 2 === 1;
+    const boostBurst = vstRhythm(mk(300, i => i % 60 === 0 ? 50000 : (i % 10 === 0 ? 80000 : burst(i) ? 35000 : 10000)));
+    const burstOnly = vstRhythm(mk(300, i => i % 60 === 0 ? 50000 : (burst(i) ? 35000 : 10000)));
     const q = r => ({rhythm: r, src: {}, out: {}});
-    return {steady, starved, collapse, boost, settling, tSteady: vstKeyframesText(q(steady)), tStarved: vstKeyframesText(q(starved)),
+    return {steady, starved, collapse, boost, settling, boostBurst, burstOnly, tSteady: vstKeyframesText(q(steady)), tStarved: vstKeyframesText(q(starved)),
             tBoost: vstKeyframesText(q(boost)), bCollapse: vstBitrateTimeText(q(collapse)), bSteady: vstBitrateTimeText(q(steady))};
   });
   ok('the rhythm detector: a steady encoder reads as steady — keyframe 5× a delta frame, delta frames not starved, no second collapsed',
@@ -16763,6 +16771,11 @@ section('Timestamp Video RHYTHM: one encoder configuration a run, a keyframe exa
      JSON.stringify([D.boost.boost, D.tBoost]));
   ok('…while one that only wobbles as its rate control settles is not mistaken for a rhythm, and a steady one has none',
      !D.settling.boost && !D.steady.boost, JSON.stringify([D.settling.boost, D.steady.boost]));
+  ok('…and a rate-control burst mid-clip does not hide the encoder’s own rhythm: still every 10th frame, 8× the rest — keyframes on the beat counted against nothing',
+     D.boostBurst.boost && D.boostBurst.boost.every === 10 && D.boostBurst.boost.count === 20 && Math.abs(D.boostBurst.boost.ratio - 8) < 0.01,
+     JSON.stringify(D.boostBurst.boost));
+  ok('…while that burst on its own — a few seconds of every other frame — is not named a rhythm',
+     !D.burstOnly.boost, JSON.stringify(D.burstOnly.boost));
 
   /* THE MOV/MP4 PATH keeps its original's own clock: an iPhone-style 1/600 s track. */
   const M = await vstRun(page, `
