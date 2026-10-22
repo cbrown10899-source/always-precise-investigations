@@ -50,6 +50,10 @@ env:
   CLOUDFLARE_ACCOUNT_ID: 63a4b8fd9efe4137e1f91c49b5e61c6f
   DB_NAME: api-case-portal
   SITE: https://alwayspreciseinvestigations.net
+  # Wrangler is pinned so a setup run never picks up whatever npm calls
+  # "latest" that day. 4.137.0 is the version run #60 (2026-09-24) used
+  # successfully against this account. Moving it is a deliberate edit here.
+  WRANGLER_VERSION: '4.137.0'
 
 jobs:
   setup:
@@ -58,8 +62,24 @@ jobs:
       - uses: actions/checkout@v4
         with: { ref: master }
 
+      # The Node version lives in ONE place, .node-version at the repo root.
+      # 22.23.4 is the Oct 21 2026 security release (CVE-2026-111497 and others).
       - uses: actions/setup-node@v4
-        with: { node-version: '22' }
+        with: { node-version-file: '.node-version' }
+
+      - name: Verify toolchain (Node pinned in .node-version)
+        run: |
+          want="v$(tr -d '[:space:]' < .node-version)"
+          got="$(node --version)"
+          echo "Node: $got (pinned: $want in .node-version)"
+          echo "npm:  $(npm --version)"
+          [ "$got" = "$want" ] || { echo "::error::Node is $got but .node-version pins $want"; exit 1; }
+
+      - name: Verify toolchain (Wrangler pinned in WRANGLER_VERSION)
+        run: |
+          got="$(npx --yes "wrangler@${WRANGLER_VERSION}" --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)"
+          echo "Wrangler: $got (pinned: $WRANGLER_VERSION)"
+          [ "$got" = "$WRANGLER_VERSION" ] || { echo "::error::Wrangler is $got but the workflow pins $WRANGLER_VERSION"; exit 1; }
 
       - name: Check the admin password secret exists
         if: ${{ inputs.create_admin }}
@@ -178,8 +198,8 @@ jobs:
           cd case-portal
           # Every table is IF NOT EXISTS, so re-running is a no-op. --yes skips
           # the "about to touch a remote database" confirmation.
-          npx --yes wrangler d1 execute "$DB_NAME" --remote --file=schema.sql --yes 2>/tmp/d1.err \
-            || npx --yes wrangler d1 execute "$DB_NAME" --remote --file=schema.sql \
+          npx --yes "wrangler@${WRANGLER_VERSION}" d1 execute "$DB_NAME" --remote --file=schema.sql --yes 2>/tmp/d1.err \
+            || npx --yes "wrangler@${WRANGLER_VERSION}" d1 execute "$DB_NAME" --remote --file=schema.sql \
             || { echo "::error::schema apply failed"; cat /tmp/d1.err || true; exit 1; }
 
       - name: Settle the ingest key
@@ -214,14 +234,14 @@ jobs:
           # value here that can mint an admin account.
           echo "::add-mask::$BOOT"
           echo "BOOT_TOKEN=$BOOT" >> "$GITHUB_ENV"
-          printf '%s' "$INGEST_KEY" | npx --yes wrangler secret put INGEST_KEY
-          printf '%s' "$BOOT"       | npx --yes wrangler secret put BOOTSTRAP_TOKEN
+          printf '%s' "$INGEST_KEY" | npx --yes "wrangler@${WRANGLER_VERSION}" secret put INGEST_KEY
+          printf '%s' "$BOOT"       | npx --yes "wrangler@${WRANGLER_VERSION}" secret put BOOTSTRAP_TOKEN
 
           # Optional. Set RESEND_API_KEY as a repository secret and invitations
           # get emailed; leave it unset and the admin sends the link by hand,
           # which is how the portal has always worked.
           if [ -n "${RESEND_API_KEY:-}" ]; then
-            printf '%s' "$RESEND_API_KEY" | npx --yes wrangler secret put RESEND_API_KEY
+            printf '%s' "$RESEND_API_KEY" | npx --yes "wrangler@${WRANGLER_VERSION}" secret put RESEND_API_KEY
             echo "Invitation email is configured."
           else
             echo "No RESEND_API_KEY set — invitations will return a link for you to send yourself."
@@ -234,9 +254,9 @@ jobs:
           # nothing else waits on it.
           if [ -n "${DROPBOX_APP_KEY:-}" ] && [ -n "${DROPBOX_APP_SECRET:-}" ] \
              && [ -n "${DROPBOX_REFRESH_TOKEN:-}" ]; then
-            printf '%s' "$DROPBOX_APP_KEY"       | npx --yes wrangler secret put DROPBOX_APP_KEY
-            printf '%s' "$DROPBOX_APP_SECRET"    | npx --yes wrangler secret put DROPBOX_APP_SECRET
-            printf '%s' "$DROPBOX_REFRESH_TOKEN" | npx --yes wrangler secret put DROPBOX_REFRESH_TOKEN
+            printf '%s' "$DROPBOX_APP_KEY"       | npx --yes "wrangler@${WRANGLER_VERSION}" secret put DROPBOX_APP_KEY
+            printf '%s' "$DROPBOX_APP_SECRET"    | npx --yes "wrangler@${WRANGLER_VERSION}" secret put DROPBOX_APP_SECRET
+            printf '%s' "$DROPBOX_REFRESH_TOKEN" | npx --yes "wrangler@${WRANGLER_VERSION}" secret put DROPBOX_REFRESH_TOKEN
             echo "Dropbox credentials are on the Worker."
           elif [ -n "${DROPBOX_APP_KEY:-}${DROPBOX_APP_SECRET:-}${DROPBOX_REFRESH_TOKEN:-}" ]; then
             echo "::warning::Dropbox is PARTIALLY configured — all three of DROPBOX_APP_KEY,"
@@ -250,7 +270,7 @@ jobs:
         run: |
           set -euo pipefail
           cd case-portal
-          npx --yes wrangler deploy
+          npx --yes "wrangler@${WRANGLER_VERSION}" deploy
 
       - name: Wait for the route to answer
         run: |
@@ -298,7 +318,7 @@ jobs:
           cd case-portal
           # Runs even if an earlier step failed: a token that can mint an admin
           # must never outlive the run that created it.
-          OUT=$(printf 'BOOTSTRAP_TOKEN\ny\n' | npx --yes wrangler secret delete BOOTSTRAP_TOKEN 2>&1) && RC=0 || RC=$?
+          OUT=$(printf 'BOOTSTRAP_TOKEN\ny\n' | npx --yes "wrangler@${WRANGLER_VERSION}" secret delete BOOTSTRAP_TOKEN 2>&1) && RC=0 || RC=$?
           if [ "${RC:-0}" -eq 0 ]; then
             echo "Bootstrap token destroyed."
           elif printf '%s' "$OUT" | grep -qi "not found"; then

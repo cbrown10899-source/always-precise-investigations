@@ -16,11 +16,32 @@ concurrency:
   group: deploy-pages
   cancel-in-progress: true
 
+# Pinned to the version wrangler-action@v3 has been installing by default
+# (3.90.0, per the deploy logs), so pinning changes nothing about the deploy.
+# Moving to Wrangler 4 is a separate, deliberate change - not this one.
+env:
+  WRANGLER_VERSION: '3.90.0'
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # This job used to run on whatever Node the runner image shipped. The
+      # version now comes from .node-version, the same file the Worker
+      # workflows read, so every Node step in CI is the same patched release.
+      - uses: actions/setup-node@v4
+        with: { node-version-file: '.node-version' }
+
+      - name: Verify toolchain (Node from .node-version, Wrangler pinned below)
+        run: |
+          want="v$(tr -d '[:space:]' < .node-version)"
+          got="$(node --version)"
+          echo "Node: $got (pinned: $want in .node-version)"
+          echo "npm:  $(npm --version)"
+          [ "$got" = "$want" ] || { echo "::error::Node is $got but .node-version pins $want"; exit 1; }
+          echo "Wrangler: pinned $WRANGLER_VERSION (installed by wrangler-action)"
 
       # The artifact is built from an explicit ALLOW-LIST
       # (.github/deploy-manifest.txt), not from the repository minus a list of
@@ -62,6 +83,13 @@ jobs:
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
+          wranglerVersion: ${{ env.WRANGLER_VERSION }}
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: 63a4b8fd9efe4137e1f91c49b5e61c6f
           command: pages deploy _site --project-name=always-precise --branch=main --commit-dirty=true
+
+      - name: Record the Wrangler version the deploy used
+        run: |
+          got="$(npx --no-install wrangler --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)"
+          echo "Wrangler: $got (pinned: $WRANGLER_VERSION)"
+          [ "$got" = "$WRANGLER_VERSION" ] || { echo "::error::the deploy ran Wrangler $got but the workflow pins $WRANGLER_VERSION"; exit 1; }
