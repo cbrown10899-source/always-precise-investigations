@@ -41,7 +41,7 @@ jobs:
           echo "Node: $got (pinned: $want in .node-version)"
           echo "npm:  $(npm --version)"
           [ "$got" = "$want" ] || { echo "::error::Node is $got but .node-version pins $want"; exit 1; }
-          echo "Wrangler: pinned $WRANGLER_VERSION (installed by wrangler-action)"
+          echo "Wrangler: pinned $WRANGLER_VERSION (installed and checked before the upload)"
 
       # The artifact is built from an explicit ALLOW-LIST
       # (.github/deploy-manifest.txt), not from the repository minus a list of
@@ -80,6 +80,20 @@ jobs:
             "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > _site/.well-known/build.txt
           cat _site/.well-known/build.txt
 
+      # Wrangler is installed and checked HERE, before anything is uploaded,
+      # rather than read back after the deploy. wrangler-action@v3 looks for an
+      # existing install first (`npx --no-install wrangler --version`, npm chosen
+      # by the package-lock.json this leaves) and, when it is exactly the
+      # wranglerVersion asked for, logs "Using Wrangler <v>" and skips its own
+      # install - so the upload runs the binary this step just verified. The
+      # npm files it writes are outside the allow-listed _site artifact.
+      - name: Install and verify Wrangler before upload (pinned in WRANGLER_VERSION)
+        run: |
+          npm i --no-audit --no-fund "wrangler@${WRANGLER_VERSION}"
+          got="$(npx --no-install wrangler --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)"
+          echo "Wrangler: $got (pinned: $WRANGLER_VERSION)"
+          [ "$got" = "$WRANGLER_VERSION" ] || { echo "::error::Wrangler is $got but the workflow pins $WRANGLER_VERSION"; exit 1; }
+
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
@@ -87,9 +101,3 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: 63a4b8fd9efe4137e1f91c49b5e61c6f
           command: pages deploy _site --project-name=always-precise --branch=main --commit-dirty=true
-
-      - name: Record the Wrangler version the deploy used
-        run: |
-          got="$(npx --no-install wrangler --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)"
-          echo "Wrangler: $got (pinned: $WRANGLER_VERSION)"
-          [ "$got" = "$WRANGLER_VERSION" ] || { echo "::error::the deploy ran Wrangler $got but the workflow pins $WRANGLER_VERSION"; exit 1; }
