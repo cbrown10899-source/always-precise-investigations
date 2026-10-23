@@ -3980,9 +3980,9 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 4428 checks (2026-10-15): auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 4461 checks (2026-10-23): auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 5218 checks (2026-10-15): the page against the real Worker
-node case-portal/test-verify.mjs   # 37 checks (2026-10-22): verify.sh against the real Worker, and zero DB writes
+node case-portal/test-verify.mjs   # 43 checks (2026-10-23): verify.sh against the real Worker, and zero DB writes
 ```
 
 **THE LIVE PROBE WRITES NOTHING, AND THAT IS TESTED RATHER THAN CLAIMED.**
@@ -3997,8 +3997,17 @@ alphabet is refused before `login_fails`, and a foreign Origin is refused before
 any route. `test-verify.mjs` runs the unmodified script with real curl against
 the real Worker and the staged site, and asserts zero writes by SQLite's change
 counter, a hash of every table and the statement log; `harden-check.yml` runs it
-before the live probe. The `__verify__` row already in production is harmless and
-was deliberately left alone. **Never add a probe the Worker would remember.**
+before the live probe, and the same test pins that order (no `continue-on-error`,
+no `if:`, the live probe last). **And `test-worker.mjs` holds the same property
+where a Worker change lands**: it reads every Worker probe out of `verify.sh` and
+asserts the sign-in and ingest probes reach the database ZERO times (reads
+included), the forged session only reads, nothing writes by the change counter
+or the statement log, and the old `__verify__` body still registers as a write —
+so `deploy-portal.yml` refuses a Worker that would make a probe write, rather
+than next Monday finding it. A DELETE matching no row moves no change counter;
+only the statement log sees it, which is why both are asserted. The
+`__verify__` row already in production is harmless and was deliberately left
+alone. **Never add a probe the Worker would remember.**
 
 **A FULL RUN'S TOTAL MOVES WITH THE CLOCK, BY A CHECK OR TWO.** *A surveillance
 date is the date where the investigator is standing* asserts once for every

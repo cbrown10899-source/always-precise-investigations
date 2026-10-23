@@ -282,6 +282,26 @@ section('The instrument can see a write, and the script can fail');
      line(bare.out, 'never issued'));
 }
 
+section('harden-check.yml runs this proof first, and a failure stops the live run');
+{
+  /* GitHub runs steps in order and skips the rest once one fails, unless a
+     step opts out. So the property is: the proof is a step BEFORE the live
+     probe, and nothing lets the live probe run past a failed proof. */
+  const wf = fs.readFileSync(path.join(HERE, '..', '.github', 'workflows', 'harden-check.yml'), 'utf8');
+  const steps = wf.split(/\n(?=\s*- (?:name|uses):)/);
+  const at = re => steps.findIndex(s => re.test(s));
+  const proof = at(/run:\s*node case-portal\/test-verify\.mjs\s*$/m);
+  const liveRun = at(/run:\s*bash case-portal\/verify\.sh https:\/\//m);
+  const nodeSetup = at(/uses:\s*actions\/setup-node@\S+[\s\S]*node-version-file:\s*'\.node-version'/);
+  ok('the workflow runs the local proof', proof > 0);
+  ok('it runs the live probe against the site', liveRun > 0);
+  ok('the proof comes BEFORE the live probe', proof > 0 && liveRun > proof, `proof step ${proof}, live step ${liveRun}`);
+  ok('Node comes from .node-version before the proof (node:sqlite needs 22)', nodeSetup > 0 && nodeSetup < proof);
+  ok('nothing lets a step run past a failure (no continue-on-error, no if: on any step)',
+     !/continue-on-error/.test(wf) && !steps.some(s => /^\s*if:/m.test(s)));
+  ok('the live probe is the last step, so nothing after it can mask its exit code', liveRun === steps.length - 1);
+}
+
 server.close();
 fs.rmSync(SITE_DIR, { recursive: true, force: true });
 console.log(`\n${passed} passed, ${failed} failed`);
