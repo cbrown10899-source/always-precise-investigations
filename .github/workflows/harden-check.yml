@@ -6,14 +6,23 @@ name: Security check (live)
 # remote Claude sessions run behind an egress policy that may block the
 # domain — and because a security posture should be re-checked on a schedule,
 # not only when someone remembers. The checks are read-only: nothing is
-# created, nothing is signed in, no real data is sent.
+# created, nothing is signed in, no real data is sent, and nothing is written
+# to the database.
 #
 # What it verifies (see verify.sh for the authoritative list): the Worker
-# answers on the site's own domain with its bindings; ingest and case data
-# refuse unauthenticated callers; the portal page is served with noindex and a
-# CSP; the intake is wired and publishes no price; internal files (CLAUDE.md,
-# PRICING.md, the Worker source, the test suites) all 404; the admin-only
-# endpoints all 401; robots.txt does not advertise the portal.
+# answers on the site's own domain with its bindings and full schema; a session
+# cookie the server never issued is refused; sign-in answers and refuses a name
+# no account can have; a sign-in from another site is refused; ingest and case
+# data refuse unauthenticated callers; the portal page is served with noindex
+# and a CSP; the intake is wired and publishes no price; internal files
+# (CLAUDE.md, PRICING.md, the Worker source, the test suites) all 404; the
+# admin-only endpoints all 401; robots.txt does not advertise the portal.
+#
+# "Nothing is written" was not true until 2026-10-22: the sign-in probe used a
+# name inside the account alphabet, so every run left a login_fails row on the
+# production database. So the probes are now PROVEN write-free first, locally,
+# against the real Worker (case-portal/test-verify.mjs), and the live run only
+# happens if that proof passes — a probe that writes cannot reach production.
 #
 # Run it by hand from the Actions tab after any deploy you care about, or let
 # the weekly run catch drift. A failure fails the run loudly — read the step
@@ -36,5 +45,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # node:sqlite (the local proof below) needs Node 22; the version lives in
+      # ONE place, .node-version, the same file every other Node job reads.
+      - uses: actions/setup-node@v4
+        with: { node-version-file: '.node-version' }
+
+      - name: Verify toolchain (Node pinned in .node-version)
+        run: |
+          want="v$(tr -d '[:space:]' < .node-version)"
+          got="$(node --version)"
+          echo "Node: $got (pinned: $want in .node-version)"
+          [ "$got" = "$want" ] || { echo "::error::Node is $got but .node-version pins $want"; exit 1; }
+
+      - name: Prove the probes write nothing (local, before touching production)
+        run: node case-portal/test-verify.mjs
+
       - name: Run the live checks
         run: bash case-portal/verify.sh https://alwayspreciseinvestigations.net

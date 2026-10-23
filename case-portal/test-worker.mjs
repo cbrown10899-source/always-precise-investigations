@@ -352,6 +352,120 @@ section('Login throttling');
   ok('a successful login clears the failure count', after.res.status === 401);
 }
 
+/* THE LIVE CHECK'S PROBES WRITE NOTHING (2026-10-22). verify.sh runs weekly
+   against PRODUCTION and says it is read-only; its old sign-in probe,
+   "__verify__", sat inside the account alphabet, so every run reached the
+   password check and upserted a login_fails row. This section lives in THIS
+   suite because deploy-portal.yml runs it before every Worker upload — a
+   Worker change that would make a probe write is refused at deploy, not found
+   on the next Monday. The probes are read out of verify.sh itself, so the test
+   holds the requests that actually run; case-portal/test-verify.mjs runs the
+   whole script end to end. */
+section('The live check\'s probes never write to the database');
+{
+  const verifySh = fs.readFileSync(path.join(HERE, 'verify.sh'), 'utf8');
+  const joined = verifySh.replace(/\\\n\s*/g, ' ');
+  const loopPaths = (joined.match(/for p in ([a-z ]+); do\s+C=\$\(code "\$API\/\$p"\)/) || [, ''])[1]
+    .trim().split(/\s+/).filter(Boolean);
+  const FORGED = [...crypto.getRandomValues(new Uint8Array(32))]
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+  const probes = [];
+  for (const line of joined.split('\n')) {
+    const m = line.match(/\$\((?:code|curljson)\s+(.*)\)\s*$/);
+    if (!m || !m[1].includes('"$API/')) continue;
+    const cmd = m[1];
+    const route = cmd.match(/"\$API\/([^"]+)"/)[1];
+    const headers = {};
+    for (const h of cmd.matchAll(/-H (?:'([^']*)'|"([^"]*)")/g)) {
+      const [k, ...v] = (h[1] ?? h[2]).replace('$FORGED', FORGED).split(':');
+      headers[k.trim()] = v.join(':').trim();
+    }
+    const body = (cmd.match(/-d '([^']*)'/) || [])[1];
+    const method = (cmd.match(/-X ([A-Z]+)/) || [, 'GET'])[1];
+    for (const p of route === '$p' ? loopPaths : [route]) probes.push({ p: '/' + p, method, headers, body });
+  }
+  const find = (p, pred = () => true) => probes.filter(x => x.p === p && pred(x));
+  const signIns = find('/auth/login');
+  ok('verify.sh carries the probes this test reads (health, session, two sign-ins, ingest, case data, five admin doors)',
+     find('/health').length === 1 && find('/auth/me').length === 1 && signIns.length === 2
+       && find('/ingest').length === 1 && find('/submissions').length === 1 && loopPaths.length === 5,
+     JSON.stringify(probes.map(x => x.method + ' ' + x.p)));
+  ok('exactly one sign-in probe carries a foreign Origin (3c), the other none (3b)',
+     signIns.filter(x => x.headers.Origin && x.headers.Origin !== ORIGIN).length === 1
+       && signIns.filter(x => !x.headers.Origin).length === 1,
+     JSON.stringify(signIns.map(x => x.headers)));
+
+  /* Exactly what curl sends: no Origin unless the probe names one. */
+  const send = (env, x) => worker.fetch(new Request(API + x.p, {
+    method: x.method, headers: x.headers, body: x.body }), env);
+  const WRITE = /^\s*(INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER)\b/i;
+  const counted = schema => {
+    const db = new DatabaseSync(':memory:');
+    if (schema) db.exec(SCHEMA);
+    const seen = [];
+    const real = d1(db);
+    const env = { ...freshEnv(), DB: {
+      prepare(sql) { seen.push(sql); return real.prepare(sql); },
+      batch(st) { seen.push('BATCH'); return real.batch(st); } } };
+    const changes = () => Number(db.prepare('SELECT total_changes() AS n').get().n);
+    return { db, env, seen, changes };
+  };
+
+  const live = counted(true);
+  await bootstrapAdmin(live.env);
+  const base = live.changes();
+  const rows = () => live.db.prepare('SELECT COUNT(*) AS n FROM login_fails').get().n;
+  for (const x of probes) {
+    live.seen.length = 0;
+    const res = await send(live.env, x);
+    const writes = live.seen.filter(s => s === 'BATCH' || WRITE.test(s));
+    ok(`${x.method} ${x.p}${x.headers.Origin ? ' (foreign Origin)' : ''} writes nothing`,
+       writes.length === 0, writes.join(' | ').slice(0, 200));
+    if (x.p === '/auth/login') {
+      const want = x.headers.Origin ? 403 : 401;
+      ok(`  and is refused ${want}`, res.status === want, `got ${res.status}`);
+      ok('  and reaches the database zero times — no read, no write',
+         live.seen.length === 0, `${live.seen.length}: ${live.seen.join(' | ').slice(0, 200)}`);
+    } else if (x.p === '/auth/me') {
+      ok('  and refuses the forged session 401', res.status === 401, `got ${res.status}`);
+      ok('  after checking it against the sessions table (a read, so this proves the schema answers)',
+         live.seen.some(s => /FROM sessions s JOIN users u/.test(s)));
+    } else if (x.p === '/ingest' || x.p === '/submissions' || loopPaths.includes(x.p.slice(1))) {
+      ok('  and is refused 401 without touching the database', res.status === 401 && live.seen.length === 0,
+         `${res.status}, ${live.seen.length} statement(s)`);
+    }
+  }
+  ok("after every probe, SQLite's own change counter has not moved", live.changes() === base,
+     `${base} → ${live.changes()}`);
+  ok('and login_fails is still empty', rows() === 0);
+
+  /* No tables at all: the sign-in probes answer without the database, and the
+     forged session is the probe that notices — 503, the schema-out-of-date
+     answer verify.sh names. */
+  const bare = counted(false);
+  for (const x of signIns) {
+    const res = await send(bare.env, x);
+    ok(`with no tables, the sign-in probe${x.headers.Origin ? ' (foreign Origin)' : ''} still answers ${x.headers.Origin ? 403 : 401}`,
+       res.status === (x.headers.Origin ? 403 : 401), `got ${res.status}`);
+  }
+  ok('and reaches that database zero times', bare.seen.length === 0, bare.seen.join(' | ').slice(0, 200));
+  const meProbe = find('/auth/me')[0];
+  const sess = meProbe ? await send(bare.env, meProbe) : null;
+  ok('with no tables, the forged-session probe answers 503 (the schema check)',
+     Boolean(sess) && sess.status === 503, sess ? `got ${sess.status}` : 'verify.sh has no forged-session probe');
+
+  /* The instrument can see a write: the old probe IS recorded as one. */
+  const old = counted(true);
+  await bootstrapAdmin(old.env);
+  const before = old.changes();
+  old.seen.length = 0;
+  await call(old.env, '/auth/login', { method: 'POST',
+    body: { username: '__verify__', password: '__not-a-real-password__' } });
+  ok('the old "__verify__" probe IS recorded as a write — the defect this section exists for',
+     old.changes() > before && old.seen.some(s => /INSERT INTO login_fails/.test(s))
+       && old.db.prepare("SELECT COUNT(*) AS n FROM login_fails WHERE username = '__verify__'").get().n === 1);
+}
+
 /* ------------------------------------------------------------------ ingest */
 
 section('Submission ingest');
