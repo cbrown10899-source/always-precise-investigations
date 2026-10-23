@@ -21,7 +21,11 @@
  *     that never got there;
  *   - and the instrument can see failure: the old probe, sent to the same
  *     server, IS recorded as a write, and a database missing its session
- *     tables makes the script fail by name.
+ *     tables makes the script fail by name;
+ *   - and a check that READ NOTHING never reports clean: an unreachable site,
+ *     a server answering 200 and {} to everything, a missing or empty
+ *     robots.txt, a detached Worker route and a missing page each fail by
+ *     name rather than passing.
  *
  * No network beyond 127.0.0.1, no deployed resources.
  *
@@ -145,8 +149,16 @@ function pagesHeaders(p) {
   }
   return out;
 }
+/* A path answered with something other than the deploy artifact: a file
+   missing from the deploy, an empty one, a host's fallback page. */
+const PAGE_OVERRIDE = new Map();
 function servePage(req, res) {
   const p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+  if (PAGE_OVERRIDE.has(p)) {
+    const o = PAGE_OVERRIDE.get(p);
+    res.writeHead(o.status, o.headers || {});
+    return res.end(o.body);
+  }
   let file = path.join(SITE_DIR, p.endsWith('/') ? p + 'index.html' : p);
   if (!file.startsWith(SITE_DIR + path.sep)) file = '';
   const found = file && fs.existsSync(file) && fs.statSync(file).isFile();
@@ -158,8 +170,10 @@ function servePage(req, res) {
 
 let ENV = null;
 let workerCalls = 0;
+/* With the Worker route detached, Pages answers /portal-api/* itself. */
+let DETACHED = false;
 const server = http.createServer(async (req, res) => {
-  if (!req.url.startsWith('/portal-api/') && req.url !== '/portal-api') return servePage(req, res);
+  if (DETACHED || (!req.url.startsWith('/portal-api/') && req.url !== '/portal-api')) return servePage(req, res);
   workerCalls++;
   const chunks = [];
   for await (const c of req) chunks.push(c);
@@ -176,9 +190,9 @@ const BASE = `http://127.0.0.1:${server.address().port}`;
 function makeEnv(db, log) {
   return { DB: d1(db, log), SITE_ORIGIN: BASE, INGEST_KEY: 'ingest-test-key', PBKDF2_ITER: '10000' };
 }
-function runVerify() {
+function runVerify(base = BASE) {
   return new Promise(resolve => {
-    const child = spawn('bash', [VERIFY, BASE], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('bash', [VERIFY, base], { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     child.stdout.on('data', d => { out += d; });
     child.stderr.on('data', d => { out += d; });
@@ -220,8 +234,11 @@ for (const name of [
   'case data is refused to anyone not signed in',
   '/portal-api/pricing is closed', '/portal-api/sheets is closed', '/portal-api/summary is closed',
   '/portal-api/users is closed', '/portal-api/invites is closed',
+  'the portal page is served at /portal/',
   'the portal is marked noindex by header',
   'the portal carries a Content-Security-Policy',
+  'the intake form is wired to the portal',
+  'the intake form publishes no price',
   'internal file is not served: /CLAUDE.md',
   'internal file is not served: /case-portal/worker.js',
   'robots.txt does not advertise the portal',
@@ -281,6 +298,125 @@ section('The instrument can see a write, and the script can fail');
      /FAIL\s+a session the server never issued is refused/.test(bare.out) && /missing tables/.test(bare.out),
      line(bare.out, 'never issued'));
 }
+
+section('A check that read nothing never reports clean');
+{
+  ENV = makeEnv(freshDb(), []);
+  const ROBOTS = 'robots.txt does not advertise the portal';
+  const PASS_LINES = out => out.split('\n').filter(l => /^\s*PASS\s/.test(l));
+  const failed = out => Number((out.match(/(\d+) failed/) || [])[1]);
+  /* The FAIL line, plus its reason on the line after it. */
+  const failOf = (out, name) => {
+    const ls = out.split('\n'); const i = ls.findIndex(l => /^\s*FAIL\s/.test(l) && l.includes(name));
+    return i < 0 ? '' : `${ls[i]}\n${ls[i + 1] || ''}`;
+  };
+
+  /* robots.txt that could not be read, four ways — and the file still read
+     when it IS there, so the existing "portal" test keeps its teeth. */
+  const robotsCases = [
+    ['missing from the deploy (the site answers its 404 page)', { status: 404, body: fs.readFileSync(path.join(SITE_DIR, '404.html')) }, /could not fetch/],
+    ['empty', { status: 200, body: '' }, /could not fetch/],
+    ['answered with something that is not a robots file', { status: 200, body: '{}' }, /not with a robots file/],
+    ['a server error', { status: 500, body: 'User-agent: *\nAllow: /\n' }, /could not fetch/],
+    ['naming the portal', { status: 200, body: 'User-agent: *\nDisallow: /portal/\n' }, /points straight at it/],
+  ];
+  for (const [how, answer, why] of robotsCases) {
+    PAGE_OVERRIDE.set('/robots.txt', answer);
+    const r = await runVerify();
+    const f = failOf(r.out, ROBOTS);
+    ok(`robots.txt ${how}: verify.sh fails`, r.code !== 0, `exit ${r.code}`);
+    ok(`robots.txt ${how}: the robots check fails BY NAME, saying why`, why.test(f), f || line(r.out, ROBOTS));
+    ok(`robots.txt ${how}: and it is the only failure`, failed(r.out) === 1, line(r.out, 'failed'));
+  }
+  PAGE_OVERRIDE.clear();
+
+  /* The Worker route detached: Pages answers /portal-api/health with its 404
+     page. A body arrived; it is not the Worker's. */
+  DETACHED = true;
+  {
+    const r = await runVerify();
+    const f = failOf(r.out, 'the Worker answers at /portal-api/');
+    ok('a detached Worker route fails "the Worker answers" by name', /not the portal Worker's health/.test(f), f || line(r.out, 'Worker answers'));
+    ok('and no Worker check passes on the 404 page', !PASS_LINES(r.out).some(l => /Worker|D1 binding|expects is on the database/.test(l)),
+       PASS_LINES(r.out).join(' | '));
+  }
+  DETACHED = false;
+
+  /* The intake page missing from the deploy: the 404 page has no placeholder
+     and no price, and must not be read as a wired, price-free form. */
+  PAGE_OVERRIDE.set('/intake/', { status: 404, body: fs.readFileSync(path.join(SITE_DIR, '404.html')) });
+  {
+    const r = await runVerify();
+    ok('a missing intake page fails "the intake form is wired" by name, as unread',
+       /could not fetch/.test(failOf(r.out, 'the intake form is wired to the portal')), line(r.out, 'is wired'));
+    ok('and "publishes no price" by name', /nothing was checked/.test(failOf(r.out, 'the intake form publishes no price')),
+       line(r.out, 'publishes no price'));
+    ok('and those are the only two failures', failed(r.out) === 2, line(r.out, 'failed'));
+  }
+  /* What check 7 and 8 exist to find, placed EARLY in the real page — where
+     `printf | grep -q` under pipefail used to read a match as no match. */
+  {
+    const intake = fs.readFileSync(path.join(SITE_DIR, 'intake', 'index.html'), 'utf8');
+    const keyed = intake.replace(/PORTAL_INGEST_KEY = "[^"]*"/, 'PORTAL_INGEST_KEY = "PASTE_INGEST_KEY"');
+    ok('control: the staged intake form carries its key assignment', keyed !== intake);
+    PAGE_OVERRIDE.set('/intake/', { status: 200, body: keyed });
+    let r = await runVerify();
+    ok('an intake form still holding the placeholder key fails "wired" by name',
+       /still has the placeholder/.test(failOf(r.out, 'the intake form is wired to the portal')), line(r.out, 'is wired'));
+    PAGE_OVERRIDE.set('/intake/', { status: 200, body: intake.replace('<head>', '<head><!-- $400 -->') });
+    r = await runVerify();
+    ok('an intake form carrying a price near its top fails "publishes no price" by name',
+       /dollar figure/.test(failOf(r.out, 'the intake form publishes no price')), line(r.out, 'publishes no price'));
+    ok('control: the price really was planted', intake.includes('<head>'));
+  }
+  /* A 200 that is not the intake form (a host's fallback to its homepage). */
+  PAGE_OVERRIDE.set('/intake/', { status: 200, body: fs.readFileSync(path.join(SITE_DIR, 'index.html')) });
+  {
+    const r = await runVerify();
+    ok('an intake URL answering with another page fails by name',
+       /not with the intake form/.test(failOf(r.out, 'the intake form is wired to the portal')), line(r.out, 'is wired'));
+  }
+  /* The same fallback at /portal/: _headers matches by path, so the header
+     checks pass over it — the page itself has to be recognised. */
+  PAGE_OVERRIDE.clear();
+  PAGE_OVERRIDE.set('/portal/', { status: 200, headers: pagesHeaders('/portal/'), body: fs.readFileSync(path.join(SITE_DIR, 'index.html')) });
+  {
+    const r = await runVerify();
+    ok('a /portal/ answering 200 with another page fails "the portal page is served" by name',
+       /not with the case portal page/.test(failOf(r.out, 'the portal page is served at /portal/')), line(r.out, 'portal page is served'));
+    ok('and it is the only failure (the path-matched headers really were there)', failed(r.out) === 1, line(r.out, 'failed'));
+  }
+  PAGE_OVERRIDE.clear();
+
+  /* The whole site unreachable: a port nothing is listening on. */
+  {
+    const dead = http.createServer();
+    await new Promise(r => dead.listen(0, '127.0.0.1', r));
+    const port = dead.address().port;
+    await new Promise(r => dead.close(r));
+    const r = await runVerify(`http://127.0.0.1:${port}`);
+    ok('an unreachable site fails verify.sh', r.code !== 0, `exit ${r.code}`);
+    ok('an unreachable site passes NOTHING', PASS_LINES(r.out).length === 0, PASS_LINES(r.out).join(' | '));
+    ok('and the robots check fails by name, saying it could not fetch the file', /could not fetch/.test(failOf(r.out, ROBOTS)), line(r.out, ROBOTS));
+  }
+
+  /* A server answering 200 and {} to every path. */
+  {
+    const stub = http.createServer((q, s) => { s.writeHead(200, { 'Content-Type': 'application/json' }); s.end('{}'); });
+    await new Promise(r => stub.listen(0, '127.0.0.1', r));
+    const r = await runVerify(`http://127.0.0.1:${stub.address().port}`);
+    await new Promise(r => stub.close(r));
+    ok('a server answering 200 and {} to everything fails verify.sh', r.code !== 0, `exit ${r.code}`);
+    ok('and passes NOTHING', PASS_LINES(r.out).length === 0, PASS_LINES(r.out).join(' | '));
+    for (const name of ['the Worker answers at /portal-api/', 'the portal page is served at /portal/',
+      'the intake form is wired to the portal', 'the intake form publishes no price', ROBOTS])
+      ok(`it fails by name: ${name}`, Boolean(failOf(r.out, name)), line(r.out, name));
+  }
+}
+
+section('verify.sh searches a body without a pipe');
+ok('no `printf "$BODY" | grep` remains (under pipefail an early match reads as none)',
+   !/printf '%s' "\$[A-Z_]+" \| (grep|sed)/.test(VERIFY_SRC));
 
 section('harden-check.yml runs this proof first, and a failure stops the live run');
 {

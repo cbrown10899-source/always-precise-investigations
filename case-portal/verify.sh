@@ -20,21 +20,40 @@ bad()  { printf '  FAIL  %s\n'   "$1"; printf '        %s\n' "$2"; FAIL=$((FAIL+
 note() { printf '  ----  %s\n' "$1"; }
 
 curljson() { curl -sS --max-time 20 "$@" 2>/dev/null; }
+# A body is searched with a here-string, never `printf ... | grep -q`. Under
+# pipefail that pipeline fails whenever grep finds its match and exits before
+# printf has written a large page — so a MATCH early in the intake form read as
+# NO match, and the placeholder and price checks passed on the very thing they
+# look for. test-verify.mjs plants both near the top of the page.
+#
+# The body of a 200 answer, or nothing. curl hands back the body of ANY status,
+# so a missing file arrives as the site's 404 page — which mentions no portal
+# and carries no placeholder, and would pass the checks below without either
+# file having been read. A check that reads a page uses this, and must also
+# confirm the page is the one it asked for before judging what is in it.
+get200()   { local o; o=$(curl -sS --max-time 20 -w '\n%{http_code}' "$@" 2>/dev/null); [ "${o##*$'\n'}" = "200" ] && printf '%s' "${o%$'\n'*}"; return 0; }
 code()     { local c; c=$(curl -sS --max-time 20 -o /dev/null -w '%{http_code}' "$@" 2>/dev/null); echo "${c:-000}"; }
 
 printf '\nChecking %s\n\n' "$SITE"
 
 # 1. The Worker answers on the site's own domain. If this fails nothing else
 #    matters — a portal on a workers.dev hostname cannot hold a session.
+#    ANY ANSWER IS NOT THE WORKER'S ANSWER. With the route detached, Pages
+#    answers /portal-api/health itself with the site's 404 page — a body, so a
+#    non-empty test passed on exactly the failure this check exists to name.
+#    The Worker's health always carries "configured", so that is the test.
 HEALTH=$(curljson "$API/health")
 if [ -z "$HEALTH" ]; then
   bad "the Worker answers at /portal-api/" \
       "No response. The route in wrangler.toml is not attached — run 'npx wrangler deploy' from case-portal/."
+elif ! grep -q '"configured":' <<<"$HEALTH"; then
+  bad "the Worker answers at /portal-api/" \
+      "something answered, but not the portal Worker's health — the route in wrangler.toml is not attached, or another service holds /portal-api/."
 else
   ok "the Worker answers at /portal-api/ on the site's own domain"
 
   # 2. Its bindings are present.
-  if printf '%s' "$HEALTH" | grep -q '"configured":true'; then
+  if grep -q '"configured":true' <<<"$HEALTH"; then
     ok "the D1 binding and INGEST_KEY are both set"
   else
     bad "the D1 binding and INGEST_KEY are both set" \
@@ -59,11 +78,11 @@ else
   #     the table NAMES go only to a signed-in admin, because the list was a
   #     partial map of the schema handed to anyone who asked. Same rule about
   #     absence: no key means unknown, never clean.
-  if ! printf '%s' "$HEALTH" | grep -q '"schema_missing"'; then
+  if ! grep -q '"schema_missing"' <<<"$HEALTH"; then
     bad "every table this build expects is on the database" \
         "health did not report schema_missing at all — this Worker predates the check, so the schema state is unknown rather than clean."
   else
-    MISSING=$(printf '%s' "$HEALTH" | sed -n 's/.*"schema_missing":\([0-9][0-9]*\).*/\1/p')
+    MISSING=$(sed -n 's/.*"schema_missing":\([0-9][0-9]*\).*/\1/p' <<<"$HEALTH")
     if [ "$MISSING" = "0" ]; then
       ok "every table this build expects is on the database"
     else
@@ -147,29 +166,40 @@ else
   bad "case data is refused to anyone not signed in" "expected 401, got $SUBS — STOP, this is exposing cases."
 fi
 
-# 6. The portal page is served and is not indexable.
+# 6. The portal page is served and is not indexable. A 200 is not the portal:
+#    a host falling back to its homepage answers 200 at any path, and _headers
+#    matches by PATH, so the two header checks below pass over that page too.
+#    So the page is read and its title checked.
 PORTAL_HDRS=$(curl -sS --max-time 20 -D - -o /dev/null "$SITE/portal/" 2>/dev/null)
-if printf '%s' "$PORTAL_HDRS" | grep -qi '^HTTP.*200'; then
-  ok "the portal page is served at /portal/"
-else
+PORTAL_PAGE=$(get200 "$SITE/portal/")
+if [ -z "$PORTAL_PAGE" ]; then
   bad "the portal page is served at /portal/" "not returning 200 — has the site deployed since merging?"
+elif ! grep -q '<title>Case Portal' <<<"$PORTAL_PAGE"; then
+  bad "the portal page is served at /portal/" "/portal/ answered 200, but not with the case portal page."
+else
+  ok "the portal page is served at /portal/"
 fi
-if printf '%s' "$PORTAL_HDRS" | grep -qi 'x-robots-tag:.*noindex'; then
+if grep -qi 'x-robots-tag:.*noindex' <<<"$PORTAL_HDRS"; then
   ok "the portal is marked noindex by header"
 else
   bad "the portal is marked noindex by header" "_headers is not being applied to /portal/*."
 fi
-if printf '%s' "$PORTAL_HDRS" | grep -qi 'content-security-policy'; then
+if grep -qi 'content-security-policy' <<<"$PORTAL_HDRS"; then
   ok "the portal carries a Content-Security-Policy"
 else
   bad "the portal carries a Content-Security-Policy" "_headers is not being applied to /portal/*."
 fi
 
-# 7. The intake form is wired to the portal.
-INTAKE=$(curljson "$SITE/intake/")
+# 7. The intake form is wired to the portal. A page with no placeholder in it
+#    is only evidence when it is the intake form — the site's 404 page has no
+#    placeholder either — so the form's own key assignment must be present.
+INTAKE=$(get200 "$SITE/intake/")
 if [ -z "$INTAKE" ]; then
   bad "the intake form is wired to the portal" "could not fetch $SITE/intake/ — nothing was checked."
-elif printf '%s' "$INTAKE" | grep -q 'PORTAL_INGEST_KEY = "PASTE_INGEST_KEY"'; then
+elif ! grep -q 'PORTAL_INGEST_KEY = "' <<<"$INTAKE"; then
+  INTAKE=""
+  bad "the intake form is wired to the portal" "$SITE/intake/ answered, but not with the intake form — nothing was checked."
+elif grep -q 'PORTAL_INGEST_KEY = "PASTE_INGEST_KEY"' <<<"$INTAKE"; then
   # Match the placeholder AS THE ASSIGNED VALUE. The bare string also appears in
   # the page's own guard (`=== "PASTE_INGEST_KEY"`), which made this check fail
   # on a perfectly wired form for as long as the guard has existed.
@@ -181,13 +211,15 @@ fi
 
 # 8. No price is published anywhere a visitor can reach. Quotes go out from
 #    the portal as rate sheets; a figure on the public site is a leak.
-if [ -n "$INTAKE" ]; then
-  if printf '%s' "$INTAKE" | grep -qE '\$[0-9]'; then
-    bad "the intake form publishes no price" \
-        "a dollar figure is in the served intake page — pricing belongs in the portal's rate sheets."
-  else
-    ok "the intake form publishes no price"
-  fi
+#    Only the intake form itself can answer this: a page check 7 could not
+#    read, or could not recognise, carries no price and proves nothing.
+if [ -z "$INTAKE" ]; then
+  bad "the intake form publishes no price" "the intake form was not read (check 7) — nothing was checked."
+elif grep -qE '\$[0-9]' <<<"$INTAKE"; then
+  bad "the intake form publishes no price" \
+      "a dollar figure is in the served intake page — pricing belongs in the portal's rate sheets."
+else
+  ok "the intake form publishes no price"
 fi
 
 # 9. Internal files must 404 on the live site. Each of these was served
@@ -214,8 +246,18 @@ for p in pricing sheets summary users invites; do
 done
 
 # 11. The portal is hidden, not advertised: robots.txt must not mention it.
-ROBOTS=$(curljson "$SITE/robots.txt")
-if printf '%s' "$ROBOTS" | grep -qi 'portal'; then
+#     A file that was never read mentions nothing, so an unreachable site, a
+#     404 page or an empty answer must fail here rather than pass: the file is
+#     read only from a 200, and only once it carries a User-agent line, as this
+#     site's own robots.txt does.
+ROBOTS=$(get200 "$SITE/robots.txt")
+if [ -z "$ROBOTS" ]; then
+  bad "robots.txt does not advertise the portal" \
+      "could not fetch $SITE/robots.txt (no 200, or an empty file) — nothing was checked."
+elif ! grep -qi '^user-agent:' <<<"$ROBOTS"; then
+  bad "robots.txt does not advertise the portal" \
+      "$SITE/robots.txt answered, but not with a robots file (no User-agent line) — nothing was checked."
+elif grep -qi 'portal' <<<"$ROBOTS"; then
   bad "robots.txt does not advertise the portal" \
       "a portal path is in robots.txt — that hides nothing and points straight at it."
 else

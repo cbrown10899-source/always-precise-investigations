@@ -3982,7 +3982,7 @@ Tests:
 ```bash
 node case-portal/test-worker.mjs   # 4461 checks (2026-10-23): auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 5218 checks (2026-10-15): the page against the real Worker
-node case-portal/test-verify.mjs   # 43 checks (2026-10-23): verify.sh against the real Worker, and zero DB writes
+node case-portal/test-verify.mjs   # 84 checks (2026-10-23): verify.sh against the real Worker, zero DB writes, and no PASS on an unread answer
 ```
 
 **THE LIVE PROBE WRITES NOTHING, AND THAT IS TESTED RATHER THAN CLAIMED.**
@@ -4008,6 +4008,23 @@ than next Monday finding it. A DELETE matching no row moves no change counter;
 only the statement log sees it, which is why both are asserted. The
 `__verify__` row already in production is harmless and was deliberately left
 alone. **Never add a probe the Worker would remember.**
+
+**AND A CHECK THAT READ NOTHING NEVER PASSES.** Against a dead port the script
+once printed 20 FAILs and one PASS — *robots.txt does not advertise the portal*,
+said about a file nobody had fetched — and against a server answering 200 and
+`{}` everywhere, five checks passed. Every check that judges a page now reads it
+through `get200` (a 404 page is a body too, so curl's output alone proves
+nothing) and recognises it before judging it: the Worker's health by
+`"configured"`, the portal by its title, the intake by its key assignment,
+robots.txt by a `User-agent` line. **And no body is searched through a pipe**:
+under `set -o pipefail`, `printf "$PAGE" | grep -q` fails whenever grep finds
+its match and exits before printf finishes a large page — so the placeholder key
+and a price near the top of the intake form read as ABSENT. `test-verify.mjs`
+runs the script against a dead port and a `{}` stub (zero PASS lines), a
+missing, empty, 500 and non-robots robots.txt, a detached Worker route, a
+missing and a substituted intake page, a homepage at `/portal/`, and the
+placeholder and a price planted early; ten mutations of the fixes each fail by
+name.
 
 **A FULL RUN'S TOTAL MOVES WITH THE CLOCK, BY A CHECK OR TWO.** *A surveillance
 date is the date where the investigator is standing* asserts once for every
