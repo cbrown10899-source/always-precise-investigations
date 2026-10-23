@@ -3982,7 +3982,7 @@ Tests:
 ```bash
 node case-portal/test-worker.mjs   # 4461 checks (2026-10-23): auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 5218 checks (2026-10-15): the page against the real Worker
-node case-portal/test-verify.mjs   # 43 checks (2026-10-23): verify.sh against the real Worker, and zero DB writes
+node case-portal/test-verify.mjs   # 120 checks (2026-10-23): verify.sh against the real Worker, zero DB writes, and every unreadable page FAILS
 ```
 
 **THE LIVE PROBE WRITES NOTHING, AND THAT IS TESTED RATHER THAN CLAIMED.**
@@ -4008,6 +4008,25 @@ than next Monday finding it. A DELETE matching no row moves no change counter;
 only the statement log sees it, which is why both are asserted. The
 `__verify__` row already in production is harmless and was deliberately left
 alone. **Never add a probe the Worker would remember.**
+
+**A PAGE THE LIVE CHECK CANNOT READ FAILS — IT NEVER PASSES** (2026-10-23).
+Four checks judged a page by its body alone: robots.txt passed on any body
+without the word "portal", so a 404, a 500, an empty answer, a timeout, a
+refused connection and a DNS failure all read PASS — measured, nine of ten
+scenarios. Checks 1, 7 and 8 had the same shape. Site pages are now read by
+`fetch_page` (status and body; `000` when the transfer did not complete), each
+check also proves the body is what it claims (a `User-agent` line, the
+Worker's `"ok":true`, the intake's `PORTAL_INGEST_KEY`), and a check that reads
+what another fetched says **NOT CHECKED** — counted as a failure — when there
+was nothing to read. **`fetch_page` is for site pages only**: `test-worker.mjs`
+finds Worker probes as `$(code …)`/`$(curljson …)` lines, so a Worker probe
+written any other way escapes its no-write guard, and a test pins it.
+
+**AND `printf "$big" | grep -q` UNDER `pipefail` READS A MATCH AS A MISS.** The
+intake page is 101 KB; `grep -q` exits at its first match, `printf` dies of
+SIGPIPE, and the pipeline answers 141. So the placeholder check could never
+fire on the real page, and a price near its top passed — pre-existing, found by
+the regression tests. Grep the file, never a pipe of a large variable.
 
 **A FULL RUN'S TOTAL MOVES WITH THE CLOCK, BY A CHECK OR TWO.** *A surveillance
 date is the date where the investigator is standing* asserts once for every
