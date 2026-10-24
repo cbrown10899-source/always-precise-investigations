@@ -36,6 +36,9 @@
 html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
 @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 body{font-family:var(--sans);font-size:17px;line-height:1.65;color:var(--ink);background:var(--cream)}
+/* An email address is one unbroken word, wider than a 320px column in some fonts. The
+   page breaks it after the "@" with a <wbr>; this is the backstop for one that has none. */
+a[href^="mailto:"]{overflow-wrap:anywhere}
 h1,h2,h3{font-family:var(--serif);font-weight:400;line-height:1.15;color:var(--ink)}
 img{max-width:100%;display:block}
 a{color:var(--navy-2)}
