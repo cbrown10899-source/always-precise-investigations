@@ -1,0 +1,152 @@
+name: PR checks
+
+# Tests every pull request into master BEFORE anyone decides to merge it.
+# Before this file, every workflow ran only after a push to master, so the
+# first test a change got was the deploy itself.
+#
+# Read-only by construction:
+#   - the trigger is `pull_request`, never `pull_request_target`, so a PR's code
+#     runs with a read-only token and no repository secrets;
+#   - `permissions: contents: read`, and no secret is referenced in this file;
+#   - nothing here deploys, uploads to a site, or calls Cloudflare, Dropbox,
+#     Resend or any database. The only upload is the test output, as a
+#     workflow artifact attached to this run.
+#
+# Every suite goes through .github/ci/run-suite.sh, which fails a suite that
+# skipped, crashed, or ended without a clean totals line, not only one that
+# exited non-zero. The portal suite has its own workflow, pr-portal.yml.
+on:
+  pull_request:
+    branches: [master]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# A new push to a PR cancels that PR's run in progress; different PRs never
+# cancel each other. A cancelled run is shown as cancelled, never as passed.
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fast:
+    name: Deploy guards, generator, Workers
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version-file: '.node-version' }
+      # The same Python build-locations.yml regenerates the pages with.
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with: { python-version: '3.12' }
+
+      - name: Verify toolchain (Node pinned in .node-version)
+        id: toolchain
+        run: |
+          want="v$(tr -d '[:space:]' < .node-version)"; got="$(node --version)"
+          echo "Node: $got (pinned: $want)  Python: $(python3 --version)"
+          [ "$got" = "$want" ] || { echo "::error::Node is $got but .node-version pins $want"; exit 1; }
+
+      # First, while the tree is still exactly the PR's: the generated pages and
+      # the sitemap must be byte-for-byte what the generator writes, because a
+      # hand edit is undone by the next regeneration (CLAUDE.md).
+      - name: Generated pages match build-locations.py
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/ci-out"
+          # The tree's state, contents included, before and after: only what
+          # the generator itself changed can make this step fail.
+          tree() { git status --porcelain --untracked-files=all; git diff | sha256sum
+                   git ls-files -o --exclude-standard -z | xargs -0 -r sha256sum; }
+          before=$(tree)
+          python3 build-locations.py > "$RUNNER_TEMP/ci-out/generator.txt" 2>&1 \
+            || { cat "$RUNNER_TEMP/ci-out/generator.txt"; echo "::error title=Generated pages::build-locations.py failed"; exit 1; }
+          if [ "$(tree)" != "$before" ]; then
+            git status --porcelain --untracked-files=all; git diff --stat
+            echo "::error title=Generated pages::the committed pages differ from what build-locations.py writes. Run it and commit the result."
+            exit 1
+          fi
+          echo "Generated pages and sitemap match the generator."
+
+      # Each suite runs even when an earlier one failed, so one red check shows
+      # every failure at once. None runs if the toolchain is wrong.
+      - name: Deploy allow-list and page guards
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        timeout-minutes: 5
+        run: .github/ci/run-suite.sh "Deploy guards" "$RUNNER_TEMP/ci-out/deploy.txt" node .github/test-deploy.mjs
+      - name: Case-portal Worker suite
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        timeout-minutes: 10
+        run: .github/ci/run-suite.sh "Case-portal Worker" "$RUNNER_TEMP/ci-out/case-portal-worker.txt" node case-portal/test-worker.mjs
+      - name: verify.sh probes write nothing
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        timeout-minutes: 5
+        run: .github/ci/run-suite.sh "verify.sh write check" "$RUNNER_TEMP/ci-out/verify.txt" node case-portal/test-verify.mjs
+      - name: Visitor-alerts Worker suite
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        timeout-minutes: 5
+        run: .github/ci/run-suite.sh "Visitor-alerts Worker" "$RUNNER_TEMP/ci-out/visitor-alerts-worker.txt" node visitor-alerts/test-worker.mjs
+
+      - name: Keep the full output
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pr-checks-fast-output
+          path: ${{ runner.temp }}/ci-out
+          if-no-files-found: warn
+          retention-days: 14
+
+  browser:
+    name: Intake, watch, CEO gate (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version-file: '.node-version' }
+
+      - name: Verify toolchain (Node pinned in .node-version)
+        id: toolchain
+        run: |
+          want="v$(tr -d '[:space:]' < .node-version)"; got="$(node --version)"
+          echo "Node: $got (pinned: $want)"
+          [ "$got" = "$want" ] || { echo "::error::Node is $got but .node-version pins $want"; exit 1; }
+
+      # Pinned in .playwright-version; fails here, by name, if the install, the
+      # version or a first page in Chromium is not right.
+      - name: Install pinned Playwright and Chromium
+        id: playwright
+        if: ${{ steps.toolchain.outcome == 'success' }}
+        timeout-minutes: 10
+        run: .github/ci/install-playwright.sh
+
+      - name: Intake suite
+        if: ${{ !cancelled() && steps.playwright.outcome == 'success' }}
+        timeout-minutes: 15
+        run: .github/ci/run-suite.sh "Intake" "$RUNNER_TEMP/ci-out/intake.txt" node intake/test-intake.mjs
+      - name: Watch dashboard suite
+        if: ${{ !cancelled() && steps.playwright.outcome == 'success' }}
+        timeout-minutes: 10
+        run: .github/ci/run-suite.sh "Watch dashboard" "$RUNNER_TEMP/ci-out/watch.txt" node watch/test-watch.mjs
+      - name: CEO release gate
+        if: ${{ !cancelled() && steps.playwright.outcome == 'success' }}
+        timeout-minutes: 10
+        run: |
+          rc=0
+          .github/ci/run-suite.sh "CEO release gate" "$RUNNER_TEMP/ci-out/ceo-gate.txt" node portal/test-ceo-gate.mjs || rc=$?
+          cp portal/ceo-gate-report.json "$RUNNER_TEMP/ci-out/" || true
+          exit $rc
+
+      - name: Keep the full output
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pr-checks-browser-output
+          path: ${{ runner.temp }}/ci-out
+          if-no-files-found: warn
+          retention-days: 14
