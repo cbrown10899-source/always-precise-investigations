@@ -180,7 +180,7 @@ failing the build**, which is the incident itself.
 
 ## Deploy topology
 
-Ten workflows, all in `.github/workflows/`:
+Twelve workflows, all in `.github/workflows/`:
 
 | Workflow              | Trigger                              | Does                                       |
 | --------------------- | ------------------------------------ | ------------------------------------------ |
@@ -194,6 +194,8 @@ Ten workflows, all in `.github/workflows/`:
 | `save-point.yml`      | human push to `master`, or manual    | tags a `save/…` point and cuts a Release   |
 | `harden-check.yml`    | manual, plus weekly Monday 11:30 UTC | runs `verify.sh` live-site security checks |
 | `visitors-setup.yml`  | manual dispatch                      | creates the visitor-journeys D1, attaches it to the visitor Worker, verifies, rolls back on failure |
+| `pr-checks.yml`       | every pull request into `master`, or manual | deploy guards, generator, Worker suites, intake/watch/CEO gate; read-only |
+| `pr-portal.yml`       | every pull request into `master`, or manual | the portal suite, when the PR reaches the portal; read-only |
 
 Every workflow carries a `concurrency` group. They were added after runs
 collided: on 2026-08-07 five runs started in the same minute and two were
@@ -201,6 +203,39 @@ cancelled. Without the guards, a push that touches `build-locations.py` starts
 one deploy of the *pre-rebuild* tree while `build-locations.yml` dispatches a
 second deploy of the *rebuilt* tree — a race whose loser can publish stale
 pages over fresh ones. Do not remove them.
+
+## Pull requests are tested before they merge
+
+Owner, 2026-10-23: *"every future PR automatically tested before I decide
+whether to merge it, without disrupting the live … website."* Until then every
+workflow ran on a push to `master`, so a PR showed no checks and the first test
+a change got was the deploy.
+
+**READ-ONLY BY CONSTRUCTION.** `pull_request`, never `pull_request_target`, so
+a PR's code gets a read-only token and no secrets; `permissions: contents:
+read`; no secret referenced; every checkout `persist-credentials: false`; every
+action pinned to a commit SHA. Nothing deploys or calls an outside service —
+the only upload is the test output, kept 14 days as a run artifact.
+
+**A SKIP IS NOT A PASS.** The four Playwright suites print `SKIP` and exit 0
+when Playwright is missing. `.github/ci/run-suite.sh` is the one judge of a
+suite: green only on exit 0, no `SKIP`, no crash, AND a last line that is the
+suite's own totals with zero failures and at least one pass — a run that
+stopped part-way never prints one. `.github/ci/install-playwright.sh` installs
+the version in **`.playwright-version`** (the Playwright pin, beside
+`.node-version`) outside the repo, then proves a suite resolves exactly that
+copy and Chromium opens a page, or fails the job before any suite runs.
+
+**NO `paths:` FILTER, ON PURPOSE.** A workflow filtered out by path never
+starts, so a required check would wait forever. `pr-portal.yml` always starts:
+`changes` diffs GitHub's trial merge (`HEAD^1..HEAD`) and decides — running
+the suite when in doubt — and **`Portal suite result`** always reports, failing
+on a failed, timed-out OR cancelled suite. That is the check to require; a
+job skipped because its run was cancelled would otherwise count as passing.
+A file the portal suite starts reading must be added to `PORTAL_PATHS`.
+
+Branch protection (which checks are *required*) is a repository setting and
+the owner's decision; these workflows only report.
 
 ## Save points and rollback
 
@@ -5877,6 +5912,18 @@ tick trap again. Its source is all-intra now, so any rhythm left is the
 pipeline's. And a detector for an encoder's own periodic boost must skip the
 first two seconds: every rate control wobbles while it settles, and read from
 frame 0 that wobble is a "rhythm".
+
+**A RHYTHM IS A LATTICE, NOT GAPS THAT AGREE** (2026-10-22). The real-codec
+"(b) … the log NAMES it" check failed about half its runs. The detector asked
+whether the gaps between boosted frames agreed, and real VP9 broke that two
+ways: the every-10th boost lands on the keyframe every 60 frames, which is not
+a delta frame, so every sixth gap read 20; and on some runs the rate control
+threw a mid-clip burst of 3–4× frames on every other frame, wedging gaps of 1
+and 2 in — the ~11× boost intact, the answer `null` (or, on a longer burst,
+*"every 2"*). `vstRhythm` now finds the smallest spacing at which 70% of the
+delta frames are boosted. Six runs in a row green; master's detector, replayed
+over the same six logs, failed two. **Both shapes are pinned on synthetic logs
+in the RHYTHM section, so a flaky encoder is no longer the only witness.**
 
 **26 MUTATIONS, 25 NAMED, AND THE 26TH COULD NOT FAIL.** W07 read the copy's
 fingerprint 8 MiB + 64 bytes a slice — still a multiple of SHA-256's block, so

@@ -8466,6 +8466,38 @@ const VP9_LIB = String.raw`
   const metaClip = async (name, frames, lastModified) => new File([withMovMeta(await vp9Clip({frames: frames || 12}))],
     name, {type: 'video/quicktime', lastModified: lastModified || 1790000000000});
   const confirmTime = async v => { qClick('vqEdit', v.qid); qClick('vqSaveTime'); qClick('vqBack'); };
+  /* A SEEK THAT HAS FINISHED IS NOT A FRAME THAT CAN BE DRAWN. Chromium can
+     fire seeked, at readyState 4, before the frame reaches the element, and
+     drawImage then paints nothing (measured 2026-10-23: 0 of every pixel,
+     about one run in twenty, at each of the three places that read a played
+     copy back). So the frame is drawn onto its OWN fresh canvas, after the
+     frame callback (bounded, since a paused element that is not on the page
+     may never call it), and redrawn until every pixel is painted, at most 20
+     tries. How many were painted is returned, so a frame that never drew can
+     be asserted by name instead of being measured as something else. */
+  const drawnFrame = async (vid, at, seekWait) => {
+    await new Promise(res => { vid.onseeked = res; vid.currentTime = at; setTimeout(res, seekWait); });
+    const c = document.createElement('canvas');
+    c.width = vid.videoWidth; c.height = vid.videoHeight;
+    const x = c.getContext('2d');
+    const total = c.width * c.height;
+    let painted = 0, tries = 0, rvfc = false;
+    while (tries < 20) {
+      tries++;
+      if (typeof vid.requestVideoFrameCallback === 'function') {
+        await new Promise(res => { vid.requestVideoFrameCallback(() => { rvfc = true; res(); }); setTimeout(res, 250); });
+      } else {
+        await new Promise(res => setTimeout(res, 50));
+      }
+      x.clearRect(0, 0, c.width, c.height);
+      x.drawImage(vid, 0, 0);
+      const d = x.getImageData(0, 0, c.width, c.height).data;
+      painted = 0;
+      for (let i = 3; i < d.length; i += 4) if (d[i]) painted++;
+      if (painted === total) break;
+    }
+    return { c, x, w: c.width, h: c.height, draw: { painted, total, tries, rvfc } };
+  };
 `;
 
 section('The stamp is encoded into the video, not laid over it');
@@ -8510,14 +8542,15 @@ section('The stamp is encoded into the video, not laid over it');
         setTimeout(() => rej(new Error('output decode timed out')), 10000);
       });
       out.w = v.videoWidth; out.h = v.videoHeight;
-      await new Promise(res => { v.onseeked = res; v.currentTime = 0.05; setTimeout(res, 1200); });
-      const chk = document.createElement('canvas');
-      chk.width = v.videoWidth; chk.height = v.videoHeight;
-      const cx = chk.getContext('2d');
-      cx.drawImage(v, 0, 0);
+      /* Each video gets its OWN fresh canvas (drawnFrame, in VP9_LIB): the
+         source used to be drawn over the canvas still holding the stamped
+         output, so a source frame that never drew was measured as the stamp
+         (255 -> 255). On a fresh canvas an undrawn frame reads dark instead,
+         which the source check below would pass by itself, so both frames are
+         asserted drawn first. */
       // Brightest pixel in a band, not one sample: text is thin strokes, and a
       // single point can land between two of them.
-      const brightest = (x, y, w, h) => {
+      const brightest = (cx, x, y, w, h) => {
         const d = cx.getImageData(x, y, w, h).data;
         let best = 0;
         for (let i = 0; i < d.length; i += 4) {
@@ -8526,18 +8559,20 @@ section('The stamp is encoded into the video, not laid over it');
         }
         return Math.round(best);
       };
-      out.stampBand = brightest(Math.round(chk.width * 0.3), Math.round(chk.height * 0.86),
-                                Math.round(chk.width * 0.68), Math.round(chk.height * 0.12));
-      out.controlBand = brightest(4, 4, Math.round(chk.width * 0.5), Math.round(chk.height * 0.4));
+      const of = await drawnFrame(v, 0.05, 1200);
+      out.outDraw = of.draw;
+      out.stampBand = brightest(of.x, Math.round(of.w * 0.3), Math.round(of.h * 0.86),
+                                Math.round(of.w * 0.68), Math.round(of.h * 0.12));
+      out.controlBand = brightest(of.x, 4, 4, Math.round(of.w * 0.5), Math.round(of.h * 0.4));
       // And the source, at the same place, for comparison: it had nothing there.
       const sv = document.createElement('video');
       sv.muted = true; sv.src = URL.createObjectURL(file);
       await new Promise((res, rej) => { sv.onloadedmetadata = res; sv.onerror = rej;
         setTimeout(res, 6000); });
-      await new Promise(res => { sv.onseeked = res; sv.currentTime = 0.05; setTimeout(res, 1200); });
-      cx.drawImage(sv, 0, 0);
-      out.sourceBand = brightest(Math.round(chk.width * 0.3), Math.round(chk.height * 0.86),
-                                 Math.round(chk.width * 0.68), Math.round(chk.height * 0.12));
+      const sf = await drawnFrame(sv, 0.05, 1200);
+      out.srcDraw = sf.draw;
+      out.sourceBand = brightest(sf.x, Math.round(sf.w * 0.3), Math.round(sf.h * 0.86),
+                                 Math.round(sf.w * 0.68), Math.round(sf.h * 0.12));
       return out;
     } finally { restore(); }
   })()`);
@@ -8555,7 +8590,13 @@ section('The stamp is encoded into the video, not laid over it');
        trip.name === 'API-Timestamped-20260817-171432-001.mp4', String(trip.name));
     /* THE PROOF. The source is uniformly dark; the output has bright pixels in
        the bottom-right band and nowhere else. That is the stamp, in the encoded
-       file, surviving a full decode — which a CSS overlay could not do. */
+       file, surviving a full decode — which a CSS overlay could not do.
+       Each frame is first asserted DRAWN: on a fresh canvas a frame that never
+       drew reads as dark, which would pass the source check below by itself. */
+    ok('the output frame was actually drawn before it was measured',
+       !!trip.outDraw && trip.outDraw.total > 0 && trip.outDraw.painted === trip.outDraw.total, JSON.stringify(trip.outDraw));
+    ok('the source frame was actually drawn before it was measured',
+       !!trip.srcDraw && trip.srcDraw.total > 0 && trip.srcDraw.painted === trip.srcDraw.total, JSON.stringify(trip.srcDraw));
     ok('the source had nothing in the bottom-right corner', trip.sourceBand < 90, String(trip.sourceBand));
     ok('the output carries bright pixels there', trip.stampBand > 170, String(trip.stampBand));
     ok('and the rest of the picture was left alone', trip.controlBand < 90, String(trip.controlBand));
@@ -14246,7 +14287,7 @@ section('Clean derivative: a MOV loaded with metadata comes out carrying none of
       const afterBytes = await readFileBytes(f);
       let same = beforeBytes.length === afterBytes.length;
       for (let i = 0; same && i < beforeBytes.length; i++) if (beforeBytes[i] !== afterBytes[i]) same = false;
-      let plays = false, stampBand = null, restBand = null;
+      let plays = false, stampBand = null, restBand = null, copyDraw = null;
       if (out && out.url) {
         const v = document.createElement('video'); v.muted = true; v.src = out.url;
         plays = await new Promise(r => { v.onloadeddata = () => r(v.videoWidth === 320);
@@ -14255,9 +14296,8 @@ section('Clean derivative: a MOV loaded with metadata comes out carrying none of
            bottom-right band against a band of the same frame away from both the
            stamp and the clip's own moving marker. */
         if (plays) {
-          await new Promise(r => { v.onseeked = r; v.currentTime = 0.05; setTimeout(r, 1500); });
-          const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
-          const x = c.getContext('2d'); x.drawImage(v, 0, 0);
+          const fr = await drawnFrame(v, 0.05, 1500);   // a seek is not a drawn frame (VP9_LIB)
+          const c = fr.c, x = fr.x; copyDraw = fr.draw;
           const brightest = (bx0, by0, bw, bh) => { const d = x.getImageData(bx0, by0, bw, bh).data; let best = 0;
             for (let i = 0; i < d.length; i += 4) best = Math.max(best, 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
             return Math.round(best); };
@@ -14265,7 +14305,7 @@ section('Clean derivative: a MOV loaded with metadata comes out carrying none of
           restBand = brightest(Math.round(c.width * 0.1), Math.round(c.height * 0.45), Math.round(c.width * 0.5), Math.round(c.height * 0.3));
         }
       }
-      return { cats: parsed.meta && parsed.meta.cats, strings: parsed.meta && parsed.meta.strings, stampBand, restBand,
+      return { cats: parsed.meta && parsed.meta.cats, strings: parsed.meta && parsed.meta.strings, stampBand, restBand, copyDraw,
                trusted: !!(parsed.capture && parsed.capture.trusted),
                name: out && out.name, clean: out && out.clean, fault: VST && VST.fault && VST.fault.lines,
                paths: tree && tree.map(b => b.path), zeroTimes, hdlrBlank,
@@ -14308,6 +14348,8 @@ section('Clean derivative: a MOV loaded with metadata comes out carrying none of
   ok('the copy has its own fingerprint — the SHA-256 of the copy, not the original',
      R.copySha === R.copyReal && R.copySha !== R.before, `${R.copySha} / ${R.copyReal}`);
   ok('the copy plays back', R.plays === true);
+  ok('the played frame was actually drawn before it was measured',
+     !!R.copyDraw && R.copyDraw.total > 0 && R.copyDraw.painted === R.copyDraw.total, JSON.stringify(R.copyDraw));
   ok('and the timestamp is burned into its pixels, with the rest of the picture left alone',
      R.stampBand > 170 && R.restBand < 90, `${R.stampBand} / ${R.restBand}`);
   ok('and nothing left the device', R.fetches === 0, String(R.fetches));
@@ -15836,9 +15878,8 @@ section('Timestamp Video quality on real codecs: an MP4, a portrait iPhone MOV a
         const el = document.createElement('video'); el.muted = true; el.playsInline = true; el.src = v.out.url;
         await new Promise((res, rej) => { el.onloadedmetadata = res; el.onerror = () => rej(new Error('copy not playable'));
           setTimeout(() => rej(new Error('timeout')), 10000); });
-        await new Promise(res => { el.onseeked = res; el.currentTime = 0.2; setTimeout(res, 1500); });
-        const cv = document.createElement('canvas'); cv.width = el.videoWidth; cv.height = el.videoHeight;
-        const cx = cv.getContext('2d'); cx.drawImage(el, 0, 0);
+        const fr = await drawnFrame(el, 0.2, 1500);   // a seek is not a drawn frame (VP9_LIB)
+        const cv = fr.c, cx = fr.x;
         const d = cx.getImageData(0, 0, cv.width, cv.height).data;
         let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1, n = 0;
         for (let y = 0; y < cv.height; y++) for (let x = 0; x < cv.width; x++) {
@@ -15851,7 +15892,7 @@ section('Timestamp Video quality on real codecs: an MP4, a portrait iPhone MOV a
                  copy: { w: back.video.width, h: back.video.height, frames: back.video.samples.length,
                          seconds: back.video.seconds, rotation: back.rotation },
                  shown: { w: el.videoWidth, h: el.videoHeight },
-                 stamp: n ? { x0, y0, x1, y1, n } : null,
+                 stamp: n ? { x0, y0, x1, y1, n } : null, played: fr.draw,
                  draws: Array.from(new Set(draws)), clean: !!(v.out.clean && v.out.clean.ok),
                  sha: !!v.out.sha256, unchanged: before === after, quality: v.out.quality };
       } finally { window.vstDraw = realDraw; restore(); vstClose(); }
@@ -15872,6 +15913,8 @@ section('Timestamp Video quality on real codecs: an MP4, a portrait iPhone MOV a
       ok('MP4: the copy is 640 x 360 — the source’s own size — with every frame', !r.failed && r.copy.w === 640 && r.copy.h === 360
          && r.copy.frames === r.src.frames, say(r));
       ok('MP4: the stamp is drawn on the 640 x 360 picture itself', JSON.stringify(r.draws) === '["640x360|640x360"]', say(r.draws));
+      ok('MP4: the played frame was actually drawn before it was measured',
+         !!r.played && r.played.total > 0 && r.played.painted === r.played.total, say(r.played));
       const b = box(r);
       ok('MP4: in the copy as played, the stamp sits in the bottom-right, across about half the width',
          b && b.x1 > 640 * 0.9 && b.y1 > 360 * 0.85 && b.x0 > 640 * 0.3 && (b.x1 - b.x0) > 640 * 0.4 && (b.x1 - b.x0) > (b.y1 - b.y0),
@@ -15884,6 +15927,8 @@ section('Timestamp Video quality on real codecs: an MP4, a portrait iPhone MOV a
          !r.failed && r.src.rotation === 90 && r.copy.w === 640 && r.copy.h === 360 && r.copy.rotation === 90
            && r.copy.frames === r.src.frames, say(r));
       ok('portrait MOV: a player shows it upright, 360 x 640', r.shown.w === 360 && r.shown.h === 640, say(r.shown));
+      ok('portrait MOV: the played frame was actually drawn before it was measured',
+         !!r.played && r.played.total > 0 && r.played.painted === r.played.total, say(r.played));
       const b = box(r);
       /* THE DEFECT THIS FIXES: V2 drew on the stored landscape pixels, so the
          turned copy showed the stamp running down the left edge, sideways. */
@@ -16744,8 +16789,16 @@ section('Timestamp Video RHYTHM: one encoder configuration a run, a keyframe exa
     /* an encoder that boosts every 10th frame by itself, and one that only wobbles while it settles */
     const boost = vstRhythm(mk(300, i => i % 60 === 0 ? 50000 : (i % 10 === 0 ? 80000 : 10000)));
     const settling = vstRhythm(mk(300, i => i % 60 === 0 ? 50000 : (i < 40 && i % 2 ? 200 : i < 40 ? 15000 : 10000)));
+    /* THE TWO SHAPES THIS BROWSER'S REAL VP9 PRODUCED ON ALTERNATE RUNS (2026-10-22): the
+       every-10th boost, plus — mid-clip, frames 229 to 265 — a rate-control burst of
+       frames 3.5× the rest on every other frame. Read as gaps between boosted frames that
+       burst hid the boost on one run and not the next; and the burst ALONE read as "every
+       2nd". Built here so the property does not depend on which run the encoder has. */
+    const burst = i => i >= 229 && i <= 265 && i % 2 === 1;
+    const boostBurst = vstRhythm(mk(300, i => i % 60 === 0 ? 50000 : (i % 10 === 0 ? 80000 : burst(i) ? 35000 : 10000)));
+    const burstOnly = vstRhythm(mk(300, i => i % 60 === 0 ? 50000 : (burst(i) ? 35000 : 10000)));
     const q = r => ({rhythm: r, src: {}, out: {}});
-    return {steady, starved, collapse, boost, settling, tSteady: vstKeyframesText(q(steady)), tStarved: vstKeyframesText(q(starved)),
+    return {steady, starved, collapse, boost, settling, boostBurst, burstOnly, tSteady: vstKeyframesText(q(steady)), tStarved: vstKeyframesText(q(starved)),
             tBoost: vstKeyframesText(q(boost)), bCollapse: vstBitrateTimeText(q(collapse)), bSteady: vstBitrateTimeText(q(steady))};
   });
   ok('the rhythm detector: a steady encoder reads as steady — keyframe 5× a delta frame, delta frames not starved, no second collapsed',
@@ -16763,6 +16816,11 @@ section('Timestamp Video RHYTHM: one encoder configuration a run, a keyframe exa
      JSON.stringify([D.boost.boost, D.tBoost]));
   ok('…while one that only wobbles as its rate control settles is not mistaken for a rhythm, and a steady one has none',
      !D.settling.boost && !D.steady.boost, JSON.stringify([D.settling.boost, D.steady.boost]));
+  ok('…and a rate-control burst mid-clip does not hide the encoder’s own rhythm: still every 10th frame, 8× the rest — keyframes on the beat counted against nothing',
+     D.boostBurst.boost && D.boostBurst.boost.every === 10 && D.boostBurst.boost.count === 20 && Math.abs(D.boostBurst.boost.ratio - 8) < 0.01,
+     JSON.stringify(D.boostBurst.boost));
+  ok('…while that burst on its own — a few seconds of every other frame — is not named a rhythm',
+     !D.burstOnly.boost, JSON.stringify(D.burstOnly.boost));
 
   /* THE MOV/MP4 PATH keeps its original's own clock: an iPhone-style 1/600 s track. */
   const M = await vstRun(page, `
