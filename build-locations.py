@@ -288,7 +288,7 @@ def site_footer(current="", door="private"):
     <div>
       <div class="fname">Always Precise Investigations, LLC</div>
       <div class="row"><a href="tel:{PHONE_LINK}">{PHONE_DISPLAY}</a></div>
-      <div class="row"><a href="mailto:{EMAIL}">{EMAIL}</a></div>
+      <div class="row"><a href="mailto:{EMAIL}">{EMAIL.replace("@", "@<wbr>")}</a></div>
       <div class="row lic">{LICENSE} · Licensed and Insured</div>
       <div class="row">{BRAND_LINE}</div>
     </div>
