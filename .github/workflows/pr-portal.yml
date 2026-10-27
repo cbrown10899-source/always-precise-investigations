@@ -1,0 +1,139 @@
+name: PR portal suite
+
+# portal/test-portal.mjs, on pull requests into master. It runs the real
+# portal page against the real Worker on real SQLite and takes about 35
+# minutes, and CLAUDE.md's rule is that it gets the machine to itself (real
+# video encodes and timing-sensitive checks), so it has its own workflow and
+# its own runner.
+#
+# This workflow deliberately has NO `paths:` filter. A workflow filtered out
+# by path never starts, so a check required by branch protection would wait
+# forever. Instead it ALWAYS starts:
+#   - `changes` lists the files the PR changes and decides whether the suite is
+#     needed, and when in doubt it decides yes;
+#   - `portal` runs the suite only when needed;
+#   - `result`, named "Portal suite result", always reports. It passes when the
+#     suite passed, or when the PR changes nothing the suite exercises, and it
+#     fails when the suite failed, timed out or was cancelled. This is the one
+#     check to require.
+#
+# Read-only, like pr-checks.yml: no secrets, a read-only token, no deploys and
+# no calls to any outside service. The only upload is the test output, as a
+# workflow artifact attached to this run.
+on:
+  pull_request:
+    branches: [master]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-portal-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Does this PR reach the portal?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      # A PR's checkout is GitHub's trial merge of the PR into master. Its first
+      # parent is master, so HEAD^1..HEAD is everything the PR would change.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { persist-credentials: false, fetch-depth: 2 }
+      - name: Decide
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          # Everything the portal suite reads, serves or runs on: the portal,
+          # the Worker and schema it tests against, the _headers it checks, the
+          # logo the page loads, the pinned toolchain, and the PR test workflows
+          # and scripts.
+          PORTAL_PATHS: '^(portal/|case-portal/worker\.js$|case-portal/schema\.sql$|_headers$|assets/logo-white\.webp$|\.node-version$|\.playwright-version$|\.github/ci/|\.github/workflows/pr-[a-z-]*\.yml$)'
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            echo "Started by hand: the portal suite runs."; echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if ! git rev-parse -q --verify HEAD^2 > /dev/null; then
+            echo "The checkout is not a trial merge, so the changed files are unknown: the portal suite runs."
+            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          git diff --name-only HEAD^1 HEAD > "$RUNNER_TEMP/changed.txt"
+          echo "This PR changes $(wc -l < "$RUNNER_TEMP/changed.txt") file(s):"; cat "$RUNNER_TEMP/changed.txt"
+          if grep -qE "$PORTAL_PATHS" "$RUNNER_TEMP/changed.txt"; then
+            echo "It reaches the portal: the portal suite runs."; echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Nothing here reaches the portal: the suite is not needed."; echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  portal:
+    name: Portal suite (run)
+    needs: changes
+    if: ${{ needs.changes.outputs.run == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version-file: '.node-version' }
+      - name: Verify toolchain (Node pinned in .node-version)
+        run: |
+          want="v$(tr -d '[:space:]' < .node-version)"; got="$(node --version)"
+          echo "Node: $got (pinned: $want)"
+          [ "$got" = "$want" ] || { echo "::error::Node is $got but .node-version pins $want"; exit 1; }
+      - name: Install pinned Playwright and Chromium
+        timeout-minutes: 10
+        run: .github/ci/install-playwright.sh
+      # The photo sections add extra cross-checks when exiftool is installed.
+      # Say which way this run went, so two runs' totals can be compared.
+      - name: Note optional tools
+        run: |
+          if command -v exiftool > /dev/null; then echo "exiftool $(exiftool -ver): the photo metadata cross-checks run."
+          else echo "exiftool not installed: the photo sections skip only their exiftool cross-checks."; fi
+      # No retry, on purpose: "flake" is not a root cause. A red run is
+      # investigated, never re-run until it happens to go green.
+      - name: Portal suite
+        timeout-minutes: 70
+        run: .github/ci/run-suite.sh "Portal suite" "$RUNNER_TEMP/ci-out/portal.txt" node portal/test-portal.mjs
+      - name: Keep the full output
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pr-portal-output
+          path: ${{ runner.temp }}/ci-out
+          if-no-files-found: warn
+          retention-days: 14
+
+  result:
+    name: Portal suite result
+    needs: [changes, portal]
+    # always(), not !cancelled(): a cancelled or timed-out suite must report a
+    # FAILURE here. A job skipped because its run was cancelled would count as
+    # passing for a required check.
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          RUN: ${{ needs.changes.outputs.run }}
+          PORTAL: ${{ needs.portal.result }}
+        run: |
+          echo "decide: $CHANGES (run=$RUN)  portal suite: $PORTAL"
+          if [ "$CHANGES" != success ]; then
+            echo "::error title=Portal suite::could not decide whether the suite was needed ($CHANGES)"; exit 1
+          fi
+          if [ "$RUN" = true ]; then
+            [ "$PORTAL" = success ] || { echo "::error title=Portal suite::the portal suite did not pass ($PORTAL)"; exit 1; }
+            echo "The portal suite ran and passed."
+          elif [ "$RUN" = false ]; then
+            echo "This PR changes nothing the portal suite exercises, so it was not run." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error title=Portal suite::unexpected decision '$RUN'"; exit 1
+          fi

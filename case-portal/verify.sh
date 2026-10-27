@@ -4,8 +4,10 @@
 #   ./case-portal/verify.sh
 #   ./case-portal/verify.sh https://alwayspreciseinvestigations.net
 #
-# Read-only: it creates nothing, changes nothing, and sends no real data. Run it
-# after setup, and again after any deploy that touches the Worker.
+# Read-only: it creates nothing, changes nothing, sends no real data and writes
+# nothing to the database — case-portal/test-verify.mjs runs this script
+# against the real Worker and fails on any database write. Run it after setup,
+# and again after any deploy that touches the Worker.
 set -uo pipefail
 
 SITE="${1:-https://alwayspreciseinvestigations.net}"
@@ -71,19 +73,65 @@ else
   fi
 fi
 
-# 3. The database really has its tables. A missing schema shows up as a 500
-#    here rather than at the moment a client submits something.
-LOGIN=$(code -X POST "$API/auth/login" -H 'Content-Type: application/json' \
-  -d '{"username":"__verify__","password":"__not-a-real-password__"}')
-case "$LOGIN" in
-  401) ok "the schema is applied and login is answering" ;;
-  500) bad "the schema is applied and login is answering" \
-           "500 — the tables are missing. Run: npx wrangler d1 execute api-case-portal --remote --file=case-portal/schema.sql" ;;
-  000) bad "the schema is applied and login is answering" "no response from $API/auth/login" ;;
-  *)   bad "the schema is applied and login is answering" "expected 401 for bad credentials, got $LOGIN" ;;
+# 3. Authentication is answering — and nothing here writes to the database.
+#
+#    The probe that stood here posted a wrong password for "__verify__". That
+#    name is inside the account alphabet, so the Worker did what it must with a
+#    failed sign-in and recorded it in login_fails: every run of this
+#    "read-only" script wrote a production row. A wrong password for a name an
+#    account COULD have cannot be probed without that write — recording it is
+#    the lockout working — so that path is covered by the Worker suite, and the
+#    three probes below cover what can be checked live without leaving anything
+#    behind. Do not add a probe here that the Worker would remember.
+
+# 3a. A session the server never issued is refused. The cookie is 32 random
+#     bytes, so it matches no session row: the Worker reads sessions and users,
+#     finds nothing, and answers 401 — a read, never a write (the only write on
+#     that path removes a REAL session that has expired). The same read is the
+#     schema check the old probe made: with those tables missing it answers 503.
+#     The cookie name must stay the Worker's SESSION_COOKIE, or the Worker
+#     ignores the cookie and this quietly becomes check 5; test-verify.mjs pins
+#     the two together.
+FORGED=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
+SESS=$(code "$API/auth/me" -H "Cookie: api_portal=$FORGED")
+case "$SESS" in
+  401) ok "a session the server never issued is refused" ;;
+  503) bad "a session the server never issued is refused" \
+           "503 — the database is missing tables. Run the portal-setup workflow (Actions → Set up the case portal → Run workflow); it is idempotent." ;;
+  000) bad "a session the server never issued is refused" "no response from $API/auth/me" ;;
+  2*)  bad "a session the server never issued is refused" "got $SESS — STOP, a forged session cookie was accepted." ;;
+  *)   bad "a session the server never issued is refused" "expected 401, got $SESS" ;;
 esac
 
-# 4. Ingest is closed to anyone without the key.
+# 3b. Sign-in answers, and refuses a name no account can have. "verify probe"
+#     contains a space, which is outside the account alphabet, so the Worker
+#     refuses it before reading or writing login_fails — the guard that stops
+#     anonymous callers filling that table with invented names. Never use a
+#     name the alphabet accepts here; test-verify.mjs fails if one appears.
+LOGIN=$(code -X POST "$API/auth/login" -H 'Content-Type: application/json' \
+  -d '{"username":"verify probe","password":"not-a-password"}')
+case "$LOGIN" in
+  401) ok "sign-in answers and refuses a name no account can have" ;;
+  500|503) bad "sign-in answers and refuses a name no account can have" \
+           "$LOGIN — the sign-in route is failing. Check the Worker's logs." ;;
+  000) bad "sign-in answers and refuses a name no account can have" "no response from $API/auth/login" ;;
+  *)   bad "sign-in answers and refuses a name no account can have" "expected 401, got $LOGIN" ;;
+esac
+
+# 3c. A sign-in from another site is refused before any route runs. The
+#     Worker answers a foreign Origin with 403 without reaching the sign-in
+#     code. It carries the same impossible name, so even a Worker that let the
+#     origin through would write nothing.
+XSITE=$(code -X POST "$API/auth/login" -H 'Origin: https://verify.invalid' \
+  -H 'Content-Type: application/json' -d '{"username":"verify probe","password":"not-a-password"}')
+if [ "$XSITE" = "403" ]; then
+  ok "a sign-in from another site is refused"
+else
+  bad "a sign-in from another site is refused" "expected 403, got $XSITE — the Worker's origin check is not answering."
+fi
+
+# 4. Ingest is closed to anyone without the key. It is refused at the key
+#    check, before the body is read or anything is written.
 NOKEY=$(code -X POST "$API/ingest" -H 'Content-Type: application/json' -d '{"case_no":"VERIFY-0000"}')
 if [ "$NOKEY" = "401" ]; then
   ok "ingest refuses a submission with no key"

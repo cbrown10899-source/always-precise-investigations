@@ -44,8 +44,18 @@ jobs:
       - uses: actions/checkout@v4
         with: { ref: master }
 
+      # The Node version lives in ONE place, .node-version at the repo root.
+      # 22.23.4 is the Oct 21 2026 security release (CVE-2026-111497 and others).
       - uses: actions/setup-node@v4
-        with: { node-version: '22' }
+        with: { node-version-file: '.node-version' }
+
+      - name: Verify toolchain (Node pinned in .node-version)
+        run: |
+          want="v$(tr -d '[:space:]' < .node-version)"
+          got="$(node --version)"
+          echo "Node: $got (pinned: $want in .node-version)"
+          echo "npm:  $(npm --version)"
+          [ "$got" = "$want" ] || { echo "::error::Node is $got but .node-version pins $want"; exit 1; }
 
       - name: Test the Worker before touching anything
         run: node visitor-alerts/test-worker.mjs
