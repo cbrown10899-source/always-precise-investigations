@@ -5913,6 +5913,18 @@ pipeline's. And a detector for an encoder's own periodic boost must skip the
 first two seconds: every rate control wobbles while it settles, and read from
 frame 0 that wobble is a "rhythm".
 
+**A RHYTHM IS A LATTICE, NOT GAPS THAT AGREE** (2026-10-22). The real-codec
+"(b) … the log NAMES it" check failed about half its runs. The detector asked
+whether the gaps between boosted frames agreed, and real VP9 broke that two
+ways: the every-10th boost lands on the keyframe every 60 frames, which is not
+a delta frame, so every sixth gap read 20; and on some runs the rate control
+threw a mid-clip burst of 3–4× frames on every other frame, wedging gaps of 1
+and 2 in — the ~11× boost intact, the answer `null` (or, on a longer burst,
+*"every 2"*). `vstRhythm` now finds the smallest spacing at which 70% of the
+delta frames are boosted. Six runs in a row green; master's detector, replayed
+over the same six logs, failed two. **Both shapes are pinned on synthetic logs
+in the RHYTHM section, so a flaky encoder is no longer the only witness.**
+
 **26 MUTATIONS, 25 NAMED, AND THE 26TH COULD NOT FAIL.** W07 read the copy's
 fingerprint 8 MiB + 64 bytes a slice — still a multiple of SHA-256's block, so
 the digest was right and nothing should have failed. The defect it stood for,

@@ -15636,6 +15636,7 @@ function vstChunkLog(){
 const VST_STARVED = 0.6;       // delta frames after a keyframe below 60% of those before the next
 const VST_COLLAPSED = 0.5;     // a whole second below half the median second
 const VST_BOOSTED = 3;         // a delta frame over three times the median delta frame
+const VST_RHYTHM_COVER = 0.7;  // a spacing is a rhythm when 70% of its frames are boosted
 function vstRhythm(log){
   if(!log || !log.length) return null;
   const {n, ts, dur, bytes, key} = log.view();
@@ -15689,15 +15690,37 @@ function vstRhythm(log){
   const mDelta = med(deltas);
   const boosted = [];
   if(mDelta > 0) order.forEach((i, p) => { if(p >= settle && !key[i] && bytes[i] > mDelta * VST_BOOSTED) boosted.push(p); });
+  /* A rhythm is a SPACING at which nearly every frame is boosted — not gaps
+     between boosted frames that agree. Read as gaps, two real shapes broke it
+     (measured on this browser's VP9, 2026-10-22): a boost landing on a
+     keyframe is not a delta frame, so that gap read 20 instead of 10; and a
+     rate-control burst of frames 3–4× the median, mid-clip, wedged gaps of 1
+     and 2 between the boosted ones — so the same encoder, keeping the same
+     every-10th boost, was named on one run and not the next. So: for each
+     spacing up to four seconds, find the phase whose delta frames (after the
+     settle, keyframes aside) are most often boosted; the smallest spacing at
+     which at least 70% of them are, five or more, is the rhythm. A burst off
+     that lattice cannot hide it, and a burst alone covers no lattice. */
   let boost = null;
   if(boosted.length >= 5){
-    const bg = [];
-    for(let k = 1; k < boosted.length; k++) bg.push(boosted[k] - boosted[k - 1]);
-    const g = med(bg);
-    const regular = bg.filter(x => Math.abs(x - g) <= 1).length / bg.length;
-    if(regular >= 0.7){
-      let bb = 0; for(const p of boosted) bb += bytes[order[p]];
-      boost = {every: g, seconds: g * (end - t0) / n / 1e6, count: boosted.length, ratio: (bb / boosted.length) / mDelta};
+    const keyAt = [];
+    order.forEach((i, p) => { if(p >= settle && key[i]) keyAt.push(p); });
+    const maxP = Math.min(Math.floor((n - settle) / 5), Math.max(2, Math.round(4 * n / Math.max(1e-6, (end - t0) / 1e6))));
+    for(let P = 2; P <= maxP && !boost; P++){
+      const hit = new Int32Array(P), off = new Int32Array(P);
+      for(const p of boosted) hit[p % P]++;
+      for(const p of keyAt) off[p % P]++;
+      let best = -1, bestCov = 0;
+      for(let ph = 0; ph < P; ph++){
+        const first = settle + ((ph - settle % P) % P + P) % P;
+        const tot = (first < n ? Math.floor((n - 1 - first) / P) + 1 : 0) - off[ph];
+        if(hit[ph] < 5 || tot <= 0) continue;
+        const cov = hit[ph] / tot;
+        if(cov >= VST_RHYTHM_COVER && cov > bestCov){ best = ph; bestCov = cov; }
+      }
+      if(best < 0) continue;
+      let bb = 0, bc = 0; for(const p of boosted) if(p % P === best){ bb += bytes[order[p]]; bc++; }
+      boost = {every: P, seconds: P * (end - t0) / n / 1e6, count: bc, ratio: (bb / bc) / mDelta};
     }
   }
   return {frames: n, keys: kc, keyEveryFrames: med(gaps), keyEverySec: gapUs.length ? med(gapUs) / 1e6 : null, boost,

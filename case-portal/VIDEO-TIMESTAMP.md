@@ -2578,8 +2578,9 @@ It asserts the brief's §13–14 structurally:
 - a 90 kHz copy with every frame 3,003 ticks.
 
 It also asserts the per-chunk table, every Details line, the detector against
-five shapes (steady, starved, a collapsed second, an encoder's own beat, and
-settling that is not a beat), and a MOV that keeps its 1/600 s clock.
+seven shapes (steady, starved, a collapsed second, an encoder's own beat,
+settling that is not a beat, that beat with a rate-control burst across it, and
+the burst alone), and a MOV that keeps its 1/600 s clock.
 
 **ON REAL VP9 CODECS**, a 10-second noisy source goes through the production
 transcode held to one quantizer. The source is all-intra at 6 Mbps, so it
@@ -2595,7 +2596,12 @@ carries no keyframe rhythm of its own. The assertions:
 - the encoder log reads steady.
 
 Under the encoder's own rate control at 1.8 Mbps, the same encoder keeps a
-beat, and the log names it: a boosted frame every 10.
+beat, and the log names it: a boosted frame every 10. The detector reads it
+as a LATTICE — the smallest spacing at which 70% of the delta frames are
+boosted — because read as agreeing gaps it failed about half the runs: a boost
+on a keyframe is not a delta frame (a gap of 20), and VP9 sometimes throws a
+mid-clip burst of 3–4× frames on every other frame (gaps of 1 and 2), which
+hid the boost or was itself named "every 2" (2026-10-22).
 
 **STORAGE WRITER** asserts that a 12-second 1080p copy on a 4 MB memory budget
 is made in High, written to storage, laid out ftyp–mdat–moov, scrubbed before
