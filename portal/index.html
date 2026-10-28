@@ -18264,6 +18264,18 @@ function vqRepick(id){
   inp.click();
 }
 
+/* A repaint hands the keyboard back to the control that had it. A control
+   without an id is found again by its data-act, and a data-act can be drawn
+   twice: + Add sits in the header AND is the drop zone, and on a desk the
+   header copy is display:none. The first match is therefore not the one that
+   had the keyboard, and a hidden one cannot take it, so focus fell to the
+   page. The same copy by position is the one, if it is still drawn; else the
+   first drawn copy; never one that is not drawn. */
+function vqdRefocus(el, sel, nth){
+  const all = [...el.querySelectorAll(sel)];
+  const drawn = x => x.getClientRects().length > 0;
+  return all[nth] && drawn(all[nth]) ? all[nth] : all.find(drawn) || null;
+}
 /* ONLY WHERE THE BROWSER OFFERS IT: a desktop with a folder picker. An iPhone
    and iPad ignore the request and show the ordinary picker, so the button is
    not drawn there at all — ordinary multi-select is the feature, the folder a
@@ -21326,6 +21338,7 @@ function paintPStamp(){
     const focusId = inside && act.id ? act.id : "";
     const focusAct = inside && !act.id && act.dataset && act.dataset.act
       ? `[data-act="${act.dataset.act}"]` + (act.dataset.id ? `[data-id="${act.dataset.id}"]` : "") : "";
+    const focusNth = focusAct ? [...el.querySelectorAll(focusAct)].indexOf(act) : -1;
     const caret = focusId && typeof act.selectionStart === "number" ? act.selectionStart : null;
     const open = [...el.querySelectorAll(".vqd-menu[open]")].map(d => d.dataset.qid);
     const selV = pqSel();
@@ -21353,7 +21366,7 @@ function paintPStamp(){
     let f = null;
     if(to) f = /^[\w-]+$/.test(to) ? document.getElementById(to) : el.querySelector(to);
     else if(PST && now !== was) f = el.querySelector(".vst .vst-x");
-    else if(!PST || now === was) f = focusId ? document.getElementById(focusId) : focusAct ? el.querySelector(focusAct) : null;
+    else if(!PST || now === was) f = focusId ? document.getElementById(focusId) : focusAct ? vqdRefocus(el, focusAct, focusNth) : null;
     if(f && f !== document.activeElement){
       try{ f.focus({preventScroll: true}); }catch{}
       if(caret != null && f.id === focusId && f.setSelectionRange){ try{ f.setSelectionRange(caret, caret); }catch{} }
@@ -22041,6 +22054,7 @@ function paintVStamp(){
     const focusId = inside && act.id ? act.id : "";
     const focusAct = inside && !act.id && act.dataset && act.dataset.act
       ? `[data-act="${act.dataset.act}"]` + (act.dataset.id ? `[data-id="${act.dataset.id}"]` : "") : "";
+    const focusNth = focusAct ? [...el.querySelectorAll(focusAct)].indexOf(act) : -1;
     const caret = focusId && typeof act.selectionStart === "number" ? act.selectionStart : null;
     const open = [...el.querySelectorAll(".vqd-menu[open]")].map(d => d.dataset.qid);
     const selV = vqSel();
@@ -22076,7 +22090,7 @@ function paintVStamp(){
     let f = null;
     if(to) f = /^[\w-]+$/.test(to) ? document.getElementById(to) : el.querySelector(to);
     else if(VST && now !== was) f = el.querySelector(".vst .vst-x");
-    else if(!VST || now === was) f = focusId ? document.getElementById(focusId) : focusAct ? el.querySelector(focusAct) : null;
+    else if(!VST || now === was) f = focusId ? document.getElementById(focusId) : focusAct ? vqdRefocus(el, focusAct, focusNth) : null;
     if(f && f !== document.activeElement){
       try{ f.focus({preventScroll: true}); }catch{}
       if(caret != null && f.id === focusId && f.setSelectionRange){ try{ f.setSelectionRange(caret, caret); }catch{} }
