@@ -9950,8 +9950,24 @@ async function phOpenFromHome(page) {
   await page.evaluate(() => document.querySelector('.qtapp[data-qt="photo"]').click());
   await page.waitForFunction(() => !!document.querySelector('#pstamp .pqd'), null, { timeout: 10000 });
 }
+/* A FILE CHOOSER IS WAITED FOR WITH INTERCEPTION ALREADY ON. Playwright turns
+   chooser interception on when a page gains its first 'filechooser' listener
+   and off when it loses its last, and waits for neither — so a waitForEvent
+   started beside the press that opens the chooser races that switch, and the
+   chooser can open before anything is listening for it: missed 5 times in 25
+   on an idle machine, and the §47 crash on CI. A listener held first, and one
+   round trip to the page after it, settle the switch before the press. */
+async function chooserFor(page, act, opts) {
+  const keep = () => {};
+  page.on('filechooser', keep);
+  try {
+    await page.evaluate(() => 0);
+    const [chooser] = await Promise.all([page.waitForEvent('filechooser', opts), act()]);
+    return chooser;
+  } finally { page.off('filechooser', keep); }
+}
 async function phChoose(page, files) {
-  const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.locator('#pstamp .vqd-drop').click()]);
+  const chooser = await chooserFor(page, () => page.locator('#pstamp .vqd-drop').click());
   await chooser.setFiles(files);
 }
 const phIdle = (page, n, timeout = 20000) => page.waitForFunction((n) => PQ && PQ.items.length === n
@@ -10793,7 +10809,7 @@ section('Timestamp Photo asks for a picture first, and for a case only to file i
   ok('the door opens the photo queue, empty, with nothing asked first',
      fired === 0 && has(opened, 'Timestamp Photo') && has(opened, 'No photos yet'), opened.slice(0, 200));
   ok('and no case has been asked for at all', !has(opened, 'which case'), opened.slice(0, 300));
-  const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.locator('#pstamp .vqd-drop').click()]);
+  const chooser = await chooserFor(page, () => page.locator('#pstamp .vqd-drop').click());
   ok('the drop zone opens a picture picker that takes several at once', chooser.isMultiple());
   await chooser.setFiles({ name: 'from-phone.jpg', mimeType: 'image/jpeg', buffer: local });
   await phIdle(page, 1);
@@ -12325,6 +12341,83 @@ section('Timestamp Photo V2: a case, when one is chosen, is offered on the finis
   await page.close();
 }
 
+/* A REPAINT GIVES THE KEYBOARD BACK TO THE CONTROL THAT HAD IT — on both
+   timestamp dashboards. Every portal paint() repaints them, so any read that
+   lands while somebody is on one (the case list, a count) rebuilds the
+   control under their focus. A data-act can be drawn twice: the header's
+   + Add and the drop zone are both pqAdd / vqAdd, and on a desk the header
+   copy is display:none. Restoring "the first element with that data-act"
+   handed focus to the hidden one, it could not take it, and the keyboard
+   fell to the page — so Enter on the drop zone did nothing. Each repaint
+   here is forced, so nothing depends on when a read happens to land. */
+section('Timestamp dashboards: a repaint gives the keyboard back to the control that had it, never a hidden copy of it');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  for (const [tool, root, add, close] of [['photo', '#pstamp', 'pqAdd', 'pqClose'], ['video', '#vstamp', 'vqAdd', 'vqClose']]) {
+    for (const [w, h] of [[1440, 900], [390, 844]]) {
+     const which = `${tool} at ${w}`;
+     try {
+      /* Home through the desk's rail, then the width under test. */
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await goHome(page);
+      await page.setViewportSize({ width: w, height: h });
+      await page.evaluate((t) => document.querySelector(`.qtapp[data-qt="${t}"]`).click(), tool);
+      await page.waitForFunction((r) => !!document.querySelector(`${r} .vqd-drop`), root, { timeout: 10000 });
+      /* Every copy of the Add control, and which of them a person can reach. */
+      const copies = await page.evaluate(({ r, a }) => [...document.querySelectorAll(`${r} [data-act="${a}"]`)]
+        .map(x => ({ drop: x.classList.contains('vqd-drop'), shown: x.getClientRects().length > 0 })), { r: root, a: add });
+      if (w === 1440) ok(`${which}: the precondition holds — a hidden copy of ${add} comes before the drop zone`,
+        copies.length === 2 && !copies[0].shown && copies[1].drop && copies[1].shown, JSON.stringify(copies));
+      for (const kind of ['the portal repaint', 'the dashboard repaint']) {
+        await page.locator(`${root} .vqd-drop`).focus();
+        const got = await page.evaluate(({ r, k, t }) => {
+          const before = document.activeElement && document.activeElement.classList.contains('vqd-drop');
+          if (k === 'the portal repaint') paint(); else (t === 'photo' ? paintPStamp : paintVStamp)();
+          const a = document.activeElement;
+          return { before, same: !!a && a.classList.contains('vqd-drop') && !!a.closest(r),
+                   on: a ? (a === document.body ? 'body' : a.tagName + '.' + a.className) : 'none' };
+        }, { r: root, k: kind, t: tool });
+        ok(`${which}: after ${kind} the drop zone still has the keyboard`, got.before && got.same, JSON.stringify(got));
+      }
+      /* And the property the person feels: Enter after a repaint still asks
+         for files. What is counted is the product's own act — its file input
+         clicked — not whether this browser then raised a chooser, which a
+         headless run does not do reliably twice in a row. */
+      await page.locator(`${root} .vqd-drop`).focus();
+      await page.evaluate(() => {
+        paint();
+        window.__fileAsks = 0;
+        window.__realClick = HTMLInputElement.prototype.click;
+        HTMLInputElement.prototype.click = function(){ if(this.type === 'file') window.__fileAsks++; else window.__realClick.call(this); };
+      });
+      await page.keyboard.press('Enter');
+      const asked = await page.evaluate(() => {
+        HTMLInputElement.prototype.click = window.__realClick;
+        return window.__fileAsks;
+      });
+      ok(`${which}: Enter on the drop zone after a repaint still asks for files, once`, asked === 1, `file input clicked ${asked} time(s)`);
+      /* The other copy is restored to itself too, where it is the one drawn. */
+      const hdr = await page.evaluate(({ r, a }) => {
+        const h = document.querySelector(`${r} .vqd-hadd[data-act="${a}"]`);
+        if (!h || !h.getClientRects().length) return { skip: true };
+        h.focus(); paint();
+        const x = document.activeElement;
+        return { skip: false, same: !!x && x.classList.contains('vqd-hadd') && !!x.closest(r) };
+      }, { r: root, a: add });
+      if (!hdr.skip) ok(`${which}: the header's + Add keeps the keyboard across a repaint, rather than it moving to the drop zone`, hdr.same, JSON.stringify(hdr));
+     } catch (e) {
+      /* A step that cannot happen is a failure with this width's name on it, not a crash. */
+      ok(`${which}: the walk completes`, false, String(e && e.message || e).split('\n')[0]);
+     }
+      /* Leave the dashboard whatever happened, so the next width starts clean. */
+      await page.evaluate((c) => { const b = document.querySelector(`[data-act="${c}"]`); if (b) b.click(); }, close);
+      await page.waitForFunction((r) => !document.querySelector(`${r} .vqd`), root, { timeout: 10000 }).catch(() => {});
+    }
+  }
+  await page.close();
+}
+
 /* §47 — ACCESSIBILITY: every control has a name, a status is a word as well
    as a colour, the drop zone is a button a keyboard reaches, and Escape steps
    back one layer at a time without ever closing the queue. */
@@ -12345,7 +12438,7 @@ section('Timestamp Photo V2: accessible by name and by keyboard, and Escape step
   ok('the dashboard is a named dialog', E.dialog === 'dialog' && E.label === 'Timestamp photo', JSON.stringify(E));
   /* The keyboard reaches the drop zone and Enter opens the chooser. */
   await page.locator('#pstamp .vqd-drop').focus();
-  const [chooser] = await Promise.all([page.waitForEvent('filechooser', { timeout: 5000 }), page.keyboard.press('Enter')]);
+  const chooser = await chooserFor(page, () => page.keyboard.press('Enter'), { timeout: 5000 });
   ok('Enter on the drop zone opens the chooser, for several files', !!chooser && chooser.isMultiple());
   await chooser.setFiles([]);
   const A = await phRun(page, `
