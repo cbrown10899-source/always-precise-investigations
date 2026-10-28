@@ -19,11 +19,11 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # The Node version lives in ONE place, .node-version at the repo root.
       # 22.23.4 is the Oct 21 2026 security release (CVE-2026-111497 and others).
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with: { node-version-file: '.node-version' }
 
       - name: Verify toolchain (Node pinned in .node-version)

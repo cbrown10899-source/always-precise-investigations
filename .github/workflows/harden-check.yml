@@ -44,11 +44,11 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # node:sqlite (the local proof below) needs Node 22; the version lives in
       # ONE place, .node-version, the same file every other Node job reads.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with: { node-version-file: '.node-version' }
 
       - name: Verify toolchain (Node pinned in .node-version)
