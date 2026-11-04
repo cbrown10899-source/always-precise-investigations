@@ -4126,6 +4126,9 @@
    Phone-first: every control at the 44px floor, inputs at 16px (the portal's
    rule), the retainer list one column, nothing wider than the screen. */
 .ci-form{scroll-margin-top:12px}
+.ci-sheetdoor{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:12px;
+  padding-top:12px;border-top:1px solid var(--line)}
+.ci-sheetdoor .btn{min-height:44px}
 .ci-choices{border:0;margin:6px 0 4px;padding:0;min-width:0}
 .ci-choices legend{font-size:.85rem;font-weight:600;margin-bottom:6px}
 .ci-opt{display:flex;align-items:center;gap:10px;min-height:48px;padding:8px 12px;margin-bottom:8px;
@@ -11308,17 +11311,21 @@ function sheetsView(){
       <button class="btn ghost" data-act="rsPrint">&#128424; Print / Save PDF</button>
       <button class="btn" data-act="shWiz" data-sheet="${esc(open.id)}"
         data-context="${esc(open.context || "")}">Send this sheet &rarr;</button>
-      ${/* THE PRIVATE CARD'S OTHER DOOR (owner brief 2026-11-04 §9): the same
-           client may be sent a prepared intake that carries the retainer and
-           takes their signature, instead of a sheet. A door, nothing more —
-           the sheet and its send are untouched. */""}${open.id === "private_retainer" && (open.context || "private") === "private"
-        ? `<button class="btn ghost" data-act="ciNew">Prepare client intake with retainer &rarr;</button>` : ""}
+
       <div class="nextstep">
         <b>Next step</b>
         Choose what to include with this email:
         <ul>${sheetIncludables(open.id, open.context === "legal").map(x => `<li>${esc(x)}</li>`).join("")}</ul>
       </div>
     </div>
+    ${/* THE PRIVATE CARD'S OTHER DOOR (owner brief 2026-11-04 §9): the same
+         client may be sent a prepared intake that carries the retainer and
+         takes their signature, instead of a sheet. Its own line BELOW the send
+         row, so the send row's own layout (button beside its Next-step panel)
+         is exactly what it was. A door, nothing more. */""}${
+      open.id === "private_retainer" && (open.context || "private") === "private"
+      ? `<div class="ci-sheetdoor"><button class="btn ghost" data-act="ciNew">Prepare client intake with retainer &rarr;</button>
+          <span class="hint">Text the client a secure intake that carries the retainer and takes their signature.</span></div>` : ""}
     ${SHEET_MSG ? `<div class="note" style="margin-top:4px">${esc(SHEET_MSG)}</div>` : ""}
   </div>` : ""}
   ${/* THE OFFICE-COPY STRIP BELONGS TO THE SEND, NOT TO AN OPEN CARD. It sat

@@ -2084,7 +2084,7 @@ section('A private lead can be sent payment options; an insurance lead cannot');
 {
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
-  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
+  await page.locator('.tabs button[data-tab="leads"]').click();
   await page.waitForTimeout(600);
 
   const priv = page.locator('.pcard', { hasText: 'API-20260812-4002' });
@@ -4620,7 +4620,7 @@ section('Leads and intakes: cards, decisions, and the phone-call lead');
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
   ok('the office navigation carries Intakes', has(await text(page, '.tabs'), 'Intakes'));
-  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
+  await page.locator('.tabs button[data-tab="leads"]').click();
   await page.waitForTimeout(400);
   const desk = await text(page, '#app');
   ok('early-stage submissions wait as cards', await page.locator('.pcard').count() >= 1, desk.slice(0, 200));
@@ -5705,7 +5705,7 @@ section('A phone can actually reach the navigation');
   for (const t of ['Dashboard', 'Cases', 'Intakes', 'Billing', 'Settings']) {
     ok(`the drawer carries ${t}`, has(drawer, t), drawer);
   }
-  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
+  await page.locator('.tabs button[data-tab="leads"]').click();
   await page.waitForTimeout(700);
   ok('and navigating from it works', has(await text(page, '#app'), 'awaiting a decision'));
   ok('the drawer closes behind you', !(await page.locator('.tabs').isVisible()));
@@ -7016,7 +7016,7 @@ section('A lead has its own life, and its sends live on the card');
 
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
-  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
+  await page.locator('.tabs button[data-tab="leads"]').click();
   await page.waitForTimeout(600);
 
   const card = page.locator('.pcard', { hasText: 'API-20260812-4005' });
@@ -7051,7 +7051,7 @@ section('A lead has its own life, and its sends live on the card');
   await page.waitForTimeout(600);
   await page.reload();
   await page.waitForTimeout(900);
-  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
+  await page.locator('.tabs button[data-tab="leads"]').click();
   await page.waitForTimeout(600);
   ok('a status set by hand survives a reload',
      await page.locator('.pcard', { hasText: 'API-20260812-4005' })
@@ -7284,7 +7284,7 @@ section('A returned private intake shows the retainer pending and the way to act
 
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
-  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
+  await page.locator('.tabs button[data-tab="leads"]').click();
   await page.waitForTimeout(700);
 
   const c1 = page.locator('.pcard', { hasText: 'API-RP-1' });
@@ -7423,7 +7423,7 @@ section('An archived case never leaks out of the Cases table');
      has(arched, 'API-LENS-ARCH'), arched.slice(0, 300));
 
   /* THE REPRO. The lens is still on Archived; switch to Intakes. */
-  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
+  await page.locator('.tabs button[data-tab="leads"]').click();
   await page.waitForTimeout(700);
   const desk = await text(page, 'body');
   ok('switching to Intakes does NOT carry the archived case across',
@@ -18622,7 +18622,7 @@ section('Quick Legal Assignment: a phone call becomes a case');
 {
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
-  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
+  await page.locator('.tabs button[data-tab="leads"]').click();
   await page.waitForTimeout(500);
   await page.locator('.btn', { hasText: 'Intake a client' }).click();
   await page.waitForTimeout(400);
@@ -18681,7 +18681,7 @@ section('Quick Legal Assignment: a phone call becomes a case');
   // Back on the desk: the card is a LEGAL card.
   await page.locator('[data-act="backToCases"]').click();
   await page.waitForTimeout(300);
-  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
+  await page.locator('.tabs button[data-tab="leads"]').click();
   await page.waitForTimeout(600);
   const card = page.locator('.pcard', { hasText: 'Calloway Law' }).first();
   const cardText = await card.innerText();
@@ -18821,7 +18821,7 @@ section('Clients & Firms: a firm saved once, then an assignment in seconds');
      await page.locator('.ccard .tag', { hasText: 'Preferred' }).count() === 1);
 
   // --- the picker, and the assignment ------------------------------------
-  await page.locator('.tabs button', { hasText: 'Intakes' }).first().click();
+  await page.locator('.tabs button[data-tab="leads"]').first().click();
   await page.waitForTimeout(300);
   await page.locator('[data-act="tab"][data-tab="newlead"]').first().click();
   await page.waitForTimeout(300);
@@ -19052,7 +19052,7 @@ section('Clients & Firms: a case says which profile it came from, and asks befor
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
   /* An ordinary intake with no profile behind it. */
-  await page.locator('.tabs button', { hasText: 'Intakes' }).first().click();
+  await page.locator('.tabs button[data-tab="leads"]').first().click();
   await page.waitForTimeout(300);
   await page.locator('[data-act="tab"][data-tab="newlead"]').first().click();
   await page.waitForTimeout(300);
@@ -19356,7 +19356,7 @@ section('Needs attention: an alert leaves because the thing was done');
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
   /* A private case with an agreed retainer and nothing received. */
-  await page.locator('.tabs button', { hasText: 'Intakes' }).first().click();
+  await page.locator('.tabs button[data-tab="leads"]').first().click();
   await page.waitForTimeout(300);
   await page.locator('[data-act="tab"][data-tab="newlead"]').first().click();
   await page.waitForTimeout(300);
@@ -30450,7 +30450,7 @@ section('Create case / Accept: one tap, no chooser, and the intake survives it')
 
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
-  await page.locator('.tabs button', { hasText: 'Intakes' }).first().click();
+  await page.locator('.tabs button[data-tab="leads"]').first().click();
   await page.waitForTimeout(800);
 
   /* ---- THE DOOR ITSELF --------------------------------------------------- */
@@ -30558,7 +30558,7 @@ section('Create case / Accept: one tap, no chooser, and the intake survives it')
      leaves too. */
   await page.locator('.pagebar .close').first().click();
   await page.waitForTimeout(600);
-  await page.locator('.tabs button', { hasText: 'Intakes' }).first().click();
+  await page.locator('.tabs button[data-tab="leads"]').first().click();
   await page.waitForTimeout(800);
   const desk = await page.evaluate(() => {
     const card = [...document.querySelectorAll('.pcard')]
