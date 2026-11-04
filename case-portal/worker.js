@@ -8627,6 +8627,10 @@ const CEO_REMOVING = ['MOVE_TO_MORE', 'MOVE_TO_ADVANCED', 'HIDE_DUPLICATE'];
    where the capability still lives if the shortcut goes. */
 const CEO_CAPS = [
   { id: 'qt:sheets',   label: 'Rate Sheet',          core: true,  nav: false, alt: null },
+  /* Owner brief 2026-11-04. Core — it is how a private client is sent their
+     retainer and signs — and its capability lives on the Client Intakes
+     screen in the rail, so the most the Bot may ever propose is the card. */
+  { id: 'qt:cintake',  label: 'Prepare & Send Client Intake', core: true, nav: false, alt: 'Client Intakes in the navigation' },
   { id: 'qt:newlead',  label: 'New Intake',          core: true,  nav: false, alt: 'the Intakes desk' },
   { id: 'qt:priv',     label: 'Private Intake',      core: false, nav: false, alt: 'New Intake' },
   { id: 'qt:claims',   label: 'Insurance Intake',    core: false, nav: false, alt: 'New Intake' },

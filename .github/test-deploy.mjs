@@ -36,7 +36,8 @@ ok('and produces a real site', files.length > 20, `${files.length} files`);
 
 section('What the public site is allowed to contain');
 for (const need of ['index.html', '_headers', '_redirects', 'robots.txt', 'sitemap.xml',
-                    'portal/index.html', 'intake/index.html', 'privacy.html', '404.html']) {
+                    'portal/index.html', 'intake/index.html', 'intake/client/index.html',
+                    'privacy.html', '404.html']) {
   ok(`${need} is published`, files.includes(need));
 }
 ok('the PWA manifests ship with their pages',

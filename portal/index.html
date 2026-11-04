@@ -96,6 +96,10 @@
     --art-field:#152738;   /* dark navy / slate  — Active Surveillance */
     --art-photo:#1d4e7a;   /* blue / charcoal    — Timestamp Photo */
     --art-video:#33307d;   /* deep blue / indigo — Timestamp Video */
+    /* PREPARE & SEND CLIENT INTAKE (owner, 2026-11-04): deep bronze — the
+       retainer travels with this one. White on it 8.92:1; closest of the
+       other seven grounds 40.5 dE (Rate Sheet). Measured, like the rest. */
+    --art-cintake:#6b3f1d; /* deep bronze        — Prepare & Send Client Intake */
     /* TIMESTAMP VIDEO'S DASHBOARD (owner, approved mockup, 2026-09-28): near-black
        navy, restrained gold, cream headings. Each ink measured on the ground it
        sits on — cream 14.3:1 and ink 14.5 on the panel, muted 8.1, gold 8.2,
@@ -1094,6 +1098,7 @@
   .art-field  {--c-art:var(--art-field);}
   .art-photo  {--c-art:var(--art-photo);}
   .art-video  {--c-art:var(--art-video);}
+  .art-cintake{--c-art:var(--art-cintake);}
 
   /* §1 — "optional small count/status badge". Its own element in the corner
      the manifest already reserves, ABSOLUTELY POSITIONED so it costs the card
@@ -4117,6 +4122,67 @@
      sideways — the defect this file already records on the Home card track. */
   .cugrid{grid-template-columns:minmax(0,1fr)}
 }
+/* ===== CLIENT INTAKES (owner brief 2026-11-04) — `ci-` is its own prefix.
+   Phone-first: every control at the 44px floor, inputs at 16px (the portal's
+   rule), the retainer list one column, nothing wider than the screen. */
+.ci-form{scroll-margin-top:12px}
+.ci-choices{border:0;margin:6px 0 4px;padding:0;min-width:0}
+.ci-choices legend{font-size:.85rem;font-weight:600;margin-bottom:6px}
+.ci-opt{display:flex;align-items:center;gap:10px;min-height:48px;padding:8px 12px;margin-bottom:8px;
+  border:1.5px solid var(--line);border-radius:var(--r-btn);cursor:pointer;background:var(--card)}
+.ci-opt.on{border-color:var(--teal);background:var(--teal-wash)}
+.ci-opt input{width:20px;height:20px;flex:none}
+.ci-live{margin:10px 0 12px}
+.ci-live-none{color:var(--muted);font-size:.88rem}
+.ci-sum{display:grid;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-btn);padding:10px 12px;margin:6px 0 12px}
+.ci-sum > div{display:flex;justify-content:space-between;gap:12px;font-size:.92rem;min-width:0}
+.ci-sum > div > *{min-width:0;overflow-wrap:anywhere}
+/* The label never breaks mid-word; the value beside it wraps instead. */
+.ci-sum > div > span{flex:none;overflow-wrap:normal}
+.ci-sum b{text-align:right}
+.ci-confirm{min-height:44px;margin:4px 0 10px;align-items:flex-start}
+.ci-confirm input{width:22px;height:22px;flex:none;margin-top:1px}
+.ci-acts,.ci-share{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.ci-acts .btn,.ci-share .btn{min-height:44px}
+.ci-share a.btn{display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
+.ci-prev{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
+.ci-prev-h{display:flex;justify-content:space-between;align-items:center;gap:8px;font-weight:700;margin-bottom:6px}
+.ci-prev-steps{margin:0 0 10px 20px;font-size:.88rem}
+.ci-terms{border:1px solid var(--info-line);background:var(--info-bg);border-radius:var(--r-btn);padding:2px 12px;margin:8px 0}
+.ci-trow{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--line)}
+.ci-trow:last-child{border-bottom:0}
+.ci-trow > *{min-width:0;overflow-wrap:anywhere}
+.ci-trow small{display:block;color:var(--muted);font-size:.8rem}
+.ci-trow b{text-align:right}
+.ci-trow.term span,.ci-trow.term b{font-weight:800}
+.ci-auth{margin:6px 0 10px 20px;font-size:.88rem}
+.ci-filters{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.ci-filters .btn{min-height:44px}
+.ci-n{opacity:.75;font-weight:600}
+.ci-search{max-width:520px}
+.ci-list{list-style:none;margin:0;padding:0}
+.ci-row{border:1px solid var(--line);border-radius:var(--r-card);padding:12px;margin-bottom:10px;min-width:0}
+.ci-row-h{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;min-width:0}
+.ci-name{min-width:0;overflow-wrap:anywhere;font-size:1rem}
+.ci-row-m{font-size:.88rem;color:var(--ink);overflow-wrap:anywhere}
+.ci-row-d{font-size:.8rem;color:var(--muted);margin-top:2px}
+.ci-row-a{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.ci-row-a .btn,.ci-row-a .ci-share{margin-top:0}
+.ci-row-a .btn{min-height:44px}
+.ci-hist{font-size:.85rem;color:var(--muted);margin-left:18px}
+.ci-doc{border:1px solid var(--line);border-radius:var(--r-btn);padding:14px;margin:12px 0;background:var(--card);overflow-wrap:anywhere}
+.ci-doc .ci-banner{display:block;width:100%;height:auto;border-radius:4px;margin-bottom:10px}
+.ci-doc h3{margin:14px 0 4px;font-size:.95rem}
+.ci-doc .ci-dl{margin:2px 0;font-size:.9rem}
+.ci-doc .ci-sigref{margin:10px 0 6px}
+.ci-doc .ci-sig{display:block;max-width:min(100%,420px);height:auto;margin:6px 0}
+@media (max-width:640px){
+  .ci-acts .btn,.ci-share .btn{flex:1 1 100%}
+  .ci-row-a .btn,.ci-row-a .ci-share{flex:1 1 calc(50% - 6px)}
+  .ci-row-a .ci-share .btn{flex:1 1 100%}
+  .ci-trow{flex-direction:column;gap:2px}
+  .ci-trow b{text-align:left}
+}
 </style>
 </head>
 <body>
@@ -4886,6 +4952,7 @@ function shell(inner){
         item("cases", "&#128193; Cases"),
         item("tasks", "&#9989; Tasks"),
         item("leads", "&#128234; Intakes"),
+        item("cintakes", "&#128221; Client Intakes"),
         item("profiles", "&#127970; Clients &amp; Firms"),
         item("calendar", "&#128197; Calendar"))
       + group("Delivery &amp; Billing",
@@ -6968,6 +7035,14 @@ const QT = {
      desktop-only second name would be preserving a workaround its own reason
      has outlived, against this file's rule that a control has ONE wording.
      Restoring it is one field and one ternary if the owner prefers it. */
+  /* PREPARE & SEND CLIENT INTAKE (owner brief 2026-11-04): pick the
+     retainer, text the client a secure link, get the signed intake back. It
+     opens the Client Intakes screen with the prepare form already open — one
+     tap to the form, the Rate Sheet card's rule. It carries a ground and no
+     photograph yet: "a card may have a ground and no art", and it is the
+     eighth card the seven left room for, so Home grows no taller. */
+  cintake: {fam:"intake", ground:"cintake", act:"ciNew", icon:"&#128221;", label:"Prepare &amp; Send Client Intake",
+            sub:"Retainer, link, signature", admin:true},
   newlead: {fam:"intake", ground:"intake", art:"new-intake", act:"tab", tab:"newlead",  icon:"&#10133;",  label:"New Intake",
             sub:"Choose the type", admin:true},
   /* The three kinds are the same door one step in: nlKind is the button
@@ -7066,7 +7141,12 @@ const CARD_ART_V = 1;
    THE SEVEN THE OWNER NAMED, in their order. Both timestamp tools stay primary
    under the 2026-09-07 lock; Active Surveillance stays because it is the field
    view's only top-level door. */
-const QT_PHONE = ["sheets", "newlead", "priv", "leads", "field", "photo", "video"];
+/* OWNER, 2026-11-04: "PREPARE & SEND CLIENT INTAKE ... in the existing Quick
+   Tools area, prominently visible on desktop and mobile." Second, beside the
+   Rate Sheet card it belongs with, and EIGHTH in count — the two-across phone
+   grid and the four-across desk grid both had one empty cell, so every row
+   stays where it was and both timestamp tools keep their first-screen place. */
+const QT_PHONE = ["sheets", "cintake", "newlead", "priv", "leads", "field", "photo", "video"];
 /* OWNER DECISION, 2026-09-07 — LOCKED: "Keep BOTH Timestamp Photo and
    Timestamp Video as primary visible cards on Home. Do not move either behind
    More. Preserve their direct one-tap access."
@@ -7154,7 +7234,7 @@ function homeTabs(){
    acts with no entry — Active Surveillance, the two timestamp tools, the CEO
    Bot — take over the screen with their own root and their own close, so a
    `.pagebar` behind them would be a control nobody can reach. */
-const ACT_LANDS = {sheetQuick: "sheets", nlKind: "newlead"};
+const ACT_LANDS = {sheetQuick: "sheets", nlKind: "newlead", ciNew: "cintakes"};
 function homeCardTabs(){
   const out = new Set();
   for(const id of QT_PHONE){
@@ -11228,6 +11308,11 @@ function sheetsView(){
       <button class="btn ghost" data-act="rsPrint">&#128424; Print / Save PDF</button>
       <button class="btn" data-act="shWiz" data-sheet="${esc(open.id)}"
         data-context="${esc(open.context || "")}">Send this sheet &rarr;</button>
+      ${/* THE PRIVATE CARD'S OTHER DOOR (owner brief 2026-11-04 §9): the same
+           client may be sent a prepared intake that carries the retainer and
+           takes their signature, instead of a sheet. A door, nothing more —
+           the sheet and its send are untouched. */""}${open.id === "private_retainer" && (open.context || "private") === "private"
+        ? `<button class="btn ghost" data-act="ciNew">Prepare client intake with retainer &rarr;</button>` : ""}
       <div class="nextstep">
         <b>Next step</b>
         Choose what to include with this email:
@@ -23640,7 +23725,7 @@ function vqHtml(){
    Dialogs are untouched and stay untouched — `ls_to` and `pi_to` focus after
    the user has explicitly opened that form, which the owner's rule allows by
    name. */
-const FOCUS_KEEP = ["q", "prof_q", "nl_pick", "gsearch", "am_q", "inv_q", "asst_in", "bs_owner_record_email"];
+const FOCUS_KEEP = ["q", "prof_q", "nl_pick", "gsearch", "am_q", "inv_q", "asst_in", "bs_owner_record_email", "ci_q"];
 let INV_Q_TIMER = null;   // the invoice search's debounce, the srchSoon shape
 let FOCUS_WAS = null;
 function focusCapture(){
@@ -23952,6 +24037,7 @@ function paint(){
     : TAB === "settings" ? settingsView()
     : TAB === "leads" ? leadsView()
     : TAB === "newlead" ? newLeadView()
+    : TAB === "cintakes" ? clientIntakesView()
     : TAB === "profiles" ? profilesView()
     : TAB === "search" ? searchView()
     : TAB === "tasks" ? tasksView()
@@ -31617,6 +31703,575 @@ function billingPanel(s, a){
 function paintCase(){ paint(); }
 
 
+/* ================ CLIENT INTAKES — PREPARE & SEND (owner brief 2026-11-04) ===
+
+   "Open my portal on my phone, tap Prepare & Send Client Intake, select or
+   enter a retainer, see the 50% non-refundable amount, text the generated
+   secure link ... and retrieve the completed signed PDF from the staff portal."
+
+   EVERY FIGURE IS THE WORKER'S. The form shows the half as it is typed —
+   display only, integer cents, the same rule — but the link is created by the
+   Worker from the choice, the preview is the Worker's own terms, and the
+   record is what the Worker stored. This page holds no amount of its own: the
+   preset list arrives from `/client-intakes` with the links.
+
+   SENDING IS THE PHONE'S. Text Client is an `sms:` link, so the phone's own
+   messaging app opens with the number and the message ready; the portal
+   records that the composer was OPENED and says so, never that a text was
+   delivered — it cannot know that. */
+let CI = { state: "never", links: [], options: null, err: "" };
+let CI_FILTER = "all";
+let CI_Q = "";
+let CI_FORM = null;     // the prepare form's draft, held here so a repaint never loses it
+let CI_SENT = null;     // the link just created: the send panel
+let CI_OPEN = null;     // { id, state, data, err, sigWide } — one prepared intake, read in full
+let CI_MSG = "";
+let CI_ERR = "";
+let CI_BUSY = false;
+let CI_PREVIEW = null;  // { state, terms, err } — the client's terms, as the Worker composes them
+
+const CI_STATUS = {
+  draft:     ["Draft", "rs-draft"],
+  ready:     ["Link ready", "rs-submitted"],
+  sent:      ["Sent", "rs-submitted"],
+  viewed:    ["Viewed", "rs-submitted"],
+  submitted: ["Submitted", "rs-approved"],
+  reviewed:  ["Reviewed", "rs-approved"],
+  expired:   ["Expired", "rs-needs_revision"],
+  revoked:   ["Revoked", "rs-needs_revision"],
+};
+const CI_FILTERS = [["all", "All"], ["draft", "Drafts"], ["sent", "Sent"], ["viewed", "Viewed"],
+  ["submitted", "Submitted"], ["reviewed", "Reviewed"], ["closed", "Expired / revoked"]];
+const ciInFilter = (l, f) => f === "all" ? true
+  : f === "sent" ? ["ready", "sent"].includes(l.status)
+  : f === "closed" ? ["expired", "revoked"].includes(l.status) : l.status === f;
+
+/* Cents as money, for DISPLAY. Integer arithmetic; the dollar sign is added
+   at runtime, so this file still carries no figure of its own. */
+function ciMoney(c, cents){
+  const n = Math.round(Number(c) || 0), whole = Math.floor(n / 100), frac = n % 100;
+  return "$" + whole.toLocaleString("en-US") + (frac || cents ? "." + String(frac).padStart(2, "0") : "");
+}
+/* The same parse the Worker uses: digits and at most two decimals. */
+function ciCents(raw){
+  const t = String(raw == null ? "" : raw).replace(/[$,\s]/g, "");
+  if(!/^\d{1,9}(\.\d{1,2})?$/.test(t)) return null;
+  const [w, f = ""] = t.split(".");
+  return Number(w) * 100 + Number((f + "00").slice(0, 2));
+}
+/* What the form's current choice comes to, or why it comes to nothing. */
+function ciChoice(f){
+  if(!f || !f.choice) return { err: "Choose a retainer." };
+  if(f.choice === "custom"){
+    const c = ciCents(f.custom);
+    if(!String(f.custom || "").trim()) return { err: "Enter the custom retainer amount." };
+    if(c === null) return { err: "Enter the custom retainer as a dollar amount, like 5200 or 5200.50." };
+    if(c <= 0) return { err: "The custom retainer must be more than zero." };
+    if(CI.options && c > CI.options.max_cents) return { err: "That retainer is above what this form accepts." };
+    return { ret: c, nr: Math.floor(c / 2) };
+  }
+  const p = ((CI.options || {}).presets || []).find(x => x.value === f.choice);
+  return p ? { ret: p.retainer_cents, nr: p.nonref_cents } : { err: "Choose a retainer." };
+}
+const ciFmtPair = (ret, nr) => { const c = Boolean(ret % 100 || nr % 100); return [ciMoney(ret, c), ciMoney(nr, c)]; };
+
+/* The firm's clock, said out loud — EST or EDT from the instant itself. */
+function ciWhen(iso){
+  if(!iso) return "";
+  const d = new Date(iso);
+  if(isNaN(d)) return "";
+  return d.toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric",
+    year: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+}
+
+/* The number as the phone's messaging app wants it. */
+function ciSmsHref(phone, message){
+  const d = String(phone || "").replace(/\D/g, "");
+  const num = d.length === 10 ? "+1" + d : d.length === 11 && d[0] === "1" ? "+" + d : d;
+  /* `?&body=` is the spelling both iOS and Android read. */
+  return "sms:" + num + "?&body=" + encodeURIComponent(message || "");
+}
+
+async function loadCI(){
+  if(!ME || ME.role !== "admin") return;
+  if(CI.state === "never") CI.state = "loading";
+  try{
+    const d = await api("/client-intakes");
+    CI = { state: "ok", links: d.links || [], options: d.options || null, err: "" };
+  }catch(e){
+    CI = { ...CI, state: "failed", err: e.message };
+  }
+  paint();
+}
+
+function ciNewForm(src){
+  CI_FORM = src ? { id: src.id, client_name: src.client_name, client_phone: src.client_phone,
+      client_email: src.client_email || "", choice: src.retainer_choice || "",
+      custom: src.retainer_choice === "custom" ? (src.retainer_cents / 100).toFixed(2) : "",
+      confirm: false, err: "" }
+    : { id: null, client_name: "", client_phone: "", client_email: "", choice: "",
+        custom: "", confirm: false, err: "" };
+  CI_SENT = null; CI_OPEN = null; CI_PREVIEW = null; CI_MSG = ""; CI_ERR = "";
+}
+
+/* The form's inputs are collected on every keystroke and the derived figures
+   rewritten IN PLACE, without a repaint — rebuilding the box somebody is
+   typing in is the defect this file already records twice. */
+function ciCollect(){
+  if(!CI_FORM) return;
+  const g = id => { const e = $(id); return e ? e.value : undefined; };
+  for(const [k, id] of [["client_name", "ci_name"], ["client_phone", "ci_phone"],
+      ["client_email", "ci_email"], ["custom", "ci_custom"]]){
+    const v = g(id); if(v !== undefined) CI_FORM[k] = v;
+  }
+  const c = $("ci_confirm"); if(c) CI_FORM.confirm = c.checked;
+  const live = $("ci_live");
+  if(live) live.innerHTML = ciLiveHtml();
+}
+function ciLiveHtml(){
+  const r = ciChoice(CI_FORM);
+  if(r.err) return `<span class="ci-live-none">${esc(CI_FORM.choice ? r.err : "Choose a retainer to see its terms.")}</span>`;
+  const [a, b] = ciFmtPair(r.ret, r.nr);
+  const o = CI.options || {};
+  return `<div class="ci-sum"><div><span>Retainer</span><b>${esc(a)}</b></div>
+    <div><span>Non-refundable portion (50%)</span><b>${esc(b)}</b></div>
+    <div><span>Rate</span><b>${esc(ciMoney(o.hourly_cents || 0))}/hr</b></div>
+    <div><span>Minimum</span><b>${esc(String(o.min_hours || ""))}-hour minimum per surveillance day</b></div></div>`;
+}
+
+function ciFormHtml(){
+  const f = CI_FORM;
+  const o = CI.options || { presets: [] };
+  const opt = (value, label) => `<label class="ci-opt${f.choice === value ? " on" : ""}">
+    <input type="radio" name="ci_choice" data-act-change="ciChoice" value="${esc(value)}" ${f.choice === value ? "checked" : ""}>
+    <span>${label}</span></label>`;
+  return `<div class="card ci-form" id="ci-form">
+    <h2 style="margin:0 0 4px">${f.id ? "Draft client intake" : "Prepare &amp; send client intake"}</h2>
+    <p class="note" style="margin-top:0">The client completes and signs it on their own phone. The retainer you
+      choose here is fixed on the link &mdash; the client cannot change it.</p>
+    <label class="f"><span>Client name</span><input id="ci_name" data-act-input="ciCollect" autocomplete="off" value="${esc(f.client_name)}"></label>
+    <label class="f"><span>Phone number</span><input id="ci_phone" type="tel" inputmode="tel" data-act-input="ciCollect" autocomplete="off" value="${esc(f.client_phone)}"></label>
+    <label class="f"><span>Email address <span class="optn">(optional)</span></span><input id="ci_email" type="email" data-act-input="ciCollect" autocomplete="off" value="${esc(f.client_email)}"></label>
+    <fieldset class="ci-choices"><legend>Retainer</legend>
+      ${o.presets.map(p => opt(p.value, `<b>${esc(p.retainer)}</b> &mdash; Non-refundable ${esc(p.non_refundable)}`)).join("")}
+      ${opt("custom", "<b>Custom retainer</b>")}
+      ${f.choice === "custom" ? `<label class="f" style="margin:8px 0 0"><span>Custom retainer amount</span>
+        <input id="ci_custom" inputmode="decimal" data-act-input="ciCollect" placeholder="e.g. 5200" value="${esc(f.custom)}">
+        <span class="hint">The non-refundable portion is calculated as exactly 50%.</span></label>` : ""}
+    </fieldset>
+    <div id="ci_live" class="ci-live" aria-live="polite">${ciLiveHtml()}</div>
+    <label class="cap ci-confirm"><input type="checkbox" id="ci_confirm" data-act-change="ciCollectChk" ${f.confirm ? "checked" : ""}>
+      <span>I confirm this retainer and non-refundable amount for this client.</span></label>
+    ${f.err ? `<div class="err" role="alert">${esc(f.err)}</div>` : ""}
+    <div class="ci-acts">
+      <button class="btn accent" data-act="ciCreate" ${CI_BUSY ? "disabled" : ""}>Create Secure Client Link</button>
+      <button class="btn ghost" data-act="ciPreview">Preview Client Form</button>
+      <button class="btn ghost" data-act="ciDraft" ${CI_BUSY ? "disabled" : ""}>Save Draft</button>
+      <button class="btn ghost" data-act="ciCancel">Cancel</button>
+    </div>
+    ${ciPreviewHtml()}
+  </div>`;
+}
+
+/* WHAT THE CLIENT WILL SEE, as the Worker composes it — the terms block in the
+   client's own words, and the sections around it. Reading this writes
+   nothing and opens no link, so previewing never counts as the client
+   opening their form. */
+function ciPreviewHtml(){
+  if(!CI_PREVIEW) return "";
+  if(CI_PREVIEW.state === "loading") return `<div class="ci-prev"><p class="note">Preparing the preview&hellip;</p></div>`;
+  if(CI_PREVIEW.state === "failed") return `<div class="ci-prev"><div class="err">${esc(CI_PREVIEW.err)}</div></div>`;
+  const t = CI_PREVIEW.terms;
+  return `<div class="ci-prev" id="ci-prev"><div class="ci-prev-h">Client form preview
+      <button class="btn sm ghost" data-act="ciPreviewClose">Close preview</button></div>
+    <ol class="ci-prev-steps"><li>Client information</li><li>Type of investigation</li><li>Subject information</li>
+      <li>Vehicle information</li><li>Investigation objective</li><li>Scheduling</li>
+      <li><b>Retainer &amp; payment terms</b></li><li><b>Client authorization &amp; signature</b></li></ol>
+    ${ciTermsHtml(t)}
+    <p class="note">${esc(t.conditions)}</p>
+    <p class="note"><b>The client acknowledges:</b> ${esc(t.acknowledgment)}</p>
+    <ul class="ci-auth">${t.authorization.map(a => `<li>${esc(a)}</li>`).join("")}</ul>
+    <p class="note">Below this: typed full name, agreement box and a drawn signature. The date and time are recorded on submission.</p>
+  </div>`;
+}
+function ciTermsHtml(t){
+  return `<div class="ci-terms">${t.lines.map(l => `<div class="ci-trow${l.term ? " term" : ""}">
+    <div><span>${esc(l.label)}</span>${l.note ? `<small>${esc(l.note)}</small>` : ""}</div><b>${esc(l.value)}</b></div>`).join("")}</div>`;
+}
+
+/* The share controls for a live link — the send panel and every list row use
+   this one writer, so Text, Copy and Email cannot drift apart. */
+function ciShareHtml(l, big){
+  const sz = big ? "" : " sm";
+  return `<div class="ci-share">
+    <a class="btn accent${sz} ci-text" href="${esc(ciSmsHref(l.client_phone, l.message))}" data-act="ciShared"
+      data-via="text" data-id="${esc(l.id)}">Text Client</a>
+    <button class="btn ghost${sz}" data-act="ciCopy" data-id="${esc(l.id)}">Copy Link</button>
+    ${l.client_email ? `<button class="btn ghost${sz}" data-act="ciEmail" data-id="${esc(l.id)}">Email Client</button>` : ""}
+  </div>`;
+}
+
+function ciSentHtml(){
+  const l = CI_SENT;
+  return `<div class="card ci-form" id="ci-sent">
+    <h2 style="margin:0 0 4px">Secure link ready for ${esc(l.client_name)}</h2>
+    <div class="ci-sum"><div><span>Retainer</span><b>${esc(l.retainer)}</b></div>
+      <div><span>Non-refundable portion (50%)</span><b>${esc(l.non_refundable)}</b></div></div>
+    <label class="f"><span>Secure client link</span><input id="ci_url" readonly value="${esc(l.url || "")}"></label>
+    ${l.url ? ciShareHtml(l, true) : ""}
+    <p class="note">Text Client opens your phone's messages with the number and the message filled in &mdash;
+      you press send there. The portal records that the composer was opened, not that the text arrived.
+      The link works for ${esc(String((CI.options || {}).link_days || 30))} days and can be revoked at any time.</p>
+    ${CI_MSG ? `<div class="note" role="status">${esc(CI_MSG)}</div>` : ""}
+    ${CI_ERR ? `<div class="err" role="alert">${esc(CI_ERR)}</div>` : ""}
+    <div class="ci-acts"><button class="btn ghost" data-act="ciPreview" data-id="${esc(l.id)}">Preview Client Form</button>
+      <button class="btn ghost" data-act="ciDone">Done</button></div>
+    ${ciPreviewHtml()}
+  </div>`;
+}
+
+function ciRowHtml(l){
+  const [word, tone] = CI_STATUS[l.status] || [l.status, "rs-draft"];
+  const live = ["ready", "sent", "viewed"].includes(l.status);
+  const open = ["submitted", "reviewed"].includes(l.status);
+  return `<li class="ci-row" data-id="${esc(l.id)}">
+    <div class="ci-row-h"><b class="ci-name">${esc(l.client_name)}</b><span class="tag ${tone}">${esc(word)}</span></div>
+    <div class="ci-row-m">${esc(l.client_phone)}${l.client_email ? ` &middot; ${esc(l.client_email)}` : ""}</div>
+    <div class="ci-row-m">Retainer <b>${esc(l.retainer)}</b> &middot; Non-refundable <b>${esc(l.non_refundable)}</b></div>
+    <div class="ci-row-d">${l.submitted_at ? `Submitted ${esc(ciWhen(l.submitted_at))}`
+      : l.first_viewed_at ? `Opened ${esc(ciWhen(l.first_viewed_at))}`
+      : l.shared_at ? `Shared by ${esc(l.shared_via === "text" ? "text composer" : l.shared_via === "email" ? "email" : "copied link")} ${esc(ciWhen(l.shared_at))}`
+      : `Created ${esc(ciWhen(l.created_at))}`}${l.status === "expired" ? " &middot; link expired" : ""}</div>
+    <div class="ci-row-a">
+      ${open ? `<button class="btn sm accent" data-act="ciOpen" data-id="${esc(l.id)}">Open submission</button>
+        <button class="btn sm ghost" data-act="ciPdf" data-id="${esc(l.id)}">Download PDF</button>` : ""}
+      ${l.status === "draft" ? `<button class="btn sm accent" data-act="ciEdit" data-id="${esc(l.id)}">Continue draft</button>` : ""}
+      ${live ? ciShareHtml(l, false) : ""}
+      ${live || l.status === "expired" ? `<button class="btn sm ghost" data-act="ciRenew" data-id="${esc(l.id)}">Resend</button>` : ""}
+      ${!open && l.status !== "revoked" ? `<button class="btn sm ghost ci-revoke" data-act="ciRevoke" data-id="${esc(l.id)}">Revoke</button>` : ""}
+      ${!open ? `<button class="btn sm ghost" data-act="ciOpen" data-id="${esc(l.id)}">Details</button>` : ""}
+    </div></li>`;
+}
+
+function ciListHtml(){
+  if(CI.state === "never" || CI.state === "loading") return `<p class="note">Loading client intakes&hellip;</p>`;
+  if(CI.state === "failed") return `<div class="err">The client intakes could not be loaded &mdash; ${esc(CI.err)}
+    <button class="btn sm ghost" data-act="ciRetry">Try again</button></div>`;
+  const q = CI_Q.trim().toLowerCase(), qd = q.replace(/\D/g, "");
+  const rows = CI.links.filter(l => ciInFilter(l, CI_FILTER)).filter(l => !q
+    || l.client_name.toLowerCase().includes(q)
+    /* The name the client signed with is searched too: the office types a
+       name to send the link, and the client writes their full legal one. */
+    || String(l.signed_name || "").toLowerCase().includes(q)
+    || (qd.length >= 3 && l.client_phone.replace(/\D/g, "").includes(qd)));
+  const count = f => CI.links.filter(l => ciInFilter(l, f)).length;
+  return `<div class="ci-filters" role="group" aria-label="Filter client intakes">${CI_FILTERS.map(([k, w]) =>
+      `<button class="btn sm ${CI_FILTER === k ? "accent" : "ghost"}" data-act="ciFilter" data-f="${k}"
+        aria-pressed="${CI_FILTER === k}">${w} <span class="ci-n">${count(k)}</span></button>`).join("")}</div>
+    <label class="f ci-search"><span>Search by client name or phone</span>
+      <input id="ci_q" type="search" data-act-input="ciSearch" value="${esc(CI_Q)}" autocomplete="off"></label>
+    ${!CI.links.length ? `<p class="note">No client intakes yet. Prepare one above &mdash; it appears here as soon as it is saved.</p>`
+      : !rows.length ? `<p class="note">Nothing matches that search or filter.</p>`
+      : `<ul class="ci-list">${rows.map(ciRowHtml).join("")}</ul>`}`;
+}
+
+/* ---- one prepared intake, read in full ---------------------------------- */
+const CI_FIELDS = [
+  ["1. Client information", [["full_name", "Full legal name"], ["preferred_name", "Preferred name"],
+    ["phone", "Phone"], ["email", "Email"], ["address", "Address"], ["contact_method", "Preferred contact method", "contact"]]],
+  ["2. Type of investigation", [["investigation_type", "Type", "type"], ["type_other", "Other — described"],
+    ["description", "Description and timeline"]]],
+  ["3. Subject information", [["subject_name", "Subject name"], ["subject_age", "Approximate age / DOB"],
+    ["subject_address", "Known address"], ["subject_phone", "Phone"], ["subject_email", "Email"],
+    ["subject_workplace", "Workplace"], ["subject_locations", "Known locations"], ["subject_photo", "Photo available"]]],
+  ["4. Vehicle information", [["vehicle_year", "Year"], ["vehicle_make", "Make"], ["vehicle_model", "Model"],
+    ["vehicle_color", "Color"], ["vehicle_plate", "License plate"], ["vehicle_state", "State"],
+    ["vehicle_more", "Additional vehicles"]]],
+  ["5. Investigation objective", [["objective", "What the client wants established"],
+    ["known_schedule", "Known schedules and routines"], ["other_info", "Important people, vehicles, locations"]]],
+  ["6. Scheduling", [["start_date", "Requested start date"], ["preferred_times", "Preferred dates / times"],
+    ["start_location", "Starting location"], ["safety_notes", "Access, parking and safety"], ["urgency", "Urgency", "urgency"]]],
+];
+const CI_WORDS = {
+  contact: { call: "Phone call", text: "Text message", email: "Email" },
+  type: { surveillance: "Surveillance", domestic: "Domestic / Infidelity", custody: "Custody / Family Matter",
+    locate: "Person Locate", background: "Background / Due Diligence", civil: "Civil / Legal Support", other: "Other" },
+  urgency: { standard: "Standard", soon: "Within the next few days", urgent: "Urgent — as soon as possible" },
+};
+function ciFieldValue(f, k, words){
+  const v = f[k];
+  if(v) return words ? (CI_WORDS[words][v] || v) : v;
+  const st = f[k + "_status"] || (k.startsWith("vehicle_") && !["vehicle_more"].includes(k) ? f.vehicle_status : "");
+  return st === "unknown" ? "Not known to the client" : "";
+}
+
+/* The firm's banner, drawn once as a picture so the PDF carries the navy
+   header — the one PDF writer draws text and pictures, nothing else. */
+let CI_BANNER = "";
+function ciBanner(){
+  if(CI_BANNER) return CI_BANNER;
+  try{
+    const c = document.createElement("canvas"); c.width = 1200; c.height = 168;
+    const g = c.getContext("2d");
+    g.fillStyle = "#0e1a2c"; g.fillRect(0, 0, 1200, 168);
+    g.fillStyle = "#c99a3b"; g.fillRect(0, 160, 1200, 8);
+    g.fillStyle = "#ffffff"; g.font = "bold 46px Helvetica, Arial, sans-serif";
+    g.fillText("ALWAYS PRECISE INVESTIGATIONS", 40, 70);
+    g.fillStyle = "#cfe0f0"; g.font = "26px Helvetica, Arial, sans-serif";
+    g.fillText("Confidential Client Intake  ·  Va DCJS #11-9159  ·  (434) 907-0975", 40, 120);
+    CI_BANNER = c.toDataURL("image/png");
+  }catch{ CI_BANNER = ""; }
+  return CI_BANNER;
+}
+/* The drawn signature set on a wide white line, so the PDF prints it at a
+   signature's size rather than stretched across the page. */
+function ciSigWide(src){
+  return new Promise(res => {
+    const im = new Image();
+    im.onload = () => {
+      try{
+        const c = document.createElement("canvas"); c.width = 1200; c.height = 300;
+        const g = c.getContext("2d");
+        g.fillStyle = "#fff"; g.fillRect(0, 0, 1200, 300);
+        const k = Math.min(520 / im.naturalWidth, 220 / im.naturalHeight);
+        g.drawImage(im, 30, 250 - im.naturalHeight * k, im.naturalWidth * k, im.naturalHeight * k);
+        g.strokeStyle = "#8a96a3"; g.lineWidth = 2; g.beginPath(); g.moveTo(20, 262); g.lineTo(640, 262); g.stroke();
+        res(c.toDataURL("image/png"));
+      }catch{ res(""); }
+    };
+    im.onerror = () => res("");
+    im.src = src;
+  });
+}
+
+/* THE COMPLETED DOCUMENT. Its ORDER is the rule the owner set: every retainer
+   and payment term comes BEFORE the authorization and the signature, and the
+   signature block restates the accepted figures beside the pen, so wherever a
+   page breaks the signature is never separated from the terms it accepts. It
+   is what the PDF is written from, and the same element the office reads. */
+function ciDocHtml(d, blank){
+  const sub = d && d.submission, p = sub ? sub.payload : {}, f = (p && p.client_intake) || {};
+  const t = blank ? null : (d.accepted_terms || d.terms);
+  const line = (k, v) => `<p class="ci-dl"><b>${esc(k)}:</b> ${esc(v || (blank ? "______________________________" : "—"))}</p>`;
+  const sections = CI_FIELDS.map(([h, rows]) => `<h3>${esc(h)}</h3>${rows.map(([k, lbl, w]) =>
+    line(lbl, blank ? "" : ciFieldValue(f, k, w))).join("")}`).join("");
+  const o = CI.options || {};
+  const termsPart = blank
+    ? `${line("Retainer", "")}${line("Non-refundable portion (50% of the retainer)", "")}
+       <p>Investigative rate: ${esc(ciMoney(o.hourly_cents || 0))} per hour, with a ${esc(String(o.min_hours || ""))}-hour minimum per surveillance day.</p>
+       <p>Any unused retainer balance, additional charges, refunds and other payment conditions are governed by the Always Precise Investigations services agreement and applicable law.</p>`
+    : `${t.lines.map(l => `<p class="ci-dl${l.term ? " ci-term" : ""}"><b>${esc(l.label)}:</b> ${esc(l.value)}</p>`).join("")}
+       <p>${esc(t.conditions)}</p>
+       <p><b>Client acknowledgment:</b> ${esc(t.acknowledgment)}</p>`;
+  const auth = blank ? [
+      "The information I have provided is accurate to the best of my knowledge.",
+      "I am authorized to request these investigative services.",
+      "I acknowledge the financial terms stated above.",
+      "I affirm a lawful purpose, and I understand that all services must be performed in compliance with applicable law.",
+      "Submitting this form does not by itself mean that services have begun or that Always Precise Investigations has accepted the matter.",
+      "The conditions of the Always Precise Investigations services agreement remain in effect, subject to applicable law."]
+    : t.authorization;
+  const link = d && d.link;
+  return `<div id="${blank ? "cidoc-blank" : "cidoc"}" class="ci-doc">
+    ${ciBanner() ? `<img class="ci-banner" src="${ciBanner()}" alt="Always Precise Investigations — Confidential Client Intake">` : ""}
+    <h2>${blank ? "Confidential Client Intake" : "Completed Confidential Client Intake"}</h2>
+    ${blank ? "" : `<p>Reference ${esc(sub ? sub.case_no : (link.case_no || ""))} &middot; Submitted ${esc(ciWhen(link.submitted_at))}</p>`}
+    ${sections}
+    <h3>7. Retainer &amp; payment terms</h3>
+    ${termsPart}
+    <h3>8. Client authorization &amp; signature</h3>
+    <ul class="ci-auth">${auth.map(a => `<li>${esc(a)}</li>`).join("")}</ul>
+    <p class="ci-sigref"><b>Signed below the retainer and payment terms in section 7${blank ? "." : `: retainer ${esc(t.retainer)},
+      non-refundable portion ${esc(t.non_refundable)}, ${esc(t.hourly)}, ${esc(String(t.min_hours))}-hour minimum per surveillance day.`}</b></p>
+    ${blank ? `<p>Signature: ________________________________________</p>`
+      : (CI_OPEN && CI_OPEN.sigWide) ? `<img class="ci-sig" src="${CI_OPEN.sigWide}" alt="Client signature">`
+      : p.signature && safeImage(p.signature) ? `<img class="ci-sig" src="${esc(p.signature)}" alt="Client signature">` : `<p>Signature: not on file</p>`}
+    ${line("Typed full name", blank ? "" : link.signed_name)}
+    ${line("Signed", blank ? "" : ciWhen(link.signed_at))}
+    ${line("Agreement", blank ? "" : "The client checked the agreement box and acknowledged the payment terms.")}
+    ${blank ? "" : line("Terms version", t.version)}
+    ${blank ? "" : line("Terms record (SHA-256)", d.accepted_terms_hash || "")}
+  </div>`;
+}
+
+function ciDetailHtml(){
+  const o = CI_OPEN;
+  if(o.state === "loading") return `<div class="card"><p class="note">Loading&hellip;</p></div>`;
+  if(o.state === "failed") return `<div class="card"><div class="err">${esc(o.err)}</div>
+    <button class="btn sm ghost" data-act="ciClose">&larr; All client intakes</button></div>`;
+  const d = o.data, l = d.link;
+  const [word, tone] = CI_STATUS[l.status] || [l.status, "rs-draft"];
+  const done = ["submitted", "reviewed"].includes(l.status);
+  return `<div class="card" id="ci-detail">
+    <div class="pagebar"><button class="btn sm ghost" data-act="ciClose">&larr; All client intakes</button></div>
+    <div class="ci-row-h"><h2 style="margin:0">${esc(l.client_name)}</h2><span class="tag ${tone}">${esc(word)}</span></div>
+    <p class="note">Retainer <b>${esc(l.retainer)}</b> &middot; Non-refundable <b>${esc(l.non_refundable)}</b>
+      ${l.case_no ? ` &middot; Intake ${esc(l.case_no)}` : ""}</p>
+    ${CI_MSG ? `<div class="note" role="status">${esc(CI_MSG)}</div>` : ""}
+    ${CI_ERR ? `<div class="err" role="alert">${esc(CI_ERR)}</div>` : ""}
+    <div class="ci-acts">
+      ${done && d.submission ? `<button class="btn accent" data-act="ciPdf" data-id="${esc(l.id)}">Download completed PDF</button>
+        <button class="btn ghost" data-act="openCaseTab" data-case="${esc(l.case_no)}" data-tab="details">Open intake in the portal</button>` : ""}
+      ${l.status === "submitted" ? `<button class="btn ghost" data-act="ciReviewed" data-id="${esc(l.id)}">Mark reviewed</button>` : ""}
+      ${["ready", "sent", "viewed"].includes(l.status) ? ciShareHtml(l, true) : ""}
+    </div>
+    ${done && !d.submission ? `<p class="err">The submission this link produced has been deleted from the portal. The signed
+      terms below are kept as the record of what was accepted.</p>` : ""}
+    ${done ? (d.submission ? ciDocHtml(d, false) : `<h3>Accepted terms</h3>${ciTermsHtml(d.accepted_terms)}`)
+      : `<h3>Terms on this link</h3>${ciTermsHtml(d.terms)}`}
+    <h3>History</h3>
+    <ul class="ci-hist">${d.events.map(e => `<li>${esc(ciWhen(e.at))} &mdash; ${esc(CI_EVENT[e.action] || e.action)}${
+      e.actor_name ? ` (${esc(e.actor_name)})` : ""}</li>`).join("")}</ul>
+  </div>`;
+}
+const CI_EVENT = { draft_saved: "Draft saved", link_created: "Secure link created", renewed: "Link renewed (resend)",
+  text_composer_opened: "Text composer opened (not a delivery confirmation)", link_copied: "Link copied",
+  emailed: "Emailed to the client", email_failed: "Email could not be sent", opened: "Client opened the link",
+  submitted: "Client submitted and signed", reviewed: "Marked reviewed", revoked: "Link revoked" };
+
+function clientIntakesView(){
+  if(ME.role !== "admin") return `<div class="card"><p class="note">Client intakes are for the office.</p></div>`;
+  /* `shell()` already draws the Back to Home bar on a Home card's screen. */
+  if(CI_OPEN) return ciDetailHtml();
+  return `<div class="card">
+    <div class="bar"><h2 style="margin:0">Client Intakes</h2>
+      ${CI_FORM || CI_SENT ? "" : `<button class="btn accent ci-start" data-act="ciNew">Prepare &amp; Send Client Intake</button>`}</div>
+    <p class="note">Prepare a private client's intake with their retainer, send the secure link by text, and find
+      the signed submission here when it comes back.
+      <button class="btn sm ghost" data-act="ciBlankPdf">Printable blank intake (PDF)</button></p>
+    ${CI_MSG && !CI_FORM && !CI_SENT ? `<div class="note" role="status">${esc(CI_MSG)}</div>` : ""}
+    ${CI_ERR && !CI_FORM && !CI_SENT ? `<div class="err" role="alert">${esc(CI_ERR)}</div>` : ""}
+  </div>
+  ${CI_FORM ? ciFormHtml() : CI_SENT ? ciSentHtml() : ""}
+  <div class="card">${ciListHtml()}</div>`;
+}
+
+/* ---- actions ------------------------------------------------------------- */
+function ciBody(draft){
+  const f = CI_FORM;
+  return { client_name: f.client_name, client_phone: f.client_phone, client_email: f.client_email,
+    retainer_choice: f.choice, custom_retainer: f.choice === "custom" ? f.custom : "",
+    confirm_terms: draft ? undefined : f.confirm === true, draft: draft || undefined };
+}
+async function ciSave(draft){
+  if(!CI_FORM || CI_BUSY) return;
+  ciCollect();
+  const f = CI_FORM;
+  if(!draft){
+    const r = ciChoice(f);
+    if(!String(f.client_name).trim()){ f.err = "Enter the client's name."; paint(); return; }
+    if(!String(f.client_phone).trim()){ f.err = "Enter the client's mobile number so the link can be texted."; paint(); return; }
+    if(r.err){ f.err = r.err; paint(); return; }
+    if(!f.confirm){ f.err = "Confirm the retainer and non-refundable amount before creating the link."; paint(); return; }
+  }
+  CI_BUSY = true; f.err = ""; paint();
+  try{
+    const d = await api(f.id ? `/client-intakes/${encodeURIComponent(f.id)}` : "/client-intakes",
+      { method: "POST", body: ciBody(draft) });
+    CI_BUSY = false;
+    if(draft){ CI_FORM = null; CI_PREVIEW = null; CI_MSG = `Draft saved for ${d.link.client_name}.`; }
+    else { CI_FORM = null; CI_PREVIEW = null; CI_SENT = d.link; CI_MSG = ""; CI_ERR = ""; }
+    await loadCI();
+  }catch(e){
+    CI_BUSY = false; if(CI_FORM) CI_FORM.err = e.message; paint();
+  }
+}
+async function ciPreviewOpen(id){
+  CI_PREVIEW = { state: "loading" }; paint();
+  try{
+    if(id){
+      const d = await api(`/client-intakes/${encodeURIComponent(id)}`);
+      CI_PREVIEW = { state: "ok", terms: d.terms };
+    }else{
+      ciCollect();
+      const r = ciChoice(CI_FORM);
+      if(r.err){ CI_PREVIEW = { state: "failed", err: r.err }; paint(); return; }
+      const d = await api("/client-intakes/preview", { method: "POST",
+        body: { retainer_choice: CI_FORM.choice, custom_retainer: CI_FORM.choice === "custom" ? CI_FORM.custom : "" } });
+      CI_PREVIEW = { state: "ok", terms: d.terms };
+    }
+  }catch(e){ CI_PREVIEW = { state: "failed", err: e.message }; }
+  paint();
+  const pv = $("ci-prev"); if(pv) pv.scrollIntoView({ block: "nearest" });
+}
+async function ciAct(id, act, body, okMsg){
+  CI_MSG = ""; CI_ERR = "";
+  try{
+    const d = await api(`/client-intakes/${encodeURIComponent(id)}/${act}`, { method: "POST", body: body || {} });
+    if(CI_SENT && CI_SENT.id === id) CI_SENT = d.link;
+    CI_MSG = okMsg || "";
+    if(CI_OPEN && CI_OPEN.id === id) await ciOpen(id, true);
+    await loadCI();
+    return d;
+  }catch(e){ CI_ERR = e.message; paint(); return null; }
+}
+async function ciOpen(id, keepMsg){
+  if(!keepMsg){ CI_MSG = ""; CI_ERR = ""; }
+  CI_FORM = null; CI_SENT = null; CI_PREVIEW = null;
+  const prev = CI_OPEN && CI_OPEN.id === id ? CI_OPEN : null;
+  CI_OPEN = { id, state: prev ? prev.state : "loading", data: prev ? prev.data : null, err: "", sigWide: prev ? prev.sigWide : "" };
+  paint();
+  try{
+    const d = await api(`/client-intakes/${encodeURIComponent(id)}`);
+    if(!CI_OPEN || CI_OPEN.id !== id) return;
+    CI_OPEN.data = d; CI_OPEN.state = "ok";
+    const sig = d.submission && d.submission.payload && d.submission.payload.signature;
+    if(sig && safeImage(sig) && !CI_OPEN.sigWide) CI_OPEN.sigWide = await ciSigWide(sig);
+  }catch(e){ if(CI_OPEN && CI_OPEN.id === id){ CI_OPEN.state = "failed"; CI_OPEN.err = e.message; } }
+  paint();
+}
+async function ciCopy(id){
+  const l = (CI_SENT && CI_SENT.id === id) ? CI_SENT : CI.links.find(x => x.id === id);
+  if(!l || !l.url) return;
+  let copied = false;
+  try{ await navigator.clipboard.writeText(l.url); copied = true; }catch{
+    const inp = $("ci_url");
+    if(inp){ inp.select(); try{ copied = document.execCommand("copy"); }catch{} }
+  }
+  if(!copied){ CI_ERR = "Copying is blocked on this device — select the link and copy it by hand."; paint(); return; }
+  await ciAct(id, "shared", { via: "copy" }, "Link copied — paste it into a message to the client.");
+}
+function ciFileName(d){
+  const n = String(d.link.client_name || "client").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
+  return `Client-Intake-${d.link.case_no || "draft"}-${n || "client"}.pdf`;
+}
+async function ciDownload(blob, name){
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+async function ciPdf(id){
+  if(!CI_OPEN || CI_OPEN.id !== id || CI_OPEN.state !== "ok") await ciOpen(id);
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const root = $("cidoc");
+  if(!root || !CI_OPEN || !CI_OPEN.data){ CI_ERR = "The completed intake is not on screen to make a PDF from."; paint(); return; }
+  try{
+    const d = CI_OPEN.data;
+    const blob = await pdfFromDoc(root, (n, total) =>
+      `Always Precise Investigations  ·  Confidential client intake ${d.link.case_no || ""}  ·  Page ${n} of ${total}`);
+    await ciDownload(blob, ciFileName(d));
+    CI_MSG = "PDF downloaded."; CI_ERR = "";
+  }catch(e){ CI_ERR = "The PDF could not be built: " + e.message; }
+  paint();
+}
+async function ciBlankPdf(){
+  if(!CI.options){ CI_ERR = "The intake details have not loaded yet — try again in a moment."; paint(); return; }
+  const box = document.createElement("div");
+  box.setAttribute("aria-hidden", "true");
+  box.style.cssText = "position:absolute;left:-10000px;top:0;width:800px";
+  box.innerHTML = ciDocHtml(null, true);
+  document.body.appendChild(box);
+  try{
+    const blob = await pdfFromDoc(box.firstElementChild, (n, total) =>
+      `Always Precise Investigations  ·  Confidential client intake  ·  Page ${n} of ${total}`);
+    await ciDownload(blob, "Client-Intake-Blank.pdf");
+    CI_MSG = "Blank intake PDF downloaded."; CI_ERR = "";
+  }catch(e){ CI_ERR = "The PDF could not be built: " + e.message; }
+  box.remove();
+  paint();
+}
+
 /* INTAKE-NA: what a marked-unavailable field says on an admin's screen. The
    submitter chose these words' meaning on the form; the review repeats them
    rather than showing a blank that reads as an error. */
@@ -34051,6 +34706,8 @@ document.addEventListener("click", ev => {
        current question, and a stale result list under a stale term is worse
        than an empty one. */
     if(TAB === "search"){ SRCH = { q: "", results: null, err: "", busy: false, hi: -1 }; }
+    if(TAB === "cintakes" && ME.role === "admin"){
+      CI_OPEN = null; CI_FORM = null; CI_SENT = null; CI_PREVIEW = null; CI_MSG = ""; CI_ERR = ""; loadCI(); }
     /* Reports & Packages reads the two routes it is assembled from, both
        admin-only in the Worker. Fetched on arrival for the same reason the
        dashboard refetches: a stale package stage is a wrong next step. */
@@ -34087,6 +34744,42 @@ document.addEventListener("click", ev => {
     }
   }
   else if(act === "openCaseTab"){ openCase(el.dataset.case, el.dataset.tab); }
+  /* CLIENT INTAKES (owner brief 2026-11-04). */
+  else if(act === "ciNew"){ TAB = "cintakes"; navClose(); ciNewForm(null); paint(); loadCI();
+    const fm = $("ci-form"); if(fm) fm.scrollIntoView({ block: "start" }); }
+  else if(act === "ciCreate"){ ciSave(false); }
+  else if(act === "ciDraft"){ ciSave(true); }
+  else if(act === "ciCancel"){ CI_FORM = null; CI_PREVIEW = null; paint(); }
+  else if(act === "ciDone"){ CI_SENT = null; CI_PREVIEW = null; CI_MSG = ""; CI_ERR = ""; paint(); }
+  else if(act === "ciPreview"){ ciPreviewOpen(el.dataset.id || ""); }
+  else if(act === "ciPreviewClose"){ CI_PREVIEW = null; paint(); }
+  /* TEXT CLIENT IS A REAL LINK: the phone's messaging app opens from the
+     `sms:` href itself, so nothing is prevented here. The note that the
+     composer was opened rides a keepalive request, which outlives the page
+     being backgrounded by the messaging app. */
+  else if(act === "ciShared"){
+    const id = el.dataset.id;
+    fetch(API + `/client-intakes/${encodeURIComponent(id)}/shared`, { method: "POST", keepalive: true,
+      credentials: "same-origin", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ via: "text" }) }).then(() => loadCI()).catch(() => {});
+    CI_MSG = "Your messages app was opened with the link — press send there. The portal cannot see whether the text was delivered.";
+    setTimeout(paint, 0);
+  }
+  else if(act === "ciCopy"){ ciCopy(el.dataset.id); }
+  else if(act === "ciEmail"){ ciAct(el.dataset.id, "email", {}, "Emailed to the client."); }
+  else if(act === "ciRenew"){ ciAct(el.dataset.id, "renew", {}, "The link is good for another 30 days — text or copy it to resend."); }
+  else if(act === "ciRevoke"){
+    if(confirm("Revoke this client's intake link?\n\nThe link stops working immediately. Nothing the client has already submitted is affected."))
+      ciAct(el.dataset.id, "revoke", {}, "Link revoked.");
+  }
+  else if(act === "ciReviewed"){ ciAct(el.dataset.id, "reviewed", {}, "Marked reviewed."); }
+  else if(act === "ciOpen"){ ciOpen(el.dataset.id); window.scrollTo(0, 0); }
+  else if(act === "ciClose"){ CI_OPEN = null; CI_MSG = ""; CI_ERR = ""; paint(); }
+  else if(act === "ciEdit"){ const l = CI.links.find(x => x.id === el.dataset.id); if(l){ ciNewForm(l); paint(); } }
+  else if(act === "ciPdf"){ ciPdf(el.dataset.id); }
+  else if(act === "ciBlankPdf"){ ciBlankPdf(); }
+  else if(act === "ciFilter"){ CI_FILTER = el.dataset.f || "all"; paint(); }
+  else if(act === "ciRetry"){ CI.state = "loading"; paint(); loadCI(); }
   else if(act === "acceptIntake"){ acceptIntake(el.dataset.case); }
   else if(act === "viewMode"){ setViewMode(el.dataset.mode); }
   /* Simple View's own door into an intake: the EXISTING case screen on the
@@ -35315,6 +36008,8 @@ document.addEventListener("change", ev => {
   }
   const act = ev.target.dataset ? ev.target.dataset.actChange : "";
   if(act) srActed();
+  if(act === "ciChoice"){ ciCollect(); if(CI_FORM){ CI_FORM.choice = ev.target.value; CI_FORM.err = ""; } CI_PREVIEW = null; paint(); return; }
+  if(act === "ciCollectChk"){ ciCollect(); return; }
   /* The daily summary's controls: capture-then-recompose, per day. */
   if(act === "dsCtl"){ dsCtl(parseInt(ev.target.dataset.day, 10)); return; }
   /* UNIT 4/5 — BEFORE the NL bail-out below, because the Assistant workbench
@@ -35356,6 +36051,8 @@ document.addEventListener("input", ev => {
   /* Unit 17 — the reason boxes and the date survive async repaints (loadCloseout
      resolving, a retention write returning) without the box being rebuilt mid-word. */
   if(din === "retDraft"){ RTN_DRAFT[ev.target.id] = ev.target.value; return; }
+  if(din === "ciCollect"){ ciCollect(); return; }
+  if(din === "ciSearch"){ CI_Q = ev.target.value; paint(); return; }
   /* UNIT 4 — the Assistant workbench draft: the value lands in ASST.prep on
      every keystroke, so a repaint from anywhere redraws what was typed. */
   if(din === "asstPrep"){ asstPrepCollect(); return; }

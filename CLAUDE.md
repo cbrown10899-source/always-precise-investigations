@@ -1928,6 +1928,40 @@ first page test caught the collector posting `"4"` from the select's displayed
 default — harmless to the document, untrue to the comment, fixed in the
 collector rather than the test.
 
+## Prepare & Send Client Intake — the retainer travels on a signed link
+
+Owner brief 2026-11-04, scoped the same day to the API portal's private-client
+intake workflow only. Record and decisions in `case-portal/CLIENT-INTAKE-LINKS.md`.
+
+The office prepares a private client's intake with the retainer already chosen
+($1,600–$4,000 presets or Custom), texts the client a link, and the client
+completes and signs on their own phone at `/intake/client/#k=<token>`. Home
+card **Prepare & Send Client Intake** (second, the eighth card in a grid that had
+one empty cell, so Home is no taller), rail **Client Intakes**, and a door on the
+private Rate Sheet card.
+
+**THE NON-REFUNDABLE PORTION IS EXACTLY HALF, IN INTEGER CENTS** —
+`clientIntakeRetainer` is the one place the rule is written; an odd number of
+cents rounds the half DOWN, the client's favour. **THE TERMS HAVE ONE WRITER**,
+`clientIntakeTerms(row)`: the client's page renders it, the submit route
+recomputes it and refuses a different hash, and the stored record is the same
+JSON. No amount is ever read from the client. **A link's terms lock when its
+token is minted**; changing them is revoke and re-prepare.
+
+**THE TOKEN RIDES IN THE FRAGMENT**, so no server log, Referer or link-preview
+fetch ever sees it — a preview cannot mark a link "viewed". **ONE LINK, ONE CASE**:
+the submit is one batch whose every write is conditional on this attempt owning
+the claim. **TEXT CLIENT IS AN `sms:` LINK**: the phone's own app sends, and the
+portal records only that the composer was opened.
+
+The submission is an ordinary signed private `submissions` row (Intakes desk,
+Simple View, the case screens), with fieldwork mapped to `FIELD_KEEP` keys and the
+client's full answers under `client_intake` (admin-only by default). Its agreed
+retainer is written to `case_retainer` in the same transaction. The PDF is the
+portal's one writer over `#cidoc`, signature after section 7 and restating the
+accepted figures. **Two additive tables — a manual `portal-setup.yml` dispatch
+after merge.**
+
 ## The exact document a client received, and what they signed
 
 Owner brief 2026-09-07; derived decisions D1–D14 in

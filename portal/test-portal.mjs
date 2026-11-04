@@ -33661,6 +33661,332 @@ section('LEGAL FLAT FEE: a matter sold as a flat fee reads Flat Fee on every scr
   await page.close();
 }
 
+
+/* ================= CLIENT INTAKES — PREPARE, SEND, SIGN, RETRIEVE ===========
+   Owner brief 2026-11-04. The whole loop on phone widths: the Home card opens
+   the prepare form, the retainer's half is shown as it is chosen, the link is
+   created and handed to the phone's messages app, the client completes and
+   signs on their own phone with every figure ABOVE the signature, and the
+   office finds the signed intake and downloads its PDF. */
+const ciOver = page => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+let CI_LINK = null;
+
+section('Client intakes: the Home card opens Prepare & Send on a phone');
+try {
+  const page = await newPage();
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: SITE });
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await goHome(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(400);
+  const card = await page.evaluate(() => {
+    const c = document.querySelector('.qtools .qtapps:not(.qtapps-more) > .qtapp[data-qt="cintake"]');
+    const r = c ? c.getBoundingClientRect() : null;
+    return c ? { label: c.innerText.replace(/\s+/g, ' '), top: r.top, h: r.height, w: r.width,
+      idx: [...c.parentElement.children].indexOf(c) } : null;
+  });
+  ok('Home carries Prepare & Send Client Intake as a primary card, second',
+     card && /Prepare & Send Client Intake/.test(card.label) && card.idx === 1, JSON.stringify(card));
+  ok('and it is on the first screen of a phone', card && card.top + 40 < 844 && card.h >= 44, JSON.stringify(card));
+  ok('the rail names the screen: Client Intakes',
+     await page.locator('.tabs button[data-tab="cintakes"]', { hasText: 'Client Intakes' }).count() === 1);
+  await page.locator('.qtapp[data-qt="cintake"]').first().click();
+  await page.waitForTimeout(500);
+  ok('one tap opens the prepare form on the Client Intakes screen',
+     await page.evaluate(() => TAB === 'cintakes' && !!document.getElementById('ci-form')));
+  ok('with a way back to Home', await page.locator('.homeback').count() === 1);
+  await page.waitForFunction(() => CI.state === 'ok', null, { timeout: 5000 });
+  await page.evaluate(() => paint());
+
+  // every preset shows its exact half, as it is chosen
+  const presets = await page.evaluate(() => CI.options.presets.map(p => [p.value, p.retainer, p.non_refundable]));
+  ok('the seven presets are offered', presets.length === 7 && presets[0][0] === '1600' && presets[6][0] === '4000',
+     JSON.stringify(presets));
+  for (const [v, ret, nr] of presets) {
+    await page.locator(`input[name="ci_choice"][value="${v}"]`).check();
+    await page.waitForTimeout(80);
+    const live = await page.locator('#ci_live').innerText();
+    ok(`choosing ${ret} shows ${nr} non-refundable at once`, live.includes(ret) && live.includes(nr)
+       && /50%/.test(live), live);
+  }
+  await page.locator('input[name="ci_choice"][value="custom"]').check();
+  await page.waitForTimeout(100);
+  await page.locator('#ci_custom').fill('5200.50');
+  let live = await page.locator('#ci_live').innerText();
+  ok('a custom $5,200.50 shows $2,600.25, as typed', live.includes('5,200.50') && live.includes('2,600.25'), live);
+  await page.locator('#ci_custom').fill('-40');
+  live = await page.locator('#ci_live').innerText();
+  ok('a negative custom figure shows why it cannot be used', /dollar amount|more than zero/.test(live), live);
+  await page.locator('#ci_custom').fill('5200');
+  live = await page.locator('#ci_live').innerText();
+  ok('and $5,200 shows $2,600', live.includes('5,200') && live.includes('2,600') && live.includes('4-hour minimum per surveillance day'), live);
+  ok('typing did not rebuild the box', await page.evaluate(() => document.activeElement && document.activeElement.id === 'ci_custom'));
+
+  await page.locator('#ci_name').fill('Morgan Phone-Client');
+  await page.locator('#ci_phone').fill('(434) 555-0199');
+  await page.locator('#ci_email').fill('morgan@example.com');
+  await page.locator('[data-act="ciPreview"]').first().click();
+  await page.waitForSelector('#ci-prev', { timeout: 5000 });
+  const prev = await page.locator('#ci-prev').innerText();
+  ok('Preview Client Form shows the Worker\'s terms and the sections, writing nothing',
+     prev.includes('$5,200') && prev.includes('$2,600') && /Client authorization/i.test(prev)
+     && (await page.evaluate(() => CI.links.length)) === 0, prev.slice(0, 200));
+
+  for (const w of [390, 320]) {
+    await page.setViewportSize({ width: w, height: w === 320 ? 568 : 844 });
+    await page.waitForTimeout(250);
+    const g = await page.evaluate(() => ({
+      small: [...document.querySelectorAll('#ci-form .btn, #ci-form .ci-opt')]
+        .filter(b => b.getBoundingClientRect().height && b.getBoundingClientRect().height < 44)
+        .map(b => b.innerText + ':' + Math.round(b.getBoundingClientRect().height)),
+      fonts: [...document.querySelectorAll('#ci-form input:not([type=radio]):not([type=checkbox])')]
+        .filter(i => parseFloat(getComputedStyle(i).fontSize) < 16).length }));
+    ok(`${w}: nothing scrolls sideways on the prepare form`, (await ciOver(page)) <= 1, String(await ciOver(page)));
+    ok(`${w}: every control is at least 44px, every input 16px`, !g.small.length && !g.fonts, JSON.stringify(g));
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  await page.locator('[data-act="ciCreate"]').click();
+  await page.waitForTimeout(300);
+  ok('the link is refused until the terms are confirmed',
+     /Confirm the retainer/.test(await page.locator('#ci-form').innerText()) && await page.locator('#ci-sent').count() === 0);
+  await page.locator('#ci_confirm').check();
+  await page.locator('[data-act="ciCreate"]').click();
+  await page.waitForSelector('#ci-sent', { timeout: 5000 });
+  CI_LINK = await page.locator('#ci_url').inputValue();
+  ok('Create Secure Client Link shows the link', /\/intake\/client\/#k=[0-9a-f]{64}$/.test(CI_LINK), CI_LINK);
+  const href = await page.locator('#ci-sent a.ci-text').getAttribute('href');
+  ok('Text Client opens the phone\'s messages with the number and the message',
+     href.startsWith('sms:+14345550199?&body=') && decodeURIComponent(href.split('body=')[1]).includes(CI_LINK)
+     && decodeURIComponent(href).startsWith('sms:+14345550199?&body=Hello, this is Always Precise Investigations.'), href.slice(0, 120));
+  ok('and the screen says the portal cannot confirm delivery',
+     /not that the text arrived/.test(await page.locator('#ci-sent').innerText()));
+  ok('Email Client is offered because an address was given', await page.locator('#ci-sent [data-act="ciEmail"]').count() === 1);
+  await page.locator('#ci-sent [data-act="ciCopy"]').click();
+  await page.waitForTimeout(600);
+  ok('Copy Link copies it and says so', /Link copied/.test(await page.locator('#ci-sent').innerText())
+     && (await page.evaluate(() => navigator.clipboard.readText())) === CI_LINK);
+  const row = await page.evaluate(() => CI.links.find(l => l.client_name === 'Morgan Phone-Client'));
+  ok('the list holds it as Sent, $5,200 / $2,600', row && row.status === 'sent' && row.retainer === '$5,200'
+     && row.non_refundable === '$2,600', JSON.stringify(row));
+  await page.close();
+} catch (e) { ok('the section ran to its end without throwing', false, e && e.message); }
+
+section('Client intakes: the client completes and signs on their own phone');
+try {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const cp = await ctx.newPage();
+  const errs = []; cp.on('pageerror', e => errs.push(e.message));
+  const sent = []; cp.on('request', r => sent.push(r.url()));
+  await cp.goto(CI_LINK);
+  await cp.waitForSelector('[data-step="client"]', { timeout: 8000 });
+  ok('the link opens the intake with no account and no app', await cp.locator('#f_full_name').count() === 1);
+  ok('the office\'s details are prefilled', (await cp.locator('#f_full_name').inputValue()) === 'Morgan Phone-Client'
+     && (await cp.locator('#f_phone').inputValue()) === '(434) 555-0199');
+  ok('the token never travels in a request URL\'s path or query except to the API',
+     sent.every(u => !/[0-9a-f]{64}/.test(u.replace(/\/portal-api\/client-intake\/[0-9a-f]{64}/, ''))), sent.join(' '));
+  const stepFlow = async (fill) => {
+    await fill();
+    await cp.locator('#next').click(); await cp.waitForTimeout(150);
+  };
+  const over = async (label) => {
+    for (const w of [390, 320]) {
+      await cp.setViewportSize({ width: w, height: w === 320 ? 568 : 844 }); await cp.waitForTimeout(120);
+      const o = await ciOver(cp);
+      ok(`${w}: step "${label}" has nothing off the side of the screen`, o <= 1, String(o));
+    }
+    await cp.setViewportSize({ width: 390, height: 844 });
+  };
+  await over('client');
+  await cp.locator('#f_full_name').fill('');
+  await cp.locator('#next').click(); await cp.waitForTimeout(100);
+  ok('the full legal name is required to continue', /full legal name/.test(await cp.locator('#err').innerText()));
+  await stepFlow(async () => { await cp.locator('#f_full_name').fill('Morgan A. Phone-Client'); });
+  ok('step 2 is the type of investigation', await cp.locator('[data-step="type"]').count() === 1);
+  await cp.locator('#next').click(); await cp.waitForTimeout(100);
+  ok('a type must be chosen', /type of investigation/.test(await cp.locator('#err').innerText()));
+  await cp.locator('input[name="r_investigation_type"][value="domestic"]').check(); await cp.waitForTimeout(100);
+  await stepFlow(async () => { await cp.locator('#f_description').fill('Suspected affair since August.'); });
+  await over('subject');
+  await stepFlow(async () => {
+    await cp.locator('[data-unknown="subject_name"]').check(); await cp.waitForTimeout(80);
+    ok('"I don\'t know" disables the subject name', await cp.locator('#f_subject_name').isDisabled());
+    await cp.locator('#f_subject_address').fill('41 Oak Lane, Lynchburg');
+  });
+  await stepFlow(async () => { await cp.locator('#f_vehicle_make').fill('Toyota'); await cp.locator('#f_vehicle_plate').fill('XYZ9876'); });
+  await cp.locator('#next').click(); await cp.waitForTimeout(100);
+  ok('the objective is required', /establish/.test(await cp.locator('#err').innerText()));
+  await stepFlow(async () => { await cp.locator('#f_objective').fill('Establish whether the spouse visits 41 Oak Lane.'); });
+  await stepFlow(async () => { await cp.locator('#f_start_date').fill('2026-12-01'); });
+  ok('step 7 is the retainer & payment terms', await cp.locator('[data-step="terms"]').count() === 1);
+  const terms = await cp.locator('.terms').innerText();
+  ok('the client sees the office\'s retainer, its 50% portion, $100/hr and the 4-hour minimum',
+     terms.includes('$5,200') && terms.includes('$2,600') && terms.includes('$100/hr')
+     && /4-HOUR MINIMUM PER SURVEILLANCE DAY/.test(terms), terms);
+  ok('nothing on the terms step can edit a figure',
+     await cp.locator('[data-step="terms"] input:not([type=checkbox])').count() === 0);
+  await over('terms');
+  await cp.locator('#next').click(); await cp.waitForTimeout(100);
+  ok('the terms must be acknowledged before signing', /reviewed the retainer/.test(await cp.locator('#err').innerText()));
+  await stepFlow(async () => { await cp.locator('#ack').check(); });
+  ok('step 8 is the authorization & signature', await cp.locator('[data-step="sign"]').count() === 1);
+  await over('sign');
+  const geo = await cp.evaluate(() => {
+    const sig = document.getElementById('sigwrap').getBoundingClientRect();
+    const vals = [...document.querySelectorAll('#accepted-terms .val')].map(e => e.getBoundingClientRect().bottom);
+    const auth = document.querySelector('.auth').getBoundingClientRect();
+    return { sigTop: sig.top + scrollY, lastTerm: Math.max(...vals) + scrollY, authBottom: auth.bottom + scrollY,
+      n: vals.length, text: document.getElementById('accepted-terms').innerText };
+  });
+  ok('every financial figure is ABOVE the signature on the signing screen',
+     geo.n === 5 && geo.lastTerm < geo.authBottom && geo.authBottom < geo.sigTop
+     && geo.text.includes('$5,200') && geo.text.includes('$2,600'), JSON.stringify(geo).slice(0, 200));
+  await cp.locator('#f_signed_name').fill('Morgan A. Phone-Client');
+  await cp.locator('#agree').check();
+  /* Below the fold on a phone: a pointer at off-screen coordinates lands on
+     nothing (the intake suite's own recorded trap), so scroll as a person would. */
+  await cp.locator('#sig').scrollIntoViewIfNeeded();
+  const box = await cp.locator('#sig').boundingBox();
+  await cp.mouse.move(box.x + 30, box.y + 120); await cp.mouse.down();
+  for (let i = 1; i <= 12; i++) await cp.mouse.move(box.x + 30 + i * 18, box.y + 120 - (i % 3) * 22);
+  await cp.mouse.up();
+  // the first try is cut off — the client keeps everything and tries again
+  await cp.route('**/submit', r => r.abort(), { times: 1 });
+  await cp.locator('#next').click();
+  await cp.waitForTimeout(500);
+  const dropErr = await cp.locator('#err').innerText();
+  ok('a dropped connection keeps what was entered and says so',
+     /could not reach the server/.test(dropErr)
+     && (await cp.locator('#f_signed_name').inputValue()) === 'Morgan A. Phone-Client', dropErr);
+  await cp.locator('#next').click();
+  await cp.waitForSelector('.msg h1', { timeout: 8000 });
+  ok('the client sees the confirmation in the owner\'s words',
+     (await cp.locator('.msg h1').innerText()) === 'Your confidential intake has been submitted to Always Precise Investigations.');
+  ok('with a reference number', /API-\d{8}-\d{4}/.test(await cp.locator('.msg').innerText()));
+  await cp.reload(); await cp.waitForTimeout(800);
+  ok('reopening the link says it was already submitted', /Already submitted/.test(await cp.locator('#app').innerText()));
+  ok('no page errors on the client form', errs.length === 0, errs.join(' | '));
+  await ctx.close();
+} catch (e) { ok('the section ran to its end without throwing', false, e && e.message); }
+
+section('Client intakes: the office finds the signed intake and downloads its PDF');
+try {
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => { TAB = 'cintakes'; CI_OPEN = null; paint(); return loadCI(); });
+  await page.waitForTimeout(300);
+  await page.locator('[data-act="ciFilter"][data-f="submitted"]').click();
+  await page.locator('#ci_q').fill('555-0199');
+  await page.waitForTimeout(200);
+  const rows = await page.locator('.ci-row').allInnerTexts();
+  ok('Submitted + a phone search finds it', rows.length === 1 && /Morgan/.test(rows[0]) && /Submitted/i.test(rows[0]), rows.join(' || '));
+  ok('the search box kept the caret through the repaint', await page.evaluate(() => document.activeElement && document.activeElement.id === 'ci_q'));
+  await page.locator('#ci_q').fill('Morgan A');
+  ok('and a name search finds it too', (await page.locator('.ci-row').count()) === 1);
+  ok('the row says when it was submitted and what was agreed', /Submitted .*20\d\d/.test(rows[0]) && rows[0].includes('$5,200'));
+  await page.locator('.ci-row [data-act="ciOpen"]').first().click();
+  await page.waitForSelector('#cidoc', { timeout: 8000 });
+  await page.waitForTimeout(500);
+  const doc = await page.evaluate(() => {
+    const d = document.getElementById('cidoc'), t = d.innerText;
+    const sig = d.querySelector('img.ci-sig');
+    return { t, terms: t.indexOf('7. Retainer'), auth: t.indexOf('8. Client authorization'),
+      sigAfter: sig ? !!(d.querySelector('h3:nth-of-type(7)').compareDocumentPosition(sig) & Node.DOCUMENT_POSITION_FOLLOWING) : false,
+      sigLoaded: sig ? sig.naturalWidth > 0 : false };
+  });
+  ok('the completed document holds every section', ['1. Client information', '3. Subject information', '4. Vehicle information',
+    '6. Scheduling'].every(h => doc.t.includes(h)) && doc.t.includes('Not known to the client') && doc.t.includes('Toyota'));
+  ok('and the signature comes after every financial term', doc.terms > 0 && doc.auth > doc.terms && doc.sigAfter && doc.sigLoaded,
+     JSON.stringify({ terms: doc.terms, auth: doc.auth, sigAfter: doc.sigAfter, loaded: doc.sigLoaded }));
+  ok('it carries the typed name, the time and the terms record', doc.t.includes('Morgan A. Phone-Client')
+     && /Terms record \(SHA-256\): [0-9a-f]{64}/.test(doc.t) && doc.t.includes('$2,600'));
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 15000 }),
+    page.locator('#ci-detail [data-act="ciPdf"]').click()]);
+  const bytes = fs.readFileSync(await dl.path()).toString('latin1');
+  ok('Download completed PDF produces a PDF', bytes.startsWith('%PDF-1.4') && /\.pdf$/.test(dl.suggestedFilename()), dl.suggestedFilename());
+  const pT = bytes.indexOf('(7. Retainer'), pNR = bytes.indexOf('Non-refundable portion: $2,600'),
+        pSig = bytes.indexOf('(Signed below the retainer'), pImg = bytes.lastIndexOf(' Do Q');
+  ok('in the PDF, the terms come before the authorization and the signature image after both',
+     pT > 0 && pNR > pT && pSig > pNR && pImg > pSig, JSON.stringify({ pT, pNR, pSig, pImg }));
+  ok('it is the firm\'s document: banner, footer page numbers', /\/Im1 Do/.test(bytes) && /Page 1 of \d/.test(bytes));
+  await page.locator('#ci-detail [data-act="ciReviewed"]').click();
+  await page.waitForTimeout(500);
+  ok('Mark reviewed moves it to Reviewed', await page.evaluate(() => CI_OPEN.data.link.status === 'reviewed'));
+  await page.locator('[data-act="ciClose"]').click();
+  await page.waitForTimeout(200);
+  const [blank] = await Promise.all([page.waitForEvent('download', { timeout: 15000 }),
+    page.locator('[data-act="ciBlankPdf"]').click()]);
+  const bb = fs.readFileSync(await blank.path()).toString('latin1');
+  ok('the printable blank intake is available separately', bb.startsWith('%PDF-1.4') && bb.indexOf('(7. Retainer') > 0
+     && bb.indexOf('(8. Client authorization') > bb.indexOf('(7. Retainer'));
+  ok('the signed intake is on the ordinary Intakes list too',
+     await page.evaluate(() => CASES.some(c => c.client_name === 'Morgan A. Phone-Client' && c.signed === 1)) ||
+     await page.evaluate(async () => (await api('/submissions?limit=200')).submissions.some(c => c.client_name === 'Morgan A. Phone-Client' && c.signed === 1)));
+  for (const w of [390, 320, 1200]) {
+    await page.setViewportSize({ width: w, height: 800 });
+    await page.waitForTimeout(200);
+    ok(`${w}: the Client Intakes list has nothing off the side`, (await ciOver(page)) <= 1);
+  }
+  await page.close();
+} catch (e) { ok('the section ran to its end without throwing', false, e && e.message); }
+
+section('Client intakes: revoke, the rate-sheet door, and the field sees none of it');
+try {
+  const page = await newPage();
+  page.on('dialog', d => d.accept());
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button[data-tab="sheets"]').click();
+  await page.waitForTimeout(500);
+  await page.locator('.sheet-card', { hasText: 'Private Client' }).first().click();
+  await page.waitForTimeout(300);
+  const door = page.locator('[data-act="ciNew"]', { hasText: 'Prepare client intake' });
+  ok('the private rate sheet offers Prepare client intake', await door.count() === 1);
+  await door.click(); await page.waitForTimeout(400);
+  ok('and it opens the prepare form', await page.locator('#ci-form').count() === 1);
+  await page.waitForFunction(() => CI.state === 'ok');
+  await page.locator('#ci_name').fill('Revoke Me');
+  await page.locator('#ci_phone').fill('4345550100');
+  await page.locator('input[name="ci_choice"][value="2000"]').check();
+  await page.locator('#ci_confirm').check();
+  await page.locator('[data-act="ciCreate"]').click();
+  await page.waitForSelector('#ci-sent');
+  const url = await page.locator('#ci_url').inputValue();
+  await page.locator('[data-act="ciDone"]').click();
+  await page.waitForTimeout(200);
+  await page.locator('.ci-row', { hasText: 'Revoke Me' }).locator('[data-act="ciRevoke"]').click();
+  await page.waitForTimeout(600);
+  ok('Revoke marks it revoked', /Revoked/i.test(await page.locator('.ci-row', { hasText: 'Revoke Me' }).innerText()));
+  const cp = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  await cp.goto(url); await cp.waitForTimeout(800);
+  ok('the client\'s revoked link no longer opens the form', /withdrawn/.test(await cp.locator('#app').innerText())
+     && await cp.locator('#f_full_name').count() === 0);
+  await cp.context().close();
+  // a draft is saved without a link, and continued later
+  await page.locator('.ci-start').click(); await page.waitForTimeout(200);
+  await page.locator('#ci_name').fill('Draft Person');
+  await page.locator('#ci_phone').fill('4345550101');
+  await page.locator('input[name="ci_choice"][value="3600"]').check();
+  await page.locator('[data-act="ciDraft"]').click();
+  await page.waitForTimeout(500);
+  ok('Save Draft keeps it under Drafts, with no link', await page.evaluate(() =>
+    CI.links.some(l => l.client_name === 'Draft Person' && l.status === 'draft' && !l.url)));
+  await page.locator('.ci-row', { hasText: 'Draft Person' }).locator('[data-act="ciEdit"]').click();
+  await page.waitForTimeout(200);
+  ok('Continue draft reopens it with its retainer chosen',
+     await page.locator('input[name="ci_choice"][value="3600"]').isChecked());
+  await page.close();
+
+  const fp = await newPage();
+  await signIn(fp, 'dana', 'FieldWork2026x');
+  ok('an investigator has no Client Intakes in the rail', await fp.locator('.tabs button[data-tab="cintakes"]').count() === 0);
+  ok('and no Prepare & Send card', await fp.locator('.qtapp[data-qt="cintake"]').count() === 0);
+  const st = await fp.evaluate(async () => (await fetch('/portal-api/client-intakes', { credentials: 'same-origin' })).status);
+  ok('and the Worker refuses the list to them', st === 403, String(st));
+  await fp.close();
+} catch (e) { ok('the section ran to its end without throwing', false, e && e.message); }
+
+
 await browser.close();
 server.close();
 

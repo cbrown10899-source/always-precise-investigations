@@ -53,7 +53,7 @@ jobs:
           # the Worker and schema it tests against, the _headers it checks, the
           # logo the page loads, the pinned toolchain, and the PR test workflows
           # and scripts.
-          PORTAL_PATHS: '^(portal/|case-portal/worker\.js$|case-portal/schema\.sql$|_headers$|assets/logo-white\.webp$|\.node-version$|\.playwright-version$|\.github/ci/|\.github/workflows/pr-[a-z-]*\.yml$)'
+          PORTAL_PATHS: '^(portal/|case-portal/worker\.js$|case-portal/schema\.sql$|_headers$|assets/logo-white\.webp$|intake/client/index\.html$|\.node-version$|\.playwright-version$|\.github/ci/|\.github/workflows/pr-[a-z-]*\.yml$)'
         run: |
           if [ "$EVENT" != pull_request ]; then
             echo "Started by hand: the portal suite runs."; echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
