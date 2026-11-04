@@ -24753,6 +24753,414 @@ section('Legal flat fee: the question is asked of the service, and nothing else'
      (src.match(/'Flat Fee Received'/g) || []).length === 1);
 }
 
+
+/* ===================== PRIVATE CLIENT INTAKE LINKS (owner brief 2026-11-04) */
+
+const CIL_SIG = 'data:image/png;base64,' + 'iVBORw0KGgo'.repeat(40);
+function cilClientBody(rd, over = {}) {
+  return {
+    attempt: 'att-' + Math.random().toString(36).slice(2, 12),
+    terms_hash: rd.terms_hash, terms_acknowledged: true, agree: true,
+    full_name: 'Jordan Q. Client', phone: '(434) 555-0111', email: 'jordan@example.com',
+    investigation_type: 'domestic', objective: 'Establish where the subject goes on Fridays.',
+    signed_name: 'Jordan Q. Client', signature: CIL_SIG, ...over,
+  };
+}
+async function cilSetup() {
+  const env = freshEnv();
+  /* The suite's ingest cap is 5 a minute; these sections submit more than
+     that on purpose, and the cap has its own sections elsewhere. */
+  env.INGEST_PER_MINUTE = '200';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  return { env, admin };
+}
+async function cilMake(env, admin, body) {
+  const res = await call(env, '/client-intakes', { method: 'POST', cookie: admin,
+    body: { client_name: 'Jordan Client', client_phone: '434-555-0111', confirm_terms: true, ...body } });
+  return { res, j: await jsonOf(res) };
+}
+const cilTok = link => new URL(link.url).hash.replace('#k=', '');
+
+section('Client intake links: the standard retainers and their exact half');
+{
+  const { env, admin } = await cilSetup();
+  const want = [[1600, 800], [2000, 1000], [2400, 1200], [2800, 1400], [3200, 1600], [3600, 1800], [4000, 2000]];
+  const list = await jsonOf(await call(env, '/client-intakes', { cookie: admin }));
+  ok('the option list is the seven owner presets, in order',
+     JSON.stringify(list.options.presets.map(p => [p.retainer_cents / 100, p.nonref_cents / 100])) === JSON.stringify(want),
+     JSON.stringify(list.options && list.options.presets));
+  ok('the rate and minimum are the private standard: $100/hr, 4 hours',
+     list.options.hourly_cents === 10000 && list.options.min_hours === 4);
+  for (const [ret, nr] of want) {
+    const { res, j } = await cilMake(env, admin, { retainer_choice: String(ret) });
+    ok(`$${ret} creates a link whose non-refundable portion is $${nr}`,
+       res.status === 201 && j.link.retainer_cents === ret * 100 && j.link.nonref_cents === nr * 100
+       && j.link.retainer === `$${ret.toLocaleString('en-US')}` && j.link.non_refundable === `$${nr.toLocaleString('en-US')}`,
+       JSON.stringify(j.link || j));
+  }
+  const bad = await cilMake(env, admin, { retainer_choice: '1500' });
+  ok('a figure that is not one of the presets is refused by name', bad.res.status === 400 && bad.j.code === 'bad_retainer_choice');
+  const none = await cilMake(env, admin, {});
+  ok('no choice at all is refused', none.res.status === 400 && none.j.code === 'bad_retainer_choice');
+}
+
+section('Client intake links: a custom retainer is halved exactly, in cents');
+{
+  const { env, admin } = await cilSetup();
+  const cases = [['5200', 520000, 260000, '$5,200', '$2,600'],
+                 ['$5,200.50', 520050, 260025, '$5,200.50', '$2,600.25'],
+                 ['1000.01', 100001, 50000, '$1,000.01', '$500.00'],
+                 ['0.02', 2, 1, '$0.02', '$0.01'],
+                 ['16.10', 1610, 805, '$16.10', '$8.05'],
+                 ['33.33', 3333, 1666, '$33.33', '$16.66'],
+                 ['999999.99', 99999999, 49999999, '$999,999.99', '$499,999.99']];
+  for (const [raw, rc, nc, rs, ns] of cases) {
+    const pv = await jsonOf(await call(env, '/client-intakes/preview', { method: 'POST', cookie: admin,
+      body: { retainer_choice: 'custom', custom_retainer: raw } }));
+    ok(`preview: custom ${raw} -> ${rc} cents, half ${nc}`, pv.retainer_cents === rc && pv.nonref_cents === nc
+       && pv.terms.retainer === rs && pv.terms.non_refundable === ns, JSON.stringify(pv).slice(0, 300));
+    const { res, j } = await cilMake(env, admin, { retainer_choice: 'custom', custom_retainer: raw });
+    ok(`stored: custom ${raw} is ${rs} with ${ns} non-refundable`,
+       res.status === 201 && j.link.retainer_cents === rc && j.link.nonref_cents === nc
+       && Number.isInteger(j.link.nonref_cents) && j.link.retainer === rs && j.link.non_refundable === ns,
+       JSON.stringify(j.link || j));
+  }
+  for (const raw of ['-500', '0', '0.00', 'abc', '12.345', '1e5', '', '5,2.00.1', '1000000.01']) {
+    const { res, j } = await cilMake(env, admin, { retainer_choice: 'custom', custom_retainer: raw });
+    ok(`custom "${raw}" is refused by name`, res.status === 400
+       && ['bad_custom_retainer', 'custom_retainer_missing', 'custom_retainer_too_large'].includes(j.code), JSON.stringify(j));
+  }
+  const src = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+  const fn = src.slice(src.indexOf('function clientIntakeRetainer('), src.indexOf('function clientIntakeTerms('));
+  ok('the half is integer arithmetic on cents — no float multiply in the rule',
+     /Math\.floor\(c \/ 2\)/.test(fn) && /d \* 50/.test(fn) && !/\* 0\.5|\/ 2\.0|\* \.5/.test(fn));
+}
+
+section('Client intake links: the office confirms before a link exists, and the terms then lock');
+{
+  const { env, admin } = await cilSetup();
+  let { res, j } = await cilMake(env, admin, { retainer_choice: '2000', confirm_terms: false });
+  ok('a link is refused until the terms are confirmed', res.status === 400 && j.code === 'terms_not_confirmed');
+  ({ res, j } = await cilMake(env, admin, { retainer_choice: '2000', confirm_terms: undefined, draft: true }));
+  ok('a draft saves without confirmation, and carries no link',
+     res.status === 201 && j.link.status === 'draft' && j.link.url === null, JSON.stringify(j.link));
+  const id = j.link.id;
+  res = await call(env, `/client-intakes/${id}`, { method: 'POST', cookie: admin,
+    body: { client_name: 'Jordan Client', client_phone: '434-555-0111', retainer_choice: '2400', draft: true } });
+  j = await jsonOf(res);
+  ok('a draft can be edited', res.status === 200 && j.link.retainer_cents === 240000);
+  res = await call(env, `/client-intakes/${id}`, { method: 'POST', cookie: admin,
+    body: { client_name: 'Jordan Client', client_phone: '434-555-0111', retainer_choice: '2400', confirm_terms: true } });
+  j = await jsonOf(res);
+  ok('confirming a draft creates its link', res.status === 200 && j.link.status === 'ready' && /#k=[0-9a-f]{64}$/.test(j.link.url),
+     JSON.stringify(j.link));
+  res = await call(env, `/client-intakes/${id}`, { method: 'POST', cookie: admin,
+    body: { client_name: 'Jordan Client', client_phone: '434-555-0111', retainer_choice: '4000', confirm_terms: true } });
+  j = await jsonOf(res);
+  ok('once a link exists its terms cannot be edited', res.status === 409 && j.code === 'terms_locked');
+  const row = await env.DB.prepare('SELECT retainer_cents FROM client_intake_link WHERE id = ?').bind(id).first();
+  ok('and the stored retainer did not move', row.retainer_cents === 240000);
+  ({ res, j } = await cilMake(env, admin, { retainer_choice: '2000', client_phone: '' }));
+  ok('the client\'s phone is required, so the link can be texted', res.status === 400 && j.code === 'client_phone_required');
+  ({ res, j } = await cilMake(env, admin, { retainer_choice: '2000', client_name: ' ' }));
+  ok('and so is the client\'s name', res.status === 400 && j.code === 'client_name_required');
+  ({ res, j } = await cilMake(env, admin, { retainer_choice: '2000', client_email: 'not-an-email' }));
+  ok('an email, when given, must be an address', res.status === 400 && j.code === 'bad_email');
+}
+
+section('Client intake links: the link is unpredictable and carries nothing about the client');
+{
+  const { env, admin } = await cilSetup();
+  const toks = new Set(), ids = new Set();
+  for (let i = 0; i < 25; i++) {
+    const { j } = await cilMake(env, admin, { retainer_choice: '2000', client_name: `Client Number ${i}` });
+    toks.add(cilTok(j.link)); ids.add(j.link.id);
+  }
+  ok('25 links, 25 different 256-bit tokens', toks.size === 25 && [...toks].every(t => /^[0-9a-f]{64}$/.test(t)));
+  ok('the admin id is a separate random id, not the token', [...ids].every(i => /^CIL-[0-9a-f]{32}$/.test(i) && !toks.has(i.slice(4))));
+  const { j } = await cilMake(env, admin, { retainer_choice: '3200', client_name: 'Visible Name', client_email: 'v@example.com' });
+  const u = new URL(j.link.url);
+  ok('the URL is /intake/client/ with the token in the fragment only',
+     u.pathname === '/intake/client/' && u.search === '' && /^#k=[0-9a-f]{64}$/.test(u.hash), j.link.url);
+  ok('it names no client, phone, email, case or amount',
+     !/visible|v@example|3200|3,200|1600|API-|434/i.test(j.link.url));
+  ok('the text message is the owner\'s wording with the link in it',
+     j.link.message.startsWith('Hello, this is Always Precise Investigations. Please complete your confidential client intake form')
+     && j.link.message.includes(j.link.url) && !/3,200|Visible/.test(j.link.message));
+  const res = await call(env, '/client-intake/' + 'a'.repeat(64));
+  const k = await jsonOf(res);
+  ok('a token nobody issued is refused, saying nothing about why', res.status === 404 && k.code === 'link_not_found');
+  ok('a malformed token never reaches a lookup (falls to the sign-in gate)',
+     (await call(env, '/client-intake/XYZ')).status === 401);
+}
+
+section('Client intake links: the client reads the terms and cannot change them');
+{
+  const { env, admin } = await cilSetup();
+  const { j } = await cilMake(env, admin, { retainer_choice: 'custom', custom_retainer: '5200' });
+  const tok = cilTok(j.link);
+  let res = await call(env, `/client-intake/${tok}`);
+  const rd = await jsonOf(res);
+  ok('the client reads the link without signing in', res.status === 200 && rd.ok);
+  ok('the terms state the retainer, its exact half, $100/hr and the 4-hour minimum per surveillance day',
+     rd.terms.retainer === '$5,200' && rd.terms.non_refundable === '$2,600' && rd.terms.hourly === '$100/hr'
+     && rd.terms.lines.some(l => l.value === '4-HOUR MINIMUM PER SURVEILLANCE DAY'), JSON.stringify(rd.terms));
+  ok('the services agreement and the law govern balances and refunds, in words',
+     /governed by the Always Precise Investigations services agreement and applicable law/.test(rd.terms.conditions));
+  ok('the authorization says submission alone is not acceptance',
+     rd.terms.authorization.some(t => /does not by itself mean that services have begun/.test(t)));
+  ok('the office\'s own figures prefill the client\'s name and number', rd.client.name === 'Jordan Client');
+  const after = await env.DB.prepare('SELECT first_viewed_at, view_count FROM client_intake_link WHERE id = ?').bind(j.link.id).first();
+  ok('opening the link is recorded as viewed', after.first_viewed_at && after.view_count === 1);
+
+  // Tampering: the client posts different figures. Nothing reads them.
+  res = await call(env, `/client-intake/${tok}/submit`, { method: 'POST',
+    body: cilClientBody(rd, { retainer_cents: 100, nonref_cents: 0, retainer_choice: '1600', custom_retainer: '1' }) });
+  const sub = await jsonOf(res);
+  ok('a submission posting other figures still records the office\'s terms', res.status === 200 && sub.ok, JSON.stringify(sub));
+  const row = await env.DB.prepare('SELECT * FROM client_intake_link WHERE id = ?').bind(j.link.id).first();
+  const acc = JSON.parse(row.accepted_terms);
+  ok('the accepted terms are $5,200 / $2,600', acc.retainer === '$5,200' && acc.non_refundable === '$2,600'
+     && row.retainer_cents === 520000 && row.nonref_cents === 260000);
+  const s = await env.DB.prepare('SELECT payload FROM submissions WHERE case_no = ?').bind(sub.case_no).first();
+  const pl = JSON.parse(s.payload);
+  ok('the case payload carries the same terms, not the posted ones',
+     pl.retainer_terms.retainer_cents === 520000 && pl.retainer_terms.nonrefundable_cents === 260000
+     && !('retainer_choice' in pl) && pl.retainer_terms.hash === row.accepted_terms_hash);
+  const cr = await env.DB.prepare('SELECT retainer_amount FROM case_retainer WHERE case_no = ?').bind(sub.case_no).first();
+  ok('and the case\'s agreed retainer is the signed figure', cr && cr.retainer_amount === 5200, JSON.stringify(cr));
+
+  // A stale terms hash is refused.
+  const { j: j2 } = await cilMake(env, admin, { retainer_choice: '2000' });
+  const t2 = cilTok(j2.link);
+  const rd2 = await jsonOf(await call(env, `/client-intake/${t2}`));
+  res = await call(env, `/client-intake/${t2}/submit`, { method: 'POST', body: cilClientBody({ terms_hash: 'f'.repeat(64) }) });
+  ok('a submission whose terms hash differs from the office\'s is refused', res.status === 409
+     && (await jsonOf(res)).code === 'terms_changed');
+  res = await call(env, `/client-intake/${t2}/submit`, { method: 'POST', body: cilClientBody(rd2, { terms_acknowledged: false }) });
+  ok('the payment terms must be acknowledged', res.status === 400 && (await jsonOf(res)).code === 'terms_not_acknowledged');
+  res = await call(env, `/client-intake/${t2}/submit`, { method: 'POST', body: cilClientBody(rd2, { agree: false }) });
+  ok('the authorization must be agreed', res.status === 400 && (await jsonOf(res)).code === 'agree_required');
+  res = await call(env, `/client-intake/${t2}/submit`, { method: 'POST', body: cilClientBody(rd2, { signature: '' }) });
+  ok('a signature is required', res.status === 400 && (await jsonOf(res)).code === 'signature_required');
+  res = await call(env, `/client-intake/${t2}/submit`, { method: 'POST', body: cilClientBody(rd2, { signature: 'data:image/svg+xml;base64,' + 'A'.repeat(400) }) });
+  ok('and only a drawn PNG counts as one', res.status === 400 && (await jsonOf(res)).code === 'signature_required');
+  res = await call(env, `/client-intake/${t2}/submit`, { method: 'POST', body: cilClientBody(rd2, { signed_name: '' }) });
+  ok('a typed name is required', res.status === 400 && (await jsonOf(res)).code === 'signed_name_required');
+  res = await call(env, `/client-intake/${t2}/submit`, { method: 'POST', body: cilClientBody(rd2, { full_name: '' }) });
+  ok('the client\'s full legal name is required', res.status === 400 && (await jsonOf(res)).code === 'full_name_required');
+  res = await call(env, `/client-intake/${t2}/submit`, { method: 'POST', body: cilClientBody(rd2, { phone: '', email: '' }) });
+  ok('one way to reach the client is required', res.status === 400 && (await jsonOf(res)).code === 'contact_required');
+  res = await call(env, `/client-intake/${t2}/submit`, { method: 'POST', body: cilClientBody(rd2, { objective: '' }) });
+  ok('the objective is required', res.status === 400 && (await jsonOf(res)).code === 'objective_required');
+  res = await call(env, `/client-intake/${t2}/submit`, { method: 'POST', body: cilClientBody(rd2, { investigation_type: 'hacking' }) });
+  ok('the type of investigation must be one offered', res.status === 400 && (await jsonOf(res)).code === 'type_required');
+  const still = await env.DB.prepare('SELECT submitted_at FROM client_intake_link WHERE id = ?').bind(j2.link.id).first();
+  ok('none of those refused submissions claimed the link', !still.submitted_at);
+}
+
+section('Client intake links: unknown subject details are allowed, and stay empty');
+{
+  const { env, admin } = await cilSetup();
+  const { j } = await cilMake(env, admin, { retainer_choice: '2000' });
+  const tok = cilTok(j.link);
+  const rd = await jsonOf(await call(env, `/client-intake/${tok}`));
+  const res = await call(env, `/client-intake/${tok}/submit`, { method: 'POST',
+    body: cilClientBody(rd, { subject_name: 'Typed then marked', unknown: ['subject_name', 'subject_address', 'vehicle'],
+      vehicle_make: 'Honda', email: '' }) });
+  const sub = await jsonOf(res);
+  ok('a submission with no subject, address or vehicle is accepted', res.status === 200 && sub.ok, JSON.stringify(sub));
+  const pl = JSON.parse((await env.DB.prepare('SELECT payload FROM submissions WHERE case_no = ?').bind(sub.case_no).first()).payload);
+  ok('a field marked unknown is EMPTY with its status beside it — never a placeholder',
+     pl.client_intake.subject_name === '' && pl.client_intake.subject_name_status === 'unknown'
+     && pl.client_intake.vehicle_make === '' && pl.client_intake.vehicle_status === 'unknown'
+     && pl.subject_address_status === 'unknown');
+  const vals = JSON.stringify(pl.client_intake);
+  ok('no "N/A", "Unknown" or 0000 was written into a value', !/"(N\/A|Unknown|unknown|0000)"/.test(vals.replace(/_status":"unknown"/g, '')));
+}
+
+section('Client intake links: the submission is an ordinary signed private intake');
+{
+  const { env, admin } = await cilSetup();
+  const { j } = await cilMake(env, admin, { retainer_choice: '2800', client_name: 'Desk Client' });
+  const tok = cilTok(j.link);
+  const rd = await jsonOf(await call(env, `/client-intake/${tok}`));
+  const sent = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => { if (String(u).includes('resend.com')) { sent.push(JSON.parse(init.body)); return new Response('{}', { status: 200 }); } return realFetch(u, init); };
+  env.RESEND_API_KEY = 'k';
+  await env.DB.prepare(`INSERT INTO notify_recipient (label, email, enabled, alert_intakes, created_at, updated_at)
+    VALUES ('Office', 'office@example.com', 1, 1, ?1, ?1)`).bind(new Date().toISOString()).run();
+  const res = await call(env, `/client-intake/${tok}/submit`, { method: 'POST',
+    body: cilClientBody(rd, { full_name: 'Desk Client Legal', investigation_type: 'custody',
+      subject_name: 'Pat Subject', subject_address: '12 Main St', vehicle_make: 'Ford', vehicle_model: 'F-150',
+      vehicle_plate: 'ABC1234', vehicle_state: 'VA', known_schedule: 'Fridays after 5', start_date: '2026-12-01',
+      urgency: 'soon' }) });
+  const sub = await jsonOf(res);
+  globalThis.fetch = realFetch;
+  ok('the client is told it is in, with a reference', res.status === 200 && /^API-\d{8}-\d{4}$/.test(sub.case_no), JSON.stringify(sub));
+  const list = await jsonOf(await call(env, '/submissions', { cookie: admin }));
+  const rowL = (list.submissions || list.rows || list.cases || []).find(r => r.case_no === sub.case_no);
+  ok('it appears on the office\'s intake list, private and signed',
+     rowL && rowL.kind === 'consumer' && rowL.signed === 1 && rowL.client_name === 'Desk Client Legal', JSON.stringify(rowL));
+  ok('its service is the type the client chose', rowL && rowL.service === 'Custody / Family Matter');
+  const full = await jsonOf(await call(env, `/client-intakes/${j.link.id}`, { cookie: admin }));
+  ok('the prepared intake now reads Submitted, with its case', full.link.status === 'submitted' && full.link.case_no === sub.case_no
+     && full.link.submission_exists === true);
+  ok('the audit record: typed name, time, version, terms and their hash',
+     full.link.signed_name === 'Jordan Q. Client' && full.link.signed_at && full.accepted_terms.version === 'private-client-intake-2026-11-04'
+     && full.accepted_terms_hash && /^[0-9a-f]{64}$/.test(full.signature_hash));
+  ok('the signature itself is on the submission the office opens',
+     full.submission.payload.signature === CIL_SIG && full.submission.payload.client_intake.vehicle_make === 'Ford');
+  ok('the trail says opened then submitted', full.events.map(e => e.action).join(',') === 'link_created,opened,submitted',
+     full.events.map(e => e.action).join(','));
+  const alerts = sent.filter(m => m.to === 'office@example.com' || (Array.isArray(m.to) && m.to.includes('office@example.com')));
+  ok('the office is alerted through the existing intake alert', alerts.length === 1, JSON.stringify(sent).slice(0, 300));
+  ok('and the alert carries no client detail',
+     alerts.every(m => !/Desk Client|Pat Subject|12 Main|2,800|ABC1234/.test(JSON.stringify(m))), JSON.stringify(alerts).slice(0, 300));
+
+  // the field sees fieldwork, never the client or the money
+  let ires = await invite(env, admin, { username: 'dana', display_name: 'Dana', role: 'investigator' });
+  const itok = new URL((await jsonOf(ires)).url, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${itok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'dana', 'FieldWork2026x')).cookie;
+  ok('an investigator cannot list prepared intakes', (await call(env, '/client-intakes', { cookie: inv })).status === 403);
+  ok('nor read one', (await call(env, `/client-intakes/${j.link.id}`, { cookie: inv })).status === 403);
+  ok('nor create one', (await call(env, '/client-intakes', { method: 'POST', cookie: inv,
+    body: { client_name: 'x', client_phone: '4345550111', retainer_choice: '2000', confirm_terms: true } })).status === 403);
+  ok('signed out, the office routes refuse', (await call(env, '/client-intakes')).status === 401
+     && (await call(env, '/client-intakes/preview', { method: 'POST', body: {} })).status === 401);
+  const did = (await jsonOf(await call(env, '/auth/me', { cookie: inv }))).user.id;
+  await env.DB.prepare('UPDATE submissions SET assigned_to = ? WHERE case_no = ?').bind(did, sub.case_no).run();
+  const ws = await jsonOf(await call(env, `/submissions/${sub.case_no}`, { cookie: inv }));
+  const wp = (ws.submission || ws).payload || {};
+  ok('assigned, the investigator sees the subject and the objective',
+     wp.subject_name === 'Pat Subject' && /Fridays/.test(wp.known_schedule || ''), JSON.stringify(Object.keys(wp)));
+  ok('but not the client, the signature or the retainer terms',
+     !wp.client_name && !wp.signature && !wp.retainer_terms && !wp.client_intake && !wp.client_phone, JSON.stringify(Object.keys(wp)));
+}
+
+section('Client intake links: one link, one case — retries, double taps and a second phone');
+{
+  const { env, admin } = await cilSetup();
+  const { j } = await cilMake(env, admin, { retainer_choice: '2000' });
+  const tok = cilTok(j.link);
+  const rd = await jsonOf(await call(env, `/client-intake/${tok}`));
+  const body = cilClientBody(rd);
+  const [a, b] = await Promise.all([
+    call(env, `/client-intake/${tok}/submit`, { method: 'POST', body }),
+    call(env, `/client-intake/${tok}/submit`, { method: 'POST', body }),
+  ]);
+  const ja = await jsonOf(a), jb = await jsonOf(b);
+  ok('two taps of the same attempt both answer ok with ONE case number', a.status === 200 && b.status === 200
+     && ja.case_no === jb.case_no, JSON.stringify([ja, jb]));
+  const retry = await jsonOf(await call(env, `/client-intake/${tok}/submit`, { method: 'POST', body }));
+  ok('a retry after a dropped response is told it already landed', retry.ok && retry.duplicate && retry.case_no === ja.case_no);
+  const other = await call(env, `/client-intake/${tok}/submit`, { method: 'POST', body: cilClientBody(rd) });
+  ok('a different attempt on a submitted link is refused by name', other.status === 409 && (await jsonOf(other)).code === 'already_submitted');
+  const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM submissions WHERE json_extract(payload, '$.client_intake_link') = ?").bind(j.link.id).first();
+  ok('exactly one submission exists for the link', n.n === 1, String(n.n));
+  const re = await call(env, `/client-intake/${tok}`);
+  ok('reopening the link after submission says it was submitted', re.status === 409 && (await jsonOf(re)).code === 'already_submitted');
+  const rv = await call(env, `/client-intakes/${j.link.id}/revoke`, { method: 'POST', cookie: admin });
+  ok('a submitted intake cannot be revoked', rv.status === 409 && (await jsonOf(rv)).code === 'already_submitted');
+  const rw = await jsonOf(await call(env, `/client-intakes/${j.link.id}/reviewed`, { method: 'POST', cookie: admin }));
+  ok('it can be marked reviewed', rw.link.status === 'reviewed' && rw.link.reviewed_at);
+}
+
+section('Client intake links: expired and revoked links refuse, and Resend renews');
+{
+  const { env, admin } = await cilSetup();
+  const { j } = await cilMake(env, admin, { retainer_choice: '2000' });
+  const tok = cilTok(j.link);
+  const rd = await jsonOf(await call(env, `/client-intake/${tok}`));
+  ok('a new link lasts 30 days', Math.round((Date.parse(j.link.expires_at) - Date.now()) / 86400000) === 30);
+  await env.DB.prepare('UPDATE client_intake_link SET expires_at = ? WHERE id = ?').bind('2020-01-01T00:00:00.000Z', j.link.id).run();
+  let res = await call(env, `/client-intake/${tok}`);
+  ok('an expired link refuses to open', res.status === 410 && (await jsonOf(res)).code === 'link_expired');
+  res = await call(env, `/client-intake/${tok}/submit`, { method: 'POST', body: cilClientBody(rd) });
+  ok('and refuses a submission', res.status === 410 && (await jsonOf(res)).code === 'link_expired');
+  let l = await jsonOf(await call(env, '/client-intakes', { cookie: admin }));
+  ok('the office sees it as Expired', l.links.find(x => x.id === j.link.id).status === 'expired');
+  res = await call(env, `/client-intakes/${j.link.id}/shared`, { method: 'POST', cookie: admin, body: { via: 'text' } });
+  ok('an expired link cannot be shared until it is renewed', res.status === 409 && (await jsonOf(res)).code === 'link_expired');
+  const rn = await jsonOf(await call(env, `/client-intakes/${j.link.id}/renew`, { method: 'POST', cookie: admin }));
+  ok('Resend renews the SAME link for another 30 days (it was opened, so it reads Viewed)',
+     rn.link.url === j.link.url && rn.link.status === 'viewed'
+     && Date.parse(rn.link.expires_at) > Date.now() + 29 * 86400000);
+  res = await call(env, `/client-intakes/${j.link.id}/shared`, { method: 'POST', cookie: admin, body: { via: 'text' } });
+  const sh = await jsonOf(res);
+  ok('sharing by text is recorded as the composer opened — never as delivered',
+     sh.link.shared_via === 'text' && sh.link.shared_at && sh.link.status === 'viewed');
+  const evs = (await jsonOf(await call(env, `/client-intakes/${j.link.id}`, { cookie: admin }))).events.map(e => e.action);
+  ok('the trail calls it the text composer opened', evs.includes('text_composer_opened') && !evs.some(a => /delivered|texted/.test(a)));
+  const { j: fresh } = await cilMake(env, admin, { retainer_choice: '2000' });
+  const fs1 = await jsonOf(await call(env, `/client-intakes/${fresh.link.id}/shared`, { method: 'POST', cookie: admin, body: { via: 'copy' } }));
+  ok('a link shared and not yet opened reads Sent', fs1.link.status === 'sent' && fs1.link.shared_via === 'copy');
+  res = await call(env, `/client-intakes/${j.link.id}/shared`, { method: 'POST', cookie: admin, body: { via: 'carrier-pigeon' } });
+  ok('an unknown share method is refused', res.status === 400);
+  const rv = await jsonOf(await call(env, `/client-intakes/${j.link.id}/revoke`, { method: 'POST', cookie: admin }));
+  ok('the office can revoke a link', rv.link.status === 'revoked' && rv.link.url === null);
+  res = await call(env, `/client-intake/${tok}`);
+  ok('a revoked link refuses to open', res.status === 410 && (await jsonOf(res)).code === 'link_revoked');
+  res = await call(env, `/client-intake/${tok}/submit`, { method: 'POST', body: cilClientBody(rd) });
+  ok('and refuses a submission', res.status === 410);
+  res = await call(env, `/client-intakes/${j.link.id}/renew`, { method: 'POST', cookie: admin });
+  ok('and a revoked link cannot be renewed back to life', res.status === 409 && (await jsonOf(res)).code === 'link_revoked');
+  const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM submissions').first();
+  ok('no submission was written by any refused attempt', n.n === 0);
+}
+
+section('Client intake links: Email Client goes through the one sender, or says it did not');
+{
+  const { env, admin } = await cilSetup();
+  const { j } = await cilMake(env, admin, { retainer_choice: '3600', client_email: 'client@example.com' });
+  let res = await call(env, `/client-intakes/${j.link.id}/email`, { method: 'POST', cookie: admin });
+  ok('with email not configured, it refuses and says so', res.status === 502 && (await jsonOf(res)).code === 'email_not_sent');
+  env.RESEND_API_KEY = 'k';
+  const sent = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => { if (String(u).includes('resend.com')) { sent.push(JSON.parse(init.body)); return new Response('{}', { status: 200 }); } return realFetch(u, init); };
+  res = await call(env, `/client-intakes/${j.link.id}/email`, { method: 'POST', cookie: admin });
+  globalThis.fetch = realFetch;
+  const k = await jsonOf(res);
+  ok('configured, it sends one email to the client', res.status === 200 && sent.length === 1 && sent[0].to === 'client@example.com');
+  ok('carrying the link and no amount or name in its subject',
+     sent[0].text.includes(j.link.url) && !/3,600|1,800|Jordan/.test(sent[0].subject));
+  ok('and the intake reads Sent by email', k.link.status === 'sent' && k.link.shared_via === 'email');
+  const { j: j2 } = await cilMake(env, admin, { retainer_choice: '2000' });
+  res = await call(env, `/client-intakes/${j2.link.id}/email`, { method: 'POST', cookie: admin });
+  ok('with no address on the intake, it refuses by name', res.status === 409 && (await jsonOf(res)).code === 'no_email');
+}
+
+section('Client intake links: the schema is guarded, swept and classified');
+{
+  const env = freshEnv();
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  const db = env.DB;
+  await db.prepare('DROP TABLE client_intake_event').run();
+  let res = await call(env, '/client-intakes', { cookie: admin });
+  ok('before portal-setup the office route names the workflow', res.status === 503 && /Set up the case portal/.test((await jsonOf(res)).error));
+  res = await call(env, '/client-intake/' + 'b'.repeat(64));
+  ok('and the public route says the form is unavailable', res.status === 503);
+  const h = await jsonOf(await call(env, '/health', { cookie: admin }));
+  ok('health names the missing table', (h.missing_tables || []).includes('client_intake_event'));
+
+  const { env: e2, admin: a2 } = await cilSetup();
+  const { j } = await cilMake(e2, a2, { retainer_choice: '2000' });
+  const tok = cilTok(j.link);
+  const rd = await jsonOf(await call(e2, `/client-intake/${tok}`));
+  const sub = await jsonOf(await call(e2, `/client-intake/${tok}/submit`, { method: 'POST', body: cilClientBody(rd) }));
+  const del = await call(e2, `/cases/${sub.case_no}/intake-delete`, { method: 'POST', cookie: a2 });
+  ok('a fresh client-link intake can still be quick-deleted', del.status === 200, String(del.status));
+  const kept = await e2.DB.prepare('SELECT signed_name, accepted_terms_hash FROM client_intake_link WHERE id = ?').bind(j.link.id).first();
+  ok('and the signed-terms record survives it', kept && kept.signed_name && kept.accepted_terms_hash);
+  const after = await jsonOf(await call(e2, `/client-intakes/${j.link.id}`, { cookie: a2 }));
+  ok('the office is told the submission no longer exists', after.link.submission_exists === false && after.submission === null);
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));

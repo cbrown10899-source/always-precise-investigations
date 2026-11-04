@@ -15851,6 +15851,13 @@ const INTAKE_EXEMPT = {
   invoice_payment_token: 'child of invoices', invoice_payment_void: 'child of invoices',
   retainer_payment_void: 'child of retainer_payment',
   subject_vehicles: 'child of case_subjects',
+  /* WHAT A CLIENT SIGNED THROUGH A PREPARED LINK is the same class of evidence
+     as `document_acceptance`: the exact retainer, non-refundable portion and
+     terms they accepted, and when. Destroying it to tidy away a duplicate
+     intake would delete the answer to "what did they agree to", so it neither
+     blocks the delete nor dies with it. Its event trail follows it. */
+  client_intake_link: 'the signed retainer terms are non-deletable evidence, and they must not block deletion',
+  client_intake_event: 'child of client_intake_link',
 };
 
 /* The blocker probe, extracted so the DELETE and the EXPLANATION cannot
@@ -16035,6 +16042,10 @@ const DEMO_SWEEP = [
   ['case_refund',           'DELETE FROM case_refund WHERE case_no LIKE ?'],
   ['case_closeout',         'DELETE FROM case_closeout WHERE case_no LIKE ?'],
   ['case_closeout_detail',    'DELETE FROM case_closeout_detail WHERE case_no LIKE ?'],
+  /* A prepared client intake whose submission was a TEST- case goes with it,
+     its event trail first (addressed through the parent, the children rule). */
+  ['client_intake_event',   'DELETE FROM client_intake_event WHERE link_id IN (SELECT id FROM client_intake_link WHERE case_no LIKE ?)'],
+  ['client_intake_link',    'DELETE FROM client_intake_link WHERE case_no LIKE ?'],
 
   /* --- the spine, last --- */
   ['submissions',           'DELETE FROM submissions WHERE case_no LIKE ?'],
@@ -17680,6 +17691,761 @@ async function handleBootstrap(request, env) {
   }), env);
 }
 
+/* ============= PRIVATE CLIENT INTAKE LINKS (owner brief 2026-11-04) =========
+
+   "I must be able to open my portal on my phone, select or customize a
+   client's retainer, generate a secure intake link, and send it through text
+   messaging. The client must be able to open the link on their phone, complete
+   the intake, review their retainer and financial terms, electronically sign
+   BELOW those terms, and submit the completed form."
+
+   THE SHAPE. A prepared intake is a `client_intake_link` row carrying the
+   client's name and number, the chosen retainer and its non-refundable half,
+   in integer cents. The link the client receives carries ONE thing — a
+   256-bit token — and the public routes below accept it only while the row is
+   unrevoked, unexpired and unsubmitted. The submission becomes an ordinary
+   private `submissions` row, so it lands on the Intakes desk, Simple View and
+   the case screens exactly like every other intake; the row keeps the exact
+   terms the client was shown, their hash, the typed name and the instant.
+
+   THE TERMS HAVE ONE WRITER, `clientIntakeTerms`. The client's page renders
+   what it returns, the submit route recomputes it from the row and refuses a
+   submission whose hash differs, and the stored record is that same object —
+   so what the client read, what they signed and what the office keeps cannot
+   say three different things. The figures come from the ROW, never from the
+   request: a client cannot post a different retainer, because nothing reads
+   one from them.
+
+   THE NON-REFUNDABLE PORTION IS EXACTLY HALF, IN CENTS. A retainer with an odd
+   number of cents has no exact half in cents, and the half is then rounded
+   DOWN to the cent — the client's favour, by at most half a cent. No float
+   ever multiplies money here (the `customCents` lesson). */
+const CLIENT_INTAKE_PRESETS = [1600, 2000, 2400, 2800, 3200, 3600, 4000];   // whole dollars
+const CLIENT_INTAKE_MAX_CENTS = 100_000_000;     // $1,000,000 — a typo guard, not a policy
+const CLIENT_INTAKE_LINK_DAYS = 30;
+const CLIENT_INTAKE_TERMS_VERSION = 'private-client-intake-2026-11-04';
+const CLIENT_INTAKE_TYPES = [
+  ['surveillance', 'Surveillance'], ['domestic', 'Domestic / Infidelity'],
+  ['custody', 'Custody / Family Matter'], ['locate', 'Person Locate'],
+  ['background', 'Background / Due Diligence'], ['civil', 'Civil / Legal Support'],
+  ['other', 'Other'],
+];
+const CLIENT_INTAKE_CONTACT = [['call', 'Phone call'], ['text', 'Text message'], ['email', 'Email']];
+const CLIENT_INTAKE_URGENCY = [['standard', 'Standard'], ['soon', 'Within the next few days'],
+  ['urgent', 'Urgent — as soon as possible']];
+const CIL_TOKEN_RE = /^[0-9a-f]{64}$/;
+const CIL_ID_RE = /^CIL-[0-9a-f]{32}$/;
+const CIL_SETUP = 'Client intake links need a database update first. Run the "Set up the case '
+  + 'portal" workflow in GitHub Actions, then try again.';
+
+/* "$5,200.50" -> 520050. Digits and at most two decimals, nothing else: a
+   minus sign, a letter or a third decimal place is refused rather than read
+   as something nearby. Parsed as STRINGS, so no float touches the figure. */
+function parseMoneyCents(v) {
+  const t = String(v == null ? '' : v).replace(/[$,\s]/g, '');
+  if (!/^\d{1,9}(\.\d{1,2})?$/.test(t)) return null;
+  const [w, f = ''] = t.split('.');
+  return Number(w) * 100 + Number((f + '00').slice(0, 2));
+}
+
+/* Cents to "$2,000" or "$2,600.50". `cents` forces the decimals, so a document
+   whose retainer has cents prints every figure with them. */
+function centsMoney(c, cents = false) {
+  const n = Math.round(Number(c) || 0);
+  const whole = Math.floor(n / 100), frac = n % 100;
+  return '$' + whole.toLocaleString('en-US')
+    + (frac || cents ? '.' + String(frac).padStart(2, '0') : '');
+}
+
+/* The office's choice, resolved. The ONE place the 50% rule is written. */
+function clientIntakeRetainer(body) {
+  const choice = String(body.retainer_choice == null ? '' : body.retainer_choice).trim();
+  if (choice === 'custom') {
+    const raw = String(body.custom_retainer == null ? '' : body.custom_retainer).trim();
+    if (!raw) return { error: 'Enter the custom retainer amount.', code: 'custom_retainer_missing' };
+    const c = parseMoneyCents(raw);
+    if (c === null) {
+      return { error: 'Enter the custom retainer as a dollar amount, like 5200 or 5200.50.',
+               code: 'bad_custom_retainer' };
+    }
+    if (c <= 0) return { error: 'The custom retainer must be more than zero.', code: 'bad_custom_retainer' };
+    if (c > CLIENT_INTAKE_MAX_CENTS) {
+      return { error: `A retainer above ${centsMoney(CLIENT_INTAKE_MAX_CENTS)} is not accepted here.`,
+               code: 'custom_retainer_too_large' };
+    }
+    return { choice: 'custom', retainer_cents: c, nonref_cents: Math.floor(c / 2) };
+  }
+  const d = Number(choice);
+  if (!choice || !CLIENT_INTAKE_PRESETS.includes(d) || String(d) !== choice) {
+    return { error: 'Choose one of the listed retainers, or Custom.', code: 'bad_retainer_choice' };
+  }
+  return { choice, retainer_cents: d * 100, nonref_cents: d * 50 };
+}
+
+/* THE TERMS, AS THE CLIENT READS THEM. Wording follows the private rate
+   sheet's own (`rateSheets`, `privateRateLine`, `engagementBlock`) — no new
+   financial policy is stated here. What the services agreement says about an
+   unused balance, additional charges and refunds is left to it, and to the
+   law, in so many words. */
+function clientIntakeTerms(r) {
+  const anyCents = Boolean((r.retainer_cents % 100) || (r.nonref_cents % 100));
+  const m = c => centsMoney(c, anyCents);
+  const hr = centsMoney(r.hourly_cents);
+  const ret = m(r.retainer_cents), nr = m(r.nonref_cents), mh = Number(r.min_hours);
+  return {
+    version: r.terms_version,
+    retainer: ret, non_refundable: nr, hourly: `${hr}/hr`, min_hours: mh,
+    lines: [
+      { label: 'Retainer', value: ret,
+        note: 'Applied in full toward authorized investigative services. It is not a separate '
+            + 'fee — your retainer funds the work performed on your case.' },
+      { label: 'Non-refundable portion', value: nr, term: true,
+        note: 'This portion of the retainer is non-refundable upon engagement and reservation '
+            + 'of investigative services.' },
+      { label: 'Investigative rate', value: `${hr}/hr`,
+        note: `Investigative time is deducted from the retainer at ${hr} per hour. Field `
+            + 'investigation, necessary video review, case documentation and report preparation '
+            + 'are handled at this rate and applied against your authorized retainer.' },
+      { label: 'Minimum per surveillance day', value: `${mh}-HOUR MINIMUM PER SURVEILLANCE DAY`,
+        term: true, note: `Each day of surveillance is billed at no less than ${mh} hours.` },
+      { label: 'If additional time is needed', value: `${hr}/hr`,
+        note: 'We contact you before exceeding the authorized retainer. Additional investigative '
+            + 'time is never incurred without your approval.' },
+    ],
+    conditions: 'Any unused retainer balance, additional charges, refunds and other payment '
+      + 'conditions are governed by the Always Precise Investigations services agreement and '
+      + 'applicable law.',
+    acknowledgment: `I have reviewed the retainer of ${ret}, of which ${nr} is non-refundable, `
+      + `and the investigative rate of ${hr} per hour with a ${mh}-hour minimum per `
+      + 'surveillance day.',
+    authorization: [
+      'The information I have provided is accurate to the best of my knowledge.',
+      'I am authorized to request these investigative services.',
+      `I acknowledge the financial terms displayed above: a retainer of ${ret}, of which ${nr} `
+        + `is non-refundable, billed at ${hr} per hour with a ${mh}-hour minimum per `
+        + 'surveillance day.',
+      'I affirm a lawful purpose, and I understand that all services must be performed in '
+        + 'compliance with applicable law.',
+      'Submitting this form does not by itself mean that services have begun or that Always '
+        + 'Precise Investigations has accepted the matter.',
+      'The conditions of the Always Precise Investigations services agreement remain in effect, '
+        + 'subject to applicable law.',
+    ],
+  };
+}
+
+async function clientIntakeTermsHash(terms) { return sha256Hex(JSON.stringify(terms)); }
+
+/* Derived, never stored — the order is the precedence. */
+function cilStatus(row, now = nowIso()) {
+  if (row.revoked_at) return 'revoked';
+  if (row.reviewed_at) return 'reviewed';
+  if (row.submitted_at) return 'submitted';
+  if (!row.token) return 'draft';
+  if (row.expires_at && row.expires_at < now) return 'expired';
+  if (row.first_viewed_at) return 'viewed';
+  if (row.shared_at) return 'sent';
+  return 'ready';
+}
+
+function cilUrl(env, token) {
+  const site = env.SITE_ORIGIN || 'https://alwayspreciseinvestigations.net';
+  /* THE TOKEN RIDES IN THE FRAGMENT. A fragment is never sent to a server, so
+     it is in no access log and no Referer, and a messaging app that fetches
+     the link to draw a preview fetches the bare page — which cannot read the
+     terms or count as the client opening it. */
+  return `${site}/intake/client/#k=${token}`;
+}
+
+/* The ONE writer of the text the client receives, by text message or email. */
+function cilMessage(url) {
+  return 'Hello, this is Always Precise Investigations. Please complete your confidential client '
+    + 'intake form using the secure link below. Your agreed retainer and payment terms are '
+    + 'included for review before signing.\n\n' + url + '\n\nThank you,\nAlways Precise Investigations';
+}
+
+function cilView(env, row, now = nowIso()) {
+  const status = cilStatus(row, now);
+  const live = row.token && ['ready', 'sent', 'viewed', 'expired'].includes(status);
+  const url = live ? cilUrl(env, row.token) : null;
+  const anyCents = Boolean((row.retainer_cents % 100) || (row.nonref_cents % 100));
+  return {
+    id: row.id, status,
+    client_name: row.client_name, client_phone: row.client_phone || '',
+    client_email: row.client_email || '',
+    retainer_choice: row.retainer_choice,
+    retainer_cents: row.retainer_cents, nonref_cents: row.nonref_cents,
+    retainer: centsMoney(row.retainer_cents, anyCents),
+    non_refundable: centsMoney(row.nonref_cents, anyCents),
+    hourly_cents: row.hourly_cents, min_hours: row.min_hours,
+    terms_version: row.terms_version,
+    created_at: row.created_at, link_created_at: row.link_created_at || null,
+    expires_at: row.expires_at || null,
+    shared_at: row.shared_at || null, shared_via: row.shared_via || null,
+    first_viewed_at: row.first_viewed_at || null, last_viewed_at: row.last_viewed_at || null,
+    view_count: row.view_count || 0,
+    submitted_at: row.submitted_at || null, case_no: row.case_no || null,
+    submission_exists: row.case_no ? Boolean(row.sub_exists) : null,
+    signed_name: row.signed_name || null, signed_at: row.signed_at || null,
+    reviewed_at: row.reviewed_at || null, revoked_at: row.revoked_at || null,
+    url, message: url ? cilMessage(url) : null,
+  };
+}
+
+async function cilMissing(env) {
+  const missing = await missingTables(env);
+  return missing.includes('client_intake_link') || missing.includes('client_intake_event');
+}
+
+/* Best-effort, like every audit row here: a failed trail entry never costs
+   the action it describes. */
+async function cilEvent(env, linkId, action, detail, actor) {
+  try {
+    await env.DB.prepare(
+      'INSERT INTO client_intake_event (link_id, action, detail, actor, at) VALUES (?, ?, ?, ?, ?)')
+      .bind(linkId, action, detail || null, actor || null, nowIso()).run();
+  } catch { /* the action stands */ }
+}
+
+const cilText = (v, n) => String(v == null ? '' : v)
+  .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim().slice(0, n);
+const cilEmailOk = e => e.length <= 200 && /^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(e);
+
+async function cilRow(env, id) {
+  if (!CIL_ID_RE.test(id)) return null;
+  return env.DB.prepare(
+    `SELECT l.*, (SELECT 1 FROM submissions s WHERE s.case_no = l.case_no) AS sub_exists
+       FROM client_intake_link l WHERE l.id = ?`).bind(id).first();
+}
+
+/* The office's three fields and the retainer, validated once for create and
+   for a draft's edit. */
+function cilClientFields(b) {
+  const name = cilText(b.client_name, 120);
+  if (!name) return { error: "Enter the client's name.", code: 'client_name_required' };
+  const phone = cilText(b.client_phone, 40);
+  const digits = phone.replace(/\D/g, '');
+  if (!phone) return { error: "Enter the client's mobile number so the link can be texted.", code: 'client_phone_required' };
+  if (digits.length < 10 || digits.length > 15) {
+    return { error: 'Enter the phone number with its area code, like (434) 555-0123.', code: 'bad_phone' };
+  }
+  const email = cilText(b.client_email, 200);
+  if (email && !cilEmailOk(email)) return { error: 'That email address does not look complete.', code: 'bad_email' };
+  const r = clientIntakeRetainer(b);
+  if (r.error) return r;
+  return { name, phone, email, ...r };
+}
+
+async function cilList(env) {
+  if (await cilMissing(env)) return json({ error: CIL_SETUP, code: 'schema_missing' }, 503);
+  const { results } = await env.DB.prepare(
+    `SELECT l.*, (SELECT 1 FROM submissions s WHERE s.case_no = l.case_no) AS sub_exists
+       FROM client_intake_link l ORDER BY l.created_at DESC, l.id DESC LIMIT 500`).all();
+  const now = nowIso();
+  return json({ links: (results || []).map(r => cilView(env, r, now)), options: cilOptions() });
+}
+
+function cilOptions() {
+  return {
+    presets: CLIENT_INTAKE_PRESETS.map(d => ({
+      value: String(d), retainer: centsMoney(d * 100), non_refundable: centsMoney(d * 50),
+      retainer_cents: d * 100, nonref_cents: d * 50,
+    })),
+    hourly_cents: PERSONAL.hourly * 100, min_hours: PERSONAL.minHours,
+    link_days: CLIENT_INTAKE_LINK_DAYS, max_cents: CLIENT_INTAKE_MAX_CENTS,
+  };
+}
+
+/* The office's preview of the terms for a choice — the SERVER's arithmetic,
+   which is what the confirm step shows before a link exists. Writes nothing. */
+async function cilPreview(request, env) {
+  const b = await readJson(request);
+  const r = clientIntakeRetainer(b);
+  if (r.error) return json({ error: r.error, code: r.code }, 400);
+  const terms = clientIntakeTerms({ ...r, hourly_cents: PERSONAL.hourly * 100,
+    min_hours: PERSONAL.minHours, terms_version: CLIENT_INTAKE_TERMS_VERSION });
+  return json({ ok: true, retainer_cents: r.retainer_cents, nonref_cents: r.nonref_cents, terms });
+}
+
+/* CREATE, or SAVE A DRAFT'S EDIT, through one writer. A link is minted only on
+   an explicit `confirm_terms: true` — the office confirms the figures before a
+   client can ever be sent them — and once a link exists its terms are locked:
+   changing them is a revoke and a fresh intake, never an edit underneath a
+   link the client may already have open. */
+async function cilSave(request, env, user, id) {
+  if (await cilMissing(env)) return json({ error: CIL_SETUP, code: 'schema_missing' }, 503);
+  const b = await readJson(request);
+  const f = cilClientFields(b);
+  if (f.error) return json({ error: f.error, code: f.code }, 400);
+  const draft = b.draft === true;
+  if (!draft && b.confirm_terms !== true) {
+    return json({ error: 'Confirm the retainer and non-refundable amount before creating the link.',
+                  code: 'terms_not_confirmed' }, 400);
+  }
+  const now = nowIso();
+  const token = draft ? null : randomHex(32);
+  const expires = draft ? null : new Date(Date.now() + CLIENT_INTAKE_LINK_DAYS * 86400_000).toISOString();
+  if (!id) {
+    id = 'CIL-' + randomHex(16);
+    await env.DB.prepare(
+      `INSERT INTO client_intake_link (id, token, client_name, client_phone, client_email,
+         retainer_choice, retainer_cents, nonref_cents, hourly_cents, min_hours, terms_version,
+         terms_confirmed_by, terms_confirmed_at, created_by, created_at, updated_at,
+         link_created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(id, token, f.name, f.phone, f.email || null, f.choice, f.retainer_cents, f.nonref_cents,
+        PERSONAL.hourly * 100, PERSONAL.minHours, CLIENT_INTAKE_TERMS_VERSION,
+        draft ? null : user.id, draft ? null : now, user.id, now, now,
+        draft ? null : now, expires).run();
+    await cilEvent(env, id, draft ? 'draft_saved' : 'link_created',
+      `${centsMoney(f.retainer_cents)} retainer`, user.id);
+    return json({ ok: true, link: cilView(env, await cilRow(env, id)) }, 201);
+  }
+  const row = await cilRow(env, id);
+  if (!row) return json({ error: 'not found' }, 404);
+  if (row.token || row.revoked_at) {
+    return json({ error: 'This intake already has a link, so its terms are fixed. Revoke it and '
+      + 'prepare a new one to change them.', code: 'terms_locked' }, 409);
+  }
+  /* `token IS NULL` IN THE STATEMENT, so two taps on Create Link cannot mint
+     two tokens for one row: the second matches nothing. */
+  const r = await env.DB.prepare(
+    `UPDATE client_intake_link SET token = ?, client_name = ?, client_phone = ?, client_email = ?,
+       retainer_choice = ?, retainer_cents = ?, nonref_cents = ?, hourly_cents = ?, min_hours = ?,
+       terms_version = ?, terms_confirmed_by = ?, terms_confirmed_at = ?, updated_at = ?,
+       link_created_at = ?, expires_at = ?
+     WHERE id = ? AND token IS NULL AND revoked_at IS NULL`)
+    .bind(token, f.name, f.phone, f.email || null, f.choice, f.retainer_cents, f.nonref_cents,
+      PERSONAL.hourly * 100, PERSONAL.minHours, CLIENT_INTAKE_TERMS_VERSION,
+      draft ? null : user.id, draft ? null : now, now, draft ? null : now, expires, id).run();
+  if (!r.meta || !r.meta.changes) {
+    return json({ error: 'This intake already has a link, so its terms are fixed.', code: 'terms_locked' }, 409);
+  }
+  await cilEvent(env, id, draft ? 'draft_saved' : 'link_created',
+    `${centsMoney(f.retainer_cents)} retainer`, user.id);
+  return json({ ok: true, link: cilView(env, await cilRow(env, id)) });
+}
+
+/* What the office did with a live link. `shared` records that the office
+   OPENED a way to send it — a text composer or the clipboard — and says so:
+   it is never recorded as delivered, because the portal cannot know that.
+   `renew` (Resend) gives a link that is not yet submitted another
+   CLIENT_INTAKE_LINK_DAYS from now. */
+async function cilAct(request, env, user, id, act) {
+  if (await cilMissing(env)) return json({ error: CIL_SETUP, code: 'schema_missing' }, 503);
+  const row = await cilRow(env, id);
+  if (!row) return json({ error: 'not found' }, 404);
+  const now = nowIso();
+  const status = cilStatus(row, now);
+  const done = () => cilRow(env, id).then(r => json({ ok: true, link: cilView(env, r) }));
+
+  if (act === 'revoke') {
+    if (row.submitted_at) {
+      return json({ error: 'The client has already submitted this intake, so there is no link to '
+        + 'revoke.', code: 'already_submitted' }, 409);
+    }
+    if (row.revoked_at) return done();
+    await env.DB.prepare(
+      'UPDATE client_intake_link SET revoked_at = ?, revoked_by = ?, updated_at = ? WHERE id = ? AND revoked_at IS NULL AND submitted_at IS NULL')
+      .bind(now, user.id, now, id).run();
+    await cilEvent(env, id, 'revoked', null, user.id);
+    return done();
+  }
+  if (act === 'reviewed') {
+    if (!row.submitted_at) {
+      return json({ error: 'Only a submitted intake can be marked reviewed.', code: 'not_submitted' }, 409);
+    }
+    if (!row.reviewed_at) {
+      await env.DB.prepare(
+        'UPDATE client_intake_link SET reviewed_at = ?, reviewed_by = ?, updated_at = ? WHERE id = ? AND reviewed_at IS NULL')
+        .bind(now, user.id, now, id).run();
+      await cilEvent(env, id, 'reviewed', null, user.id);
+    }
+    return done();
+  }
+
+  // Everything below acts on a LIVE link.
+  if (!row.token) return json({ error: 'Create the link first.', code: 'no_link' }, 409);
+  if (row.revoked_at) return json({ error: 'This link was revoked.', code: 'link_revoked' }, 409);
+  if (row.submitted_at) {
+    return json({ error: 'The client has already submitted this intake.', code: 'already_submitted' }, 409);
+  }
+  if (act === 'renew') {
+    const exp = new Date(Date.now() + CLIENT_INTAKE_LINK_DAYS * 86400_000).toISOString();
+    await env.DB.prepare('UPDATE client_intake_link SET expires_at = ?, updated_at = ? WHERE id = ?')
+      .bind(exp, now, id).run();
+    await cilEvent(env, id, 'renewed', `link good until ${exp.slice(0, 10)}`, user.id);
+    return done();
+  }
+  if (status === 'expired') {
+    return json({ error: 'This link has expired. Use Resend to give it another '
+      + `${CLIENT_INTAKE_LINK_DAYS} days first.`, code: 'link_expired' }, 409);
+  }
+  if (act === 'shared') {
+    const b = await readJson(request);
+    const via = ['text', 'copy'].includes(b.via) ? b.via : null;
+    if (!via) return json({ error: 'Say how the link was shared.', code: 'bad_via' }, 400);
+    await env.DB.prepare(
+      'UPDATE client_intake_link SET shared_at = ?, shared_via = ?, updated_at = ? WHERE id = ?')
+      .bind(now, via, now, id).run();
+    await cilEvent(env, id, via === 'text' ? 'text_composer_opened' : 'link_copied', null, user.id);
+    return done();
+  }
+  if (act === 'email') {
+    if (!row.client_email) {
+      return json({ error: 'No email address is on this intake.', code: 'no_email' }, 409);
+    }
+    if (!(await withinRateLimit(env, 'mail'))) {
+      return json({ error: 'Too many emails in the last minute. Wait a moment and try again.' }, 429);
+    }
+    const url = cilUrl(env, row.token);
+    const text = cilMessage(url);
+    const html = `<div style="font-family:'Segoe UI',Arial,sans-serif;color:#1c2531;line-height:1.6;max-width:520px">
+  <p>Hello, this is Always Precise Investigations. Please complete your confidential client intake
+     form using the secure link below. Your agreed retainer and payment terms are included for
+     review before signing.</p>
+  <p><a href="${escHtml(url)}" style="display:inline-block;background:#2f7d90;color:#fff;
+     text-decoration:none;font-weight:700;padding:12px 22px;border-radius:8px">Open your secure intake</a></p>
+  <p style="font-size:.86rem;color:#5c6775">Or paste this into your browser:<br>
+     <span style="word-break:break-all">${escHtml(url)}</span></p>
+  <p>Thank you,<br>Always Precise Investigations</p>
+  <hr style="border:0;border-top:1px solid #dfe3e8">
+  <p style="font-size:.8rem;color:#5c6775">Always Precise Investigations, LLC &middot; Va DCJS #11-9159</p>
+</div>`;
+    /* The subject names nobody and no amount — it shows on a lock screen. */
+    const sent = await sendMail(env, { to: row.client_email,
+      subject: 'Your confidential client intake — Always Precise Investigations', text, html });
+    if (!sent.sent) {
+      await cilEvent(env, id, 'email_failed', sent.reason || 'not sent', user.id);
+      return json({ error: sent.reason === 'not_configured'
+        ? 'Email is not set up for this portal. Use Text Client or Copy Link instead.'
+        : 'The email could not be sent. Use Text Client or Copy Link instead.',
+        code: 'email_not_sent', reason: sent.reason || null }, 502);
+    }
+    await env.DB.prepare(
+      "UPDATE client_intake_link SET shared_at = ?, shared_via = 'email', updated_at = ? WHERE id = ?")
+      .bind(now, now, id).run();
+    await cilEvent(env, id, 'emailed', null, user.id);
+    return done();
+  }
+  return json({ error: 'not found' }, 404);
+}
+
+/* The full record of one prepared intake, for the office: the row, the terms
+   it carries, what was accepted, the submission it produced and its trail. */
+async function cilRead(env, id) {
+  if (await cilMissing(env)) return json({ error: CIL_SETUP, code: 'schema_missing' }, 503);
+  const row = await cilRow(env, id);
+  if (!row) return json({ error: 'not found' }, 404);
+  let accepted = null;
+  try { accepted = row.accepted_terms ? JSON.parse(row.accepted_terms) : null; } catch { accepted = null; }
+  let submission = null;
+  if (row.case_no) {
+    const s = await env.DB.prepare(
+      'SELECT case_no, kind, service, client_name, payload, created_at FROM submissions WHERE case_no = ?')
+      .bind(row.case_no).first();
+    if (s) {
+      let payload = {};
+      try { payload = JSON.parse(s.payload); } catch { payload = {}; }
+      submission = { case_no: s.case_no, service: s.service, created_at: s.created_at, payload };
+    }
+  }
+  const { results } = await env.DB.prepare(
+    `SELECT e.action, e.detail, e.at, u.display_name AS actor_name
+       FROM client_intake_event e LEFT JOIN users u ON u.id = e.actor
+      WHERE e.link_id = ? ORDER BY e.id`).bind(id).all();
+  return json({
+    link: cilView(env, row),
+    terms: clientIntakeTerms(row),
+    accepted_terms: accepted, accepted_terms_hash: row.accepted_terms_hash || null,
+    signature_hash: row.signature_hash || null,
+    submission, events: results || [],
+  });
+}
+
+/* ------------------------------------------------------- the client's side */
+
+/* The public answer for a token that cannot be used, said the same way
+   whichever reason applies to a token nobody issued, so the routes are no
+   help to someone guessing. A real link's own state IS said, because the
+   person holding it is owed the reason. */
+const CIL_GONE = 'This intake link is not valid. Please contact Always Precise Investigations '
+  + 'at (434) 907-0975 for a new link.';
+
+async function cilByToken(env, token) {
+  if (!CIL_TOKEN_RE.test(token)) return null;
+  return env.DB.prepare('SELECT * FROM client_intake_link WHERE token = ?').bind(token).first();
+}
+
+function cilRefusal(row, now) {
+  if (!row) return json({ error: CIL_GONE, code: 'link_not_found' }, 404);
+  if (row.revoked_at) {
+    return json({ error: 'This intake link has been withdrawn. Please contact Always Precise '
+      + 'Investigations at (434) 907-0975.', code: 'link_revoked' }, 410);
+  }
+  if (row.submitted_at) {
+    return json({ error: 'This intake has already been submitted to Always Precise Investigations. '
+      + 'Thank you.', code: 'already_submitted' }, 409);
+  }
+  if (row.expires_at && row.expires_at < now) {
+    return json({ error: 'This intake link has expired. Please contact Always Precise '
+      + 'Investigations at (434) 907-0975 for a new link.', code: 'link_expired' }, 410);
+  }
+  return null;
+}
+
+async function cilPublicRead(env, token) {
+  if (await cilMissing(env)) {
+    return json({ error: 'This form is not available right now. Please try again later.' }, 503);
+  }
+  const row = await cilByToken(env, token);
+  const now = nowIso();
+  const refused = cilRefusal(row, now);
+  if (refused) return refused;
+  /* OPENED is recorded here and nowhere else — this route is only reached by
+     the page's own script reading the fragment, never by a link preview. */
+  await env.DB.prepare(
+    `UPDATE client_intake_link SET view_count = view_count + 1,
+       first_viewed_at = COALESCE(first_viewed_at, ?), last_viewed_at = ? WHERE id = ?`)
+    .bind(now, now, row.id).run();
+  if (!row.first_viewed_at) await cilEvent(env, row.id, 'opened', null, null);
+  const terms = clientIntakeTerms(row);
+  return json({
+    ok: true,
+    client: { name: row.client_name, phone: row.client_phone || '', email: row.client_email || '' },
+    terms, terms_hash: await clientIntakeTermsHash(terms),
+    types: CLIENT_INTAKE_TYPES.map(([value, label]) => ({ value, label })),
+    contact_methods: CLIENT_INTAKE_CONTACT.map(([value, label]) => ({ value, label })),
+    urgency: CLIENT_INTAKE_URGENCY.map(([value, label]) => ({ value, label })),
+  });
+}
+
+/* What the client sent, validated and shaped. Almost nothing about the
+   subject is required — a client often does not know — and a field the client
+   marked "I don't know" carries `<field>_status: 'unknown'` beside an EMPTY
+   value (the INTAKE-NA rule: never a placeholder in a data field). */
+function cilSubmittedFields(b) {
+  const t = (k, n = 300) => cilText(b[k], n);
+  const long = k => cilText(b[k], 4000);
+  const f = {
+    full_name: t('full_name', 120), preferred_name: t('preferred_name', 80),
+    phone: t('phone', 40), email: t('email', 200), address: t('address', 300),
+    contact_method: t('contact_method', 20),
+    investigation_type: t('investigation_type', 20), type_other: t('type_other', 120),
+    description: long('description'),
+    subject_name: t('subject_name', 120), subject_age: t('subject_age', 60),
+    subject_address: t('subject_address', 300), subject_phone: t('subject_phone', 120),
+    subject_email: t('subject_email', 200), subject_workplace: t('subject_workplace', 300),
+    subject_locations: long('subject_locations'), subject_photo: t('subject_photo', 20),
+    vehicle_year: t('vehicle_year', 8), vehicle_make: t('vehicle_make', 40),
+    vehicle_model: t('vehicle_model', 40), vehicle_color: t('vehicle_color', 40),
+    vehicle_plate: t('vehicle_plate', 20), vehicle_state: t('vehicle_state', 30),
+    vehicle_more: long('vehicle_more'),
+    objective: long('objective'), known_schedule: long('known_schedule'),
+    other_info: long('other_info'),
+    start_date: t('start_date', 10), preferred_times: long('preferred_times'),
+    start_location: t('start_location', 300), safety_notes: long('safety_notes'),
+    urgency: t('urgency', 20),
+  };
+  const unknown = new Set((Array.isArray(b.unknown) ? b.unknown : []).map(String));
+  for (const k of ['subject_name', 'subject_age', 'subject_address', 'subject_workplace', 'vehicle']) {
+    if (unknown.has(k)) {
+      if (k === 'vehicle') { for (const v of ['vehicle_year', 'vehicle_make', 'vehicle_model',
+        'vehicle_color', 'vehicle_plate', 'vehicle_state']) f[v] = ''; }
+      else f[k] = '';
+      f[k + '_status'] = 'unknown';
+    }
+  }
+  if (!f.full_name) return { error: 'Please enter your full legal name.', code: 'full_name_required' };
+  if (!f.phone && !f.email) {
+    return { error: 'Please give a phone number or an email address so we can reach you.',
+             code: 'contact_required' };
+  }
+  if (f.email && !cilEmailOk(f.email)) return { error: 'That email address does not look complete.', code: 'bad_email' };
+  if (f.contact_method && !CLIENT_INTAKE_CONTACT.some(([v]) => v === f.contact_method)) f.contact_method = '';
+  if (!CLIENT_INTAKE_TYPES.some(([v]) => v === f.investigation_type)) {
+    return { error: 'Please choose the type of investigation.', code: 'type_required' };
+  }
+  if (!f.objective) {
+    return { error: 'Please describe what you would like the investigation to establish.',
+             code: 'objective_required' };
+  }
+  if (f.start_date && !/^\d{4}-\d{2}-\d{2}$/.test(f.start_date)) f.start_date = '';
+  if (f.urgency && !CLIENT_INTAKE_URGENCY.some(([v]) => v === f.urgency)) f.urgency = '';
+  if (f.subject_photo && !['yes', 'no', 'unsure'].includes(f.subject_photo)) f.subject_photo = '';
+  return { fields: f };
+}
+
+/* The submission's payload: the client's own record under `client_intake`,
+   plus the keys the existing intake screens and the field's allow-list
+   already read, so this intake looks like every other one everywhere it is
+   drawn. The fieldwork summary keys are composed from the client's words,
+   never from inference. */
+function cilPayload(caseNo, row, f, terms, termsHash, sig, signedName, signedAt) {
+  const label = (list, v) => (list.find(([k]) => k === v) || [, ''])[1];
+  const type = f.investigation_type === 'other' && f.type_other
+    ? `Other — ${f.type_other}` : label(CLIENT_INTAKE_TYPES, f.investigation_type);
+  const vehicle = [f.vehicle_year, f.vehicle_color, f.vehicle_make, f.vehicle_model]
+    .filter(Boolean).join(' ')
+    + (f.vehicle_plate ? `${f.vehicle_year || f.vehicle_make || f.vehicle_model ? ', ' : ''}plate ${f.vehicle_plate}${f.vehicle_state ? ` (${f.vehicle_state})` : ''}` : '');
+  const desc = [
+    f.subject_age && `Approximate age / DOB: ${f.subject_age}`,
+    vehicle && `Vehicle: ${vehicle}`,
+    f.vehicle_more && `Additional vehicles: ${f.vehicle_more}`,
+    f.subject_workplace && `Workplace: ${f.subject_workplace}`,
+    f.subject_locations && `Known locations: ${f.subject_locations}`,
+    f.subject_phone && `Subject phone: ${f.subject_phone}`,
+    f.subject_email && `Subject email: ${f.subject_email}`,
+    f.subject_photo && `Photo available: ${f.subject_photo}`,
+  ].filter(Boolean).join('\n');
+  const notes = [
+    f.preferred_times && `Preferred dates / times: ${f.preferred_times}`,
+    f.start_location && `Starting location: ${f.start_location}`,
+    f.safety_notes && `Access, parking and safety: ${f.safety_notes}`,
+    f.other_info && `Other people, vehicles or locations: ${f.other_info}`,
+  ].filter(Boolean).join('\n');
+  return {
+    case_no: caseNo, assignment: 'private', source: 'client_intake_link',
+    client_intake_link: row.id,
+    service: type,
+    client_name: f.full_name, client_phone: f.phone, client_email: f.email,
+    client_address: f.address,
+    subject_name: f.subject_name, subject_address: f.subject_address,
+    subject_description: desc, objective: f.objective, known_schedule: f.known_schedule,
+    timeline: f.description, notes, start_date: f.start_date,
+    priority: label(CLIENT_INTAKE_URGENCY, f.urgency),
+    ...(f.subject_address_status ? { subject_address_status: 'unknown' } : {}),
+    ...(f.vehicle_status ? { subject_description_status: desc ? undefined : 'unknown' } : {}),
+    client_intake: f,
+    retainer_terms: {
+      retainer_cents: row.retainer_cents, nonrefundable_cents: row.nonref_cents,
+      hourly_cents: row.hourly_cents, min_hours: row.min_hours,
+      version: row.terms_version, hash: termsHash, terms,
+    },
+    terms_acknowledged: true, consent: true,
+    signed_name: signedName, signed_at: signedAt, signature: sig,
+  };
+}
+
+function cilMintCase() {
+  const n = 1000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 9000);
+  return `API-${nowIso().slice(0, 10).replace(/-/g, '')}-${n}`;
+}
+
+async function cilPublicSubmit(request, env, token) {
+  if (await cilMissing(env)) {
+    return json({ error: 'This form is not available right now. Please try again later.' }, 503);
+  }
+  const declared = parseInt(request.headers.get('Content-Length') || '0', 10);
+  if (Number.isFinite(declared) && declared > MAX_PAYLOAD_BYTES) return json({ error: 'payload too large' }, 413);
+  const raw = await readBounded(request, MAX_PAYLOAD_BYTES);
+  if (raw === null) return json({ error: 'payload too large' }, 413);
+  if (!(await withinRateLimit(env))) {
+    return json({ error: 'Too many submissions right now. Please wait a minute and try again.' }, 429);
+  }
+  let b;
+  try { b = JSON.parse(raw); } catch { return json({ error: 'invalid json' }, 400); }
+  if (!b || typeof b !== 'object') return json({ error: 'invalid json' }, 400);
+  const attempt = String(b.attempt || '');
+  if (!/^[A-Za-z0-9-]{8,64}$/.test(attempt)) {
+    return json({ error: 'Please reload the page and try again.', code: 'bad_attempt' }, 400);
+  }
+  const row = await cilByToken(env, token);
+  /* A RETRY OF THE SUBMISSION THAT ALREADY LANDED is not a second one: the
+     attempt key it carries says so, and the client is told it is in. A
+     different attempt on a submitted link is refused by name. */
+  if (row && row.submitted_at && !row.revoked_at && row.submit_attempt === attempt) {
+    return json({ ok: true, duplicate: true, case_no: row.case_no, submitted_at: row.submitted_at });
+  }
+  const now = nowIso();
+  const refused = cilRefusal(row, now);
+  if (refused) return refused;
+
+  const terms = clientIntakeTerms(row);
+  const termsHash = await clientIntakeTermsHash(terms);
+  if (String(b.terms_hash || '') !== termsHash) {
+    return json({ error: 'The terms on this page are out of date. Please reload the page, review '
+      + 'them again and sign.', code: 'terms_changed' }, 409);
+  }
+  if (b.terms_acknowledged !== true) {
+    return json({ error: 'Please confirm that you have reviewed the retainer and payment terms.',
+                  code: 'terms_not_acknowledged' }, 400);
+  }
+  if (b.agree !== true) {
+    return json({ error: 'Please check the box to agree to the authorization.', code: 'agree_required' }, 400);
+  }
+  const v = cilSubmittedFields(b);
+  if (v.error) return json({ error: v.error, code: v.code }, 400);
+  const signedName = cilText(b.signed_name, 120);
+  if (!signedName) return json({ error: 'Please type your full name to sign.', code: 'signed_name_required' }, 400);
+  const sig = String(b.signature || '');
+  if (!/^data:image\/png;base64,[A-Za-z0-9+/]+=*$/.test(sig) || sig.length < 200 || sig.length > 300_000) {
+    return json({ error: 'Please sign in the signature box.', code: 'signature_required' }, 400);
+  }
+  const sigHash = await sha256Hex(sig);
+  const termsJson = JSON.stringify(terms);
+
+  for (let tries = 0; tries < 6; tries++) {
+    const caseNo = cilMintCase();
+    const p = cilPayload(caseNo, row, v.fields, terms, termsHash, sig, signedName, now);
+    const payload = JSON.stringify(p);
+    /* ONE TRANSACTION, AND EVERY WRITE IS CONDITIONAL ON THIS ATTEMPT OWNING
+       THE CLAIM. The submission is inserted only while the link is unclaimed,
+       the claim is taken only while it is unclaimed, and the retainer and the
+       trail are written only if the claim is THIS attempt's — so two taps, or
+       two phones, can never produce two cases from one link. */
+    const live = 'id = ? AND submitted_at IS NULL AND revoked_at IS NULL';
+    let res;
+    try {
+      res = await env.DB.batch([
+        env.DB.prepare(
+          `INSERT INTO submissions (case_no, kind, service, client_name, client_email, client_phone,
+             subject_name, carrier, claim_number, payload, created_at)
+           SELECT ?, 'consumer', ?, ?, ?, ?, ?, NULL, NULL, ?, ?
+            WHERE EXISTS (SELECT 1 FROM client_intake_link WHERE ${live})`)
+          .bind(caseNo, String(p.service || '').slice(0, 300), p.client_name.slice(0, 300),
+            (p.client_email || '').slice(0, 300) || null, (p.client_phone || '').slice(0, 300) || null,
+            (p.subject_name || '').slice(0, 300) || null, payload, now, row.id),
+        env.DB.prepare(
+          `UPDATE client_intake_link SET submitted_at = ?, case_no = ?, submit_attempt = ?,
+             accepted_terms = ?, accepted_terms_hash = ?, signed_name = ?, signed_at = ?,
+             signature_hash = ?, updated_at = ? WHERE ${live}`)
+          .bind(now, caseNo, attempt, termsJson, termsHash, signedName, now, sigHash, now, row.id),
+        /* THE CASE'S AGREED RETAINER IS THE ONE THE CLIENT SIGNED, so the
+           invoice, the balance and Record Payment draw against that figure
+           rather than the standard one. Written through the existing table,
+           only for this fresh case, never over an existing figure. */
+        env.DB.prepare(
+          `INSERT INTO case_retainer (case_no, retainer_amount, updated_at)
+           SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM client_intake_link
+             WHERE id = ? AND case_no = ? AND submit_attempt = ?)
+           ON CONFLICT(case_no) DO NOTHING`)
+          .bind(caseNo, row.retainer_cents / 100, now, row.id, caseNo, attempt),
+        env.DB.prepare(
+          `INSERT INTO client_intake_event (link_id, action, detail, actor, at)
+           SELECT ?, 'submitted', ?, NULL, ? WHERE EXISTS (SELECT 1 FROM client_intake_link
+             WHERE id = ? AND case_no = ? AND submit_attempt = ?)`)
+          .bind(row.id, caseNo, now, row.id, caseNo, attempt),
+      ]);
+    } catch (e) {
+      if (String(e).includes('UNIQUE')) continue;   // a taken case number: mint again
+      throw e;
+    }
+    const claimed = res[1] && res[1].meta && res[1].meta.changes;
+    if (!claimed) {
+      const again = await env.DB.prepare('SELECT * FROM client_intake_link WHERE id = ?').bind(row.id).first();
+      if (again && again.submitted_at && again.submit_attempt === attempt) {
+        return json({ ok: true, duplicate: true, case_no: again.case_no, submitted_at: again.submitted_at });
+      }
+      return cilRefusal(again, nowIso()) || json({ error: 'Please reload the page and try again.' }, 409);
+    }
+    // The intake is recorded; telling the office is a courtesy that cannot fail it.
+    await notifyAdmins(env, 'intakes', caseNo);
+    return json({ ok: true, case_no: caseNo, submitted_at: now });
+  }
+  return json({ error: 'Please try submitting again in a moment.' }, 503);
+}
+
 /* ------------------------------------------------------------------ router */
 
 async function readJson(request) {
@@ -17716,6 +18482,7 @@ const EXPECTED_TABLES = [
   'case_refund', 'case_closeout', 'case_closeout_detail', 'user_pref',
   'sent_document', 'document_send_attempt', 'document_acceptance', 'document_record_copy',
   'packet_generation', 'sent_document_custom',
+  'client_intake_link', 'client_intake_event',
 ];
 
 async function missingTables(env) {
@@ -20843,6 +21610,14 @@ async function route(request, env) {
   if (p === '/ingest' && method === 'POST') return handleIngest(request, env);
   if (p === '/setup' && method === 'POST') return handleBootstrap(request, env);
 
+  /* A PRIVATE CLIENT'S PREPARED INTAKE. Necessarily unauthenticated — the
+     client has no account — so the 256-bit token is the credential, and it
+     opens exactly one form: this link's terms to read, and one submission. */
+  let cil = p.match(/^\/client-intake\/([0-9a-f]{64})$/);
+  if (cil && method === 'GET') return cilPublicRead(env, cil[1]);
+  cil = p.match(/^\/client-intake\/([0-9a-f]{64})\/submit$/);
+  if (cil && method === 'POST') return cilPublicSubmit(request, env, cil[1]);
+
   // Redeeming an invitation is necessarily unauthenticated — the account does
   // not exist yet. The token is the credential.
   let inv = p.match(/^\/invite\/([0-9a-f]{64})$/);
@@ -21039,6 +21814,21 @@ async function route(request, env) {
         if (filed) return json({ error: ARCHIVED_CASE(subject), case_archived: true }, 409);
       }
     }
+  }
+
+  /* PREPARED CLIENT INTAKES — admin-only, every one: the retainer a client is
+     quoted is the office's business, and so is the link that carries it. */
+  if (p === '/client-intakes' || p.startsWith('/client-intakes/')) {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    if (p === '/client-intakes' && method === 'GET') return cilList(env);
+    if (p === '/client-intakes' && method === 'POST') return cilSave(request, env, user, null);
+    if (p === '/client-intakes/preview' && method === 'POST') return cilPreview(request, env);
+    let ci = p.match(/^\/client-intakes\/(CIL-[0-9a-f]{32})$/);
+    if (ci && method === 'GET') return cilRead(env, ci[1]);
+    if (ci && method === 'POST') return cilSave(request, env, user, ci[1]);
+    ci = p.match(/^\/client-intakes\/(CIL-[0-9a-f]{32})\/(revoke|reviewed|renew|shared|email)$/);
+    if (ci && method === 'POST') return cilAct(request, env, user, ci[1], ci[2]);
+    return json({ error: 'not found' }, 404);
   }
 
   if (p === '/submissions' && method === 'GET') return listSubmissions(request, env, user);

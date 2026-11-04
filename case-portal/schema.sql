@@ -2188,3 +2188,80 @@ CREATE TABLE IF NOT EXISTS packet_generation (
   generated_at  TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_packetgen_case ON packet_generation(case_no, id DESC);
+
+-- ===========================================================================
+-- PRIVATE CLIENT INTAKE LINKS (owner brief 2026-11-04)
+--
+-- The office prepares a private client's intake with the retainer already
+-- chosen, sends the client a secure link, and the client completes and signs
+-- the form on their own phone. One row per prepared intake.
+--
+-- THE MONEY IS INTEGER CENTS, and the non-refundable portion is stored beside
+-- the retainer rather than recomputed on read, so what the client accepted is
+-- never re-derived from a rule that might later change. A row's terms are
+-- fixed once its link exists: changing them means revoking the link and
+-- preparing a new one, so a client can never sign figures they were not shown.
+--
+-- `token` is 256 bits of randomness, NULL on a draft. It is the only thing a
+-- client's link carries — it names no client, case or amount — and the public
+-- routes accept it only while the row is unrevoked, unexpired and unsubmitted.
+--
+-- The `accepted_*` / `signed_*` columns are the signature audit record,
+-- written ONCE by the conditional UPDATE that claims the submission. The
+-- intake itself is an ordinary `submissions` row (case_no), so it appears on
+-- the Intakes desk like every other intake.
+--
+-- No CHECK constraints, the Unit 7 rule: a status is derived in the Worker,
+-- never stored, and a new column value is an ordinary Worker edit.
+CREATE TABLE IF NOT EXISTS client_intake_link (
+  id                 TEXT    PRIMARY KEY,        -- CIL-<128-bit hex>, admin addressing
+  token              TEXT    UNIQUE,             -- 256-bit hex; NULL while a draft
+  client_name        TEXT    NOT NULL,
+  client_phone       TEXT,
+  client_email       TEXT,
+  retainer_choice    TEXT    NOT NULL,           -- a preset's dollars, or 'custom'
+  retainer_cents     INTEGER NOT NULL,
+  nonref_cents       INTEGER NOT NULL,           -- exactly half, rounded down to the cent
+  hourly_cents       INTEGER NOT NULL,
+  min_hours          INTEGER NOT NULL,
+  terms_version      TEXT    NOT NULL,
+  terms_confirmed_by INTEGER REFERENCES users(id),
+  terms_confirmed_at TEXT,
+  created_by         INTEGER REFERENCES users(id),
+  created_at         TEXT    NOT NULL,
+  updated_at         TEXT    NOT NULL,
+  link_created_at    TEXT,
+  expires_at         TEXT,
+  shared_at          TEXT,                       -- last time the office shared the link
+  shared_via         TEXT,                       -- text | copy | email
+  first_viewed_at    TEXT,
+  last_viewed_at     TEXT,
+  view_count         INTEGER NOT NULL DEFAULT 0,
+  submitted_at       TEXT,
+  case_no            TEXT,                       -- the submission this link produced
+  submit_attempt     TEXT,                       -- the client's attempt key, for a safe retry
+  accepted_terms     TEXT,                       -- the exact terms shown, as JSON
+  accepted_terms_hash TEXT,                      -- SHA-256 of that JSON
+  signed_name        TEXT,
+  signed_at          TEXT,
+  signature_hash     TEXT,                       -- SHA-256 of the signature image data
+  reviewed_at        TEXT,
+  reviewed_by        INTEGER REFERENCES users(id),
+  revoked_at         TEXT,
+  revoked_by         INTEGER REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_cil_created ON client_intake_link(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_cil_case    ON client_intake_link(case_no);
+
+-- What happened to each prepared intake, append-only: created, link created,
+-- shared, emailed, opened, submitted, reviewed, revoked. Nothing in it is the
+-- client's content.
+CREATE TABLE IF NOT EXISTS client_intake_event (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  link_id    TEXT    NOT NULL,
+  action     TEXT    NOT NULL,
+  detail     TEXT,
+  actor      INTEGER REFERENCES users(id),
+  at         TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cie_link ON client_intake_event(link_id, id);
