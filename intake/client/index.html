@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Confidential Client Intake — Always Precise Investigations</title>
+<!-- A PREPARED CLIENT INTAKE (owner brief 2026-11-04). Reached only by the
+     link the office sends: the link's token is in the URL FRAGMENT, which a
+     browser never sends to a server, so it is in no access log, no Referer,
+     and no link-preview fetch. This page holds no figure of its own — the
+     retainer and terms are read from the portal for this one link. -->
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#0e1a2c">
+<style>
+  :root{
+    --navy:#0e1a2c; --navy-2:#13273f; --teal:#2f7d90; --teal-2:#3d97ad;
+    --gold:#c99a3b; --ink:#1c2531; --muted:#5c6775; --line:#dfe3e8;
+    --paper:#f4f5f7; --card:#ffffff; --good:#1c8a4d; --bad:#c14133;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{font-family:'Segoe UI',system-ui,-apple-system,Arial,sans-serif;background:var(--paper);color:var(--ink);line-height:1.6;-webkit-text-size-adjust:100%;}
+  .top{background:var(--navy);color:#fff;padding:16px 20px;}
+  .top .wrap{max-width:680px;margin:0 auto;display:flex;align-items:center;gap:12px;}
+  .mark{width:34px;height:34px;flex:none;}
+  .top .name{font-weight:700;letter-spacing:.03em;font-size:1.02rem;line-height:1.15;}
+  .top .name span{display:block;font-weight:400;font-size:.72rem;color:#9db2c9;letter-spacing:.05em;}
+  .top .meta{margin-left:auto;text-align:right;font-size:.74rem;color:#9db2c9;line-height:1.5;}
+  .top .meta a{color:#cfe0f0;text-decoration:none;font-weight:600;}
+  /* The phone number and licence never break mid-number; the firm's name
+     beside them takes the squeeze instead. */
+  .top .name{min-width:0;}
+  .top .meta{white-space:nowrap;flex:none;}
+  @media(max-width:520px){ .top{padding:12px 16px;} .top .name span{font-size:.66rem;} }
+
+  main{max-width:680px;margin:0 auto;padding:18px 16px 60px;}
+  .progress{display:flex;gap:5px;margin:4px 0 8px;}
+  .progress i{flex:1;height:6px;border-radius:3px;background:var(--line);}
+  .progress i.done{background:var(--teal-2);}
+  .progress i.on{background:var(--teal);}
+  .stepno{font-size:.8rem;color:var(--muted);margin-bottom:12px;letter-spacing:.03em;}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px;box-shadow:0 1px 3px rgba(16,29,51,.05);}
+  @media(max-width:520px){ .card{padding:16px;} }
+  h1{font-size:1.25rem;margin-bottom:4px;}
+  h1:focus{outline:none;}
+  h2.sub{font-size:.95rem;margin:18px 0 8px;color:#12305a;letter-spacing:.02em;}
+  .lead{color:var(--muted);font-size:.92rem;margin-bottom:16px;}
+  label.f{display:block;margin-bottom:14px;}
+  label.f > span{display:block;font-size:.88rem;font-weight:600;margin-bottom:5px;}
+  .optn{font-weight:400;color:var(--muted);font-size:.8rem;}
+  .req{color:var(--bad);}
+  input[type=text],input[type=tel],input[type=email],input[type=date],select,textarea{
+    width:100%;font-size:16px;font-family:inherit;color:var(--ink);background:#fff;
+    border:1px solid var(--line);border-radius:8px;padding:11px 12px;min-height:46px;}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--teal-2);border-color:var(--teal-2);}
+  textarea{min-height:96px;resize:vertical;}
+  input:disabled,textarea:disabled{background:#f2f5f8;color:#9aa4ae;}
+  .hint{font-size:.8rem;color:var(--muted);margin-top:4px;}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:0 14px;}
+  @media(max-width:520px){.two{grid-template-columns:1fr;}}
+  .na{display:flex;gap:9px;align-items:center;font-size:.85rem;color:var(--muted);margin:-8px 0 14px;min-height:40px;cursor:pointer;}
+  .na input{width:20px;height:20px;flex:none;}
+
+  .choice{display:flex;gap:12px;align-items:center;border:1.5px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:9px;cursor:pointer;min-height:52px;font-size:.98rem;}
+  .choice input{width:20px;height:20px;flex:none;}
+  .choice.sel{border-color:var(--teal-2);background:#f0f8fa;}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;}
+  .chips .choice{margin:0;flex:1 1 140px;}
+
+  .terms{border:1px solid #cfe6ec;background:#f0f8fa;border-radius:10px;padding:4px 16px;margin:4px 0 14px;}
+  .terms .row{display:flex;justify-content:space-between;gap:14px;padding:11px 0;border-bottom:1px solid #d8e9ee;}
+  .terms .row:last-child{border-bottom:0;}
+  .terms .row > *{min-width:0;overflow-wrap:anywhere;}
+  .terms .lbl{font-size:.9rem;}
+  .terms .lbl small{display:block;color:var(--muted);font-size:.8rem;line-height:1.45;margin-top:2px;}
+  .terms .val{font-weight:700;text-align:right;white-space:nowrap;font-size:1rem;}
+  .terms .row.term .lbl, .terms .row.term .val{font-weight:700;}
+  @media(max-width:420px){
+    .terms .row{flex-direction:column;gap:2px;}
+    .terms .val{text-align:left;white-space:normal;}
+  }
+  .cond{font-size:.86rem;color:#3a4653;margin-bottom:14px;}
+  .chk{display:flex;gap:12px;align-items:flex-start;font-size:.92rem;margin-bottom:14px;cursor:pointer;}
+  .chk input{margin-top:2px;flex:none;width:22px;height:22px;}
+  .auth{list-style:disc;margin:0 0 14px 20px;font-size:.88rem;color:#3a4653;}
+  .auth li{margin-bottom:6px;}
+  .accepted{font-size:.85rem;background:#fbfbfc;border:1px dashed #c7ccd3;border-radius:8px;padding:10px 12px;margin-bottom:14px;}
+
+  .sigwrap{border:1px solid var(--line);border-radius:8px;background:#fff;position:relative;margin-bottom:6px;}
+  canvas#sig{display:block;width:100%;height:180px;border-radius:8px;touch-action:none;cursor:crosshair;}
+  .sigline{position:absolute;left:16px;right:16px;bottom:34px;border-bottom:1px solid #c7ccd3;pointer-events:none;}
+  .sigx{position:absolute;left:16px;bottom:12px;color:var(--muted);font-size:.8rem;pointer-events:none;}
+  .sigclear{position:absolute;right:8px;top:8px;background:#fff;border:1px solid var(--line);border-radius:6px;font-size:.85rem;padding:6px 12px;min-height:40px;cursor:pointer;color:var(--muted);}
+  .when{font-size:.8rem;color:var(--muted);margin-bottom:14px;}
+
+  .nav{display:flex;gap:10px;margin-top:20px;}
+  .btn{font:inherit;font-size:1rem;font-weight:700;border:0;border-radius:8px;padding:13px 22px;cursor:pointer;min-height:50px;}
+  .btn.primary{background:var(--teal);color:#fff;flex:1;}
+  .btn.primary:hover{background:var(--teal-2);}
+  .btn.primary:disabled{opacity:.6;cursor:default;}
+  .btn.ghost{background:#fff;border:1px solid var(--line);color:var(--ink);}
+  .btn:focus-visible,.sigclear:focus-visible{outline:3px solid var(--gold);outline-offset:2px;}
+  .err{color:var(--bad);font-size:.9rem;margin-top:10px;min-height:1em;}
+  .msg{text-align:center;padding:28px 20px;}
+  .msg h1{margin-bottom:10px;}
+  .ok{color:var(--good);font-size:2.2rem;line-height:1;margin-bottom:10px;}
+  .ref{font-family:ui-monospace,monospace;color:var(--teal);font-weight:700;}
+  footer{max-width:680px;margin:0 auto;padding:0 16px 30px;font-size:.78rem;color:var(--muted);text-align:center;}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="wrap">
+    <svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="10" fill="#13273f"/><path d="M32 12l6 8-6 8-6-8z" fill="#3d97ad"/><path d="M32 30l10 12H22z" fill="#c99a3b"/></svg>
+    <div class="name">ALWAYS PRECISE<span>INVESTIGATIONS · CONFIDENTIAL CLIENT INTAKE</span></div>
+    <div class="meta">
+      <a href="tel:+14349070975">(434) 907-0975</a><br>
+      <span>Va DCJS #11-9159</span>
+    </div>
+  </div>
+</div>
+
+<main>
+  <div class="progress" id="progress" aria-hidden="true"></div>
+  <div class="stepno" id="stepno"></div>
+  <div id="app"><div class="card msg"><p>Loading your secure intake&hellip;</p></div></div>
+</main>
+<footer>Always Precise Investigations, LLC &middot; Licensed Virginia private investigators &middot; Va DCJS #11-9159.<br>
+  Your information is sent over an encrypted connection and kept confidential.</footer>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const API = "/portal-api/client-intake/";
+
+/* THE TOKEN IS READ FROM THE FRAGMENT AND NOWHERE ELSE. */
+const TOKEN = ((location.hash.match(/(?:^#|&)k=([0-9a-f]{64})(?:&|$)/) || [])[1]) || "";
+
+/* The steps. Seven is the terms; eight is the signature, and it draws the
+   accepted terms again ABOVE the signature, so on the screen where the client
+   signs, every figure is above the pen. */
+const STEPS = [
+  ["client",    "Client information"],
+  ["type",      "Type of investigation"],
+  ["subject",   "Subject information"],
+  ["vehicle",   "Vehicle information"],
+  ["objective", "Investigation objective"],
+  ["schedule",  "Scheduling"],
+  ["terms",     "Retainer & payment terms"],
+  ["sign",      "Client authorization & signature"],
+];
+
+/* One attempt key per submission, kept across a retry so a dropped response
+   can never become a second intake. */
+const ATTEMPT = (() => {
+  const a = new Uint8Array(12); crypto.getRandomValues(a);
+  return "c" + [...a].map(b => b.toString(16).padStart(2, "0")).join("");
+})();
+
+const S = { step: 0, data: null, val: {}, unknown: new Set(), sig: null, busy: false, done: null };
+
+/* A DRAFT IN THIS TAB ONLY, so an accidental reload or a lost connection does
+   not cost the client what they typed. sessionStorage ends with the tab, holds
+   no signature, and is cleared the moment the intake is submitted. */
+const DRAFT_KEY = "api-cintake-" + TOKEN.slice(0, 16);
+function saveDraft(){
+  try{ sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ val: S.val, unknown: [...S.unknown], step: S.step })); }catch{}
+}
+function loadDraft(){
+  try{
+    const d = JSON.parse(sessionStorage.getItem(DRAFT_KEY) || "null");
+    if(d && d.val){ S.val = d.val; S.unknown = new Set(d.unknown || []); S.step = Math.min(Number(d.step) || 0, STEPS.length - 1); }
+  }catch{}
+}
+function clearDraft(){ try{ sessionStorage.removeItem(DRAFT_KEY); }catch{} }
+
+function v(k){ return S.val[k] == null ? "" : String(S.val[k]); }
+const OPT = ' <span class="optn">(optional)</span>';
+const REQ = ' <span class="req" aria-hidden="true">*</span>';
+
+function field(k, label, { type = "text", opt = true, area = false, hint = "", auto = "", ph = "" } = {}){
+  const dis = S.unknown.has(k) || (S.unknown.has("vehicle") && /^vehicle_(year|make|model|color|plate|state)$/.test(k)) ? " disabled" : "";
+  const a = auto ? ` autocomplete="${auto}"` : "";
+  const p = ph ? ` placeholder="${esc(ph)}"` : "";
+  const ctl = area
+    ? `<textarea id="f_${k}" data-k="${k}"${p}${dis}>${esc(v(k))}</textarea>`
+    : `<input id="f_${k}" type="${type}" data-k="${k}" value="${esc(v(k))}"${a}${p}${dis}>`;
+  return `<label class="f"><span>${label}${opt ? OPT : REQ}</span>${ctl}${hint ? `<div class="hint">${hint}</div>` : ""}</label>`;
+}
+function unknownBox(k, text = "I don't know"){
+  return `<label class="na"><input type="checkbox" data-unknown="${k}" ${S.unknown.has(k) ? "checked" : ""}> ${esc(text)}</label>`;
+}
+function radios(k, list, opt){
+  return list.map(o => `<label class="choice${v(k) === o.value ? " sel" : ""}">
+    <input type="radio" name="r_${k}" data-k="${k}" value="${esc(o.value)}" ${v(k) === o.value ? "checked" : ""}>
+    <span>${esc(o.label)}</span></label>`).join("");
+}
+
+function termsBlock(t){
+  return `<div class="terms">${t.lines.map(l => `<div class="row${l.term ? " term" : ""}">
+      <div class="lbl">${esc(l.label)}${l.note ? `<small>${esc(l.note)}</small>` : ""}</div>
+      <div class="val">${esc(l.value)}</div></div>`).join("")}</div>`;
+}
+
+function stepHtml(){
+  const t = S.data.terms;
+  const key = STEPS[S.step][0];
+  if(key === "client") return `
+    <p class="lead">Thank you for choosing Always Precise Investigations. This form takes a few
+      minutes. Anything you don't know can be left blank.</p>
+    ${field("full_name", "Full legal name", { opt: false, auto: "name" })}
+    ${field("preferred_name", "Preferred name", { auto: "nickname" })}
+    <div class="two">
+      ${field("phone", "Phone", { type: "tel", auto: "tel", hint: "A phone or an email is needed so we can reach you." })}
+      ${field("email", "Email", { type: "email", auto: "email" })}
+    </div>
+    ${field("address", "Address", { auto: "street-address" })}
+    <h2 class="sub">Preferred contact method${OPT}</h2>
+    <div class="chips">${radios("contact_method", S.data.contact_methods)}</div>`;
+  if(key === "type") return `
+    <p class="lead">Choose the one that fits best.</p>
+    <fieldset style="border:0"><legend class="sr" style="position:absolute;left:-9999px">Type of investigation</legend>
+    ${radios("investigation_type", S.data.types)}</fieldset>
+    ${v("investigation_type") === "other" ? field("type_other", "Briefly, what kind of matter is it?") : ""}
+    ${field("description", "Description and relevant timeline", { area: true,
+      hint: "What has happened, and when. Approximate dates are fine." })}`;
+  if(key === "subject") return `
+    <p class="lead">Tell us what you know about the person involved. Leave anything you don't know.</p>
+    ${field("subject_name", "Subject name")}${unknownBox("subject_name")}
+    ${field("subject_age", "Approximate age or date of birth")}${unknownBox("subject_age")}
+    ${field("subject_address", "Known address")}${unknownBox("subject_address")}
+    <div class="two">${field("subject_phone", "Subject phone")}${field("subject_email", "Subject email")}</div>
+    ${field("subject_workplace", "Workplace")}${unknownBox("subject_workplace")}
+    ${field("subject_locations", "Other known locations", { area: true, hint: "Places the subject is known to go." })}
+    <h2 class="sub">Can you provide a photo of the subject?${OPT}</h2>
+    <div class="chips">${radios("subject_photo", [{value:"yes",label:"Yes"},{value:"no",label:"No"},{value:"unsure",label:"Not sure"}])}</div>
+    <p class="hint">Please don't attach anything here. If you have a photo, the office will arrange how to receive it.</p>`;
+  if(key === "vehicle") return `
+    <p class="lead">The subject's vehicle, if known.</p>
+    ${unknownBox("vehicle", "I don't know the vehicle")}
+    <div class="two">${field("vehicle_year", "Year")}${field("vehicle_make", "Make")}</div>
+    <div class="two">${field("vehicle_model", "Model")}${field("vehicle_color", "Color")}</div>
+    <div class="two">${field("vehicle_plate", "License plate")}${field("vehicle_state", "State")}</div>
+    ${field("vehicle_more", "Additional vehicles", { area: true })}`;
+  if(key === "objective") return `
+    ${field("objective", "What would you like the investigation to establish?", { opt: false, area: true })}
+    ${field("known_schedule", "Known schedules and routines", { area: true })}
+    ${field("other_info", "Important people, vehicles, locations or other information", { area: true })}`;
+  if(key === "schedule") return `
+    ${field("start_date", "Requested start date", { type: "date" })}
+    ${field("preferred_times", "Preferred surveillance dates and times", { area: true })}
+    ${field("start_location", "Starting location")}
+    ${field("safety_notes", "Access, parking and safety notes", { area: true })}
+    <h2 class="sub">Urgency${OPT}</h2>
+    ${radios("urgency", S.data.urgency)}`;
+  if(key === "terms") return `
+    <p class="lead">These are the retainer and payment terms prepared for you by Always Precise
+      Investigations. They are set by the office and cannot be changed on this form.</p>
+    ${termsBlock(t)}
+    <p class="cond">${esc(t.conditions)}</p>
+    <label class="chk"><input type="checkbox" id="ack" data-k="terms_acknowledged" ${S.val.terms_acknowledged ? "checked" : ""}>
+      <span>${esc(t.acknowledgment)}${REQ}</span></label>`;
+  // sign — the accepted terms, then the authorization, then the pen.
+  return `
+    <p class="lead">Please review the terms you are accepting, then sign below them.</p>
+    <div class="accepted" id="accepted-terms"><b>Terms you are accepting</b>
+      ${termsBlock(t)}<div class="cond" style="margin:0">${esc(t.conditions)}</div></div>
+    <h2 class="sub">Authorization</h2>
+    <ul class="auth">${t.authorization.map(a => `<li>${esc(a)}</li>`).join("")}</ul>
+    <label class="chk"><input type="checkbox" id="agree" data-k="agree" ${S.val.agree ? "checked" : ""}>
+      <span>I have read and agree to the authorization above.${REQ}</span></label>
+    ${field("signed_name", "Type your full name", { opt: false, auto: "name" })}
+    <div style="font-size:.88rem;font-weight:600;margin-bottom:6px;" id="sig-label">Signature${REQ}</div>
+    <div class="sigwrap" id="sigwrap">
+      <button type="button" class="sigclear" data-act="clearSig">Clear</button>
+      <canvas id="sig" role="img" aria-labelledby="sig-label"></canvas>
+      <div class="sigline"></div><div class="sigx">Sign with your finger or mouse</div>
+    </div>
+    <p class="when">The date and time are recorded automatically when you submit.</p>`;
+}
+
+function paint(focus){
+  const app = $("app");
+  if(S.done){
+    $("progress").innerHTML = ""; $("stepno").textContent = "";
+    app.innerHTML = `<div class="card msg" role="status">
+      <div class="ok" aria-hidden="true">&#10003;</div>
+      <h1 tabindex="-1" id="h">Your confidential intake has been submitted to Always Precise Investigations.</h1>
+      <p class="lead" style="margin:0">Reference <span class="ref">${esc(S.done.case_no)}</span></p>
+      <p class="lead">Submitting this form does not by itself mean that services have begun. The office
+        will review your intake and contact you. Questions? Call <a href="tel:+14349070975">(434) 907-0975</a>.</p>
+    </div>`;
+    const h = $("h"); if(h) h.focus();
+    return;
+  }
+  $("progress").innerHTML = STEPS.map((_, i) =>
+    `<i class="${i < S.step ? "done" : i === S.step ? "on" : ""}"></i>`).join("");
+  $("stepno").textContent = `Step ${S.step + 1} of ${STEPS.length}`;
+  const last = S.step === STEPS.length - 1;
+  app.innerHTML = `<div class="card" data-step="${STEPS[S.step][0]}">
+    <h1 tabindex="-1" id="h">${S.step + 1}. ${esc(STEPS[S.step][1])}</h1>
+    ${stepHtml()}
+    <div class="err" id="err" role="alert"></div>
+    <div class="nav">
+      ${S.step ? `<button type="button" class="btn ghost" data-act="back">Back</button>` : ""}
+      <button type="button" class="btn primary" id="next" data-act="${last ? "submit" : "next"}"
+        ${S.busy ? "disabled" : ""}>${last ? (S.busy ? "Submitting&hellip;" : "Submit intake") : "Continue"}</button>
+    </div></div>`;
+  if(STEPS[S.step][0] === "sign") initSig();
+  if(focus){ const h = $("h"); if(h){ h.focus(); window.scrollTo(0, 0); } }
+}
+
+function err(t){ const e = $("err"); if(e) e.textContent = t || ""; }
+
+/* What each step needs before moving on — the same rules the portal checks. */
+function stepProblem(){
+  const key = STEPS[S.step][0];
+  if(key === "client"){
+    if(!v("full_name").trim()) return "Please enter your full legal name.";
+    if(!v("phone").trim() && !v("email").trim()) return "Please give a phone number or an email address so we can reach you.";
+    if(v("email").trim() && !/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(v("email").trim())) return "That email address does not look complete.";
+  }
+  if(key === "type" && !v("investigation_type")) return "Please choose the type of investigation.";
+  if(key === "objective" && !v("objective").trim()) return "Please describe what you would like the investigation to establish.";
+  if(key === "terms" && !S.val.terms_acknowledged) return "Please confirm that you have reviewed the retainer and payment terms.";
+  if(key === "sign"){
+    if(!S.val.agree) return "Please check the box to agree to the authorization.";
+    if(!v("signed_name").trim()) return "Please type your full name.";
+    if(!S.sig) return "Please sign in the signature box.";
+  }
+  return "";
+}
+
+/* ---------------------------------------------------------- signature pad */
+let sigCtx = null, drawing = false;
+function initSig(){
+  const c = $("sig"); if(!c) return;
+  const ratio = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  c.width = w * ratio; c.height = h * ratio;
+  sigCtx = c.getContext("2d"); sigCtx.scale(ratio, ratio);
+  sigCtx.lineWidth = 2.2; sigCtx.lineCap = "round"; sigCtx.lineJoin = "round"; sigCtx.strokeStyle = "#12305a";
+  if(S.sig){ const img = new Image(); img.onload = () => sigCtx.drawImage(img, 0, 0, w, h); img.src = S.sig; }
+  const pos = e => { const r = c.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+  c.onpointerdown = e => { e.preventDefault(); try{ c.setPointerCapture(e.pointerId); }catch{} drawing = true;
+    const p = pos(e); sigCtx.beginPath(); sigCtx.moveTo(p.x, p.y); sigCtx.lineTo(p.x + .1, p.y + .1); sigCtx.stroke(); };
+  c.onpointermove = e => { if(!drawing) return; e.preventDefault(); const p = pos(e); sigCtx.lineTo(p.x, p.y); sigCtx.stroke(); };
+  const end = () => { if(drawing){ drawing = false; S.sig = c.toDataURL("image/png"); } };
+  c.onpointerup = end; c.onpointercancel = end; c.onpointerleave = end;
+}
+function clearSig(){ const c = $("sig"); if(c && sigCtx) sigCtx.clearRect(0, 0, c.width, c.height); S.sig = null; }
+
+/* ------------------------------------------------------------- submitting */
+async function submit(){
+  const p = stepProblem(); if(p){ err(p); return; }
+  if(S.busy) return;
+  S.busy = true; paint(false);
+  const body = { ...S.val, unknown: [...S.unknown], attempt: ATTEMPT, terms_hash: S.data.terms_hash,
+                 terms_acknowledged: Boolean(S.val.terms_acknowledged), agree: Boolean(S.val.agree),
+                 signature: S.sig };
+  let res, j = {};
+  try{
+    res = await fetch(API + TOKEN + "/submit", { method: "POST", credentials: "omit",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    try{ j = await res.json(); }catch{}
+  }catch(e){
+    S.busy = false; paint(false);
+    err("We could not reach the server — please check your connection and press Submit again. Nothing you entered has been lost.");
+    return;
+  }
+  S.busy = false;
+  if(res.ok && j.ok){ clearDraft(); S.done = j; paint(true); return; }
+  if(j.code === "already_submitted"){ clearDraft(); S.done = null; return showMessage("Already submitted", j.error); }
+  if(j.code === "link_expired" || j.code === "link_revoked" || j.code === "link_not_found") return showMessage("This link can't be used", j.error);
+  if(j.code === "terms_changed"){ return showMessage("Please reload", j.error); }
+  paint(false);
+  err(j.error || "Something went wrong — please press Submit again.");
+}
+
+function showMessage(title, text){
+  $("progress").innerHTML = ""; $("stepno").textContent = "";
+  $("app").innerHTML = `<div class="card msg" role="status"><h1 tabindex="-1" id="h">${esc(title)}</h1>
+    <p class="lead">${esc(text)}</p>
+    <p class="lead">Always Precise Investigations &middot; <a href="tel:+14349070975">(434) 907-0975</a></p></div>`;
+  const h = $("h"); if(h) h.focus();
+}
+
+/* ---------------------------------------------------------------- events */
+document.addEventListener("input", (e) => {
+  const k = e.target.dataset.k;
+  if(k && e.target.type !== "checkbox" && e.target.type !== "radio"){ S.val[k] = e.target.value; saveDraft(); }
+});
+document.addEventListener("change", (e) => {
+  const t = e.target;
+  if(t.dataset.unknown){
+    const k = t.dataset.unknown;
+    if(t.checked){ S.unknown.add(k); } else S.unknown.delete(k);
+    saveDraft(); paint(false); return;
+  }
+  const k = t.dataset.k; if(!k) return;
+  if(t.type === "checkbox"){ S.val[k] = t.checked; saveDraft(); return; }
+  if(t.type === "radio"){ S.val[k] = t.value; saveDraft(); paint(false); return; }
+  S.val[k] = t.value; saveDraft();
+});
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-act]"); if(!b) return;
+  const act = b.dataset.act;
+  if(act === "clearSig"){ clearSig(); return; }
+  if(act === "back"){ S.step = Math.max(0, S.step - 1); saveDraft(); paint(true); return; }
+  if(act === "next"){
+    const p = stepProblem(); if(p){ err(p); return; }
+    S.step = Math.min(STEPS.length - 1, S.step + 1); saveDraft(); paint(true); return;
+  }
+  if(act === "submit") submit();
+});
+
+/* ------------------------------------------------------------------ start */
+async function start(){
+  if(!TOKEN) return showMessage("This link is incomplete",
+    "Please open the full link from the message Always Precise Investigations sent you.");
+  let res, j = {};
+  try{
+    res = await fetch(API + TOKEN, { credentials: "omit" });
+    try{ j = await res.json(); }catch{}
+  }catch{
+    return showMessage("We couldn't connect", "Please check your connection and reload this page.");
+  }
+  if(!res.ok || !j.ok){
+    const title = j.code === "already_submitted" ? "Already submitted" : "This link can't be used";
+    return showMessage(title, j.error || "Please contact Always Precise Investigations at (434) 907-0975.");
+  }
+  S.data = j;
+  loadDraft();
+  // The office's own details prefill the first step; the client can correct them.
+  if(!S.val.full_name && j.client.name) S.val.full_name = j.client.name;
+  if(!S.val.phone && j.client.phone) S.val.phone = j.client.phone;
+  if(!S.val.email && j.client.email) S.val.email = j.client.email;
+  /* A previously acknowledged step does not carry over a terms change. */
+  S.val.terms_acknowledged = false; S.val.agree = false;
+  if(S.step > 6) S.step = 6;
+  paint(false);
+}
+start();
+</script>
+</body>
+</html>

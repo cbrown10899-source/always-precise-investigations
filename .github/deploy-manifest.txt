@@ -90,6 +90,10 @@ private-investigator/*/index.html
 
 # --- the intake form ---------------------------------------------------------
 intake/index.html
+# The prepared private-client intake (owner brief 2026-11-04): the page a
+# client opens from the secure link the office texts them. It holds no figure
+# of its own — the retainer is read from the portal for that one link.
+intake/client/index.html
 
 # --- the staff case portal: a PAGE, never the Worker (noindex) ---------------
 portal/index.html

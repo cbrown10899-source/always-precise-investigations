@@ -2084,7 +2084,7 @@ section('A private lead can be sent payment options; an insurance lead cannot');
 {
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
-  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
+  await page.locator('.tabs button[data-tab="leads"]').click();
   await page.waitForTimeout(600);
 
   const priv = page.locator('.pcard', { hasText: 'API-20260812-4002' });
@@ -4620,7 +4620,7 @@ section('Leads and intakes: cards, decisions, and the phone-call lead');
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
   ok('the office navigation carries Intakes', has(await text(page, '.tabs'), 'Intakes'));
-  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
+  await page.locator('.tabs button[data-tab="leads"]').click();
   await page.waitForTimeout(400);
   const desk = await text(page, '#app');
   ok('early-stage submissions wait as cards', await page.locator('.pcard').count() >= 1, desk.slice(0, 200));
@@ -5705,7 +5705,7 @@ section('A phone can actually reach the navigation');
   for (const t of ['Dashboard', 'Cases', 'Intakes', 'Billing', 'Settings']) {
     ok(`the drawer carries ${t}`, has(drawer, t), drawer);
   }
-  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
+  await page.locator('.tabs button[data-tab="leads"]').click();
   await page.waitForTimeout(700);
   ok('and navigating from it works', has(await text(page, '#app'), 'awaiting a decision'));
   ok('the drawer closes behind you', !(await page.locator('.tabs').isVisible()));
@@ -7016,7 +7016,7 @@ section('A lead has its own life, and its sends live on the card');
 
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
-  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
+  await page.locator('.tabs button[data-tab="leads"]').click();
   await page.waitForTimeout(600);
 
   const card = page.locator('.pcard', { hasText: 'API-20260812-4005' });
@@ -7051,7 +7051,7 @@ section('A lead has its own life, and its sends live on the card');
   await page.waitForTimeout(600);
   await page.reload();
   await page.waitForTimeout(900);
-  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
+  await page.locator('.tabs button[data-tab="leads"]').click();
   await page.waitForTimeout(600);
   ok('a status set by hand survives a reload',
      await page.locator('.pcard', { hasText: 'API-20260812-4005' })
@@ -7284,7 +7284,7 @@ section('A returned private intake shows the retainer pending and the way to act
 
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
-  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
+  await page.locator('.tabs button[data-tab="leads"]').click();
   await page.waitForTimeout(700);
 
   const c1 = page.locator('.pcard', { hasText: 'API-RP-1' });
@@ -7423,7 +7423,7 @@ section('An archived case never leaks out of the Cases table');
      has(arched, 'API-LENS-ARCH'), arched.slice(0, 300));
 
   /* THE REPRO. The lens is still on Archived; switch to Intakes. */
-  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
+  await page.locator('.tabs button[data-tab="leads"]').click();
   await page.waitForTimeout(700);
   const desk = await text(page, 'body');
   ok('switching to Intakes does NOT carry the archived case across',
@@ -8841,9 +8841,11 @@ section('Timestamp video is reachable without opening a case');
      day's six, the phone's seven, and now one strip carrying the owner's seven
      at every width — and each time it stayed EXACT and by ACT, so a duplicate
      door or a stray addition fails rather than accumulating. */
-  ok("and the row is exactly the owner's seven doors, no creep",
+  /* EIGHT, BY THE OWNER'S REQUEST (2026-11-04): Prepare & Send Client Intake
+     joined as the second card. Re-pinned exactly, the creep guard's rule. */
+  ok("and the row is exactly the owner's eight doors, no creep",
      JSON.stringify(tools) === JSON.stringify(
-       ['sheetQuick:', 'tab:newlead', 'nlKind:', 'tab:leads',
+       ['sheetQuick:', 'ciNew:', 'tab:newlead', 'nlKind:', 'tab:leads',
         'surveillance:', 'pstLaunch:', 'vstOpen:']),
      JSON.stringify(tools));
   ok('and it names both timestamp tools in words',
@@ -18622,7 +18624,7 @@ section('Quick Legal Assignment: a phone call becomes a case');
 {
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
-  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
+  await page.locator('.tabs button[data-tab="leads"]').click();
   await page.waitForTimeout(500);
   await page.locator('.btn', { hasText: 'Intake a client' }).click();
   await page.waitForTimeout(400);
@@ -18681,7 +18683,7 @@ section('Quick Legal Assignment: a phone call becomes a case');
   // Back on the desk: the card is a LEGAL card.
   await page.locator('[data-act="backToCases"]').click();
   await page.waitForTimeout(300);
-  await page.locator('.tabs button', { hasText: 'Intakes' }).click();
+  await page.locator('.tabs button[data-tab="leads"]').click();
   await page.waitForTimeout(600);
   const card = page.locator('.pcard', { hasText: 'Calloway Law' }).first();
   const cardText = await card.innerText();
@@ -18821,7 +18823,7 @@ section('Clients & Firms: a firm saved once, then an assignment in seconds');
      await page.locator('.ccard .tag', { hasText: 'Preferred' }).count() === 1);
 
   // --- the picker, and the assignment ------------------------------------
-  await page.locator('.tabs button', { hasText: 'Intakes' }).first().click();
+  await page.locator('.tabs button[data-tab="leads"]').first().click();
   await page.waitForTimeout(300);
   await page.locator('[data-act="tab"][data-tab="newlead"]').first().click();
   await page.waitForTimeout(300);
@@ -19052,7 +19054,7 @@ section('Clients & Firms: a case says which profile it came from, and asks befor
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
   /* An ordinary intake with no profile behind it. */
-  await page.locator('.tabs button', { hasText: 'Intakes' }).first().click();
+  await page.locator('.tabs button[data-tab="leads"]').first().click();
   await page.waitForTimeout(300);
   await page.locator('[data-act="tab"][data-tab="newlead"]').first().click();
   await page.waitForTimeout(300);
@@ -19356,7 +19358,7 @@ section('Needs attention: an alert leaves because the thing was done');
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
   /* A private case with an agreed retainer and nothing received. */
-  await page.locator('.tabs button', { hasText: 'Intakes' }).first().click();
+  await page.locator('.tabs button[data-tab="leads"]').first().click();
   await page.waitForTimeout(300);
   await page.locator('[data-act="tab"][data-tab="newlead"]').first().click();
   await page.waitForTimeout(300);
@@ -25695,9 +25697,10 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
      the owner asked for. Both facts are pinned, because "first in the list"
      and "opens the form" are different claims and an edit could satisfy one
      while breaking the other. */
-  ok("and the phone strip is the owner's seven, Rate Sheet first",
+  /* EIGHT since 2026-11-04 — Prepare & Send Client Intake, second. */
+  ok("and the phone strip is the owner's eight, Rate Sheet first",
      JSON.stringify(strip.acts) === JSON.stringify(
-       ['sheetQuick:', 'tab:newlead', 'nlKind:consumer', 'tab:leads',
+       ['sheetQuick:', 'ciNew:', 'tab:newlead', 'nlKind:consumer', 'tab:leads',
         'surveillance:', 'pstLaunch:', 'vstOpen:']),
      JSON.stringify(strip.acts));
   ok('BOTH timestamp tools are still primary — the standing owner lock',
@@ -26925,7 +26928,7 @@ section('Every art card is a direct launcher, and Back returns to an art Home');
       art: document.querySelectorAll('.qtools .qtapp.uiart').length,
     }));
     ok(`${w}: Home draws the art launcher`,
-       home.strip >= 1 && home.art === 7, JSON.stringify(home));
+       home.strip >= 1 && home.art === 8, JSON.stringify(home));
 
     /* ---- the four that used to pass through a duplicate layer ---------- */
     const land = async (qt, expect) => {
@@ -26944,7 +26947,8 @@ section('Every art card is a direct launcher, and Back returns to an art Home');
     for (const [qt, tab, label] of [['sheets', 'sheets', 'Rate Sheet'],
                                     ['newlead', 'newlead', 'New Intake'],
                                     ['priv', 'newlead', 'Private Intake'],
-                                    ['leads', 'leads', 'View Intakes']]) {
+                                    ['leads', 'leads', 'View Intakes'],
+                                    ['cintake', 'cintakes', 'Prepare & Send Client Intake']]) {
       const r = await land(qt, tab);
       ok(`${w}: ${label} lands on its own screen with NO second launcher above it`,
          r.tab === tab && r.strip === 0 && r.ovf === 0, JSON.stringify(r));
@@ -26970,7 +26974,7 @@ section('Every art card is a direct launcher, and Back returns to an art Home');
       art: document.querySelectorAll('.qtools .qtapp.uiart').length,
     }));
     ok(`${w}: Home art -> Rate Sheet -> Back -> art Home`,
-       back.tab === 'dashboard' && back.wiz === false && back.art === 7, JSON.stringify(back));
+       back.tab === 'dashboard' && back.wiz === false && back.art === 8, JSON.stringify(back));
 
     /* Active Surveillance takes its own full screen — no shell, so no strip
        could be drawn over it — and its back control returns to art Home. */
@@ -26989,7 +26993,7 @@ section('Every art card is a direct launcher, and Back returns to an art Home');
       art: document.querySelectorAll('.qtools .qtapp.uiart').length,
     }));
     ok(`${w}: Home art -> Active Surveillance -> Back -> art Home`,
-       svBack.tab === 'dashboard' && svBack.sv === false && svBack.art === 7,
+       svBack.tab === 'dashboard' && svBack.sv === false && svBack.art === 8,
        JSON.stringify(svBack));
 
     /* TIMESTAMP PHOTO OPENS ITS QUEUE — since Photo V2 (owner, 2026-09-28)
@@ -27021,7 +27025,7 @@ section('Every art card is a direct launcher, and Back returns to an art Home');
       ok(`${w}: Timestamp Photo opens its queue directly — the whole screen, empty, no launcher on it`,
          open.queue && open.whole && open.drop && open.strip === 0 && !onTap, JSON.stringify({ ...open, onTap }));
       ok(`${w}: its drop zone opens the file picker, and Close leaves art Home`,
-         fromDrop && after.tab === 'dashboard' && !after.queue && after.art === 7,
+         fromDrop && after.tab === 'dashboard' && !after.queue && after.art === 8,
          JSON.stringify({ fromDrop, ...after }));
     }
     /* TIMESTAMP VIDEO OPENS ITS QUEUE — since V2 (owner, 2026-09-28) the door
@@ -27053,7 +27057,7 @@ section('Every art card is a direct launcher, and Back returns to an art Home');
       ok(`${w}: Timestamp Video opens its queue directly — the whole screen, empty, no launcher on it`,
          open.queue && open.whole && open.drop && open.strip === 0 && !onTap, JSON.stringify({ ...open, onTap }));
       ok(`${w}: its drop zone opens the file picker, and Close leaves art Home`,
-         fromDrop && after.tab === 'dashboard' && !after.queue && after.art === 7,
+         fromDrop && after.tab === 'dashboard' && !after.queue && after.art === 8,
          JSON.stringify({ fromDrop, ...after }));
     }
     await page.close();
@@ -27156,7 +27160,8 @@ section('Every direct-launch destination has a visible way back, at the tap floo
     /* ---- the four tab destinations ---------------------------------- */
     for (const [qt, label, tab] of [['newlead', 'New Intake', 'newlead'],
                                     ['priv', 'Private Intake', 'newlead'],
-                                    ['leads', 'View Intakes', 'leads']]) {
+                                    ['leads', 'View Intakes', 'leads'],
+                                    ['cintake', 'Prepare & Send Client Intake', 'cintakes']]) {
       await page.evaluate(() => { SHEET_WIZ = null; NL = null; VIEW = 'list'; TAB = 'dashboard'; paint(); });
       await page.waitForTimeout(400);
       await page.locator(`.qtapp[data-qt="${qt}"]`).click();
@@ -27189,7 +27194,7 @@ section('Every direct-launch destination has a visible way back, at the tap floo
         back: document.querySelectorAll('#app > .pagebar .homeback').length,
       }));
       ok(`${w}: ${label} -> Back -> art Home, and the Back is gone there`,
-         home.tab === 'dashboard' && home.art === 7 && home.back === 0, JSON.stringify(home));
+         home.tab === 'dashboard' && home.art === 8 && home.back === 0, JSON.stringify(home));
     }
 
     /* ---- the Rate Sheet wizard: its own close, floored ---------------- */
@@ -27214,7 +27219,7 @@ section('Every direct-launch destination has a visible way back, at the tap floo
     await page.waitForTimeout(800);
     ok(`${w}: the wizard's close returns to an art Home`,
        await page.evaluate(() => TAB === 'dashboard'
-         && document.querySelectorAll('.qtools .qtapp.uiart').length === 7));
+         && document.querySelectorAll('.qtools .qtapp.uiart').length === 8));
 
     /* ---- Active Surveillance: its own back, floored ------------------- */
     await page.evaluate(() => { SHEET_WIZ = null; VIEW = 'list'; TAB = 'dashboard'; paint(); });
@@ -27237,7 +27242,7 @@ section('Every direct-launch destination has a visible way back, at the tap floo
     await page.waitForTimeout(800);
     ok(`${w}: and it returns to an art Home`,
        await page.evaluate(() => TAB === 'dashboard'
-         && document.querySelectorAll('.qtools .qtapp.uiart').length === 7));
+         && document.querySelectorAll('.qtools .qtapp.uiart').length === 8));
 
     /* ---- Timestamp Photo: the queue's own close, measured live -------- */
     await page.evaluate(() => { SHEET_WIZ = null; VIEW = 'list'; TAB = 'dashboard'; paint(); });
@@ -27259,7 +27264,7 @@ section('Every direct-launch destination has a visible way back, at the tap floo
     ok(`${w}: and closing it leaves an art Home`,
        await page.evaluate(() => !document.querySelector('#pstamp .pqd')
          && TAB === 'dashboard'
-         && document.querySelectorAll('.qtools .qtapp.uiart').length === 7));
+         && document.querySelectorAll('.qtools .qtapp.uiart').length === 8));
   }
 
   /* TIMESTAMP VIDEO SHARES THE CLASS, and the class is what was measured
@@ -27765,7 +27770,7 @@ section('The hybrid pass: seven art cards on Home, and nothing else touched');
     }, png);
   };
 
-  const GROUNDS = ['sheets', 'newlead', 'priv', 'leads', 'field', 'photo', 'video'];
+  const GROUNDS = ['sheets', 'cintake', 'newlead', 'priv', 'leads', 'field', 'photo', 'video'];
 
   for (const [w, h, label] of [[1280, 900, 'desktop'], [390, 844, 'phone']]) {
     await page.setViewportSize({ width: w, height: h });
@@ -27804,9 +27809,9 @@ section('The hybrid pass: seven art cards on Home, and nothing else touched');
     }
     return { n: cards.length, worst };
   });
-  ok('all seven grounds are present', sep.n === 7, JSON.stringify(sep));
+  ok('all eight grounds are present', sep.n === 8, JSON.stringify(sep));
   ok('and no two of them read as the same colour (CIE76 dE >= 12)',
-     sep.n === 7 && sep.worst.d >= 12, JSON.stringify(sep.worst));
+     sep.n === 8 && sep.worst.d >= 12, JSON.stringify(sep.worst));
 
   /* ---- §2: DO NOT ART-CARD EVERYTHING ----------------------------------- */
   const more = await page.evaluate(() => {
@@ -27838,7 +27843,7 @@ section('The hybrid pass: seven art cards on Home, and nothing else touched');
      against the owner's 2026-09-07 lock. 155x142 is 1.09:1 and still reads as
      square; a letterbox would not, which is what the upper bound catches. */
   ok('an art card is near-square on a phone, within the 142px cap',
-     shape.art.length === 7
+     shape.art.length === 8
        && shape.art.every(c => c.w / c.h >= 1.0 && c.w / c.h <= 1.15),
      JSON.stringify(shape.art[0]));
   ok('and a plain card is SHORTER, because it has no photograph to hold',
@@ -27879,8 +27884,10 @@ section('The hybrid pass: seven art cards on Home, and nothing else touched');
     allUiart: [...document.querySelectorAll('.uiart')].length,
     wideHasArt: !!document.querySelector('.uiwide.has-art'),
   }));
-  ok('all seven Home cards claim their photograph and paint the scrim over it',
-     slot.art === 7 && slot.hasArt === 7 && slot.inlineArt === 7 && slot.scrimOnArt === true,
+  /* Eight Home cards, seven photographs: Prepare & Send Client Intake has its
+     ground and no asset yet — the art-less state the scrim rule exists for. */
+  ok('all seven photographed Home cards claim their photograph and paint the scrim over it',
+     slot.art === 8 && slot.hasArt === 7 && slot.inlineArt === 7 && slot.scrimOnArt === true,
      JSON.stringify({ ...slot, urls: slot.urls.length }));
   /* §5 — THE WIDE SIGNED-INTAKE ALERT IS NOT DISTURBED. It is an `.uiart` and
      always was, but the owner's pack contains no wide asset and `§5` says the
@@ -27890,7 +27897,7 @@ section('The hybrid pass: seven art cards on Home, and nothing else touched');
      crops and this pins that they have not been confused. Eight `.uiart`
      elements, seven of them with art. */
   ok('and the wide signed-intake alert keeps its green ground, no photograph',
-     slot.allUiart === 8 && slot.wideHasArt === false, JSON.stringify(slot));
+     slot.allUiart === 9 && slot.wideHasArt === false, JSON.stringify(slot));
   /* THE CACHE-BUST IS NOT OPTIONAL, and now it is a live URL rather than a
      template. `_headers` caches these seven days and they will be replaced in
      place; the public site paid a full round for exactly that. */
@@ -28098,10 +28105,10 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
      that appends only `:tab`. Two readers, two shapes, and each assertion
      spells out the one it uses rather than sharing a constant that is wrong
      for one of them. */
-  const DESK_ORDER = 'sheetQuick|tab:newlead|nlKind:consumer|tab:leads|surveillance|pstLaunch|vstOpen';
+  const DESK_ORDER = 'sheetQuick|ciNew|tab:newlead|nlKind:consumer|tab:leads|surveillance|pstLaunch|vstOpen';
   for (const [w, h, cols] of [[1200, 900, 4], [768, 1024, 3]]) {
     const d = await read(w, h);
-    ok(`at ${w}px the desktop strip carries the owner's seven, same order as the phone`,
+    ok(`at ${w}px the desktop strip carries the owner's eight, same order as the phone`,
        d.phoneActs.join('|') === DESK_ORDER, d.phoneActs.join('|'));
     ok(`at ${w}px it is ${cols} across, not the phone's two`, d.cols === cols,
        JSON.stringify({ cols: d.cols, want: cols }));
@@ -28118,7 +28125,7 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
      DUPLICATES of a door on every screen — the bottom navigation and the CEO
      fab respectively — so the height they cost bought nothing. Each of the five
      keeps the door it already had elsewhere; nothing was taken away. */
-  const PHONE = ['Rate Sheet', 'New Intake', 'Private Intake', 'View Intakes',
+  const PHONE = ['Rate Sheet', 'Prepare & Send Client Intake', 'New Intake', 'Private Intake', 'View Intakes',
                  'Active Surveillance', 'Timestamp Photo', 'Timestamp Video'];
   const PHONE_MORE = ['Cases', 'Insurance Intake', 'Law Firm Intake',
                       'Reports & Packages', 'CEO Bot'];
@@ -28140,7 +28147,7 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
   ok('and the Rate Sheet card opens Prepare & Send itself, in one tap',
      p390.phoneActs[0] === 'sheetQuick', p390.phoneActs.join('|'));
   ok('the private intake card goes straight to a private intake',
-     p390.phoneActs[2] === 'nlKind:consumer', p390.phoneActs.join('|'));
+     p390.phoneActs[3] === 'nlKind:consumer', p390.phoneActs.join('|'));
   ok('Rate Sheet is the one card wearing the accent',
      p390.leadName === 'Rate Sheet' && parseFloat(p390.leadBorder) >= 2, JSON.stringify(p390.leadBorder));
   /* NOTHING WAS TAKEN AWAY — the six that are not primary are in the same box
@@ -30450,7 +30457,7 @@ section('Create case / Accept: one tap, no chooser, and the intake survives it')
 
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
-  await page.locator('.tabs button', { hasText: 'Intakes' }).first().click();
+  await page.locator('.tabs button[data-tab="leads"]').first().click();
   await page.waitForTimeout(800);
 
   /* ---- THE DOOR ITSELF --------------------------------------------------- */
@@ -30558,7 +30565,7 @@ section('Create case / Accept: one tap, no chooser, and the intake survives it')
      leaves too. */
   await page.locator('.pagebar .close').first().click();
   await page.waitForTimeout(600);
-  await page.locator('.tabs button', { hasText: 'Intakes' }).first().click();
+  await page.locator('.tabs button[data-tab="leads"]').first().click();
   await page.waitForTimeout(800);
   const desk = await page.evaluate(() => {
     const card = [...document.querySelectorAll('.pcard')]
@@ -31035,7 +31042,7 @@ section('My Portal: two sign-ins, two layouts, one shared caseload');
     strip: [...document.querySelectorAll('.qtapps [data-qt]')].map(b => b.dataset.qt).slice(0, 3),
     needs: /Needs assignment/.test(document.body.innerText),
   }));
-  ok("A's reorder took: the second card leads now", aView.strip[0] === 'newlead',
+  ok("A's reorder took: the second card leads now", aView.strip[0] === 'cintake',
      JSON.stringify(aView.strip));
   ok("and A's un-hide brought the Needs-assignment card back — for A", aView.needs === true);
 
@@ -31850,7 +31857,7 @@ section("Home says good morning, and a signed intake is impossible to miss");
      supplies: an eighth name added without an asset, or a `ground` added to a
      door §2 keeps plain, fails here rather than on someone's phone. */
   ok('the seven ground-bearing doors wear the treatment, and each has its file',
-     art.known === 7 && art.grounds === 7 && art.dark === 7 && art.withFile === 7,
+     art.known === 7 && art.grounds === 8 && art.dark === 8 && art.withFile === 7,
      JSON.stringify(art));
   await page.close();
 }
@@ -33660,6 +33667,355 @@ section('LEGAL FLAT FEE: a matter sold as a flat fee reads Flat Fee on every scr
   await page.setViewportSize({ width: 1200, height: 900 });
   await page.close();
 }
+
+
+/* ================= CLIENT INTAKES — PREPARE, SEND, SIGN, RETRIEVE ===========
+   Owner brief 2026-11-04. The whole loop on phone widths: the Home card opens
+   the prepare form, the retainer's half is shown as it is chosen, the link is
+   created and handed to the phone's messages app, the client completes and
+   signs on their own phone with every figure ABOVE the signature, and the
+   office finds the signed intake and downloads its PDF. */
+const ciOver = page => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+let CI_LINK = null;
+
+section('Client intakes: the Home card opens Prepare & Send on a phone');
+try {
+  const page = await newPage();
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: SITE });
+  await signIn(page, 'trever', 'AdminPassword1x');
+  /* FROM THE FACTORY VIEW. Earlier sections leave this admin's own portal
+     reordered and in Simple View on purpose; this one is about the default. */
+  await page.evaluate(() => api('/me/prefs', { method: 'POST', body: { qt_order: null, hidden: null, view: null } }));
+  await page.reload(); await page.waitForTimeout(800);
+  await goHome(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(400);
+  const card = await page.evaluate(() => {
+    const c = document.querySelector('.qtools .qtapps:not(.qtapps-more) > .qtapp[data-qt="cintake"]');
+    const r = c ? c.getBoundingClientRect() : null;
+    return c ? { label: c.innerText.replace(/\s+/g, ' '), top: r.top, h: r.height, w: r.width,
+      idx: [...c.parentElement.children].indexOf(c) } : null;
+  });
+  ok('Home carries Prepare & Send Client Intake as a primary card, second',
+     card && /Prepare & Send Client Intake/.test(card.label) && card.idx === 1, JSON.stringify(card));
+  ok('and it is on the first screen of a phone', card && card.top + 40 < 844 && card.h >= 44, JSON.stringify(card));
+  ok('the rail names the screen: Client Intakes',
+     await page.locator('.tabs button[data-tab="cintakes"]', { hasText: 'Client Intakes' }).count() === 1);
+  await page.locator('.qtapp[data-qt="cintake"]').first().click();
+  await page.waitForTimeout(500);
+  ok('one tap opens the prepare form on the Client Intakes screen',
+     await page.evaluate(() => TAB === 'cintakes' && !!document.getElementById('ci-form')));
+  ok('with a way back to Home', await page.locator('.homeback').count() === 1);
+  await page.waitForFunction(() => CI.state === 'ok', null, { timeout: 5000 });
+  await page.evaluate(() => paint());
+
+  /* THE NON-REFUNDABLE AMOUNT IS TYPED, NEVER CALCULATED (owner, final
+     revision 2026-11-04). Choosing a retainer fills nothing in. */
+  const presets = await page.evaluate(() => CI.options.presets.map(p => [p.value, p.retainer]));
+  ok('the seven presets are offered, retainer only', presets.length === 7 && presets[0][0] === '1600' && presets[6][0] === '4000'
+     && !/non-refundable/i.test(await page.locator('.ci-choices').innerText()), JSON.stringify(presets));
+  await page.locator('input[name="ci_choice"][value="2000"]').check();
+  await page.waitForTimeout(100);
+  let live = await page.locator('#ci_live').innerText();
+  ok('choosing a retainer asks for the non-refundable amount — it does not supply one',
+     /Enter the non-refundable amount/.test(live) && !live.includes('1,000') && (await page.locator('#ci_nr').inputValue()) === '', live);
+  const typed = [['1600', '0'], ['2000', '1000'], ['2400', '750'], ['2800', '2800'], ['3200', '1234.56'], ['3600', '900'], ['4000', '3999.99']];
+  for (const [v, nr] of typed) {
+    await page.locator(`input[name="ci_choice"][value="${v}"]`).check();
+    await page.waitForTimeout(60);
+    await page.locator('#ci_nr').fill(nr);
+    live = await page.locator('#ci_live').innerText();
+    const want = Number(nr).toLocaleString('en-US', { minimumFractionDigits: nr.includes('.') ? 2 : 0 });
+    ok(`$${Number(v).toLocaleString('en-US')} with ${nr} typed shows exactly that non-refundable amount`,
+       live.includes(Number(v).toLocaleString('en-US')) && live.includes('$' + want) && !/50%/.test(live), live);
+  }
+  await page.locator('input[name="ci_choice"][value="2000"]').check();
+  await page.locator('#ci_nr').fill('2000.01');
+  live = await page.locator('#ci_live').innerText();
+  ok('a non-refundable amount above the retainer says why it cannot be used', /more than the \$2,000 retainer/.test(live), live);
+  await page.locator('#ci_nr').fill('-5');
+  live = await page.locator('#ci_live').innerText();
+  ok('a negative non-refundable amount is not a dollar amount', /zero or more/.test(live), live);
+  await page.locator('input[name="ci_choice"][value="custom"]').check();
+  await page.waitForTimeout(100);
+  await page.locator('#ci_custom').fill('5200.50');
+  await page.locator('#ci_nr').fill('1300.25');
+  live = await page.locator('#ci_live').innerText();
+  ok('a custom $5,200.50 with $1,300.25 typed shows both, cents intact', live.includes('5,200.50') && live.includes('1,300.25'), live);
+  await page.locator('#ci_custom').fill('-40');
+  live = await page.locator('#ci_live').innerText();
+  ok('a negative custom figure shows why it cannot be used', /dollar amount|more than zero/.test(live), live);
+  await page.locator('#ci_custom').fill('5200');
+  await page.locator('#ci_nr').fill('2600');
+  live = await page.locator('#ci_live').innerText();
+  ok('and $5,200 with $2,600 typed shows both', live.includes('5,200') && live.includes('2,600') && live.includes('4-hour minimum per surveillance day'), live);
+  ok('typing did not rebuild the box', await page.evaluate(() => document.activeElement && document.activeElement.id === 'ci_nr'));
+
+  await page.locator('#ci_name').fill('Morgan Phone-Client');
+  await page.locator('#ci_phone').fill('(434) 555-0199');
+  await page.locator('#ci_email').fill('morgan@example.com');
+  await page.locator('[data-act="ciPreview"]').first().click();
+  await page.waitForSelector('#ci-prev', { timeout: 5000 });
+  const prev = await page.locator('#ci-prev').innerText();
+  ok('Preview Client Form shows the Worker\'s terms and the sections, writing nothing',
+     prev.includes('$5,200') && prev.includes('$2,600') && /Client authorization/i.test(prev)
+     && (await page.evaluate(() => CI.links.length)) === 0, prev.slice(0, 200));
+
+  for (const w of [390, 320]) {
+    await page.setViewportSize({ width: w, height: w === 320 ? 568 : 844 });
+    await page.waitForTimeout(250);
+    const g = await page.evaluate(() => ({
+      small: [...document.querySelectorAll('#ci-form .btn, #ci-form .ci-opt')]
+        .filter(b => b.getBoundingClientRect().height && b.getBoundingClientRect().height < 44)
+        .map(b => b.innerText + ':' + Math.round(b.getBoundingClientRect().height)),
+      fonts: [...document.querySelectorAll('#ci-form input:not([type=radio]):not([type=checkbox])')]
+        .filter(i => parseFloat(getComputedStyle(i).fontSize) < 16).length }));
+    ok(`${w}: nothing scrolls sideways on the prepare form`, (await ciOver(page)) <= 1, String(await ciOver(page)));
+    ok(`${w}: every control is at least 44px, every input 16px`, !g.small.length && !g.fonts, JSON.stringify(g));
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  await page.locator('[data-act="ciCreate"]').click();
+  await page.waitForTimeout(300);
+  ok('the link is refused until the terms are confirmed',
+     /Confirm the retainer/.test(await page.locator('#ci-form').innerText()) && await page.locator('#ci-sent').count() === 0);
+  await page.locator('#ci_confirm').check();
+  await page.locator('[data-act="ciCreate"]').click();
+  await page.waitForSelector('#ci-sent', { timeout: 5000 });
+  CI_LINK = await page.locator('#ci_url').inputValue();
+  ok('Create Secure Client Link shows the link', /\/intake\/client\/#k=[0-9a-f]{64}$/.test(CI_LINK), CI_LINK);
+  const href = await page.locator('#ci-sent a.ci-text').getAttribute('href');
+  ok('Text Client opens the phone\'s messages with the number and the message',
+     href.startsWith('sms:+14345550199?&body=') && decodeURIComponent(href.split('body=')[1]).includes(CI_LINK)
+     && decodeURIComponent(href).startsWith('sms:+14345550199?&body=Hello, this is Always Precise Investigations.'), href.slice(0, 120));
+  ok('and the screen says the portal cannot confirm delivery',
+     /not that the text arrived/.test(await page.locator('#ci-sent').innerText()));
+  ok('Email Client is offered because an address was given', await page.locator('#ci-sent [data-act="ciEmail"]').count() === 1);
+  await page.locator('#ci-sent [data-act="ciCopy"]').click();
+  await page.waitForTimeout(600);
+  ok('Copy Link copies it and says so', /Link copied/.test(await page.locator('#ci-sent').innerText())
+     && (await page.evaluate(() => navigator.clipboard.readText())) === CI_LINK);
+  const row = await page.evaluate(() => CI.links.find(l => l.client_name === 'Morgan Phone-Client'));
+  ok('the list holds it as Sent, $5,200 / $2,600', row && row.status === 'sent' && row.retainer === '$5,200'
+     && row.non_refundable === '$2,600', JSON.stringify(row));
+  await page.close();
+} catch (e) { ok('the section ran to its end without throwing', false, e && e.message); }
+
+section('Client intakes: the client completes and signs on their own phone');
+try {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const cp = await ctx.newPage();
+  const errs = []; cp.on('pageerror', e => errs.push(e.message));
+  const sent = []; cp.on('request', r => sent.push(r.url()));
+  await cp.goto(CI_LINK);
+  await cp.waitForSelector('[data-step="client"]', { timeout: 8000 });
+  ok('the link opens the intake with no account and no app', await cp.locator('#f_full_name').count() === 1);
+  ok('the office\'s details are prefilled', (await cp.locator('#f_full_name').inputValue()) === 'Morgan Phone-Client'
+     && (await cp.locator('#f_phone').inputValue()) === '(434) 555-0199');
+  ok('the token never travels in a request URL\'s path or query except to the API',
+     sent.every(u => !/[0-9a-f]{64}/.test(u.replace(/\/portal-api\/client-intake\/[0-9a-f]{64}/, ''))), sent.join(' '));
+  const stepFlow = async (fill) => {
+    await fill();
+    await cp.locator('#next').click(); await cp.waitForTimeout(150);
+  };
+  const over = async (label) => {
+    for (const w of [390, 320]) {
+      await cp.setViewportSize({ width: w, height: w === 320 ? 568 : 844 }); await cp.waitForTimeout(120);
+      const o = await ciOver(cp);
+      ok(`${w}: step "${label}" has nothing off the side of the screen`, o <= 1, String(o));
+    }
+    await cp.setViewportSize({ width: 390, height: 844 });
+  };
+  await over('client');
+  await cp.locator('#f_full_name').fill('');
+  await cp.locator('#next').click(); await cp.waitForTimeout(100);
+  ok('the full legal name is required to continue', /full legal name/.test(await cp.locator('#err').innerText()));
+  await stepFlow(async () => { await cp.locator('#f_full_name').fill('Morgan A. Phone-Client'); });
+  ok('step 2 is the type of investigation', await cp.locator('[data-step="type"]').count() === 1);
+  await cp.locator('#next').click(); await cp.waitForTimeout(100);
+  ok('a type must be chosen', /type of investigation/.test(await cp.locator('#err').innerText()));
+  await cp.locator('input[name="r_investigation_type"][value="domestic"]').check(); await cp.waitForTimeout(100);
+  await stepFlow(async () => { await cp.locator('#f_description').fill('Suspected affair since August.'); });
+  await over('subject');
+  await stepFlow(async () => {
+    await cp.locator('[data-unknown="subject_name"]').check(); await cp.waitForTimeout(80);
+    ok('"I don\'t know" disables the subject name', await cp.locator('#f_subject_name').isDisabled());
+    await cp.locator('#f_subject_address').fill('41 Oak Lane, Lynchburg');
+  });
+  await stepFlow(async () => { await cp.locator('#f_vehicle_make').fill('Toyota'); await cp.locator('#f_vehicle_plate').fill('XYZ9876'); });
+  await cp.locator('#next').click(); await cp.waitForTimeout(100);
+  ok('the objective is required', /establish/.test(await cp.locator('#err').innerText()));
+  await stepFlow(async () => { await cp.locator('#f_objective').fill('Establish whether the spouse visits 41 Oak Lane.'); });
+  await stepFlow(async () => { await cp.locator('#f_start_date').fill('2026-12-01'); });
+  ok('step 7 is the retainer & payment terms', await cp.locator('[data-step="terms"]').count() === 1);
+  const terms = await cp.locator('.terms').innerText();
+  ok('the client sees the office\'s retainer, its 50% portion, $100/hr and the 4-hour minimum',
+     terms.includes('$5,200') && terms.includes('$2,600') && terms.includes('$100/hr')
+     && /4-HOUR MINIMUM PER SURVEILLANCE DAY/.test(terms), terms);
+  ok('nothing on the terms step can edit a figure',
+     await cp.locator('[data-step="terms"] input:not([type=checkbox])').count() === 0);
+  await over('terms');
+  await cp.locator('#next').click(); await cp.waitForTimeout(100);
+  ok('the terms must be acknowledged before signing', /reviewed the retainer/.test(await cp.locator('#err').innerText()));
+  await stepFlow(async () => { await cp.locator('#ack').check(); });
+  ok('step 8 is the authorization & signature', await cp.locator('[data-step="sign"]').count() === 1);
+  await over('sign');
+  const geo = await cp.evaluate(() => {
+    const sig = document.getElementById('sigwrap').getBoundingClientRect();
+    const vals = [...document.querySelectorAll('#accepted-terms .val')].map(e => e.getBoundingClientRect().bottom);
+    const auth = document.querySelector('.auth').getBoundingClientRect();
+    return { sigTop: sig.top + scrollY, lastTerm: Math.max(...vals) + scrollY, authBottom: auth.bottom + scrollY,
+      n: vals.length, text: document.getElementById('accepted-terms').innerText };
+  });
+  ok('every financial figure is ABOVE the signature on the signing screen',
+     geo.n === 5 && geo.lastTerm < geo.authBottom && geo.authBottom < geo.sigTop
+     && geo.text.includes('$5,200') && geo.text.includes('$2,600'), JSON.stringify(geo).slice(0, 200));
+  await cp.locator('#f_signed_name').fill('Morgan A. Phone-Client');
+  await cp.locator('#agree').check();
+  /* Below the fold on a phone: a pointer at off-screen coordinates lands on
+     nothing (the intake suite's own recorded trap), so scroll as a person would. */
+  await cp.locator('#sig').scrollIntoViewIfNeeded();
+  const box = await cp.locator('#sig').boundingBox();
+  await cp.mouse.move(box.x + 30, box.y + 120); await cp.mouse.down();
+  for (let i = 1; i <= 12; i++) await cp.mouse.move(box.x + 30 + i * 18, box.y + 120 - (i % 3) * 22);
+  await cp.mouse.up();
+  // the first try is cut off — the client keeps everything and tries again
+  await cp.route('**/submit', r => r.abort(), { times: 1 });
+  await cp.locator('#next').click();
+  await cp.waitForTimeout(500);
+  const dropErr = await cp.locator('#err').innerText();
+  ok('a dropped connection keeps what was entered and says so',
+     /could not reach the server/.test(dropErr)
+     && (await cp.locator('#f_signed_name').inputValue()) === 'Morgan A. Phone-Client', dropErr);
+  await cp.locator('#next').click();
+  await cp.waitForSelector('.msg h1', { timeout: 8000 });
+  ok('the client sees the confirmation in the owner\'s words',
+     (await cp.locator('.msg h1').innerText()) === 'Your confidential intake has been submitted to Always Precise Investigations.');
+  ok('with a reference number', /API-\d{8}-\d{4}/.test(await cp.locator('.msg').innerText()));
+  await cp.reload(); await cp.waitForTimeout(800);
+  ok('reopening the link says it was already submitted', /Already submitted/.test(await cp.locator('#app').innerText()));
+  ok('no page errors on the client form', errs.length === 0, errs.join(' | '));
+  await ctx.close();
+} catch (e) { ok('the section ran to its end without throwing', false, e && e.message); }
+
+section('Client intakes: the office finds the signed intake and downloads its PDF');
+try {
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => { TAB = 'cintakes'; CI_OPEN = null; paint(); return loadCI(); });
+  await page.waitForTimeout(300);
+  await page.locator('[data-act="ciFilter"][data-f="submitted"]').click();
+  await page.locator('#ci_q').fill('555-0199');
+  await page.waitForTimeout(200);
+  const rows = await page.locator('.ci-row').allInnerTexts();
+  ok('Submitted + a phone search finds it', rows.length === 1 && /Morgan/.test(rows[0]) && /Submitted/i.test(rows[0]), rows.join(' || '));
+  ok('the search box kept the caret through the repaint', await page.evaluate(() => document.activeElement && document.activeElement.id === 'ci_q'));
+  await page.locator('#ci_q').fill('Morgan A');
+  ok('and a name search finds it too', (await page.locator('.ci-row').count()) === 1);
+  ok('the row says when it was submitted and what was agreed', /Submitted .*20\d\d/.test(rows[0]) && rows[0].includes('$5,200'));
+  await page.locator('.ci-row [data-act="ciOpen"]').first().click();
+  await page.waitForSelector('#cidoc', { timeout: 8000 });
+  await page.waitForTimeout(500);
+  const doc = await page.evaluate(() => {
+    const d = document.getElementById('cidoc'), t = d.innerText;
+    const sig = d.querySelector('img.ci-sig');
+    return { t, terms: t.indexOf('7. Retainer'), auth: t.indexOf('8. Client authorization'),
+      sigAfter: sig ? !!(d.querySelector('h3:nth-of-type(7)').compareDocumentPosition(sig) & Node.DOCUMENT_POSITION_FOLLOWING) : false,
+      sigLoaded: sig ? sig.naturalWidth > 0 : false };
+  });
+  ok('the completed document holds every section', ['1. Client information', '3. Subject information', '4. Vehicle information',
+    '6. Scheduling'].every(h => doc.t.includes(h)) && doc.t.includes('Not known to the client') && doc.t.includes('Toyota'));
+  ok('and the signature comes after every financial term', doc.terms > 0 && doc.auth > doc.terms && doc.sigAfter && doc.sigLoaded,
+     JSON.stringify({ terms: doc.terms, auth: doc.auth, sigAfter: doc.sigAfter, loaded: doc.sigLoaded }));
+  ok('it carries the typed name, the time and the terms record', doc.t.includes('Morgan A. Phone-Client')
+     && /Terms record \(SHA-256\): [0-9a-f]{64}/.test(doc.t) && doc.t.includes('$2,600'));
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 15000 }),
+    page.locator('#ci-detail [data-act="ciPdf"]').click()]);
+  const bytes = fs.readFileSync(await dl.path()).toString('latin1');
+  ok('Download completed PDF produces a PDF', bytes.startsWith('%PDF-1.4') && /\.pdf$/.test(dl.suggestedFilename()), dl.suggestedFilename());
+  const pT = bytes.indexOf('(7. Retainer'), pNR = bytes.indexOf('Non-refundable portion: $2,600'),
+        pSig = bytes.indexOf('(Signed below the retainer'), pImg = bytes.lastIndexOf(' Do Q');
+  ok('in the PDF, the terms come before the authorization and the signature image after both',
+     pT > 0 && pNR > pT && pSig > pNR && pImg > pSig, JSON.stringify({ pT, pNR, pSig, pImg }));
+  ok('it is the firm\'s document: banner, footer page numbers', /\/Im1 Do/.test(bytes) && /Page 1 of \d/.test(bytes));
+  await page.locator('#ci-detail [data-act="ciReviewed"]').click();
+  await page.waitForTimeout(500);
+  ok('Mark reviewed moves it to Reviewed', await page.evaluate(() => CI_OPEN.data.link.status === 'reviewed'));
+  await page.locator('[data-act="ciClose"]').click();
+  await page.waitForTimeout(200);
+  const [blank] = await Promise.all([page.waitForEvent('download', { timeout: 15000 }),
+    page.locator('[data-act="ciBlankPdf"]').click()]);
+  const bb = fs.readFileSync(await blank.path()).toString('latin1');
+  ok('the printable blank intake is available separately', bb.startsWith('%PDF-1.4') && bb.indexOf('(7. Retainer') > 0
+     && bb.indexOf('(8. Client authorization') > bb.indexOf('(7. Retainer'));
+  ok('the signed intake is on the ordinary Intakes list too',
+     await page.evaluate(() => CASES.some(c => c.client_name === 'Morgan A. Phone-Client' && c.signed === 1)) ||
+     await page.evaluate(async () => (await api('/submissions?limit=200')).submissions.some(c => c.client_name === 'Morgan A. Phone-Client' && c.signed === 1)));
+  for (const w of [390, 320, 1200]) {
+    await page.setViewportSize({ width: w, height: 800 });
+    await page.waitForTimeout(200);
+    ok(`${w}: the Client Intakes list has nothing off the side`, (await ciOver(page)) <= 1);
+  }
+  await page.close();
+} catch (e) { ok('the section ran to its end without throwing', false, e && e.message); }
+
+section('Client intakes: revoke, the rate-sheet door, and the field sees none of it');
+try {
+  const page = await newPage();
+  page.on('dialog', d => d.accept());
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button[data-tab="sheets"]').click();
+  await page.waitForTimeout(500);
+  await page.locator('.sheet-card', { hasText: 'Private Client' }).first().click();
+  await page.waitForTimeout(300);
+  const door = page.locator('[data-act="ciNew"]', { hasText: 'Prepare client intake' });
+  ok('the private rate sheet offers Prepare client intake', await door.count() === 1);
+  await door.click(); await page.waitForTimeout(400);
+  ok('and it opens the prepare form', await page.locator('#ci-form').count() === 1);
+  await page.waitForFunction(() => CI.state === 'ok');
+  await page.locator('#ci_name').fill('Revoke Me');
+  await page.locator('#ci_phone').fill('4345550100');
+  await page.locator('input[name="ci_choice"][value="2000"]').check();
+  await page.locator('#ci_nr').fill('500');
+  await page.locator('#ci_confirm').check();
+  await page.locator('[data-act="ciCreate"]').click();
+  await page.waitForSelector('#ci-sent');
+  const url = await page.locator('#ci_url').inputValue();
+  await page.locator('[data-act="ciDone"]').click();
+  await page.waitForTimeout(200);
+  await page.locator('.ci-row', { hasText: 'Revoke Me' }).locator('[data-act="ciRevoke"]').click();
+  await page.waitForTimeout(600);
+  ok('Revoke marks it revoked', /Revoked/i.test(await page.locator('.ci-row', { hasText: 'Revoke Me' }).innerText()));
+  const cp = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  await cp.goto(url); await cp.waitForTimeout(800);
+  ok('the client\'s revoked link no longer opens the form', /withdrawn/.test(await cp.locator('#app').innerText())
+     && await cp.locator('#f_full_name').count() === 0);
+  await cp.context().close();
+  // a draft is saved without a link, and continued later
+  await page.locator('.ci-start').click(); await page.waitForTimeout(200);
+  await page.locator('#ci_name').fill('Draft Person');
+  await page.locator('#ci_phone').fill('4345550101');
+  await page.locator('input[name="ci_choice"][value="3600"]').check();
+  await page.locator('[data-act="ciDraft"]').click();
+  await page.waitForTimeout(500);
+  ok('Save Draft keeps it under Drafts, with no link and no non-refundable amount invented', await page.evaluate(() =>
+    CI.links.some(l => l.client_name === 'Draft Person' && l.status === 'draft' && !l.url && l.nonref_cents === null)));
+  await page.locator('.ci-row', { hasText: 'Draft Person' }).locator('[data-act="ciEdit"]').click();
+  await page.waitForTimeout(200);
+  ok('Continue draft reopens it with its retainer chosen',
+     await page.locator('input[name="ci_choice"][value="3600"]').isChecked());
+  await page.close();
+
+  const fp = await newPage();
+  await signIn(fp, 'dana', 'FieldWork2026x');
+  ok('an investigator has no Client Intakes in the rail', await fp.locator('.tabs button[data-tab="cintakes"]').count() === 0);
+  ok('and no Prepare & Send card', await fp.locator('.qtapp[data-qt="cintake"]').count() === 0);
+  const st = await fp.evaluate(async () => (await fetch('/portal-api/client-intakes', { credentials: 'same-origin' })).status);
+  ok('and the Worker refuses the list to them', st === 403, String(st));
+  await fp.close();
+} catch (e) { ok('the section ran to its end without throwing', false, e && e.message); }
+
 
 await browser.close();
 server.close();
