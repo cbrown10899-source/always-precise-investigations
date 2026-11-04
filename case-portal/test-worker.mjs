@@ -24777,64 +24777,81 @@ async function cilSetup() {
 }
 async function cilMake(env, admin, body) {
   const res = await call(env, '/client-intakes', { method: 'POST', cookie: admin,
-    body: { client_name: 'Jordan Client', client_phone: '434-555-0111', confirm_terms: true, ...body } });
+    body: { client_name: 'Jordan Client', client_phone: '434-555-0111', confirm_terms: true,
+            non_refundable: '500', ...body } });
   return { res, j: await jsonOf(res) };
 }
 const cilTok = link => new URL(link.url).hash.replace('#k=', '');
 
-section('Client intake links: the standard retainers and their exact half');
+section('Client intake links: the retainers are offered, and the non-refundable amount is typed');
 {
   const { env, admin } = await cilSetup();
-  const want = [[1600, 800], [2000, 1000], [2400, 1200], [2800, 1400], [3200, 1600], [3600, 1800], [4000, 2000]];
   const list = await jsonOf(await call(env, '/client-intakes', { cookie: admin }));
-  ok('the option list is the seven owner presets, in order',
-     JSON.stringify(list.options.presets.map(p => [p.retainer_cents / 100, p.nonref_cents / 100])) === JSON.stringify(want),
+  ok('the option list is the seven owner presets, in order, with no non-refundable figure attached',
+     JSON.stringify(list.options.presets.map(p => p.retainer_cents / 100)) === JSON.stringify([1600, 2000, 2400, 2800, 3200, 3600, 4000])
+     && list.options.presets.every(p => !('non_refundable' in p) && !('nonref_cents' in p)),
      JSON.stringify(list.options && list.options.presets));
   ok('the rate and minimum are the private standard: $100/hr, 4 hours',
      list.options.hourly_cents === 10000 && list.options.min_hours === 4);
-  for (const [ret, nr] of want) {
-    const { res, j } = await cilMake(env, admin, { retainer_choice: String(ret) });
-    ok(`$${ret} creates a link whose non-refundable portion is $${nr}`,
-       res.status === 201 && j.link.retainer_cents === ret * 100 && j.link.nonref_cents === nr * 100
-       && j.link.retainer === `$${ret.toLocaleString('en-US')}` && j.link.non_refundable === `$${nr.toLocaleString('en-US')}`,
+  /* The figure the office types is the figure stored — whatever its share of
+     the retainer. Half is just one of these. */
+  for (const [ret, nr] of [[1600, '0'], [2000, '1000'], [2400, '500'], [2800, '2800'], [3200, '1234.56'], [3600, '900.05'], [4000, '3999.99']]) {
+    const { res, j } = await cilMake(env, admin, { retainer_choice: String(ret), non_refundable: nr });
+    const want = Math.round(Number(nr) * 100);
+    ok(`$${ret} with ${nr} typed stores exactly ${want} cents non-refundable`,
+       res.status === 201 && j.link.retainer_cents === ret * 100 && j.link.nonref_cents === want,
        JSON.stringify(j.link || j));
   }
+  let r = await cilMake(env, admin, { retainer_choice: '2000', non_refundable: '' });
+  ok('a link is refused without a non-refundable amount — nothing is calculated in its place',
+     r.res.status === 400 && r.j.code === 'non_refundable_required', JSON.stringify(r.j));
+  r = await cilMake(env, admin, { retainer_choice: '2000', non_refundable: '2000.01' });
+  ok('more than the retainer is refused by name, not clamped',
+     r.res.status === 400 && r.j.code === 'non_refundable_over_retainer', JSON.stringify(r.j));
+  for (const bad of ['-1', 'abc', '10.005', '1e3', '$-5']) {
+    r = await cilMake(env, admin, { retainer_choice: '2000', non_refundable: bad });
+    ok(`non-refundable "${bad}" is refused as not a dollar amount`, r.res.status === 400 && r.j.code === 'bad_non_refundable', JSON.stringify(r.j));
+  }
+  r = await cilMake(env, admin, { retainer_choice: '2000', non_refundable: '$1,250.50' });
+  ok('a typed "$1,250.50" is read as 125050 cents', r.res.status === 201 && r.j.link.nonref_cents === 125050 && r.j.link.non_refundable === '$1,250.50');
   const bad = await cilMake(env, admin, { retainer_choice: '1500' });
-  ok('a figure that is not one of the presets is refused by name', bad.res.status === 400 && bad.j.code === 'bad_retainer_choice');
-  const none = await cilMake(env, admin, {});
-  ok('no choice at all is refused', none.res.status === 400 && none.j.code === 'bad_retainer_choice');
+  ok('a retainer that is not one of the presets is refused by name', bad.res.status === 400 && bad.j.code === 'bad_retainer_choice');
+  const none = await cilMake(env, admin, { retainer_choice: undefined });
+  ok('no retainer choice at all is refused', none.res.status === 400 && none.j.code === 'bad_retainer_choice');
+  const src = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+  const fn = src.slice(src.indexOf('function clientIntakeRetainer('), src.indexOf('function clientIntakeTerms('))
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  ok('nothing in the client-intake money rules derives the non-refundable amount from the retainer',
+     !/\/\s*2\b|\*\s*0?\.5\b|\*\s*50\b|Math\.floor\(c/.test(fn), fn.slice(0, 200));
 }
 
-section('Client intake links: a custom retainer is halved exactly, in cents');
+section('Client intakes: a custom retainer and its typed amount keep their cents');
 {
   const { env, admin } = await cilSetup();
-  const cases = [['5200', 520000, 260000, '$5,200', '$2,600'],
-                 ['$5,200.50', 520050, 260025, '$5,200.50', '$2,600.25'],
-                 ['1000.01', 100001, 50000, '$1,000.01', '$500.00'],
-                 ['0.02', 2, 1, '$0.02', '$0.01'],
-                 ['16.10', 1610, 805, '$16.10', '$8.05'],
-                 ['33.33', 3333, 1666, '$33.33', '$16.66'],
-                 ['999999.99', 99999999, 49999999, '$999,999.99', '$499,999.99']];
-  for (const [raw, rc, nc, rs, ns] of cases) {
+  const cases = [['5200', '2600', 520000, 260000, '$5,200', '$2,600'],
+                 ['$5,200.50', '1000', 520050, 100000, '$5,200.50', '$1,000.00'],
+                 ['1000.01', '1000.01', 100001, 100001, '$1,000.01', '$1,000.01'],
+                 ['0.02', '0', 2, 0, '$0.02', '$0.00'],
+                 ['16.10', '8.05', 1610, 805, '$16.10', '$8.05'],
+                 ['999999.99', '333333.33', 99999999, 33333333, '$999,999.99', '$333,333.33']];
+  for (const [raw, nr, rc, nc, rs, ns] of cases) {
     const pv = await jsonOf(await call(env, '/client-intakes/preview', { method: 'POST', cookie: admin,
-      body: { retainer_choice: 'custom', custom_retainer: raw } }));
-    ok(`preview: custom ${raw} -> ${rc} cents, half ${nc}`, pv.retainer_cents === rc && pv.nonref_cents === nc
+      body: { retainer_choice: 'custom', custom_retainer: raw, non_refundable: nr } }));
+    ok(`preview: custom ${raw}, non-refundable ${nr} -> ${rc} / ${nc} cents`, pv.retainer_cents === rc && pv.nonref_cents === nc
        && pv.terms.retainer === rs && pv.terms.non_refundable === ns, JSON.stringify(pv).slice(0, 300));
-    const { res, j } = await cilMake(env, admin, { retainer_choice: 'custom', custom_retainer: raw });
+    const { res, j } = await cilMake(env, admin, { retainer_choice: 'custom', custom_retainer: raw, non_refundable: nr });
     ok(`stored: custom ${raw} is ${rs} with ${ns} non-refundable`,
        res.status === 201 && j.link.retainer_cents === rc && j.link.nonref_cents === nc
-       && Number.isInteger(j.link.nonref_cents) && j.link.retainer === rs && j.link.non_refundable === ns,
-       JSON.stringify(j.link || j));
+       && j.link.retainer === rs && j.link.non_refundable === ns, JSON.stringify(j.link || j));
   }
   for (const raw of ['-500', '0', '0.00', 'abc', '12.345', '1e5', '', '5,2.00.1', '1000000.01']) {
-    const { res, j } = await cilMake(env, admin, { retainer_choice: 'custom', custom_retainer: raw });
+    const { res, j } = await cilMake(env, admin, { retainer_choice: 'custom', custom_retainer: raw, non_refundable: '0' });
     ok(`custom "${raw}" is refused by name`, res.status === 400
        && ['bad_custom_retainer', 'custom_retainer_missing', 'custom_retainer_too_large'].includes(j.code), JSON.stringify(j));
   }
-  const src = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
-  const fn = src.slice(src.indexOf('function clientIntakeRetainer('), src.indexOf('function clientIntakeTerms('));
-  ok('the half is integer arithmetic on cents — no float multiply in the rule',
-     /Math\.floor\(c \/ 2\)/.test(fn) && /d \* 50/.test(fn) && !/\* 0\.5|\/ 2\.0|\* \.5/.test(fn));
+  const pv = await call(env, '/client-intakes/preview', { method: 'POST', cookie: admin,
+    body: { retainer_choice: 'custom', custom_retainer: '5200' } });
+  ok('the preview also needs the typed amount', pv.status === 400 && (await jsonOf(pv)).code === 'non_refundable_required');
 }
 
 section('Client intake links: the office confirms before a link exists, and the terms then lock');
@@ -24842,9 +24859,12 @@ section('Client intake links: the office confirms before a link exists, and the 
   const { env, admin } = await cilSetup();
   let { res, j } = await cilMake(env, admin, { retainer_choice: '2000', confirm_terms: false });
   ok('a link is refused until the terms are confirmed', res.status === 400 && j.code === 'terms_not_confirmed');
-  ({ res, j } = await cilMake(env, admin, { retainer_choice: '2000', confirm_terms: undefined, draft: true }));
-  ok('a draft saves without confirmation, and carries no link',
-     res.status === 201 && j.link.status === 'draft' && j.link.url === null, JSON.stringify(j.link));
+  ({ res, j } = await cilMake(env, admin, { retainer_choice: '2000', confirm_terms: undefined, draft: true, non_refundable: '' }));
+  ok('a draft saves without confirmation or a non-refundable amount, and carries no link',
+     res.status === 201 && j.link.status === 'draft' && j.link.url === null && j.link.nonref_cents === null
+     && j.link.non_refundable === null, JSON.stringify(j.link));
+  const dr = await jsonOf(await call(env, `/client-intakes/${j.link.id}`, { cookie: admin }));
+  ok('a draft with no amount shows no terms rather than an invented figure', dr.terms === null, JSON.stringify(dr.terms));
   const id = j.link.id;
   res = await call(env, `/client-intakes/${id}`, { method: 'POST', cookie: admin,
     body: { client_name: 'Jordan Client', client_phone: '434-555-0111', retainer_choice: '2400', draft: true } });
@@ -24853,10 +24873,18 @@ section('Client intake links: the office confirms before a link exists, and the 
   res = await call(env, `/client-intakes/${id}`, { method: 'POST', cookie: admin,
     body: { client_name: 'Jordan Client', client_phone: '434-555-0111', retainer_choice: '2400', confirm_terms: true } });
   j = await jsonOf(res);
+  ok('a draft cannot become a link without its non-refundable amount', res.status === 400 && j.code === 'non_refundable_required');
+  res = await call(env, `/client-intakes/${id}`, { method: 'POST', cookie: admin,
+    body: { client_name: 'Jordan Client', client_phone: '434-555-0111', retainer_choice: '2400',
+            non_refundable: '700', confirm_terms: true } });
+  j = await jsonOf(res);
+  ok('confirming a draft with both amounts creates its link, with exactly the typed amount',
+     j.link && j.link.nonref_cents === 70000, JSON.stringify(j.link));
   ok('confirming a draft creates its link', res.status === 200 && j.link.status === 'ready' && /#k=[0-9a-f]{64}$/.test(j.link.url),
      JSON.stringify(j.link));
   res = await call(env, `/client-intakes/${id}`, { method: 'POST', cookie: admin,
-    body: { client_name: 'Jordan Client', client_phone: '434-555-0111', retainer_choice: '4000', confirm_terms: true } });
+    body: { client_name: 'Jordan Client', client_phone: '434-555-0111', retainer_choice: '4000',
+            non_refundable: '100', confirm_terms: true } });
   j = await jsonOf(res);
   ok('once a link exists its terms cannot be edited', res.status === 409 && j.code === 'terms_locked');
   const row = await env.DB.prepare('SELECT retainer_cents FROM client_intake_link WHERE id = ?').bind(id).first();
@@ -24898,7 +24926,7 @@ section('Client intake links: the link is unpredictable and carries nothing abou
 section('Client intake links: the client reads the terms and cannot change them');
 {
   const { env, admin } = await cilSetup();
-  const { j } = await cilMake(env, admin, { retainer_choice: 'custom', custom_retainer: '5200' });
+  const { j } = await cilMake(env, admin, { retainer_choice: 'custom', custom_retainer: '5200', non_refundable: '2600' });
   const tok = cilTok(j.link);
   let res = await call(env, `/client-intake/${tok}`);
   const rd = await jsonOf(res);

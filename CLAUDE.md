@@ -1934,15 +1934,19 @@ Owner brief 2026-11-04, scoped the same day to the API portal's private-client
 intake workflow only. Record and decisions in `case-portal/CLIENT-INTAKE-LINKS.md`.
 
 The office prepares a private client's intake with the retainer already chosen
-($1,600–$4,000 presets or Custom), texts the client a link, and the client
+($1,600–$4,000 presets or Custom) and the non-refundable amount typed for that
+client, texts the client a link, and the client
 completes and signs on their own phone at `/intake/client/#k=<token>`. Home
 card **Prepare & Send Client Intake** (second, the eighth card in a grid that had
 one empty cell, so Home is no taller), rail **Client Intakes**, and a door on the
 private Rate Sheet card.
 
-**THE NON-REFUNDABLE PORTION IS EXACTLY HALF, IN INTEGER CENTS** —
-`clientIntakeRetainer` is the one place the rule is written; an odd number of
-cents rounds the half DOWN, the client's favour. **THE TERMS HAVE ONE WRITER**,
+**THE NON-REFUNDABLE PORTION IS TYPED, NEVER CALCULATED** (owner's final
+revision, 2026-11-04, overriding a first build that computed 50%): a separate
+required field per client, validated by `clientIntakeNonRefundable` — a dollar
+amount, zero or more, no more than the retainer, refused by name otherwise —
+and stored exactly, in integer cents. A test fails if the client-intake money
+rules ever derive it from the retainer again. **THE TERMS HAVE ONE WRITER**,
 `clientIntakeTerms(row)`: the client's page renders it, the submit route
 recomputes it and refuses a different hash, and the stored record is the same
 JSON. No amount is ever read from the client. **A link's terms lock when its

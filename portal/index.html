@@ -31706,14 +31706,16 @@ function paintCase(){ paint(); }
 /* ================ CLIENT INTAKES — PREPARE & SEND (owner brief 2026-11-04) ===
 
    "Open my portal on my phone, tap Prepare & Send Client Intake, select or
-   enter a retainer, see the 50% non-refundable amount, text the generated
-   secure link ... and retrieve the completed signed PDF from the staff portal."
+   enter a retainer ... text the generated secure link ... and retrieve the
+   completed signed PDF from the staff portal."
 
-   EVERY FIGURE IS THE WORKER'S. The form shows the half as it is typed —
-   display only, integer cents, the same rule — but the link is created by the
-   Worker from the choice, the preview is the Worker's own terms, and the
-   record is what the Worker stored. This page holds no amount of its own: the
-   preset list arrives from `/client-intakes` with the links.
+   THE NON-REFUNDABLE AMOUNT IS TYPED, NEVER CALCULATED (owner, 2026-11-04,
+   final revision: "DO NOT automatically calculate or enforce 50% of the
+   retainer"). The office enters it for each client beside the retainer, and
+   confirms both before a link exists. The form checks it as it is typed —
+   display only — and the Worker checks it again and stores exactly it. This
+   page holds no amount of its own: the preset list arrives from
+   `/client-intakes` with the links.
 
    SENDING IS THE PHONE'S. Text Client is an `sms:` link, so the phone's own
    messaging app opens with the number and the message ready; the portal
@@ -31759,19 +31761,31 @@ function ciCents(raw){
   const [w, f = ""] = t.split(".");
   return Number(w) * 100 + Number((f + "00").slice(0, 2));
 }
-/* What the form's current choice comes to, or why it comes to nothing. */
+/* What the form's two figures come to, or why they come to nothing — the
+   same three rules the Worker applies, so the screen says the reason before
+   the request does. The non-refundable amount is the office's own figure:
+   nothing here derives it from the retainer. */
 function ciChoice(f){
   if(!f || !f.choice) return { err: "Choose a retainer." };
+  let ret;
   if(f.choice === "custom"){
     const c = ciCents(f.custom);
     if(!String(f.custom || "").trim()) return { err: "Enter the custom retainer amount." };
     if(c === null) return { err: "Enter the custom retainer as a dollar amount, like 5200 or 5200.50." };
     if(c <= 0) return { err: "The custom retainer must be more than zero." };
     if(CI.options && c > CI.options.max_cents) return { err: "That retainer is above what this form accepts." };
-    return { ret: c, nr: Math.floor(c / 2) };
+    ret = c;
+  }else{
+    const p = ((CI.options || {}).presets || []).find(x => x.value === f.choice);
+    if(!p) return { err: "Choose a retainer." };
+    ret = p.retainer_cents;
   }
-  const p = ((CI.options || {}).presets || []).find(x => x.value === f.choice);
-  return p ? { ret: p.retainer_cents, nr: p.nonref_cents } : { err: "Choose a retainer." };
+  const raw = String(f.nr || "").trim();
+  if(!raw) return { ret, err: "Enter the non-refundable amount for this client (it can be zero)." };
+  const nr = ciCents(raw);
+  if(nr === null) return { ret, err: "Enter the non-refundable amount as a dollar amount of zero or more, like 800 or 812.50." };
+  if(nr > ret) return { ret, err: `The non-refundable amount is more than the ${ciMoney(ret)} retainer. It can be at most the retainer.` };
+  return { ret, nr };
 }
 const ciFmtPair = (ret, nr) => { const c = Boolean(ret % 100 || nr % 100); return [ciMoney(ret, c), ciMoney(nr, c)]; };
 
@@ -31808,9 +31822,10 @@ function ciNewForm(src){
   CI_FORM = src ? { id: src.id, client_name: src.client_name, client_phone: src.client_phone,
       client_email: src.client_email || "", choice: src.retainer_choice || "",
       custom: src.retainer_choice === "custom" ? (src.retainer_cents / 100).toFixed(2) : "",
+      nr: src.nonref_cents == null ? "" : (src.nonref_cents / 100).toFixed(2),
       confirm: false, err: "" }
     : { id: null, client_name: "", client_phone: "", client_email: "", choice: "",
-        custom: "", confirm: false, err: "" };
+        custom: "", nr: "", confirm: false, err: "" };
   CI_SENT = null; CI_OPEN = null; CI_PREVIEW = null; CI_MSG = ""; CI_ERR = "";
 }
 
@@ -31821,7 +31836,7 @@ function ciCollect(){
   if(!CI_FORM) return;
   const g = id => { const e = $(id); return e ? e.value : undefined; };
   for(const [k, id] of [["client_name", "ci_name"], ["client_phone", "ci_phone"],
-      ["client_email", "ci_email"], ["custom", "ci_custom"]]){
+      ["client_email", "ci_email"], ["custom", "ci_custom"], ["nr", "ci_nr"]]){
     const v = g(id); if(v !== undefined) CI_FORM[k] = v;
   }
   const c = $("ci_confirm"); if(c) CI_FORM.confirm = c.checked;
@@ -31830,11 +31845,11 @@ function ciCollect(){
 }
 function ciLiveHtml(){
   const r = ciChoice(CI_FORM);
-  if(r.err) return `<span class="ci-live-none">${esc(CI_FORM.choice ? r.err : "Choose a retainer to see its terms.")}</span>`;
+  if(r.err) return `<span class="ci-live-none">${esc(CI_FORM.choice ? r.err : "Choose a retainer and enter the non-refundable amount to see the terms.")}</span>`;
   const [a, b] = ciFmtPair(r.ret, r.nr);
   const o = CI.options || {};
   return `<div class="ci-sum"><div><span>Retainer</span><b>${esc(a)}</b></div>
-    <div><span>Non-refundable portion (50%)</span><b>${esc(b)}</b></div>
+    <div><span>Non-refundable portion</span><b>${esc(b)}</b></div>
     <div><span>Rate</span><b>${esc(ciMoney(o.hourly_cents || 0))}/hr</b></div>
     <div><span>Minimum</span><b>${esc(String(o.min_hours || ""))}-hour minimum per surveillance day</b></div></div>`;
 }
@@ -31847,21 +31862,23 @@ function ciFormHtml(){
     <span>${label}</span></label>`;
   return `<div class="card ci-form" id="ci-form">
     <h2 style="margin:0 0 4px">${f.id ? "Draft client intake" : "Prepare &amp; send client intake"}</h2>
-    <p class="note" style="margin-top:0">The client completes and signs it on their own phone. The retainer you
-      choose here is fixed on the link &mdash; the client cannot change it.</p>
+    <p class="note" style="margin-top:0">The client completes and signs it on their own phone. Both amounts you
+      enter here are fixed on the link &mdash; the client can read them but cannot change them.</p>
     <label class="f"><span>Client name</span><input id="ci_name" data-act-input="ciCollect" autocomplete="off" value="${esc(f.client_name)}"></label>
     <label class="f"><span>Phone number</span><input id="ci_phone" type="tel" inputmode="tel" data-act-input="ciCollect" autocomplete="off" value="${esc(f.client_phone)}"></label>
     <label class="f"><span>Email address <span class="optn">(optional)</span></span><input id="ci_email" type="email" data-act-input="ciCollect" autocomplete="off" value="${esc(f.client_email)}"></label>
     <fieldset class="ci-choices"><legend>Retainer</legend>
-      ${o.presets.map(p => opt(p.value, `<b>${esc(p.retainer)}</b> &mdash; Non-refundable ${esc(p.non_refundable)}`)).join("")}
+      ${o.presets.map(p => opt(p.value, `<b>${esc(p.retainer)}</b>`)).join("")}
       ${opt("custom", "<b>Custom retainer</b>")}
       ${f.choice === "custom" ? `<label class="f" style="margin:8px 0 0"><span>Custom retainer amount</span>
-        <input id="ci_custom" inputmode="decimal" data-act-input="ciCollect" placeholder="e.g. 5200" value="${esc(f.custom)}">
-        <span class="hint">The non-refundable portion is calculated as exactly 50%.</span></label>` : ""}
+        <input id="ci_custom" inputmode="decimal" data-act-input="ciCollect" placeholder="e.g. 5200" value="${esc(f.custom)}"></label>` : ""}
     </fieldset>
+    <label class="f"><span>Non-refundable portion</span>
+      <input id="ci_nr" inputmode="decimal" data-act-input="ciCollect" autocomplete="off" placeholder="Amount for this client" value="${esc(f.nr || "")}">
+      <span class="hint">Enter the amount for this client &mdash; from zero up to the full retainer. It is not calculated for you.</span></label>
     <div id="ci_live" class="ci-live" aria-live="polite">${ciLiveHtml()}</div>
     <label class="cap ci-confirm"><input type="checkbox" id="ci_confirm" data-act-change="ciCollectChk" ${f.confirm ? "checked" : ""}>
-      <span>I confirm this retainer and non-refundable amount for this client.</span></label>
+      <span>I confirm both amounts &mdash; the retainer and the non-refundable portion &mdash; for this client.</span></label>
     ${f.err ? `<div class="err" role="alert">${esc(f.err)}</div>` : ""}
     <div class="ci-acts">
       <button class="btn accent" data-act="ciCreate" ${CI_BUSY ? "disabled" : ""}>Create Secure Client Link</button>
@@ -31916,7 +31933,7 @@ function ciSentHtml(){
   return `<div class="card ci-form" id="ci-sent">
     <h2 style="margin:0 0 4px">Secure link ready for ${esc(l.client_name)}</h2>
     <div class="ci-sum"><div><span>Retainer</span><b>${esc(l.retainer)}</b></div>
-      <div><span>Non-refundable portion (50%)</span><b>${esc(l.non_refundable)}</b></div></div>
+      <div><span>Non-refundable portion</span><b>${esc(l.non_refundable)}</b></div></div>
     <label class="f"><span>Secure client link</span><input id="ci_url" readonly value="${esc(l.url || "")}"></label>
     ${l.url ? ciShareHtml(l, true) : ""}
     <p class="note">Text Client opens your phone's messages with the number and the message filled in &mdash;
@@ -31937,7 +31954,8 @@ function ciRowHtml(l){
   return `<li class="ci-row" data-id="${esc(l.id)}">
     <div class="ci-row-h"><b class="ci-name">${esc(l.client_name)}</b><span class="tag ${tone}">${esc(word)}</span></div>
     <div class="ci-row-m">${esc(l.client_phone)}${l.client_email ? ` &middot; ${esc(l.client_email)}` : ""}</div>
-    <div class="ci-row-m">Retainer <b>${esc(l.retainer)}</b> &middot; Non-refundable <b>${esc(l.non_refundable)}</b></div>
+    <div class="ci-row-m">Retainer <b>${esc(l.retainer)}</b> &middot; Non-refundable <b>${
+      l.non_refundable == null ? "not entered yet" : esc(l.non_refundable)}</b></div>
     <div class="ci-row-d">${l.submitted_at ? `Submitted ${esc(ciWhen(l.submitted_at))}`
       : l.first_viewed_at ? `Opened ${esc(ciWhen(l.first_viewed_at))}`
       : l.shared_at ? `Shared by ${esc(l.shared_via === "text" ? "text composer" : l.shared_via === "email" ? "email" : "copied link")} ${esc(ciWhen(l.shared_at))}`
@@ -32057,7 +32075,7 @@ function ciDocHtml(d, blank){
     line(lbl, blank ? "" : ciFieldValue(f, k, w))).join("")}`).join("");
   const o = CI.options || {};
   const termsPart = blank
-    ? `${line("Retainer", "")}${line("Non-refundable portion (50% of the retainer)", "")}
+    ? `${line("Retainer", "")}${line("Non-refundable portion", "")}
        <p>Investigative rate: ${esc(ciMoney(o.hourly_cents || 0))} per hour, with a ${esc(String(o.min_hours || ""))}-hour minimum per surveillance day.</p>
        <p>Any unused retainer balance, additional charges, refunds and other payment conditions are governed by the Always Precise Investigations services agreement and applicable law.</p>`
     : `${t.lines.map(l => `<p class="ci-dl${l.term ? " ci-term" : ""}"><b>${esc(l.label)}:</b> ${esc(l.value)}</p>`).join("")}
@@ -32105,7 +32123,8 @@ function ciDetailHtml(){
   return `<div class="card" id="ci-detail">
     <div class="pagebar"><button class="btn sm ghost" data-act="ciClose">&larr; All client intakes</button></div>
     <div class="ci-row-h"><h2 style="margin:0">${esc(l.client_name)}</h2><span class="tag ${tone}">${esc(word)}</span></div>
-    <p class="note">Retainer <b>${esc(l.retainer)}</b> &middot; Non-refundable <b>${esc(l.non_refundable)}</b>
+    <p class="note">Retainer <b>${esc(l.retainer)}</b> &middot; Non-refundable <b>${
+      l.non_refundable == null ? "not entered yet" : esc(l.non_refundable)}</b>
       ${l.case_no ? ` &middot; Intake ${esc(l.case_no)}` : ""}</p>
     ${CI_MSG ? `<div class="note" role="status">${esc(CI_MSG)}</div>` : ""}
     ${CI_ERR ? `<div class="err" role="alert">${esc(CI_ERR)}</div>` : ""}
@@ -32118,7 +32137,8 @@ function ciDetailHtml(){
     ${done && !d.submission ? `<p class="err">The submission this link produced has been deleted from the portal. The signed
       terms below are kept as the record of what was accepted.</p>` : ""}
     ${done ? (d.submission ? ciDocHtml(d, false) : `<h3>Accepted terms</h3>${ciTermsHtml(d.accepted_terms)}`)
-      : `<h3>Terms on this link</h3>${ciTermsHtml(d.terms)}`}
+      : d.terms ? `<h3>Terms on this link</h3>${ciTermsHtml(d.terms)}`
+      : `<p class="note">No terms yet &mdash; this draft has no non-refundable amount entered.</p>`}
     <h3>History</h3>
     <ul class="ci-hist">${d.events.map(e => `<li>${esc(ciWhen(e.at))} &mdash; ${esc(CI_EVENT[e.action] || e.action)}${
       e.actor_name ? ` (${esc(e.actor_name)})` : ""}</li>`).join("")}</ul>
@@ -32151,6 +32171,7 @@ function ciBody(draft){
   const f = CI_FORM;
   return { client_name: f.client_name, client_phone: f.client_phone, client_email: f.client_email,
     retainer_choice: f.choice, custom_retainer: f.choice === "custom" ? f.custom : "",
+    non_refundable: f.nr || "",
     confirm_terms: draft ? undefined : f.confirm === true, draft: draft || undefined };
 }
 async function ciSave(draft){
@@ -32187,7 +32208,8 @@ async function ciPreviewOpen(id){
       const r = ciChoice(CI_FORM);
       if(r.err){ CI_PREVIEW = { state: "failed", err: r.err }; paint(); return; }
       const d = await api("/client-intakes/preview", { method: "POST",
-        body: { retainer_choice: CI_FORM.choice, custom_retainer: CI_FORM.choice === "custom" ? CI_FORM.custom : "" } });
+        body: { retainer_choice: CI_FORM.choice, custom_retainer: CI_FORM.choice === "custom" ? CI_FORM.custom : "",
+                non_refundable: CI_FORM.nr || "" } });
       CI_PREVIEW = { state: "ok", terms: d.terms };
     }
   }catch(e){ CI_PREVIEW = { state: "failed", err: e.message }; }

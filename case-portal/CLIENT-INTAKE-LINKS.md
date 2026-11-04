@@ -9,8 +9,9 @@ directory is never deployed.
 1. **Office (phone or desk):** Home → **Prepare & Send Client Intake** (or the rail's
    **Client Intakes**, or the private Rate Sheet card's *Prepare client intake with
    retainer*). Enter name, mobile number, optional email; choose a retainer
-   ($1,600 … $4,000, or Custom); the non-refundable 50% shows immediately; tick the
-   confirmation; **Create Secure Client Link**.
+   ($1,600 … $4,000, or Custom); **type the non-refundable amount for this client**;
+   both show in the summary as typed; tick the confirmation of both amounts;
+   **Create Secure Client Link**.
 2. **Send:** **Text Client** opens the phone's messages app (`sms:` link) with the
    number and the owner's message; **Copy Link**; **Email Client** (Resend, when an
    address was given and email is configured). The portal records that the composer
@@ -25,10 +26,14 @@ directory is never deployed.
 
 ## Decisions
 
-- **D1 — Integer cents; the half rounds down.** `clientIntakeRetainer` is the one place
-  the 50% rule is written: presets `d*50`, custom `Math.floor(cents/2)`. A retainer with
-  an odd number of cents has no exact half in cents; rounding down favours the client by
-  at most half a cent. Parsed as strings; no float multiplies money.
+- **D1 — The non-refundable amount is the office's own figure** (owner's final
+  revision, 2026-11-04, which overrides an earlier 50% rule). A separate required
+  field, never calculated: `clientIntakeNonRefundable` accepts a dollar/cents amount,
+  zero or more, no more than the retainer, and refuses anything else by name
+  (`non_refundable_required`, `bad_non_refundable`, `non_refundable_over_retainer`).
+  A draft may leave it blank (stored NULL, and the draft then shows no terms rather
+  than an invented figure); a link cannot be made without it. Integer cents, parsed
+  from strings; a test fails if the money rules derive it from the retainer.
 - **D2 — The terms have one writer** (`clientIntakeTerms`), composed from the link ROW.
   The page renders it, the submit route recomputes it and refuses a submission whose
   SHA-256 differs (`terms_changed`), and the stored `accepted_terms` is that same JSON.

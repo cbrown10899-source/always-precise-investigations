@@ -33698,29 +33698,47 @@ try {
   await page.waitForFunction(() => CI.state === 'ok', null, { timeout: 5000 });
   await page.evaluate(() => paint());
 
-  // every preset shows its exact half, as it is chosen
-  const presets = await page.evaluate(() => CI.options.presets.map(p => [p.value, p.retainer, p.non_refundable]));
-  ok('the seven presets are offered', presets.length === 7 && presets[0][0] === '1600' && presets[6][0] === '4000',
-     JSON.stringify(presets));
-  for (const [v, ret, nr] of presets) {
+  /* THE NON-REFUNDABLE AMOUNT IS TYPED, NEVER CALCULATED (owner, final
+     revision 2026-11-04). Choosing a retainer fills nothing in. */
+  const presets = await page.evaluate(() => CI.options.presets.map(p => [p.value, p.retainer]));
+  ok('the seven presets are offered, retainer only', presets.length === 7 && presets[0][0] === '1600' && presets[6][0] === '4000'
+     && !/non-refundable/i.test(await page.locator('.ci-choices').innerText()), JSON.stringify(presets));
+  await page.locator('input[name="ci_choice"][value="2000"]').check();
+  await page.waitForTimeout(100);
+  let live = await page.locator('#ci_live').innerText();
+  ok('choosing a retainer asks for the non-refundable amount — it does not supply one',
+     /Enter the non-refundable amount/.test(live) && !live.includes('1,000') && (await page.locator('#ci_nr').inputValue()) === '', live);
+  const typed = [['1600', '0'], ['2000', '1000'], ['2400', '750'], ['2800', '2800'], ['3200', '1234.56'], ['3600', '900'], ['4000', '3999.99']];
+  for (const [v, nr] of typed) {
     await page.locator(`input[name="ci_choice"][value="${v}"]`).check();
-    await page.waitForTimeout(80);
-    const live = await page.locator('#ci_live').innerText();
-    ok(`choosing ${ret} shows ${nr} non-refundable at once`, live.includes(ret) && live.includes(nr)
-       && /50%/.test(live), live);
+    await page.waitForTimeout(60);
+    await page.locator('#ci_nr').fill(nr);
+    live = await page.locator('#ci_live').innerText();
+    const want = Number(nr).toLocaleString('en-US', { minimumFractionDigits: nr.includes('.') ? 2 : 0 });
+    ok(`$${Number(v).toLocaleString('en-US')} with ${nr} typed shows exactly that non-refundable amount`,
+       live.includes(Number(v).toLocaleString('en-US')) && live.includes('$' + want) && !/50%/.test(live), live);
   }
+  await page.locator('input[name="ci_choice"][value="2000"]').check();
+  await page.locator('#ci_nr').fill('2000.01');
+  live = await page.locator('#ci_live').innerText();
+  ok('a non-refundable amount above the retainer says why it cannot be used', /more than the \$2,000 retainer/.test(live), live);
+  await page.locator('#ci_nr').fill('-5');
+  live = await page.locator('#ci_live').innerText();
+  ok('a negative non-refundable amount is not a dollar amount', /zero or more/.test(live), live);
   await page.locator('input[name="ci_choice"][value="custom"]').check();
   await page.waitForTimeout(100);
   await page.locator('#ci_custom').fill('5200.50');
-  let live = await page.locator('#ci_live').innerText();
-  ok('a custom $5,200.50 shows $2,600.25, as typed', live.includes('5,200.50') && live.includes('2,600.25'), live);
+  await page.locator('#ci_nr').fill('1300.25');
+  live = await page.locator('#ci_live').innerText();
+  ok('a custom $5,200.50 with $1,300.25 typed shows both, cents intact', live.includes('5,200.50') && live.includes('1,300.25'), live);
   await page.locator('#ci_custom').fill('-40');
   live = await page.locator('#ci_live').innerText();
   ok('a negative custom figure shows why it cannot be used', /dollar amount|more than zero/.test(live), live);
   await page.locator('#ci_custom').fill('5200');
+  await page.locator('#ci_nr').fill('2600');
   live = await page.locator('#ci_live').innerText();
-  ok('and $5,200 shows $2,600', live.includes('5,200') && live.includes('2,600') && live.includes('4-hour minimum per surveillance day'), live);
-  ok('typing did not rebuild the box', await page.evaluate(() => document.activeElement && document.activeElement.id === 'ci_custom'));
+  ok('and $5,200 with $2,600 typed shows both', live.includes('5,200') && live.includes('2,600') && live.includes('4-hour minimum per surveillance day'), live);
+  ok('typing did not rebuild the box', await page.evaluate(() => document.activeElement && document.activeElement.id === 'ci_nr'));
 
   await page.locator('#ci_name').fill('Morgan Phone-Client');
   await page.locator('#ci_phone').fill('(434) 555-0199');
@@ -33948,6 +33966,7 @@ try {
   await page.locator('#ci_name').fill('Revoke Me');
   await page.locator('#ci_phone').fill('4345550100');
   await page.locator('input[name="ci_choice"][value="2000"]').check();
+  await page.locator('#ci_nr').fill('500');
   await page.locator('#ci_confirm').check();
   await page.locator('[data-act="ciCreate"]').click();
   await page.waitForSelector('#ci-sent');
@@ -33969,8 +33988,8 @@ try {
   await page.locator('input[name="ci_choice"][value="3600"]').check();
   await page.locator('[data-act="ciDraft"]').click();
   await page.waitForTimeout(500);
-  ok('Save Draft keeps it under Drafts, with no link', await page.evaluate(() =>
-    CI.links.some(l => l.client_name === 'Draft Person' && l.status === 'draft' && !l.url)));
+  ok('Save Draft keeps it under Drafts, with no link and no non-refundable amount invented', await page.evaluate(() =>
+    CI.links.some(l => l.client_name === 'Draft Person' && l.status === 'draft' && !l.url && l.nonref_cents === null)));
   await page.locator('.ci-row', { hasText: 'Draft Person' }).locator('[data-act="ciEdit"]').click();
   await page.waitForTimeout(200);
   ok('Continue draft reopens it with its retainer chosen',

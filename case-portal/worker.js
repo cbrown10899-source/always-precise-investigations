@@ -17720,10 +17720,13 @@ async function handleBootstrap(request, env) {
    request: a client cannot post a different retainer, because nothing reads
    one from them.
 
-   THE NON-REFUNDABLE PORTION IS EXACTLY HALF, IN CENTS. A retainer with an odd
-   number of cents has no exact half in cents, and the half is then rounded
-   DOWN to the cent — the client's favour, by at most half a cent. No float
-   ever multiplies money here (the `customCents` lesson). */
+   THE NON-REFUNDABLE PORTION IS THE OFFICE'S OWN FIGURE (owner, 2026-11-04,
+   final revision: "DO NOT automatically calculate or enforce 50% of the
+   retainer ... The administrator must explicitly enter the non-refundable
+   amount for each client"). Nothing here derives it from the retainer: it is
+   typed, validated — a dollar amount, zero or more, no more than the retainer
+   — and stored exactly. A link cannot be created without it. Money is integer
+   cents throughout, parsed from strings, so no float touches a figure. */
 const CLIENT_INTAKE_PRESETS = [1600, 2000, 2400, 2800, 3200, 3600, 4000];   // whole dollars
 const CLIENT_INTAKE_MAX_CENTS = 100_000_000;     // $1,000,000 — a typo guard, not a policy
 const CLIENT_INTAKE_LINK_DAYS = 30;
@@ -17761,7 +17764,7 @@ function centsMoney(c, cents = false) {
     + (frac || cents ? '.' + String(frac).padStart(2, '0') : '');
 }
 
-/* The office's choice, resolved. The ONE place the 50% rule is written. */
+/* The office's retainer choice, resolved. */
 function clientIntakeRetainer(body) {
   const choice = String(body.retainer_choice == null ? '' : body.retainer_choice).trim();
   if (choice === 'custom') {
@@ -17777,13 +17780,37 @@ function clientIntakeRetainer(body) {
       return { error: `A retainer above ${centsMoney(CLIENT_INTAKE_MAX_CENTS)} is not accepted here.`,
                code: 'custom_retainer_too_large' };
     }
-    return { choice: 'custom', retainer_cents: c, nonref_cents: Math.floor(c / 2) };
+    return { choice: 'custom', retainer_cents: c };
   }
   const d = Number(choice);
   if (!choice || !CLIENT_INTAKE_PRESETS.includes(d) || String(d) !== choice) {
     return { error: 'Choose one of the listed retainers, or Custom.', code: 'bad_retainer_choice' };
   }
-  return { choice, retainer_cents: d * 100, nonref_cents: d * 50 };
+  return { choice, retainer_cents: d * 100 };
+}
+
+/* THE NON-REFUNDABLE AMOUNT, AS TYPED. Required whenever a link is made (a
+   draft may leave it blank); zero is a deliberate figure and is honoured; it
+   may not exceed the retainer it is part of, and that is refused BY NAME
+   rather than clamped. Never computed from the retainer. */
+function clientIntakeNonRefundable(body, retainerCents, { optional = false } = {}) {
+  const raw = String(body.non_refundable == null ? '' : body.non_refundable).trim();
+  if (!raw) {
+    return optional ? { nonref_cents: null }
+      : { error: 'Enter the non-refundable amount for this client (it can be zero).',
+          code: 'non_refundable_required' };
+  }
+  const c = parseMoneyCents(raw);
+  if (c === null) {
+    return { error: 'Enter the non-refundable amount as a dollar amount of zero or more, like 800 '
+      + 'or 812.50.', code: 'bad_non_refundable' };
+  }
+  if (c > retainerCents) {
+    return { error: `The non-refundable amount of ${centsMoney(c)} is more than the `
+      + `${centsMoney(retainerCents)} retainer. It can be at most the retainer.`,
+      code: 'non_refundable_over_retainer' };
+  }
+  return { nonref_cents: c };
 }
 
 /* THE TERMS, AS THE CLIENT READS THEM. Wording follows the private rate
@@ -17872,15 +17899,16 @@ function cilView(env, row, now = nowIso()) {
   const status = cilStatus(row, now);
   const live = row.token && ['ready', 'sent', 'viewed', 'expired'].includes(status);
   const url = live ? cilUrl(env, row.token) : null;
-  const anyCents = Boolean((row.retainer_cents % 100) || (row.nonref_cents % 100));
+  const nr = row.nonref_cents == null ? null : row.nonref_cents;
+  const anyCents = Boolean((row.retainer_cents % 100) || (nr || 0) % 100);
   return {
     id: row.id, status,
     client_name: row.client_name, client_phone: row.client_phone || '',
     client_email: row.client_email || '',
     retainer_choice: row.retainer_choice,
-    retainer_cents: row.retainer_cents, nonref_cents: row.nonref_cents,
+    retainer_cents: row.retainer_cents, nonref_cents: nr,
     retainer: centsMoney(row.retainer_cents, anyCents),
-    non_refundable: centsMoney(row.nonref_cents, anyCents),
+    non_refundable: nr == null ? null : centsMoney(nr, anyCents),
     hourly_cents: row.hourly_cents, min_hours: row.min_hours,
     terms_version: row.terms_version,
     created_at: row.created_at, link_created_at: row.link_created_at || null,
@@ -17937,7 +17965,9 @@ function cilClientFields(b) {
   if (email && !cilEmailOk(email)) return { error: 'That email address does not look complete.', code: 'bad_email' };
   const r = clientIntakeRetainer(b);
   if (r.error) return r;
-  return { name, phone, email, ...r };
+  const n = clientIntakeNonRefundable(b, r.retainer_cents, { optional: b.draft === true });
+  if (n.error) return n;
+  return { name, phone, email, ...r, ...n };
 }
 
 async function cilList(env) {
@@ -17952,8 +17982,7 @@ async function cilList(env) {
 function cilOptions() {
   return {
     presets: CLIENT_INTAKE_PRESETS.map(d => ({
-      value: String(d), retainer: centsMoney(d * 100), non_refundable: centsMoney(d * 50),
-      retainer_cents: d * 100, nonref_cents: d * 50,
+      value: String(d), retainer: centsMoney(d * 100), retainer_cents: d * 100,
     })),
     hourly_cents: PERSONAL.hourly * 100, min_hours: PERSONAL.minHours,
     link_days: CLIENT_INTAKE_LINK_DAYS, max_cents: CLIENT_INTAKE_MAX_CENTS,
@@ -17966,6 +17995,9 @@ async function cilPreview(request, env) {
   const b = await readJson(request);
   const r = clientIntakeRetainer(b);
   if (r.error) return json({ error: r.error, code: r.code }, 400);
+  const n = clientIntakeNonRefundable(b, r.retainer_cents);
+  if (n.error) return json({ error: n.error, code: n.code }, 400);
+  Object.assign(r, n);
   const terms = clientIntakeTerms({ ...r, hourly_cents: PERSONAL.hourly * 100,
     min_hours: PERSONAL.minHours, terms_version: CLIENT_INTAKE_TERMS_VERSION });
   return json({ ok: true, retainer_cents: r.retainer_cents, nonref_cents: r.nonref_cents, terms });
@@ -18160,7 +18192,9 @@ async function cilRead(env, id) {
       WHERE e.link_id = ? ORDER BY e.id`).bind(id).all();
   return json({
     link: cilView(env, row),
-    terms: clientIntakeTerms(row),
+    /* A draft may not carry its non-refundable figure yet, and terms drawn
+       with a blank one would print an amount nobody entered. */
+    terms: row.nonref_cents == null ? null : clientIntakeTerms(row),
     accepted_terms: accepted, accepted_terms_hash: row.accepted_terms_hash || null,
     signature_hash: row.signature_hash || null,
     submission, events: results || [],

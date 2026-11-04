@@ -2196,9 +2196,10 @@ CREATE INDEX IF NOT EXISTS idx_packetgen_case ON packet_generation(case_no, id D
 -- chosen, sends the client a secure link, and the client completes and signs
 -- the form on their own phone. One row per prepared intake.
 --
--- THE MONEY IS INTEGER CENTS, and the non-refundable portion is stored beside
--- the retainer rather than recomputed on read, so what the client accepted is
--- never re-derived from a rule that might later change. A row's terms are
+-- THE MONEY IS INTEGER CENTS. The non-refundable portion is the office's own
+-- typed figure for this client (owner, 2026-11-04 final revision — never a
+-- percentage of the retainer), stored beside it exactly. NULL only on a draft;
+-- a link cannot be created without it. A row's terms are
 -- fixed once its link exists: changing them means revoking the link and
 -- preparing a new one, so a client can never sign figures they were not shown.
 --
@@ -2221,7 +2222,7 @@ CREATE TABLE IF NOT EXISTS client_intake_link (
   client_email       TEXT,
   retainer_choice    TEXT    NOT NULL,           -- a preset's dollars, or 'custom'
   retainer_cents     INTEGER NOT NULL,
-  nonref_cents       INTEGER NOT NULL,           -- exactly half, rounded down to the cent
+  nonref_cents       INTEGER,                    -- typed by the office; NULL only on a draft
   hourly_cents       INTEGER NOT NULL,
   min_hours          INTEGER NOT NULL,
   terms_version      TEXT    NOT NULL,
