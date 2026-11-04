@@ -8841,9 +8841,11 @@ section('Timestamp video is reachable without opening a case');
      day's six, the phone's seven, and now one strip carrying the owner's seven
      at every width — and each time it stayed EXACT and by ACT, so a duplicate
      door or a stray addition fails rather than accumulating. */
-  ok("and the row is exactly the owner's seven doors, no creep",
+  /* EIGHT, BY THE OWNER'S REQUEST (2026-11-04): Prepare & Send Client Intake
+     joined as the second card. Re-pinned exactly, the creep guard's rule. */
+  ok("and the row is exactly the owner's eight doors, no creep",
      JSON.stringify(tools) === JSON.stringify(
-       ['sheetQuick:', 'tab:newlead', 'nlKind:', 'tab:leads',
+       ['sheetQuick:', 'ciNew:', 'tab:newlead', 'nlKind:', 'tab:leads',
         'surveillance:', 'pstLaunch:', 'vstOpen:']),
      JSON.stringify(tools));
   ok('and it names both timestamp tools in words',
@@ -25695,9 +25697,10 @@ section('The first screen earns its height: drawer handle, tool strip, compact s
      the owner asked for. Both facts are pinned, because "first in the list"
      and "opens the form" are different claims and an edit could satisfy one
      while breaking the other. */
-  ok("and the phone strip is the owner's seven, Rate Sheet first",
+  /* EIGHT since 2026-11-04 — Prepare & Send Client Intake, second. */
+  ok("and the phone strip is the owner's eight, Rate Sheet first",
      JSON.stringify(strip.acts) === JSON.stringify(
-       ['sheetQuick:', 'tab:newlead', 'nlKind:consumer', 'tab:leads',
+       ['sheetQuick:', 'ciNew:', 'tab:newlead', 'nlKind:consumer', 'tab:leads',
         'surveillance:', 'pstLaunch:', 'vstOpen:']),
      JSON.stringify(strip.acts));
   ok('BOTH timestamp tools are still primary — the standing owner lock',
@@ -26925,7 +26928,7 @@ section('Every art card is a direct launcher, and Back returns to an art Home');
       art: document.querySelectorAll('.qtools .qtapp.uiart').length,
     }));
     ok(`${w}: Home draws the art launcher`,
-       home.strip >= 1 && home.art === 7, JSON.stringify(home));
+       home.strip >= 1 && home.art === 8, JSON.stringify(home));
 
     /* ---- the four that used to pass through a duplicate layer ---------- */
     const land = async (qt, expect) => {
@@ -26944,7 +26947,8 @@ section('Every art card is a direct launcher, and Back returns to an art Home');
     for (const [qt, tab, label] of [['sheets', 'sheets', 'Rate Sheet'],
                                     ['newlead', 'newlead', 'New Intake'],
                                     ['priv', 'newlead', 'Private Intake'],
-                                    ['leads', 'leads', 'View Intakes']]) {
+                                    ['leads', 'leads', 'View Intakes'],
+                                    ['cintake', 'cintakes', 'Prepare & Send Client Intake']]) {
       const r = await land(qt, tab);
       ok(`${w}: ${label} lands on its own screen with NO second launcher above it`,
          r.tab === tab && r.strip === 0 && r.ovf === 0, JSON.stringify(r));
@@ -26970,7 +26974,7 @@ section('Every art card is a direct launcher, and Back returns to an art Home');
       art: document.querySelectorAll('.qtools .qtapp.uiart').length,
     }));
     ok(`${w}: Home art -> Rate Sheet -> Back -> art Home`,
-       back.tab === 'dashboard' && back.wiz === false && back.art === 7, JSON.stringify(back));
+       back.tab === 'dashboard' && back.wiz === false && back.art === 8, JSON.stringify(back));
 
     /* Active Surveillance takes its own full screen — no shell, so no strip
        could be drawn over it — and its back control returns to art Home. */
@@ -26989,7 +26993,7 @@ section('Every art card is a direct launcher, and Back returns to an art Home');
       art: document.querySelectorAll('.qtools .qtapp.uiart').length,
     }));
     ok(`${w}: Home art -> Active Surveillance -> Back -> art Home`,
-       svBack.tab === 'dashboard' && svBack.sv === false && svBack.art === 7,
+       svBack.tab === 'dashboard' && svBack.sv === false && svBack.art === 8,
        JSON.stringify(svBack));
 
     /* TIMESTAMP PHOTO OPENS ITS QUEUE — since Photo V2 (owner, 2026-09-28)
@@ -27021,7 +27025,7 @@ section('Every art card is a direct launcher, and Back returns to an art Home');
       ok(`${w}: Timestamp Photo opens its queue directly — the whole screen, empty, no launcher on it`,
          open.queue && open.whole && open.drop && open.strip === 0 && !onTap, JSON.stringify({ ...open, onTap }));
       ok(`${w}: its drop zone opens the file picker, and Close leaves art Home`,
-         fromDrop && after.tab === 'dashboard' && !after.queue && after.art === 7,
+         fromDrop && after.tab === 'dashboard' && !after.queue && after.art === 8,
          JSON.stringify({ fromDrop, ...after }));
     }
     /* TIMESTAMP VIDEO OPENS ITS QUEUE — since V2 (owner, 2026-09-28) the door
@@ -27053,7 +27057,7 @@ section('Every art card is a direct launcher, and Back returns to an art Home');
       ok(`${w}: Timestamp Video opens its queue directly — the whole screen, empty, no launcher on it`,
          open.queue && open.whole && open.drop && open.strip === 0 && !onTap, JSON.stringify({ ...open, onTap }));
       ok(`${w}: its drop zone opens the file picker, and Close leaves art Home`,
-         fromDrop && after.tab === 'dashboard' && !after.queue && after.art === 7,
+         fromDrop && after.tab === 'dashboard' && !after.queue && after.art === 8,
          JSON.stringify({ fromDrop, ...after }));
     }
     await page.close();
@@ -27156,7 +27160,8 @@ section('Every direct-launch destination has a visible way back, at the tap floo
     /* ---- the four tab destinations ---------------------------------- */
     for (const [qt, label, tab] of [['newlead', 'New Intake', 'newlead'],
                                     ['priv', 'Private Intake', 'newlead'],
-                                    ['leads', 'View Intakes', 'leads']]) {
+                                    ['leads', 'View Intakes', 'leads'],
+                                    ['cintake', 'Prepare & Send Client Intake', 'cintakes']]) {
       await page.evaluate(() => { SHEET_WIZ = null; NL = null; VIEW = 'list'; TAB = 'dashboard'; paint(); });
       await page.waitForTimeout(400);
       await page.locator(`.qtapp[data-qt="${qt}"]`).click();
@@ -27189,7 +27194,7 @@ section('Every direct-launch destination has a visible way back, at the tap floo
         back: document.querySelectorAll('#app > .pagebar .homeback').length,
       }));
       ok(`${w}: ${label} -> Back -> art Home, and the Back is gone there`,
-         home.tab === 'dashboard' && home.art === 7 && home.back === 0, JSON.stringify(home));
+         home.tab === 'dashboard' && home.art === 8 && home.back === 0, JSON.stringify(home));
     }
 
     /* ---- the Rate Sheet wizard: its own close, floored ---------------- */
@@ -27214,7 +27219,7 @@ section('Every direct-launch destination has a visible way back, at the tap floo
     await page.waitForTimeout(800);
     ok(`${w}: the wizard's close returns to an art Home`,
        await page.evaluate(() => TAB === 'dashboard'
-         && document.querySelectorAll('.qtools .qtapp.uiart').length === 7));
+         && document.querySelectorAll('.qtools .qtapp.uiart').length === 8));
 
     /* ---- Active Surveillance: its own back, floored ------------------- */
     await page.evaluate(() => { SHEET_WIZ = null; VIEW = 'list'; TAB = 'dashboard'; paint(); });
@@ -27237,7 +27242,7 @@ section('Every direct-launch destination has a visible way back, at the tap floo
     await page.waitForTimeout(800);
     ok(`${w}: and it returns to an art Home`,
        await page.evaluate(() => TAB === 'dashboard'
-         && document.querySelectorAll('.qtools .qtapp.uiart').length === 7));
+         && document.querySelectorAll('.qtools .qtapp.uiart').length === 8));
 
     /* ---- Timestamp Photo: the queue's own close, measured live -------- */
     await page.evaluate(() => { SHEET_WIZ = null; VIEW = 'list'; TAB = 'dashboard'; paint(); });
@@ -27259,7 +27264,7 @@ section('Every direct-launch destination has a visible way back, at the tap floo
     ok(`${w}: and closing it leaves an art Home`,
        await page.evaluate(() => !document.querySelector('#pstamp .pqd')
          && TAB === 'dashboard'
-         && document.querySelectorAll('.qtools .qtapp.uiart').length === 7));
+         && document.querySelectorAll('.qtools .qtapp.uiart').length === 8));
   }
 
   /* TIMESTAMP VIDEO SHARES THE CLASS, and the class is what was measured
@@ -27765,7 +27770,7 @@ section('The hybrid pass: seven art cards on Home, and nothing else touched');
     }, png);
   };
 
-  const GROUNDS = ['sheets', 'newlead', 'priv', 'leads', 'field', 'photo', 'video'];
+  const GROUNDS = ['sheets', 'cintake', 'newlead', 'priv', 'leads', 'field', 'photo', 'video'];
 
   for (const [w, h, label] of [[1280, 900, 'desktop'], [390, 844, 'phone']]) {
     await page.setViewportSize({ width: w, height: h });
@@ -27804,9 +27809,9 @@ section('The hybrid pass: seven art cards on Home, and nothing else touched');
     }
     return { n: cards.length, worst };
   });
-  ok('all seven grounds are present', sep.n === 7, JSON.stringify(sep));
+  ok('all eight grounds are present', sep.n === 8, JSON.stringify(sep));
   ok('and no two of them read as the same colour (CIE76 dE >= 12)',
-     sep.n === 7 && sep.worst.d >= 12, JSON.stringify(sep.worst));
+     sep.n === 8 && sep.worst.d >= 12, JSON.stringify(sep.worst));
 
   /* ---- §2: DO NOT ART-CARD EVERYTHING ----------------------------------- */
   const more = await page.evaluate(() => {
@@ -27838,7 +27843,7 @@ section('The hybrid pass: seven art cards on Home, and nothing else touched');
      against the owner's 2026-09-07 lock. 155x142 is 1.09:1 and still reads as
      square; a letterbox would not, which is what the upper bound catches. */
   ok('an art card is near-square on a phone, within the 142px cap',
-     shape.art.length === 7
+     shape.art.length === 8
        && shape.art.every(c => c.w / c.h >= 1.0 && c.w / c.h <= 1.15),
      JSON.stringify(shape.art[0]));
   ok('and a plain card is SHORTER, because it has no photograph to hold',
@@ -27879,8 +27884,10 @@ section('The hybrid pass: seven art cards on Home, and nothing else touched');
     allUiart: [...document.querySelectorAll('.uiart')].length,
     wideHasArt: !!document.querySelector('.uiwide.has-art'),
   }));
-  ok('all seven Home cards claim their photograph and paint the scrim over it',
-     slot.art === 7 && slot.hasArt === 7 && slot.inlineArt === 7 && slot.scrimOnArt === true,
+  /* Eight Home cards, seven photographs: Prepare & Send Client Intake has its
+     ground and no asset yet — the art-less state the scrim rule exists for. */
+  ok('all seven photographed Home cards claim their photograph and paint the scrim over it',
+     slot.art === 8 && slot.hasArt === 7 && slot.inlineArt === 7 && slot.scrimOnArt === true,
      JSON.stringify({ ...slot, urls: slot.urls.length }));
   /* §5 — THE WIDE SIGNED-INTAKE ALERT IS NOT DISTURBED. It is an `.uiart` and
      always was, but the owner's pack contains no wide asset and `§5` says the
@@ -27890,7 +27897,7 @@ section('The hybrid pass: seven art cards on Home, and nothing else touched');
      crops and this pins that they have not been confused. Eight `.uiart`
      elements, seven of them with art. */
   ok('and the wide signed-intake alert keeps its green ground, no photograph',
-     slot.allUiart === 8 && slot.wideHasArt === false, JSON.stringify(slot));
+     slot.allUiart === 9 && slot.wideHasArt === false, JSON.stringify(slot));
   /* THE CACHE-BUST IS NOT OPTIONAL, and now it is a live URL rather than a
      template. `_headers` caches these seven days and they will be replaced in
      place; the public site paid a full round for exactly that. */
@@ -28098,10 +28105,10 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
      that appends only `:tab`. Two readers, two shapes, and each assertion
      spells out the one it uses rather than sharing a constant that is wrong
      for one of them. */
-  const DESK_ORDER = 'sheetQuick|tab:newlead|nlKind:consumer|tab:leads|surveillance|pstLaunch|vstOpen';
+  const DESK_ORDER = 'sheetQuick|ciNew|tab:newlead|nlKind:consumer|tab:leads|surveillance|pstLaunch|vstOpen';
   for (const [w, h, cols] of [[1200, 900, 4], [768, 1024, 3]]) {
     const d = await read(w, h);
-    ok(`at ${w}px the desktop strip carries the owner's seven, same order as the phone`,
+    ok(`at ${w}px the desktop strip carries the owner's eight, same order as the phone`,
        d.phoneActs.join('|') === DESK_ORDER, d.phoneActs.join('|'));
     ok(`at ${w}px it is ${cols} across, not the phone's two`, d.cols === cols,
        JSON.stringify({ cols: d.cols, want: cols }));
@@ -28118,7 +28125,7 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
      DUPLICATES of a door on every screen — the bottom navigation and the CEO
      fab respectively — so the height they cost bought nothing. Each of the five
      keeps the door it already had elsewhere; nothing was taken away. */
-  const PHONE = ['Rate Sheet', 'New Intake', 'Private Intake', 'View Intakes',
+  const PHONE = ['Rate Sheet', 'Prepare & Send Client Intake', 'New Intake', 'Private Intake', 'View Intakes',
                  'Active Surveillance', 'Timestamp Photo', 'Timestamp Video'];
   const PHONE_MORE = ['Cases', 'Insurance Intake', 'Law Firm Intake',
                       'Reports & Packages', 'CEO Bot'];
@@ -28140,7 +28147,7 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
   ok('and the Rate Sheet card opens Prepare & Send itself, in one tap',
      p390.phoneActs[0] === 'sheetQuick', p390.phoneActs.join('|'));
   ok('the private intake card goes straight to a private intake',
-     p390.phoneActs[2] === 'nlKind:consumer', p390.phoneActs.join('|'));
+     p390.phoneActs[3] === 'nlKind:consumer', p390.phoneActs.join('|'));
   ok('Rate Sheet is the one card wearing the accent',
      p390.leadName === 'Rate Sheet' && parseFloat(p390.leadBorder) >= 2, JSON.stringify(p390.leadBorder));
   /* NOTHING WAS TAKEN AWAY — the six that are not primary are in the same box
@@ -31035,7 +31042,7 @@ section('My Portal: two sign-ins, two layouts, one shared caseload');
     strip: [...document.querySelectorAll('.qtapps [data-qt]')].map(b => b.dataset.qt).slice(0, 3),
     needs: /Needs assignment/.test(document.body.innerText),
   }));
-  ok("A's reorder took: the second card leads now", aView.strip[0] === 'newlead',
+  ok("A's reorder took: the second card leads now", aView.strip[0] === 'cintake',
      JSON.stringify(aView.strip));
   ok("and A's un-hide brought the Needs-assignment card back — for A", aView.needs === true);
 
@@ -31850,7 +31857,7 @@ section("Home says good morning, and a signed intake is impossible to miss");
      supplies: an eighth name added without an asset, or a `ground` added to a
      door §2 keeps plain, fails here rather than on someone's phone. */
   ok('the seven ground-bearing doors wear the treatment, and each has its file',
-     art.known === 7 && art.grounds === 7 && art.dark === 7 && art.withFile === 7,
+     art.known === 7 && art.grounds === 8 && art.dark === 8 && art.withFile === 7,
      JSON.stringify(art));
   await page.close();
 }
@@ -33676,6 +33683,10 @@ try {
   const page = await newPage();
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: SITE });
   await signIn(page, 'trever', 'AdminPassword1x');
+  /* FROM THE FACTORY VIEW. Earlier sections leave this admin's own portal
+     reordered and in Simple View on purpose; this one is about the default. */
+  await page.evaluate(() => api('/me/prefs', { method: 'POST', body: { qt_order: null, hidden: null, view: null } }));
+  await page.reload(); await page.waitForTimeout(800);
   await goHome(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(400);
