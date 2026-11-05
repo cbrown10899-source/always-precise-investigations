@@ -4126,6 +4126,8 @@
    Phone-first: every control at the 44px floor, inputs at 16px (the portal's
    rule), the retainer list one column, nothing wider than the screen. */
 .ci-form{scroll-margin-top:12px}
+.ci-wizdoor{margin:10px 0 2px}
+.ci-wizdoor .btn{min-height:44px;white-space:normal;text-align:left}
 .ci-sheetdoor{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:12px;
   padding-top:12px;border-top:1px solid var(--line)}
 .ci-sheetdoor .btn{min-height:44px}
@@ -4146,6 +4148,13 @@
 .ci-confirm{min-height:44px;margin:4px 0 10px;align-items:flex-start}
 .ci-confirm input{width:22px;height:22px;flex:none;margin-top:1px}
 .ci-acts,.ci-share{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.ci-acts a.btn{display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
+.ci-heads{display:flex;flex-wrap:wrap;gap:8px}
+.ci-heads .btn{min-height:44px}
+.ci-pay{margin:12px 0 4px}
+.po .cap{margin-bottom:10px}
+.ci-paym{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0}
+.po-msg{width:100%;min-height:15em;font-size:16px;line-height:1.45;white-space:pre-wrap;resize:vertical}
 .ci-acts .btn,.ci-share .btn{min-height:44px}
 .ci-share a.btn{display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
 .ci-prev{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
@@ -7044,6 +7053,11 @@ const QT = {
      tap to the form, the Rate Sheet card's rule. It carries a ground and no
      photograph yet: "a card may have a ground and no art", and it is the
      eighth card the seven left room for, so Home grows no taller. */
+  /* SEND PAYMENT OPTIONS (owner brief 2026-11-05) — a plain door under More,
+     beside the work it belongs to: it opens the Client Intakes screen's own
+     payment panel. No ground, so no art treatment, by data. */
+  payopts: {fam:"money", act:"poNew", icon:"&#128179;", label:"Send Payment Options",
+            sub:"Cash App, Venmo", admin:true},
   cintake: {fam:"intake", ground:"cintake", act:"ciNew", icon:"&#128221;", label:"Prepare &amp; Send Client Intake",
             sub:"Retainer, link, signature", admin:true},
   newlead: {fam:"intake", ground:"intake", art:"new-intake", act:"tab", tab:"newlead",  icon:"&#10133;",  label:"New Intake",
@@ -7177,7 +7191,7 @@ const QT_PHONE = ["sheets", "cintake", "newlead", "priv", "leads", "field", "pho
    all three are admin-only — so the disclosure is not drawn for that role at
    all, which is why it is guarded on the filtered length rather than on the
    list. */
-const QT_PHONE_MORE = ["cases", "claims", "legal", "delivery", "ceo"];
+const QT_PHONE_MORE = ["cases", "claims", "legal", "delivery", "payopts", "ceo"];
 
 /* WHICH SCREENS EACH ROLE CALLS HOME — the quick-action strip renders on these
    and nowhere else, so getting the SET right is the whole of it.
@@ -7237,7 +7251,7 @@ function homeTabs(){
    acts with no entry — Active Surveillance, the two timestamp tools, the CEO
    Bot — take over the screen with their own root and their own close, so a
    `.pagebar` behind them would be a control nobody can reach. */
-const ACT_LANDS = {sheetQuick: "sheets", nlKind: "newlead", ciNew: "cintakes"};
+const ACT_LANDS = {sheetQuick: "sheets", nlKind: "newlead", ciNew: "cintakes", poNew: "cintakes"};
 function homeCardTabs(){
   const out = new Set();
   for(const id of QT_PHONE){
@@ -10583,6 +10597,15 @@ function wizRetainerHtml(w){
         data-act-input="wizRetDirty" value="${esc(w.retainerCustom || "")}"></label>` : ""}
     ${wizNonRefHtml(w)}
     ${wizMinHoursHtml(w)}
+    ${/* THE SIGNED-INTAKE ALTERNATIVE (owner brief 2026-11-04 §9: "From the
+         rate sheet ... prepare a private client intake with the agreed
+         retainer"). A private client only — never a law firm's send, which
+         takes this same sheet — and it carries what this wizard already
+         holds: who, and the retainer chosen or agreed here. It sends
+         nothing; it opens the prepare form, where both amounts are
+         confirmed before any link exists. */""}${wizContext(w) === "private" && !w.legal
+      ? `<div class="ci-wizdoor"><button type="button" class="btn sm ghost" data-act="ciFromWiz"
+          >Prepare a signed client intake with this retainer instead &rarr;</button></div>` : ""}
     <p class="hint">${w.retainerUnrecorded
       /* Said plainly, because the difference is invisible otherwise: the client
          is quoted this figure and the office cannot look it up afterwards. */
@@ -23732,7 +23755,7 @@ function vqHtml(){
    Dialogs are untouched and stay untouched — `ls_to` and `pi_to` focus after
    the user has explicitly opened that form, which the owner's rule allows by
    name. */
-const FOCUS_KEEP = ["q", "prof_q", "nl_pick", "gsearch", "am_q", "inv_q", "asst_in", "bs_owner_record_email", "ci_q"];
+const FOCUS_KEEP = ["q", "prof_q", "nl_pick", "gsearch", "am_q", "inv_q", "asst_in", "bs_owner_record_email", "ci_q", "po_ret", "po_phone"];
 let INV_Q_TIMER = null;   // the invoice search's debounce, the srchSoon shape
 let FOCUS_WAS = null;
 function focusCapture(){
@@ -31738,6 +31761,10 @@ let CI_MSG = "";
 let CI_ERR = "";
 let CI_BUSY = false;
 let CI_PREVIEW = null;  // { state, terms, err } — the client's terms, as the Worker composes them
+/* SEND PAYMENT OPTIONS (owner brief 2026-11-05): the panel's draft. The
+   message itself is always the Worker's — this holds only the choices. */
+let PO = null;
+let PO_TIMER = null;
 
 const CI_STATUS = {
   draft:     ["Draft", "rs-draft"],
@@ -31819,6 +31846,7 @@ async function loadCI(){
   try{
     const d = await api("/client-intakes");
     CI = { state: "ok", links: d.links || [], options: d.options || null, err: "" };
+    ciMatchPreset();
   }catch(e){
     CI = { ...CI, state: "failed", err: e.message };
   }
@@ -31830,10 +31858,154 @@ function ciNewForm(src){
       client_email: src.client_email || "", choice: src.retainer_choice || "",
       custom: src.retainer_choice === "custom" ? (src.retainer_cents / 100).toFixed(2) : "",
       nr: src.nonref_cents == null ? "" : (src.nonref_cents / 100).toFixed(2),
+      pay: (src.payment_methods || []).length > 0,
+      payM: (src.payment_methods || []).length === 1 ? src.payment_methods[0] : "both",
       confirm: false, err: "" }
     : { id: null, client_name: "", client_phone: "", client_email: "", choice: "",
-        custom: "", nr: "", confirm: false, err: "" };
-  CI_SENT = null; CI_OPEN = null; CI_PREVIEW = null; CI_MSG = ""; CI_ERR = "";
+        custom: "", nr: "", pay: false, payM: "both", confirm: false, err: "" };
+  CI_SENT = null; CI_OPEN = null; CI_PREVIEW = null; CI_MSG = ""; CI_ERR = ""; PO = null;
+}
+
+/* ---- SEND PAYMENT OPTIONS (owner brief 2026-11-05) -----------------------
+   A text the office composes on its own phone: the firm's Cash App and Venmo
+   exactly as configured in Settings, and the agreed retainer when it is
+   stated. THREE THINGS IT NEVER DOES: it sends nothing by itself (the phone's
+   own messages app does, after the office presses send there); it marks
+   nothing paid (a payment is recorded on the case, by a person, once it has
+   arrived); and it quotes no figure of its own — with a prepared intake the
+   retainer is that intake's agreed one, composed by the Worker. */
+function poNew(linkId){
+  CI_PREVIEW = null; CI_MSG = ""; CI_ERR = "";
+  PO = { linkId: linkId || "", fixed: Boolean(linkId), name: "", phone: "", choice: "both",
+    inclRet: true, retainer: "", msg: "", state: "idle", err: "", note: "", src: null, seq: 0 };
+  const l = linkId ? ciLinkById(linkId) : null;
+  if(l){ PO.name = l.client_name || ""; PO.phone = l.client_phone || ""; }
+  poCompose();
+}
+function ciLinkById(id){
+  if(CI_SENT && CI_SENT.id === id) return CI_SENT;
+  if(CI_OPEN && CI_OPEN.data && CI_OPEN.data.link && CI_OPEN.data.link.id === id) return CI_OPEN.data.link;
+  return CI.links.find(x => x.id === id) || null;
+}
+/* Prepared intakes whose agreed retainer can be quoted: terms set, not revoked. */
+function poLinks(){
+  return CI.links.filter(l => l.status !== "revoked" && l.nonref_cents != null);
+}
+async function poCompose(){
+  if(!PO) return;
+  const seq = ++PO.seq;
+  PO.state = "loading"; PO.err = "";
+  paint();
+  try{
+    const d = await api("/payment-options/message", { method: "POST", body: {
+      methods: PO.choice, include_retainer: PO.inclRet === true,
+      link_id: PO.linkId || undefined, retainer: PO.linkId ? undefined : PO.retainer } });
+    if(!PO || PO.seq !== seq) return;
+    PO.msg = d.message; PO.src = d.retainer_source; PO.state = "ok";
+    if(PO.linkId){ if(!PO.phone) PO.phone = d.client_phone || ""; if(!PO.name) PO.name = d.client_name || ""; }
+  }catch(e){
+    if(!PO || PO.seq !== seq) return;
+    PO.state = "failed"; PO.msg = ""; PO.err = e.message;
+  }
+  paint();
+}
+function poReady(){ return PO && PO.state === "ok" && Boolean(PO.msg); }
+async function poCopy(){
+  if(!poReady()) return;
+  let copied = false;
+  try{ await navigator.clipboard.writeText(PO.msg); copied = true; }catch{
+    const t = $("po_msg");
+    if(t){ t.select(); try{ copied = document.execCommand("copy"); }catch{} }
+  }
+  if(!copied){ PO.err = "Copying is blocked on this device — select the message and copy it by hand."; paint(); return; }
+  PO.err = ""; PO.note = "Payment message copied — paste it into a text or an email to the client. Nothing is marked paid.";
+  poShared("copy");
+  paint();
+}
+/* Best-effort: recorded on the prepared intake's trail when there is one,
+   as exactly what it is. A failed record never stops the office's own text. */
+function poShared(via){
+  if(!PO) return;
+  fetch(API + "/payment-options/shared", { method: "POST", keepalive: true, credentials: "same-origin",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ via, link_id: PO.linkId || undefined, methods: PO.choice }) }).catch(() => {});
+}
+function poHtml(){
+  const o = PO;
+  const opt = (value, label) => `<label class="ci-opt${o.choice === value ? " on" : ""}">
+    <input type="radio" name="po_choice" data-act-change="poChoice" value="${value}" ${o.choice === value ? "checked" : ""}>
+    <span><b>${label}</b></span></label>`;
+  const links = poLinks();
+  const ready = poReady();
+  return `<div class="card ci-form po" id="po">
+    <h2 style="margin:0 0 4px">Send payment options${o.name ? ` to ${esc(o.name)}` : ""}</h2>
+    <p class="note" style="margin-top:0">Text the firm's Cash App and Venmo details to a client. Nothing is charged,
+      and nothing is marked paid &mdash; record a payment on the case once it has actually been received.</p>
+    ${o.fixed ? "" : `<label class="f"><span>Prepared client intake <span class="optn">(optional)</span></span>
+      <select id="po_link" data-act-change="poLink">
+        <option value="">None &mdash; enter the details here</option>
+        ${links.map(l => `<option value="${esc(l.id)}" ${o.linkId === l.id ? "selected" : ""}>${esc(l.client_name)} &mdash; ${esc(l.retainer)}</option>`).join("")}
+      </select></label>`}
+    <fieldset class="ci-choices"><legend>Payment options to send</legend>
+      ${opt("cash_app", "Cash App")}${opt("venmo", "Venmo")}${opt("both", "Both")}
+    </fieldset>
+    <label class="cap"><input type="checkbox" id="po_inclret" data-act-change="poRet" ${o.inclRet ? "checked" : ""}>
+      <span>Include the agreed retainer</span></label>
+    ${o.inclRet && o.linkId ? `<p class="hint">The retainer stated is the one agreed on this client's intake &mdash; it cannot be changed here.</p>` : ""}
+    ${o.inclRet && !o.linkId ? `<label class="f"><span>Agreed retainer</span>
+      <input id="po_ret" inputmode="decimal" data-act-input="poRetType" autocomplete="off" placeholder="e.g. 2400" value="${esc(o.retainer)}"></label>` : ""}
+    <label class="f"><span>Client mobile number</span>
+      <input id="po_phone" type="tel" inputmode="tel" data-act-input="poPhone" autocomplete="off" value="${esc(o.phone)}"></label>
+    <label class="f"><span>Message</span>
+      <textarea id="po_msg" class="po-msg" readonly rows="15">${esc(o.msg)}</textarea></label>
+    ${o.state === "loading" ? `<p class="note">Composing the message&hellip;</p>` : ""}
+    ${o.err ? `<div class="err" role="alert">${esc(o.err)}</div>` : ""}
+    ${o.note ? `<div class="note" role="status">${esc(o.note)}</div>` : ""}
+    <div class="ci-acts po-acts">
+      ${ready ? `<a class="btn accent" id="po_text" href="${esc(ciSmsHref(o.phone, o.msg))}" data-act="poText">Text Payment Options</a>`
+        : `<button class="btn accent" id="po_text" disabled>Text Payment Options</button>`}
+      <button class="btn ghost" data-act="poCopy" ${ready ? "" : "disabled"}>Copy Payment Message</button>
+      <button class="btn ghost" data-act="poClose">Close</button>
+    </div>
+    <p class="note">Text Payment Options opens your phone's messages with the number and the message filled in &mdash;
+      you press send there. The portal cannot see whether the text was delivered.</p>
+  </div>`;
+}
+function ciPayWords(ids){
+  const n = { cash_app: "Cash App", venmo: "Venmo" };
+  return (ids || []).map(x => n[x] || x).join(" + ");
+}
+
+/* FROM THE RATE SHEET'S SEND WIZARD: the client it was being sent to, and
+   the retainer chosen or agreed there. The non-refundable amount is carried
+   only if one was TYPED there — the wizard's standard figure is a
+   placeholder, and this form never supplies one by itself (owner, final
+   revision 2026-11-04). The retainer arrives as a custom figure and becomes
+   the matching preset once the preset list has loaded. */
+function ciFromWizard(){
+  const w = SHEET_WIZ;
+  if(!w) return;
+  wizCollect();
+  const want = wizRetainerWanted(w);
+  const cents = want == null ? null : ciCents(String(want));
+  ciNewForm(null);
+  CI_FORM.client_name = w.clientName || "";
+  CI_FORM.client_phone = w.clientPhone || "";
+  CI_FORM.client_email = w.to || "";
+  if(cents != null && cents > 0){ CI_FORM.choice = "custom"; CI_FORM.custom = (cents / 100).toFixed(2); }
+  CI_FORM.nr = w.nonRef || "";
+  CI_FORM.fromSheet = true;
+  SHEET_WIZ = null;
+  TAB = "cintakes"; navClose(); paint(); loadCI();
+  const fm = $("ci-form"); if(fm) fm.scrollIntoView({ block: "start" });
+}
+/* A carried custom figure that IS one of the presets is shown as that preset,
+   so the office sees the choice it would have made by hand. */
+function ciMatchPreset(){
+  if(!CI_FORM || CI_FORM.choice !== "custom" || !CI.options) return;
+  const c = ciCents(CI_FORM.custom);
+  const p = (CI.options.presets || []).find(x => x.retainer_cents === c);
+  if(p){ CI_FORM.choice = p.value; CI_FORM.custom = ""; }
 }
 
 /* The form's inputs are collected on every keystroke and the derived figures
@@ -31871,6 +32043,8 @@ function ciFormHtml(){
     <h2 style="margin:0 0 4px">${f.id ? "Draft client intake" : "Prepare &amp; send client intake"}</h2>
     <p class="note" style="margin-top:0">The client completes and signs it on their own phone. Both amounts you
       enter here are fixed on the link &mdash; the client can read them but cannot change them.</p>
+    ${f.fromSheet ? `<p class="hint ci-fromsheet">Carried over from the rate sheet: the client's details and the
+      retainer. Check them, enter the non-refundable amount if it is blank, and confirm.</p>` : ""}
     <label class="f"><span>Client name</span><input id="ci_name" data-act-input="ciCollect" autocomplete="off" value="${esc(f.client_name)}"></label>
     <label class="f"><span>Phone number</span><input id="ci_phone" type="tel" inputmode="tel" data-act-input="ciCollect" autocomplete="off" value="${esc(f.client_phone)}"></label>
     <label class="f"><span>Email address <span class="optn">(optional)</span></span><input id="ci_email" type="email" data-act-input="ciCollect" autocomplete="off" value="${esc(f.client_email)}"></label>
@@ -31884,6 +32058,16 @@ function ciFormHtml(){
       <input id="ci_nr" inputmode="decimal" data-act-input="ciCollect" autocomplete="off" placeholder="Amount for this client" value="${esc(f.nr || "")}">
       <span class="hint">Enter the amount for this client &mdash; from zero up to the full retainer. It is not calculated for you.</span></label>
     <div id="ci_live" class="ci-live" aria-live="polite">${ciLiveHtml()}</div>
+    <div class="ci-pay">
+      <label class="cap"><input type="checkbox" id="ci_pay" data-act-change="ciPayChk" ${f.pay ? "checked" : ""}>
+        <span>Include Payment Options With Intake</span></label>
+      ${f.pay ? `<div class="ci-paym" role="radiogroup" aria-label="Payment options to include">
+        ${[["cash_app", "Cash App"], ["venmo", "Venmo"], ["both", "Both"]].map(([v, t]) => `<label class="ci-opt${f.payM === v ? " on" : ""}">
+          <input type="radio" name="ci_paym" data-act-change="ciPayM" value="${v}" ${f.payM === v ? "checked" : ""}><span><b>${t}</b></span></label>`).join("")}
+      </div>` : ""}
+      <span class="hint">After submitting, the client is shown the agreed retainer, the non-refundable portion and
+        buttons that open the firm's Cash App or Venmo. Nothing is charged automatically and nothing is marked paid.</span>
+    </div>
     <label class="cap ci-confirm"><input type="checkbox" id="ci_confirm" data-act-change="ciCollectChk" ${f.confirm ? "checked" : ""}>
       <span>I confirm both amounts &mdash; the retainer and the non-refundable portion &mdash; for this client.</span></label>
     ${f.err ? `<div class="err" role="alert">${esc(f.err)}</div>` : ""}
@@ -31941,6 +32125,8 @@ function ciSentHtml(){
     <h2 style="margin:0 0 4px">Secure link ready for ${esc(l.client_name)}</h2>
     <div class="ci-sum"><div><span>Retainer</span><b>${esc(l.retainer)}</b></div>
       <div><span>Non-refundable portion</span><b>${esc(l.non_refundable)}</b></div></div>
+    ${(l.payment_methods || []).length ? `<p class="hint ci-payon">Payment options included with this intake:
+      <b>${esc(ciPayWords(l.payment_methods))}</b>. The client sees them after submitting.</p>` : ""}
     <label class="f"><span>Secure client link</span><input id="ci_url" readonly value="${esc(l.url || "")}"></label>
     ${l.url ? ciShareHtml(l, true) : ""}
     <p class="note">Text Client opens your phone's messages with the number and the message filled in &mdash;
@@ -31949,6 +32135,7 @@ function ciSentHtml(){
     ${CI_MSG ? `<div class="note" role="status">${esc(CI_MSG)}</div>` : ""}
     ${CI_ERR ? `<div class="err" role="alert">${esc(CI_ERR)}</div>` : ""}
     <div class="ci-acts"><button class="btn ghost" data-act="ciPreview" data-id="${esc(l.id)}">Preview Client Form</button>
+      <button class="btn ghost" data-act="poNew" data-id="${esc(l.id)}">Send Payment Options</button>
       <button class="btn ghost" data-act="ciDone">Done</button></div>
     ${ciPreviewHtml()}
   </div>`;
@@ -32140,7 +32327,15 @@ function ciDetailHtml(){
         <button class="btn ghost" data-act="openCaseTab" data-case="${esc(l.case_no)}" data-tab="details">Open intake in the portal</button>` : ""}
       ${l.status === "submitted" ? `<button class="btn ghost" data-act="ciReviewed" data-id="${esc(l.id)}">Mark reviewed</button>` : ""}
       ${["ready", "sent", "viewed"].includes(l.status) ? ciShareHtml(l, true) : ""}
+      ${l.status !== "revoked" && l.nonref_cents != null
+        ? `<button class="btn ghost" data-act="poNew" data-id="${esc(l.id)}">Send Payment Options</button>` : ""}
+      ${done && d.submission ? `<button class="btn ghost" data-act="leadRecordPay" data-case="${esc(l.case_no)}"
+        >Record payment received</button>` : ""}
     </div>
+    ${(l.payment_methods || []).length ? `<p class="hint ci-payon">Payment options included with this intake:
+      <b>${esc(ciPayWords(l.payment_methods))}</b>.</p>` : ""}
+    ${done && d.submission ? `<p class="hint">A payment is recorded only when you confirm it here &mdash; sending
+      payment options, or a client tapping a payment button, never marks this intake paid.</p>` : ""}
     ${done && !d.submission ? `<p class="err">The submission this link produced has been deleted from the portal. The signed
       terms below are kept as the record of what was accepted.</p>` : ""}
     ${done ? (d.submission ? ciDocHtml(d, false) : `<h3>Accepted terms</h3>${ciTermsHtml(d.accepted_terms)}`)
@@ -32148,21 +32343,28 @@ function ciDetailHtml(){
       : `<p class="note">No terms yet &mdash; this draft has no non-refundable amount entered.</p>`}
     <h3>History</h3>
     <ul class="ci-hist">${d.events.map(e => `<li>${esc(ciWhen(e.at))} &mdash; ${esc(CI_EVENT[e.action] || e.action)}${
+      CI_EVENT_DETAIL.includes(e.action) && e.detail ? ` &mdash; ${esc(e.detail)}` : ""}${
       e.actor_name ? ` (${esc(e.actor_name)})` : ""}</li>`).join("")}</ul>
   </div>`;
 }
 const CI_EVENT = { draft_saved: "Draft saved", link_created: "Secure link created", renewed: "Link renewed (resend)",
   text_composer_opened: "Text composer opened (not a delivery confirmation)", link_copied: "Link copied",
   emailed: "Emailed to the client", email_failed: "Email could not be sent", opened: "Client opened the link",
-  submitted: "Client submitted and signed", reviewed: "Marked reviewed", revoked: "Link revoked" };
+  submitted: "Client submitted and signed", reviewed: "Marked reviewed", revoked: "Link revoked",
+  payment_options_included: "Payment options included", payment_options_removed: "Payment options removed",
+  payment_text_opened: "Payment options: text composer opened (not a delivery confirmation)",
+  payment_copied: "Payment message copied" };
+const CI_EVENT_DETAIL = ["payment_options_included", "payment_text_opened", "payment_copied"];
 
 function clientIntakesView(){
   if(ME.role !== "admin") return `<div class="card"><p class="note">Client intakes are for the office.</p></div>`;
   /* `shell()` already draws the Back to Home bar on a Home card's screen. */
+  if(PO) return poHtml();
   if(CI_OPEN) return ciDetailHtml();
   return `<div class="card">
     <div class="bar"><h2 style="margin:0">Client Intakes</h2>
-      ${CI_FORM || CI_SENT ? "" : `<button class="btn accent ci-start" data-act="ciNew">Prepare &amp; Send Client Intake</button>`}</div>
+      ${CI_FORM || CI_SENT ? "" : `<span class="ci-heads"><button class="btn accent ci-start" data-act="ciNew">Prepare &amp; Send Client Intake</button>
+        <button class="btn ghost ci-paystart" data-act="poNew">Send Payment Options</button></span>`}</div>
     <p class="note">Prepare a private client's intake with their retainer, send the secure link by text, and find
       the signed submission here when it comes back.
       <button class="btn sm ghost" data-act="ciBlankPdf">Printable blank intake (PDF)</button></p>
@@ -32179,6 +32381,7 @@ function ciBody(draft){
   return { client_name: f.client_name, client_phone: f.client_phone, client_email: f.client_email,
     retainer_choice: f.choice, custom_retainer: f.choice === "custom" ? f.custom : "",
     non_refundable: f.nr || "",
+    include_payment: f.pay === true, payment_methods: f.pay ? (f.payM || "both") : undefined,
     confirm_terms: draft ? undefined : f.confirm === true, draft: draft || undefined };
 }
 async function ciSave(draft){
@@ -32236,7 +32439,7 @@ async function ciAct(id, act, body, okMsg){
 }
 async function ciOpen(id, keepMsg){
   if(!keepMsg){ CI_MSG = ""; CI_ERR = ""; }
-  CI_FORM = null; CI_SENT = null; CI_PREVIEW = null;
+  CI_FORM = null; CI_SENT = null; CI_PREVIEW = null; PO = null;
   const prev = CI_OPEN && CI_OPEN.id === id ? CI_OPEN : null;
   CI_OPEN = { id, state: prev ? prev.state : "loading", data: prev ? prev.data : null, err: "", sigWide: prev ? prev.sigWide : "" };
   paint();
@@ -34736,7 +34939,7 @@ document.addEventListener("click", ev => {
        than an empty one. */
     if(TAB === "search"){ SRCH = { q: "", results: null, err: "", busy: false, hi: -1 }; }
     if(TAB === "cintakes" && ME.role === "admin"){
-      CI_OPEN = null; CI_FORM = null; CI_SENT = null; CI_PREVIEW = null; CI_MSG = ""; CI_ERR = ""; loadCI(); }
+      CI_OPEN = null; CI_FORM = null; CI_SENT = null; CI_PREVIEW = null; CI_MSG = ""; CI_ERR = ""; PO = null; loadCI(); }
     /* Reports & Packages reads the two routes it is assembled from, both
        admin-only in the Worker. Fetched on arrival for the same reason the
        dashboard refetches: a stale package stage is a wrong next step. */
@@ -34774,6 +34977,7 @@ document.addEventListener("click", ev => {
   }
   else if(act === "openCaseTab"){ openCase(el.dataset.case, el.dataset.tab); }
   /* CLIENT INTAKES (owner brief 2026-11-04). */
+  else if(act === "ciFromWiz"){ ciFromWizard(); }
   else if(act === "ciNew"){ TAB = "cintakes"; navClose(); ciNewForm(null); paint(); loadCI();
     const fm = $("ci-form"); if(fm) fm.scrollIntoView({ block: "start" }); }
   else if(act === "ciCreate"){ ciSave(false); }
@@ -34795,6 +34999,16 @@ document.addEventListener("click", ev => {
     setTimeout(paint, 0);
   }
   else if(act === "ciCopy"){ ciCopy(el.dataset.id); }
+  /* SEND PAYMENT OPTIONS — from Quick Tools, the Client Intakes screen, the
+     link just created, and a prepared intake's own record. */
+  else if(act === "poNew"){ TAB = "cintakes"; navClose(); poNew(el.dataset.id || "");
+    if(CI.state !== "ok") loadCI(); window.scrollTo(0, 0); }
+  else if(act === "poText"){ poShared("text");
+    if(PO){ PO.err = ""; PO.note = "Your messages app was opened with the payment options — press send there. "
+      + "The portal cannot see whether the text was delivered, and nothing is marked paid."; }
+    setTimeout(paint, 0); }
+  else if(act === "poCopy"){ poCopy(); }
+  else if(act === "poClose"){ PO = null; paint(); window.scrollTo(0, 0); }
   else if(act === "ciEmail"){ ciAct(el.dataset.id, "email", {}, "Emailed to the client."); }
   else if(act === "ciRenew"){ ciAct(el.dataset.id, "renew", {}, "The link is good for another 30 days — text or copy it to resend."); }
   else if(act === "ciRevoke"){
@@ -36039,6 +36253,12 @@ document.addEventListener("change", ev => {
   if(act) srActed();
   if(act === "ciChoice"){ ciCollect(); if(CI_FORM){ CI_FORM.choice = ev.target.value; CI_FORM.err = ""; } CI_PREVIEW = null; paint(); return; }
   if(act === "ciCollectChk"){ ciCollect(); return; }
+  if(act === "ciPayChk"){ ciCollect(); if(CI_FORM){ CI_FORM.pay = ev.target.checked; CI_FORM.err = ""; } paint(); return; }
+  if(act === "ciPayM"){ ciCollect(); if(CI_FORM){ CI_FORM.payM = ev.target.value; } paint(); return; }
+  if(act === "poChoice"){ if(PO){ PO.choice = ev.target.value; PO.note = ""; poCompose(); } return; }
+  if(act === "poRet"){ if(PO){ PO.inclRet = ev.target.checked; PO.note = ""; poCompose(); } return; }
+  if(act === "poLink"){ if(PO){ PO.linkId = ev.target.value; const l = PO.linkId ? ciLinkById(PO.linkId) : null;
+    PO.name = l ? l.client_name : ""; PO.phone = l ? (l.client_phone || "") : ""; PO.note = ""; poCompose(); } return; }
   /* The daily summary's controls: capture-then-recompose, per day. */
   if(act === "dsCtl"){ dsCtl(parseInt(ev.target.dataset.day, 10)); return; }
   /* UNIT 4/5 — BEFORE the NL bail-out below, because the Assistant workbench
@@ -36082,6 +36302,11 @@ document.addEventListener("input", ev => {
   if(din === "retDraft"){ RTN_DRAFT[ev.target.id] = ev.target.value; return; }
   if(din === "ciCollect"){ ciCollect(); return; }
   if(din === "ciSearch"){ CI_Q = ev.target.value; paint(); return; }
+  /* A typed retainer makes the shown message stale at once — Text and Copy
+     stand down until the Worker has composed it again. */
+  if(din === "poRetType" && PO){ PO.retainer = ev.target.value; PO.state = "stale"; PO.note = ""; paint();
+    clearTimeout(PO_TIMER); PO_TIMER = setTimeout(poCompose, 300); return; }
+  if(din === "poPhone" && PO){ PO.phone = ev.target.value; paint(); return; }
   /* UNIT 4 — the Assistant workbench draft: the value lands in ASST.prep on
      every keystroke, so a repaint from anywhere redraws what was typed. */
   if(din === "asstPrep"){ asstPrepCollect(); return; }

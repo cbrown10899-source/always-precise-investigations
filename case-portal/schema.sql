@@ -2266,3 +2266,15 @@ CREATE TABLE IF NOT EXISTS client_intake_event (
   at         TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_cie_link ON client_intake_event(link_id, id);
+
+-- PAYMENT OPTIONS WITH A PREPARED INTAKE (owner brief 2026-11-05). One row per
+-- link that the office chose to send with its payment options: which methods.
+-- The handles and links are NOT copied here: they are read live from the
+-- firm's payment configuration, the one place they are set. Absent row means
+-- the intake carries no payment options. Nothing here records a payment.
+CREATE TABLE IF NOT EXISTS client_intake_payopt (
+  link_id    TEXT    PRIMARY KEY,
+  methods    TEXT    NOT NULL,                   -- comma list of payment method ids
+  set_by     INTEGER REFERENCES users(id),
+  set_at     TEXT    NOT NULL
+);

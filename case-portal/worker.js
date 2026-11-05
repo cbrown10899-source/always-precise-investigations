@@ -8631,6 +8631,7 @@ const CEO_CAPS = [
      retainer and signs — and its capability lives on the Client Intakes
      screen in the rail, so the most the Bot may ever propose is the card. */
   { id: 'qt:cintake',  label: 'Prepare & Send Client Intake', core: true, nav: false, alt: 'Client Intakes in the navigation' },
+  { id: 'qt:payopts',  label: 'Send Payment Options', core: false, nav: false, alt: 'the Client Intakes screen' },
   { id: 'qt:newlead',  label: 'New Intake',          core: true,  nav: false, alt: 'the Intakes desk' },
   { id: 'qt:priv',     label: 'Private Intake',      core: false, nav: false, alt: 'New Intake' },
   { id: 'qt:claims',   label: 'Insurance Intake',    core: false, nav: false, alt: 'New Intake' },
@@ -15862,6 +15863,7 @@ const INTAKE_EXEMPT = {
      blocks the delete nor dies with it. Its event trail follows it. */
   client_intake_link: 'the signed retainer terms are non-deletable evidence, and they must not block deletion',
   client_intake_event: 'child of client_intake_link',
+  client_intake_payopt: 'child of client_intake_link',
 };
 
 /* The blocker probe, extracted so the DELETE and the EXPLANATION cannot
@@ -16049,6 +16051,7 @@ const DEMO_SWEEP = [
   /* A prepared client intake whose submission was a TEST- case goes with it,
      its event trail first (addressed through the parent, the children rule). */
   ['client_intake_event',   'DELETE FROM client_intake_event WHERE link_id IN (SELECT id FROM client_intake_link WHERE case_no LIKE ?)'],
+  ['client_intake_payopt',  'DELETE FROM client_intake_payopt WHERE link_id IN (SELECT id FROM client_intake_link WHERE case_no LIKE ?)'],
   ['client_intake_link',    'DELETE FROM client_intake_link WHERE case_no LIKE ?'],
 
   /* --- the spine, last --- */
@@ -17920,6 +17923,7 @@ function cilView(env, row, now = nowIso()) {
     submission_exists: row.case_no ? Boolean(row.sub_exists) : null,
     signed_name: row.signed_name || null, signed_at: row.signed_at || null,
     reviewed_at: row.reviewed_at || null, revoked_at: row.revoked_at || null,
+    payment_methods: row.pay_methods ? String(row.pay_methods).split(',').filter(x => PAY_IDS.includes(x)) : [],
     url, message: url ? cilMessage(url) : null,
   };
 }
@@ -17945,9 +17949,151 @@ const cilEmailOk = e => e.length <= 200 && /^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(e)
 
 async function cilRow(env, id) {
   if (!CIL_ID_RE.test(id)) return null;
+  const pay = await cilPayCol(env);
   return env.DB.prepare(
-    `SELECT l.*, (SELECT 1 FROM submissions s WHERE s.case_no = l.case_no) AS sub_exists
+    `SELECT l.*, (SELECT 1 FROM submissions s WHERE s.case_no = l.case_no) AS sub_exists, ${pay}
        FROM client_intake_link l WHERE l.id = ?`).bind(id).first();
+}
+
+/* ---------------------------------------------- payment options (2026-11-05)
+
+   The office may send a prepared intake WITH the firm's payment options, and
+   may send the payment options on their own, as a text it composes on its own
+   phone. Three rules hold it:
+
+   THE DESTINATIONS ARE THE CONFIGURED ONES, READ LIVE. `paymentOptionsFor`
+   in the private context is the one reader — the firm's own Cash App and
+   Venmo, or whatever Settings now says — so nothing here stores a handle or a
+   link, and a method switched off or left broken in Settings is not offered.
+   A broken one is refused by name, never guessed.
+
+   SENDING OPTIONS IS NOT BEING PAID. Nothing in this block reads or writes
+   `retainer_payment` or `case_retainer`; a payment is recorded only through
+   the case's own Record Payment form, by a person.
+
+   THE AMOUNT IS THE AGREED ONE. A prepared intake's message states that
+   intake's retainer — the figure fixed on its link — and never a typed one. */
+const CIL_PAY_CHOICES = { cash_app: ['cash_app'], venmo: ['venmo'], both: ['cash_app', 'venmo'] };
+
+/* Which methods a request asked for: 'cash_app' | 'venmo' | 'both', or a list
+   of ids. Null for nothing usable — the caller refuses by name. */
+function cilPayWanted(v) {
+  if (typeof v === 'string' && CIL_PAY_CHOICES[v]) return CIL_PAY_CHOICES[v];
+  if (Array.isArray(v)) {
+    const ids = PAY_IDS.filter(id => v.map(String).includes(id));
+    return ids.length ? ids : null;
+  }
+  return null;
+}
+
+/* The selection resolved against the configuration. { methods } or { error, code }. */
+async function cilPayResolve(env, ids) {
+  if (!ids) return { error: 'Choose Cash App, Venmo or both.', code: 'payment_methods_required' };
+  const broken = [];
+  const methods = await paymentOptionsFor(env, ids, broken, SEND_CONTEXT.PRIVATE);
+  if (broken.length) {
+    return { error: `${broken.map(m => m.display_name || m.label).join(' and ')} is switched on in `
+      + 'Settings but has no valid payment link. Fix it in Settings → Private client payment methods first.',
+      code: 'payment_method_unusable' };
+  }
+  if (methods.length !== ids.length) {
+    const off = ids.filter(id => !methods.some(m => m.id === id))
+      .map(id => (PAY_METHODS.find(m => m.id === id) || {}).label || id);
+    return { error: `${off.join(' and ')} is switched off in Settings → Private client payment methods.`,
+      code: 'payment_method_off' };
+  }
+  return { methods };
+}
+
+const cilPublicMethod = m => ({ id: m.id, label: m.label, handle: m.handle, url: m.url });
+
+async function cilPayReady(env) {
+  return !(await missingTables(env)).includes('client_intake_payopt');
+}
+async function cilPayCol(env) {
+  return (await cilPayReady(env))
+    ? '(SELECT p.methods FROM client_intake_payopt p WHERE p.link_id = l.id) AS pay_methods'
+    : 'NULL AS pay_methods';
+}
+
+/* What the CLIENT is shown when the office included payment options: the
+   agreed figures from the link itself and the methods as configured now. Null
+   when none were included, or when none are still usable. */
+async function cilPayBlock(env, row) {
+  if (!row || !row.pay_methods || row.nonref_cents == null) return null;
+  const ids = String(row.pay_methods).split(',').filter(id => PAY_IDS.includes(id));
+  const methods = (await paymentOptionsFor(env, ids, [], SEND_CONTEXT.PRIVATE)).map(cilPublicMethod);
+  if (!methods.length) return null;
+  const anyCents = Boolean((row.retainer_cents % 100) || (row.nonref_cents % 100));
+  return {
+    retainer: centsMoney(row.retainer_cents, anyCents),
+    non_refundable: centsMoney(row.nonref_cents, anyCents),
+    methods,
+    note: 'These buttons open the payment app. Nothing is charged automatically, and your payment '
+      + 'is recorded only once Always Precise Investigations confirms it was received.',
+  };
+}
+
+/* THE PAYMENT MESSAGE HAS ONE WRITER: the owner's wording (2026-11-05), the
+   retainer line only when one is stated, and each method's own handle and
+   link exactly as configured. */
+function paymentMessageText(methods, retainer) {
+  const lines = ['Hello, this is Always Precise Investigations.', ''];
+  if (retainer) lines.push(`Your agreed investigation retainer is ${retainer}.`, '');
+  lines.push(methods.length > 1 ? 'You may use either payment option:' : 'You may use this payment option:', '');
+  for (const m of methods) lines.push(`${m.label}: ${m.handle}`, m.url, '');
+  lines.push('Please contact us if you have any questions.', '', 'Thank you,', 'Always Precise Investigations');
+  return lines.join('\n');
+}
+
+/* POST /payment-options/message — compose the text; sends nothing and writes
+   nothing. With a prepared intake the retainer is that intake's; with none,
+   the office may type one, or leave it out. */
+async function paymentMessage(request, env) {
+  const b = await readJson(request);
+  const r = await cilPayResolve(env, cilPayWanted(b.methods));
+  if (r.error) return json({ error: r.error, code: r.code }, 400);
+  let retainer = null, source = null, phone = '', name = '', linkId = null;
+  if (b.link_id) {
+    if (await cilMissing(env)) return json({ error: CIL_SETUP, code: 'schema_missing' }, 503);
+    const row = await cilRow(env, String(b.link_id));
+    if (!row) return json({ error: 'not found' }, 404);
+    if (row.revoked_at) {
+      return json({ error: 'That intake was revoked, so its terms no longer stand.', code: 'link_revoked' }, 409);
+    }
+    linkId = row.id; phone = row.client_phone || ''; name = row.client_name || '';
+    if (b.include_retainer === true) {
+      retainer = centsMoney(row.retainer_cents, Boolean(row.retainer_cents % 100)); source = 'intake';
+    }
+  } else if (b.include_retainer === true) {
+    const c = parseMoneyCents(b.retainer);
+    if (c == null || c <= 0 || c > CLIENT_INTAKE_MAX_CENTS) {
+      return json({ error: 'Enter the agreed retainer, like 2400 or 2400.50 — or leave the retainer out.',
+        code: 'retainer_required' }, 400);
+    }
+    retainer = centsMoney(c, Boolean(c % 100)); source = 'typed';
+  }
+  return json({ ok: true, message: paymentMessageText(r.methods, retainer),
+    methods: r.methods.map(cilPublicMethod), retainer, retainer_source: source,
+    link_id: linkId, client_name: name, client_phone: phone });
+}
+
+/* POST /payment-options/shared — the office opened its own text composer, or
+   copied the message. Recorded on the prepared intake's trail when there is
+   one, and said as what it is: a composer opened is not a text delivered, and
+   it is never a payment. With no intake there is nothing to record against. */
+async function paymentShared(request, env, user) {
+  const b = await readJson(request);
+  const via = ['text', 'copy'].includes(b.via) ? b.via : null;
+  if (!via) return json({ error: 'Say how the message was shared.', code: 'bad_via' }, 400);
+  const ids = cilPayWanted(b.methods) || [];
+  if (!b.link_id) return json({ ok: true, recorded: false });
+  if (await cilMissing(env)) return json({ error: CIL_SETUP, code: 'schema_missing' }, 503);
+  const row = await cilRow(env, String(b.link_id));
+  if (!row) return json({ error: 'not found' }, 404);
+  await cilEvent(env, row.id, via === 'text' ? 'payment_text_opened' : 'payment_copied',
+    ids.map(id => (PAY_METHODS.find(m => m.id === id) || {}).label || id).join(' + ') || null, user.id);
+  return json({ ok: true, recorded: true });
 }
 
 /* The office's three fields and the retainer, validated once for create and
@@ -17972,8 +18118,9 @@ function cilClientFields(b) {
 
 async function cilList(env) {
   if (await cilMissing(env)) return json({ error: CIL_SETUP, code: 'schema_missing' }, 503);
+  const pay = await cilPayCol(env);
   const { results } = await env.DB.prepare(
-    `SELECT l.*, (SELECT 1 FROM submissions s WHERE s.case_no = l.case_no) AS sub_exists
+    `SELECT l.*, (SELECT 1 FROM submissions s WHERE s.case_no = l.case_no) AS sub_exists, ${pay}
        FROM client_intake_link l ORDER BY l.created_at DESC, l.id DESC LIMIT 500`).all();
   const now = nowIso();
   return json({ links: (results || []).map(r => cilView(env, r, now)), options: cilOptions() });
@@ -18018,6 +18165,15 @@ async function cilSave(request, env, user, id) {
     return json({ error: 'Confirm the retainer and non-refundable amount before creating the link.',
                   code: 'terms_not_confirmed' }, 400);
   }
+  /* PAYMENT OPTIONS WITH THE INTAKE — checked before anything is written, so a
+     refused choice never leaves a link behind without the options asked for. */
+  let payIds = null;
+  if (b.include_payment === true) {
+    if (!(await cilPayReady(env))) return json({ error: CIL_SETUP, code: 'schema_missing' }, 503);
+    const pr = await cilPayResolve(env, cilPayWanted(b.payment_methods));
+    if (pr.error) return json({ error: pr.error, code: pr.code }, 400);
+    payIds = pr.methods.map(m => m.id);
+  }
   const now = nowIso();
   const token = draft ? null : randomHex(32);
   const expires = draft ? null : new Date(Date.now() + CLIENT_INTAKE_LINK_DAYS * 86400_000).toISOString();
@@ -18035,6 +18191,7 @@ async function cilSave(request, env, user, id) {
         draft ? null : now, expires).run();
     await cilEvent(env, id, draft ? 'draft_saved' : 'link_created',
       `${centsMoney(f.retainer_cents)} retainer`, user.id);
+    await cilSavePay(env, user, id, payIds);
     return json({ ok: true, link: cilView(env, await cilRow(env, id)) }, 201);
   }
   const row = await cilRow(env, id);
@@ -18059,7 +18216,27 @@ async function cilSave(request, env, user, id) {
   }
   await cilEvent(env, id, draft ? 'draft_saved' : 'link_created',
     `${centsMoney(f.retainer_cents)} retainer`, user.id);
+  await cilSavePay(env, user, id, payIds);
   return json({ ok: true, link: cilView(env, await cilRow(env, id)) });
+}
+
+/* The one writer of an intake's payment-option choice: set, or cleared. */
+async function cilSavePay(env, user, id, ids) {
+  if (!(await cilPayReady(env))) return;
+  const cur = await env.DB.prepare('SELECT methods FROM client_intake_payopt WHERE link_id = ?').bind(id).first();
+  if (ids && ids.length) {
+    const csv = ids.join(',');
+    if (cur && cur.methods === csv) return;
+    await env.DB.prepare(
+      `INSERT INTO client_intake_payopt (link_id, methods, set_by, set_at) VALUES (?1, ?2, ?3, ?4)
+       ON CONFLICT(link_id) DO UPDATE SET methods = ?2, set_by = ?3, set_at = ?4`)
+      .bind(id, csv, user.id, nowIso()).run();
+    await cilEvent(env, id, 'payment_options_included',
+      ids.map(x => (PAY_METHODS.find(m => m.id === x) || {}).label || x).join(' + '), user.id);
+  } else if (cur) {
+    await env.DB.prepare('DELETE FROM client_intake_payopt WHERE link_id = ?').bind(id).run();
+    await cilEvent(env, id, 'payment_options_removed', null, user.id);
+  }
 }
 
 /* What the office did with a live link. `shared` records that the office
@@ -18212,7 +18389,13 @@ const CIL_GONE = 'This intake link is not valid. Please contact Always Precise I
 
 async function cilByToken(env, token) {
   if (!CIL_TOKEN_RE.test(token)) return null;
-  return env.DB.prepare('SELECT * FROM client_intake_link WHERE token = ?').bind(token).first();
+  const pay = await cilPayCol(env);
+  return env.DB.prepare(`SELECT l.*, ${pay} FROM client_intake_link l WHERE l.token = ?`).bind(token).first();
+}
+
+async function cilSubmittedReply(env, row) {
+  return json({ error: 'This intake has already been submitted to Always Precise Investigations. '
+    + 'Thank you.', code: 'already_submitted', payment: await cilPayBlock(env, row) }, 409);
 }
 
 function cilRefusal(row, now) {
@@ -18238,6 +18421,9 @@ async function cilPublicRead(env, token) {
   }
   const row = await cilByToken(env, token);
   const now = nowIso();
+  /* A SUBMITTED intake still shows its client the payment options the office
+     included, so a client who returns to pay finds them again. */
+  if (row && row.submitted_at && !row.revoked_at) return cilSubmittedReply(env, row);
   const refused = cilRefusal(row, now);
   if (refused) return refused;
   /* OPENED is recorded here and nowhere else — this route is only reached by
@@ -18252,6 +18438,7 @@ async function cilPublicRead(env, token) {
     ok: true,
     client: { name: row.client_name, phone: row.client_phone || '', email: row.client_email || '' },
     terms, terms_hash: await clientIntakeTermsHash(terms),
+    payment: await cilPayBlock(env, row),
     types: CLIENT_INTAKE_TYPES.map(([value, label]) => ({ value, label })),
     contact_methods: CLIENT_INTAKE_CONTACT.map(([value, label]) => ({ value, label })),
     urgency: CLIENT_INTAKE_URGENCY.map(([value, label]) => ({ value, label })),
@@ -18393,8 +18580,10 @@ async function cilPublicSubmit(request, env, token) {
      attempt key it carries says so, and the client is told it is in. A
      different attempt on a submitted link is refused by name. */
   if (row && row.submitted_at && !row.revoked_at && row.submit_attempt === attempt) {
-    return json({ ok: true, duplicate: true, case_no: row.case_no, submitted_at: row.submitted_at });
+    return json({ ok: true, duplicate: true, case_no: row.case_no, submitted_at: row.submitted_at,
+      payment: await cilPayBlock(env, row) });
   }
+  if (row && row.submitted_at && !row.revoked_at) return cilSubmittedReply(env, row);
   const now = nowIso();
   const refused = cilRefusal(row, now);
   if (refused) return refused;
@@ -18473,13 +18662,14 @@ async function cilPublicSubmit(request, env, token) {
     if (!claimed) {
       const again = await env.DB.prepare('SELECT * FROM client_intake_link WHERE id = ?').bind(row.id).first();
       if (again && again.submitted_at && again.submit_attempt === attempt) {
-        return json({ ok: true, duplicate: true, case_no: again.case_no, submitted_at: again.submitted_at });
+        return json({ ok: true, duplicate: true, case_no: again.case_no, submitted_at: again.submitted_at,
+          payment: await cilPayBlock(env, row) });
       }
       return cilRefusal(again, nowIso()) || json({ error: 'Please reload the page and try again.' }, 409);
     }
     // The intake is recorded; telling the office is a courtesy that cannot fail it.
     await notifyAdmins(env, 'intakes', caseNo);
-    return json({ ok: true, case_no: caseNo, submitted_at: now });
+    return json({ ok: true, case_no: caseNo, submitted_at: now, payment: await cilPayBlock(env, row) });
   }
   return json({ error: 'Please try submitting again in a moment.' }, 503);
 }
@@ -18520,7 +18710,7 @@ const EXPECTED_TABLES = [
   'case_refund', 'case_closeout', 'case_closeout_detail', 'user_pref',
   'sent_document', 'document_send_attempt', 'document_acceptance', 'document_record_copy',
   'packet_generation', 'sent_document_custom',
-  'client_intake_link', 'client_intake_event',
+  'client_intake_link', 'client_intake_event', 'client_intake_payopt',
 ];
 
 async function missingTables(env) {
@@ -22024,6 +22214,12 @@ async function route(request, env) {
      Admin-only like every other money route — an investigator has no business
      asking a client for the retainer, and knowing where the firm's money
      arrives is not fieldwork. */
+  /* SEND PAYMENT OPTIONS as a text the office composes on its own phone
+     (owner brief 2026-11-05): the message is composed here, sent by nobody. */
+  if ((p === '/payment-options/message' || p === '/payment-options/shared') && method === 'POST') {
+    if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+    return p.endsWith('/message') ? paymentMessage(request, env) : paymentShared(request, env, user);
+  }
   if (p === '/payment-options/email' && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     return emailPaymentOptions(request, env, user);

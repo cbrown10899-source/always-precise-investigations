@@ -27819,8 +27819,10 @@ section('The hybrid pass: seven art cards on Home, and nothing else touched');
     return [...document.querySelectorAll('.qtapps-more .qtapp')]
       .map(c => ({ qt: c.dataset.qt, art: c.classList.contains('uiart') }));
   });
-  ok('the five doors under More carry NO art treatment — §2, by data not by rule',
-     more.length === 5 && more.every(m => m.art === false), JSON.stringify(more));
+  /* SIX, BY THE OWNER'S REQUEST (2026-11-05): Send Payment Options joined the
+     Quick Tools as a plain door under More. Re-pinned exactly. */
+  ok('the six doors under More carry NO art treatment — §2, by data not by rule',
+     more.length === 6 && more.every(m => m.art === false), JSON.stringify(more));
   /* AND THEY DO NOT INHERIT THE ART CARD'S SHAPE EITHER. The phone rule was
      written against `.qtapp` and forced the five plain doors into 155px
      squares with an empty bottom half — the square exists to hold a
@@ -27847,7 +27849,7 @@ section('The hybrid pass: seven art cards on Home, and nothing else touched');
        && shape.art.every(c => c.w / c.h >= 1.0 && c.w / c.h <= 1.15),
      JSON.stringify(shape.art[0]));
   ok('and a plain card is SHORTER, because it has no photograph to hold',
-     shape.plain.length === 5 && shape.plain.every(c => c.h < shape.art[0].h),
+     shape.plain.length === 6 && shape.plain.every(c => c.h < shape.art[0].h),
      JSON.stringify({ art: shape.art[0], plain: shape.plain[0] }));
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.waitForTimeout(300);
@@ -28128,7 +28130,7 @@ section("Mobile Home: the owner's quick actions, and a desktop row that did not 
   const PHONE = ['Rate Sheet', 'Prepare & Send Client Intake', 'New Intake', 'Private Intake', 'View Intakes',
                  'Active Surveillance', 'Timestamp Photo', 'Timestamp Video'];
   const PHONE_MORE = ['Cases', 'Insurance Intake', 'Law Firm Intake',
-                      'Reports & Packages', 'CEO Bot'];
+                      'Reports & Packages', 'Send Payment Options', 'CEO Bot'];
   const p390 = await read(390, 844);
   /* TWO ACROSS, AND NOTHING ABOUT THE ART HERE. This section does not open
      the dashboard, so the cards it measures are the PLAIN ones the strip
@@ -33849,7 +33851,7 @@ try {
   await stepFlow(async () => { await cp.locator('#f_start_date').fill('2026-12-01'); });
   ok('step 7 is the retainer & payment terms', await cp.locator('[data-step="terms"]').count() === 1);
   const terms = await cp.locator('.terms').innerText();
-  ok('the client sees the office\'s retainer, its 50% portion, $100/hr and the 4-hour minimum',
+  ok('the client sees the office\'s retainer, the non-refundable amount it typed, $100/hr and the 4-hour minimum',
      terms.includes('$5,200') && terms.includes('$2,600') && terms.includes('$100/hr')
      && /4-HOUR MINIMUM PER SURVEILLANCE DAY/.test(terms), terms);
   ok('nothing on the terms step can edit a figure',
@@ -34016,6 +34018,273 @@ try {
   await fp.close();
 } catch (e) { ok('the section ran to its end without throwing', false, e && e.message); }
 
+
+
+section('Client intakes: the rate sheet hands its client and agreed retainer to the prepare form');
+try {
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.evaluate(() => api('/me/prefs', { method: 'POST', body: { qt_order: null, hidden: null, view: null } }));
+  await page.reload(); await page.waitForTimeout(800);
+  await goHome(page);
+  const openWiz = async () => {
+    await page.evaluate(() => { SHEET_WIZ = null; TAB = 'dashboard'; paint(); });
+    await page.waitForTimeout(300);
+    await page.locator('.qtapp[data-qt="sheets"]').first().click();
+    await page.waitForSelector('#wiz_to', { timeout: 8000 });
+  };
+  await openWiz();
+  ok('the private send wizard offers a signed client intake with this retainer',
+     await page.locator('.ci-wizdoor [data-act="ciFromWiz"]').count() === 1);
+  await page.locator('#wiz_cname').fill('Casey Carryover');
+  await page.locator('#wiz_cphone').fill('(434) 555-0177');
+  await page.locator('#wiz_to').fill('casey@example.com');
+  await page.locator('#wiz_ret').selectOption('custom');
+  await page.waitForTimeout(200);
+  await page.locator('#wiz_retc').fill('2400');
+  await page.locator('[data-act="ciFromWiz"]').click();
+  await page.waitForSelector('#ci-form', { timeout: 8000 });
+  await page.waitForFunction(() => CI.state === 'ok');
+  await page.evaluate(() => paint());
+  const f = await page.evaluate(() => ({ tab: TAB, wiz: !!SHEET_WIZ, ...CI_FORM,
+    name: document.getElementById('ci_name').value, phone: document.getElementById('ci_phone').value,
+    email: document.getElementById('ci_email').value, nrBox: document.getElementById('ci_nr').value,
+    checked: (document.querySelector('input[name="ci_choice"]:checked') || {}).value,
+    live: document.getElementById('ci_live').innerText,
+    said: /Carried over from the rate sheet/.test(document.getElementById('ci-form').innerText) }));
+  ok('it lands on the prepare form with the wizard closed', f.tab === 'cintakes' && !f.wiz, JSON.stringify(f).slice(0, 200));
+  ok('the client\'s name, phone and email came across', f.name === 'Casey Carryover'
+     && f.phone === '(434) 555-0177' && f.email === 'casey@example.com', JSON.stringify(f));
+  ok('a carried retainer that is one of the presets is shown as that preset', f.checked === '2400' && f.choice === '2400');
+  ok('and no non-refundable amount was invented — the form asks for it',
+     f.nrBox === '' && /Enter the non-refundable amount/.test(f.live) && f.said, f.live);
+
+  // a figure that is not a preset, with a non-refundable amount typed in the wizard
+  await openWiz();
+  await page.locator('#wiz_cname').fill('Dana Typed');
+  await page.locator('#wiz_ret').selectOption('custom');
+  await page.waitForTimeout(200);
+  await page.locator('#wiz_retc').fill('5150.50');
+  await page.locator('#wiz_nr').fill('900');
+  await page.locator('[data-act="ciFromWiz"]').click();
+  await page.waitForSelector('#ci-form', { timeout: 8000 });
+  await page.waitForFunction(() => CI.state === 'ok');
+  await page.evaluate(() => paint());
+  const g = await page.evaluate(() => ({ choice: CI_FORM.choice, custom: document.getElementById('ci_custom').value,
+    nr: document.getElementById('ci_nr').value, live: document.getElementById('ci_live').innerText }));
+  ok('a retainer that is not a preset arrives as Custom, cents intact', g.choice === 'custom' && g.custom === '5150.50', JSON.stringify(g));
+  ok('and a non-refundable amount TYPED in the wizard comes with it, exactly',
+     g.nr === '900' && g.live.includes('5,150.50') && g.live.includes('$900'), g.live);
+
+  // never on a law firm's send, nor a carrier's
+  const other = await page.evaluate(() => {
+    const out = {};
+    for (const [k, ctx, sheet] of [['legal', 'legal', 'private_retainer'], ['insurance', 'insurance', 'insurance_assignment']]) {
+      SHEET_WIZ = { sheet, context: ctx, legal: ctx === 'legal', attemptKey: 'x', step: 1, to: '', caseNo: '', note: '',
+        include: true, clientName: '', clientPhone: '', pay: false, payMethods: [], err: '', legalService: '',
+        lsvcTouched: false, retainer: null, retainerPick: String(RETAINER_STANDARD), retainerCustom: '', retainerTouched: false };
+      TAB = 'sheets'; paint();
+      out[k] = document.querySelectorAll('[data-act="ciFromWiz"]').length;
+    }
+    SHEET_WIZ = null; paint();
+    return out;
+  });
+  ok('a law firm\'s send and a carrier\'s send carry no such door', other.legal === 0 && other.insurance === 0, JSON.stringify(other));
+  ok('nothing was created by carrying over — only the office creates a link', await page.evaluate(() =>
+    !CI.links.some(l => l.client_name === 'Casey Carryover' || l.client_name === 'Dana Typed')));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openWiz().catch(() => {});
+  const door = await page.evaluate(() => { const b = document.querySelector('[data-act="ciFromWiz"]'); if (!b) return null;
+    const r = b.getBoundingClientRect(); return { h: Math.round(r.height), over: document.documentElement.scrollWidth - innerWidth }; });
+  ok('390: the door is at the tap floor and nothing scrolls sideways', door && door.h >= 44 && door.over <= 1, JSON.stringify(door));
+  await page.close();
+} catch (e) { ok('the section ran to its end without throwing', false, e && e.message); }
+
+
+section('Send Payment Options: Quick Tools opens a message in the owner\'s words, with the configured accounts');
+let PO_LINK = null, PO_LINK_ID = null;
+try {
+  const page = await newPage();
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: SITE });
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.evaluate(() => api('/me/prefs', { method: 'POST', body: { qt_order: null, hidden: null, view: null } }));
+  await page.reload(); await page.waitForTimeout(800);
+  await goHome(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(400);
+  await page.evaluate(() => { const d = document.querySelector('.qtmore'); if (d) d.open = true; });
+  const card = page.locator('.qtapps-more .qtapp[data-qt="payopts"]');
+  ok('Send Payment Options is in the Quick Tools, under More', await card.count() === 1);
+  await card.click();
+  await page.waitForSelector('#po', { timeout: 8000 });
+  await page.waitForFunction(() => PO && PO.state !== 'loading');
+  ok('it opens the payment panel on the Client Intakes screen', await page.evaluate(() => TAB) === 'cintakes');
+  ok('with no intake chosen, including the retainer asks for it by name and offers nothing to send',
+     /Enter the agreed retainer/.test(await page.locator('#po').innerText())
+     && await page.locator('a#po_text').count() === 0 && await page.locator('button#po_text[disabled]').count() === 1);
+  await page.locator('#po_ret').fill('2400');
+  await page.waitForFunction(() => PO && PO.state === 'ok', null, { timeout: 5000 });
+  await page.locator('#po_phone').fill('(434) 555-0123');
+  await page.waitForTimeout(150);
+  const msg = await page.locator('#po_msg').inputValue();
+  ok('the message is the owner\'s wording with the typed retainer',
+     msg.startsWith('Hello, this is Always Precise Investigations.') && msg.includes('Your agreed investigation retainer is $2,400.')
+     && msg.includes('You may use either payment option:') && msg.endsWith('Thank you,\nAlways Precise Investigations'), msg);
+  ok('Cash App is $TreverB at its verified link', msg.includes('Cash App: $TreverB\nhttps://cash.app/$TreverB'));
+  ok('Venmo is @Trever-Brown-9 at its verified link', msg.includes('Venmo: @Trever-Brown-9\nhttps://venmo.com/u/Trever-Brown-9'));
+  const href = await page.locator('a#po_text').getAttribute('href');
+  ok('Text Payment Options opens the phone\'s messages with the number and that exact message',
+     href.startsWith('sms:+14345550123?&body=') && decodeURIComponent(href.split('body=')[1]) === msg, href.slice(0, 90));
+  /* The page's own source holding no dollar figure is the static guard's job
+     (no \$digit anywhere in index.html); the message is the Worker's. */
+  await page.locator('input[name="po_choice"][value="cash_app"]').check();
+  await page.waitForFunction(() => PO && PO.state === 'ok' && !PO.msg.includes('Venmo'));
+  const one = await page.locator('#po_msg').inputValue();
+  ok('Cash App alone sends Cash App alone, worded for one', one.includes('Cash App: $TreverB') && !one.includes('Venmo')
+     && one.includes('You may use this payment option:'), one);
+  await page.locator('#po_inclret').uncheck();
+  await page.waitForFunction(() => PO && PO.state === 'ok' && !/retainer/.test(PO.msg));
+  ok('without the retainer, no retainer line and no figure', !/retainer|\$\d/.test(await page.locator('#po_msg').inputValue()));
+  await page.locator('[data-act="poCopy"]').click();
+  await page.waitForTimeout(500);
+  ok('Copy Payment Message copies exactly the message and says nothing is marked paid',
+     (await page.evaluate(() => navigator.clipboard.readText())) === await page.locator('#po_msg').inputValue()
+     && /Nothing is marked paid/.test(await page.locator('#po').innerText()));
+  for (const w of [390, 320]) {
+    await page.setViewportSize({ width: w, height: w === 320 ? 568 : 844 });
+    await page.waitForTimeout(250);
+    const g = await page.evaluate(() => ({
+      small: [...document.querySelectorAll('#po .btn, #po .ci-opt')]
+        .filter(b => b.getBoundingClientRect().height && b.getBoundingClientRect().height < 44)
+        .map(b => b.innerText + ':' + Math.round(b.getBoundingClientRect().height)),
+      fonts: [...document.querySelectorAll('#po input:not([type=radio]):not([type=checkbox]), #po textarea, #po select')]
+        .filter(i => parseFloat(getComputedStyle(i).fontSize) < 16).length }));
+    ok(`${w}: the payment panel does not scroll sideways`, (await ciOver(page)) <= 1, String(await ciOver(page)));
+    ok(`${w}: its controls are at the tap floor and its inputs at 16px`, !g.small.length && !g.fonts, JSON.stringify(g));
+  }
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.locator('[data-act="poClose"]').click();
+  await page.waitForTimeout(200);
+  ok('Close returns to the Client Intakes list, which offers it too',
+     await page.locator('#po').count() === 0 && await page.locator('.ci-paystart[data-act="poNew"]').count() === 1);
+
+  /* F1: payment options included WITH a prepared intake. */
+  await page.locator('[data-act="ciNew"]').first().click();
+  await page.waitForSelector('#ci-form');
+  await page.waitForFunction(() => CI.state === 'ok');
+  await page.locator('#ci_name').fill('Payton Payopts');
+  await page.locator('#ci_phone').fill('(434) 555-0144');
+  await page.locator('input[name="ci_choice"][value="2400"]').check();
+  await page.waitForTimeout(150);
+  await page.locator('#ci_nr').fill('600');
+  ok('the prepare form offers Include Payment Options With Intake, off by default',
+     await page.locator('#ci_pay').count() === 1 && !(await page.locator('#ci_pay').isChecked()));
+  await page.locator('#ci_pay').check();
+  await page.waitForTimeout(150);
+  await page.locator('input[name="ci_paym"][value="venmo"]').check();
+  await page.waitForTimeout(150);
+  await page.locator('#ci_confirm').check();
+  await page.locator('[data-act="ciCreate"]').click();
+  await page.waitForSelector('#ci-sent', { timeout: 5000 });
+  PO_LINK = await page.locator('#ci_url').inputValue();
+  PO_LINK_ID = await page.evaluate(() => CI_SENT.id);
+  ok('the link says Venmo is included with it', /Payment options included with this intake:\s*Venmo/.test(await page.locator('#ci-sent').innerText()));
+  await page.locator('#ci-sent [data-act="poNew"]').click();
+  await page.waitForSelector('#po');
+  await page.waitForFunction(() => PO && PO.state === 'ok');
+  const fixed = await page.evaluate(() => ({ h: document.querySelector('#po h2').innerText, msg: PO.msg,
+    ret: !!document.getElementById('po_ret'), link: !!document.getElementById('po_link'),
+    href: (document.querySelector('a#po_text') || {}).href || '' }));
+  ok('from the link just created, the panel names the client and states that intake\'s agreed retainer',
+     /Payton Payopts/.test(fixed.h) && fixed.msg.includes('$2,400') && !fixed.ret && !fixed.link, JSON.stringify(fixed).slice(0, 220));
+  ok('and the text goes to that client\'s number', fixed.href.startsWith('sms:+14345550144?&body='));
+  await page.evaluate(() => window.addEventListener('click', e => {
+    if (e.target.closest && e.target.closest('a[href^="sms:"]')) e.preventDefault(); }));
+  await page.locator('a#po_text').click();
+  await page.waitForTimeout(600);
+  ok('pressing Text says the messages app was opened, not that anything was delivered or paid',
+     /cannot see whether the text was delivered, and nothing is marked paid/.test(await page.locator('#po').innerText()));
+  const trail = await page.evaluate(id => api(`/client-intakes/${id}`), PO_LINK_ID);
+  ok('the intake\'s history records the composer was opened, as exactly that',
+     trail.events.some(e => e.action === 'payment_text_opened') && trail.link.status === 'ready', JSON.stringify(trail.events.map(e => e.action)));
+  await page.close();
+} catch (e) { ok('the section ran to its end without throwing', false, e && e.message); }
+
+section('Send Payment Options: the client sees them after signing, and nothing is marked paid');
+try {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const cp = await ctx.newPage();
+  const errs = []; cp.on('pageerror', e => errs.push(e.message));
+  await cp.goto(PO_LINK);
+  await cp.waitForSelector('[data-step="client"]', { timeout: 8000 });
+  const next = async () => { await cp.locator('#next').click(); await cp.waitForTimeout(150); };
+  await next();
+  await cp.locator('input[name="r_investigation_type"][value="domestic"]').check(); await cp.waitForTimeout(100);
+  await next(); await next(); await next();
+  await cp.locator('#f_objective').fill('Establish where the subject goes after work.');
+  await next(); await next();
+  ok('the terms step says the payment options come after signing', await cp.locator('#paylater').count() === 1);
+  ok('and shows no payment button before the client has signed', await cp.locator('#payopts').count() === 0);
+  await cp.locator('#ack').check();
+  await next();
+  await cp.locator('#f_signed_name').fill('Payton Payopts');
+  await cp.locator('#agree').check();
+  await cp.locator('#sig').scrollIntoViewIfNeeded();
+  const box = await cp.locator('#sig').boundingBox();
+  await cp.mouse.move(box.x + 30, box.y + 100); await cp.mouse.down();
+  for (let i = 1; i <= 10; i++) await cp.mouse.move(box.x + 30 + i * 20, box.y + 100 - (i % 3) * 20);
+  await cp.mouse.up();
+  await cp.locator('#next').click();
+  await cp.waitForSelector('.msg h1', { timeout: 8000 });
+  const pay = await cp.evaluate(() => {
+    const s = document.getElementById('payopts'); if (!s) return null;
+    return { text: s.innerText, links: [...s.querySelectorAll('a.pbtn')].map(a => ({ href: a.getAttribute('href'),
+      text: a.innerText.replace(/\s+/g, ' '), h: a.getBoundingClientRect().height, target: a.target, rel: a.rel })) };
+  });
+  ok('the confirmation carries PAYMENT OPTIONS with the agreed retainer and non-refundable portion',
+     pay && /PAYMENT OPTIONS/.test(pay.text) && pay.text.includes('$2,400') && pay.text.includes('$600'), JSON.stringify(pay));
+  ok('one button, PAY WITH VENMO, opening the verified @Trever-Brown-9 account',
+     pay && pay.links.length === 1 && pay.links[0].href === 'https://venmo.com/u/Trever-Brown-9'
+     && /Pay with Venmo @Trever-Brown-9/.test(pay.links[0].text), JSON.stringify(pay && pay.links));
+  ok('and no Cash App, because the office included Venmo only', pay && !/Cash App|TreverB/.test(pay.text));
+  ok('the button is a tap-sized link that opens the app, not a charge',
+     pay && pay.links[0].h >= 44 && pay.links[0].target === '_blank' && /noopener/.test(pay.links[0].rel)
+     && /Nothing is charged automatically/.test(pay.text));
+  for (const w of [390, 320]) {
+    await cp.setViewportSize({ width: w, height: w === 320 ? 568 : 844 }); await cp.waitForTimeout(150);
+    ok(`${w}: the payment options fit the screen`, (await ciOver(cp)) <= 1, String(await ciOver(cp)));
+  }
+  await cp.reload(); await cp.waitForTimeout(900);
+  ok('a client who reopens the link to pay finds the payment options again',
+     /Already submitted/.test(await cp.locator('#app').innerText())
+     && (await cp.locator('#payopts a.pbtn').getAttribute('href')) === 'https://venmo.com/u/Trever-Brown-9');
+  ok('no page errors on the client form', errs.length === 0, errs.join(' | '));
+  await ctx.close();
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.evaluate(() => { TAB = 'cintakes'; paint(); loadCI(); });
+  await page.waitForFunction(() => CI.state === 'ok');
+  await page.evaluate(id => ciOpen(id), PO_LINK_ID);
+  await page.waitForFunction(() => CI_OPEN && CI_OPEN.state === 'ok');
+  await page.evaluate(() => paint());
+  const det = await page.evaluate(() => ({ text: document.getElementById('ci-detail').innerText,
+    rec: document.querySelectorAll('#ci-detail [data-act="leadRecordPay"]').length,
+    send: document.querySelectorAll('#ci-detail [data-act="poNew"]').length, caseNo: CI_OPEN.data.link.case_no }));
+  ok('the submitted intake\'s record offers Send Payment Options and Record payment received',
+     det.send === 1 && det.rec === 1, JSON.stringify(det).slice(0, 200));
+  ok('its history says which payment options went with it', /Payment options included — Venmo/.test(det.text));
+  ok('and it says a payment is recorded only when the office confirms it', /never marks this intake paid/.test(det.text));
+  await page.locator('#ci-detail [data-act="leadRecordPay"]').click();
+  await page.waitForFunction(no => WS_CASE === no && WS && RET_FORM === true, det.caseNo, { timeout: 8000 });
+  ok('Record payment received opens the case\'s own Record Payment form — the one place a payment is recorded',
+     await page.evaluate(() => RET_FORM === true));
+  const r = await page.evaluate(() => { const x = (WS.authorization || {}).retainer || {};
+    return { amount: x.amount, received_total: x.received_total, received: x.received }; });
+  ok('and the case holds the agreed retainer with nothing received — offering payment marked nothing paid',
+     r.amount === 2400 && r.received_total === 0 && r.received === false, JSON.stringify(r));
+  await page.close();
+} catch (e) { ok('the section ran to its end without throwing', false, e && e.message); }
 
 await browser.close();
 server.close();
