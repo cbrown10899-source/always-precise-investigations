@@ -33,7 +33,9 @@
   .top .meta{white-space:nowrap;flex:none;}
   @media(max-width:520px){ .top{padding:12px 16px;} .top .name span{font-size:.66rem;} }
 
-  main{max-width:680px;margin:0 auto;padding:18px 16px 60px;}
+  /* The page's own bottom space clears the iPhone home indicator and
+     Safari's toolbar, so Continue and Back are never under either. */
+  main{max-width:680px;margin:0 auto;padding:18px 16px max(60px, calc(env(safe-area-inset-bottom) + 40px));}
   .progress{display:flex;gap:5px;margin:4px 0 8px;}
   .progress i{flex:1;height:6px;border-radius:3px;background:var(--line);}
   .progress i.done{background:var(--teal-2);}
@@ -69,16 +71,24 @@
   .chips .choice{margin:0;flex:1 1 140px;}
 
   .terms{border:1px solid #cfe6ec;background:#f0f8fa;border-radius:10px;padding:4px 16px;margin:4px 0 14px;}
-  .terms .row{display:flex;justify-content:space-between;gap:14px;padding:11px 0;border-bottom:1px solid #d8e9ee;}
+  /* EVERY CELL MAY SHRINK AND WRAP. The value used to be `nowrap` and the
+     rows stacked only under 420px, so on a 430px iPhone a long value ran out
+     of the box (owner, 2026-11-05). A grid of minmax(0,…) tracks cannot be
+     pushed wider than the card by its content. */
+  .terms .row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,auto);column-gap:14px;row-gap:2px;
+    padding:11px 0;border-bottom:1px solid #d8e9ee;}
   .terms .row:last-child{border-bottom:0;}
-  .terms .row > *{min-width:0;overflow-wrap:anywhere;}
+  .terms .row > *{min-width:0;white-space:normal;overflow-wrap:break-word;word-break:normal;}
+  /* Label and figure side by side, the explanation on its own line under
+     both — "Minimum per surveillance day · 4 hours", then the sentence. */
   .terms .lbl{font-size:.9rem;}
-  .terms .lbl small{display:block;color:var(--muted);font-size:.8rem;line-height:1.45;margin-top:2px;}
-  .terms .val{font-weight:700;text-align:right;white-space:nowrap;font-size:1rem;}
+  .terms .val{font-weight:700;text-align:right;font-size:1rem;max-width:14em;}
+  .terms .note{grid-column:1 / -1;display:block;color:var(--muted);font-size:.8rem;line-height:1.45;font-weight:400;}
   .terms .row.term .lbl, .terms .row.term .val{font-weight:700;}
-  @media(max-width:420px){
-    .terms .row{flex-direction:column;gap:2px;}
-    .terms .val{text-align:left;white-space:normal;}
+  /* The narrowest phones stack the figure under its label if they must. */
+  @media(max-width:340px){
+    .terms .row{grid-template-columns:minmax(0,1fr);}
+    .terms .val{text-align:left;max-width:none;}
   }
   .cond{font-size:.86rem;color:#3a4653;margin-bottom:14px;}
   .chk{display:flex;gap:12px;align-items:flex-start;font-size:.92rem;margin-bottom:14px;cursor:pointer;}
@@ -112,6 +122,7 @@
   .payopts{text-align:left;border:1px solid var(--line);border-radius:12px;padding:16px;margin:18px 0 4px;background:#fff;}
   .payopts h2{font-size:1.05rem;margin:0 0 10px;letter-spacing:.04em;}
   .payopts .prow{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--line);}
+  .payopts .prow > *{min-width:0;overflow-wrap:break-word;}
   .payopts .prow b{white-space:nowrap;}
   .payopts .pbtns{display:flex;flex-direction:column;gap:10px;margin:14px 0 10px;}
   .payopts .pbtn{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:50px;border-radius:8px;
@@ -215,8 +226,9 @@ function radios(k, list, opt){
 
 function termsBlock(t){
   return `<div class="terms">${t.lines.map(l => `<div class="row${l.term ? " term" : ""}">
-      <div class="lbl">${esc(l.label)}${l.note ? `<small>${esc(l.note)}</small>` : ""}</div>
-      <div class="val">${esc(l.value)}</div></div>`).join("")}</div>`;
+      <div class="lbl">${esc(l.label)}</div>
+      <div class="val">${esc(l.value)}</div>
+      ${l.note ? `<small class="note">${esc(l.note)}</small>` : ""}</div>`).join("")}</div>`;
 }
 
 function stepHtml(){

@@ -77,6 +77,18 @@ directory is never deployed.
   name, phone and email and the retainer chosen there (a preset when it matches one),
   and the non-refundable amount only if one was typed there. It creates nothing.
 
+- **D12 — Step 7 fits an iPhone (owner, 2026-11-05).** The minimum row read
+  *4-HOUR MINIMUM PER SURVEILLANCE DAY* as its VALUE, in a `nowrap` cell that stacked only
+  under 420px — measured on master, steps 7 and 8 scrolled 138px sideways at 430. The row
+  is now *Minimum per surveillance day · 4 hours* with *Each surveillance day is billed at
+  no less than 4 hours.* on its own line under both; every cell is a `minmax(0,…)` grid
+  track that wraps, and the figure stacks under its label below 340px. The term itself,
+  the $100/hr rate and every amount are unchanged. A suite section walks all eight steps
+  at 320/375/390/430 and fails on any sideways scroll, anything drawn outside its card,
+  a label over its figure, Back/Continue under 44px or overlapping, or Continue unable to
+  sit above the screen's bottom edge with page space below it; it also passes with a
+  deliberately long unbroken value, so the layout does not depend on the wording.
+
 ## Send Payment Options (owner brief 2026-11-05)
 
 - **P1 — The accounts are the configured ones, read live.** `paymentOptionsFor` in the
