@@ -74,7 +74,12 @@ jobs:
     name: Portal suite (run)
     needs: changes
     if: ${{ needs.changes.outputs.run == 'true' }}
-    runs-on: ubuntu-latest
+    # PINNED, NOT ubuntu-latest (2026-11-05). ubuntu-latest moved to 26.04, and
+    # the Playwright pinned in .playwright-version (1.56.1) refuses it outright:
+    # "Playwright does not support chromium on ubuntu26.04-x64". The install step
+    # then failed every PR before a single suite ran. 24.04 is a supported image
+    # for that pin; moving off it means upgrading Playwright, an owner decision.
+    runs-on: ubuntu-24.04
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0

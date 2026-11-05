@@ -24911,8 +24911,13 @@ section('Client intake links: the link is unpredictable and carries nothing abou
   const u = new URL(j.link.url);
   ok('the URL is /intake/client/ with the token in the fragment only',
      u.pathname === '/intake/client/' && u.search === '' && /^#k=[0-9a-f]{64}$/.test(u.hash), j.link.url);
+  /* The TOKEN is excluded from the search: 64 random hex characters contain
+     "434" or "1600" by chance about one run in fifty, which made this check
+     flaky (CI, 2026-11-05). The token's own shape — pure hex, nothing else —
+     is what proves it carries nothing; the rest of the URL is searched. */
+  const bare = j.link.url.replace(/#k=[0-9a-f]{64}$/, '#k=');
   ok('it names no client, phone, email, case or amount',
-     !/visible|v@example|3200|3,200|1600|API-|434/i.test(j.link.url));
+     /#k=[0-9a-f]{64}$/.test(j.link.url) && !/visible|v@example|3200|3,200|1600|API-|434/i.test(bare), bare);
   ok('the text message is the owner\'s wording with the link in it',
      j.link.message.startsWith('Hello, this is Always Precise Investigations. Please complete your confidential client intake form')
      && j.link.message.includes(j.link.url) && !/3,200|Visible/.test(j.link.message));
