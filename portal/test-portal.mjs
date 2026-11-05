@@ -34017,6 +34017,87 @@ try {
 } catch (e) { ok('the section ran to its end without throwing', false, e && e.message); }
 
 
+
+section('Client intakes: the rate sheet hands its client and agreed retainer to the prepare form');
+try {
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.evaluate(() => api('/me/prefs', { method: 'POST', body: { qt_order: null, hidden: null, view: null } }));
+  await page.reload(); await page.waitForTimeout(800);
+  await goHome(page);
+  const openWiz = async () => {
+    await page.evaluate(() => { SHEET_WIZ = null; TAB = 'dashboard'; paint(); });
+    await page.waitForTimeout(300);
+    await page.locator('.qtapp[data-qt="sheets"]').first().click();
+    await page.waitForSelector('#wiz_to', { timeout: 8000 });
+  };
+  await openWiz();
+  ok('the private send wizard offers a signed client intake with this retainer',
+     await page.locator('.ci-wizdoor [data-act="ciFromWiz"]').count() === 1);
+  await page.locator('#wiz_cname').fill('Casey Carryover');
+  await page.locator('#wiz_cphone').fill('(434) 555-0177');
+  await page.locator('#wiz_to').fill('casey@example.com');
+  await page.locator('#wiz_ret').selectOption('custom');
+  await page.waitForTimeout(200);
+  await page.locator('#wiz_retc').fill('2400');
+  await page.locator('[data-act="ciFromWiz"]').click();
+  await page.waitForSelector('#ci-form', { timeout: 8000 });
+  await page.waitForFunction(() => CI.state === 'ok');
+  await page.evaluate(() => paint());
+  const f = await page.evaluate(() => ({ tab: TAB, wiz: !!SHEET_WIZ, ...CI_FORM,
+    name: document.getElementById('ci_name').value, phone: document.getElementById('ci_phone').value,
+    email: document.getElementById('ci_email').value, nrBox: document.getElementById('ci_nr').value,
+    checked: (document.querySelector('input[name="ci_choice"]:checked') || {}).value,
+    live: document.getElementById('ci_live').innerText,
+    said: /Carried over from the rate sheet/.test(document.getElementById('ci-form').innerText) }));
+  ok('it lands on the prepare form with the wizard closed', f.tab === 'cintakes' && !f.wiz, JSON.stringify(f).slice(0, 200));
+  ok('the client\'s name, phone and email came across', f.name === 'Casey Carryover'
+     && f.phone === '(434) 555-0177' && f.email === 'casey@example.com', JSON.stringify(f));
+  ok('a carried retainer that is one of the presets is shown as that preset', f.checked === '2400' && f.choice === '2400');
+  ok('and no non-refundable amount was invented — the form asks for it',
+     f.nrBox === '' && /Enter the non-refundable amount/.test(f.live) && f.said, f.live);
+
+  // a figure that is not a preset, with a non-refundable amount typed in the wizard
+  await openWiz();
+  await page.locator('#wiz_cname').fill('Dana Typed');
+  await page.locator('#wiz_ret').selectOption('custom');
+  await page.waitForTimeout(200);
+  await page.locator('#wiz_retc').fill('5150.50');
+  await page.locator('#wiz_nr').fill('900');
+  await page.locator('[data-act="ciFromWiz"]').click();
+  await page.waitForSelector('#ci-form', { timeout: 8000 });
+  await page.waitForFunction(() => CI.state === 'ok');
+  await page.evaluate(() => paint());
+  const g = await page.evaluate(() => ({ choice: CI_FORM.choice, custom: document.getElementById('ci_custom').value,
+    nr: document.getElementById('ci_nr').value, live: document.getElementById('ci_live').innerText }));
+  ok('a retainer that is not a preset arrives as Custom, cents intact', g.choice === 'custom' && g.custom === '5150.50', JSON.stringify(g));
+  ok('and a non-refundable amount TYPED in the wizard comes with it, exactly',
+     g.nr === '900' && g.live.includes('5,150.50') && g.live.includes('$900'), g.live);
+
+  // never on a law firm's send, nor a carrier's
+  const other = await page.evaluate(() => {
+    const out = {};
+    for (const [k, ctx, sheet] of [['legal', 'legal', 'private_retainer'], ['insurance', 'insurance', 'insurance_assignment']]) {
+      SHEET_WIZ = { sheet, context: ctx, legal: ctx === 'legal', attemptKey: 'x', step: 1, to: '', caseNo: '', note: '',
+        include: true, clientName: '', clientPhone: '', pay: false, payMethods: [], err: '', legalService: '',
+        lsvcTouched: false, retainer: null, retainerPick: String(RETAINER_STANDARD), retainerCustom: '', retainerTouched: false };
+      TAB = 'sheets'; paint();
+      out[k] = document.querySelectorAll('[data-act="ciFromWiz"]').length;
+    }
+    SHEET_WIZ = null; paint();
+    return out;
+  });
+  ok('a law firm\'s send and a carrier\'s send carry no such door', other.legal === 0 && other.insurance === 0, JSON.stringify(other));
+  ok('nothing was created by carrying over — only the office creates a link', await page.evaluate(() =>
+    !CI.links.some(l => l.client_name === 'Casey Carryover' || l.client_name === 'Dana Typed')));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openWiz().catch(() => {});
+  const door = await page.evaluate(() => { const b = document.querySelector('[data-act="ciFromWiz"]'); if (!b) return null;
+    const r = b.getBoundingClientRect(); return { h: Math.round(r.height), over: document.documentElement.scrollWidth - innerWidth }; });
+  ok('390: the door is at the tap floor and nothing scrolls sideways', door && door.h >= 44 && door.over <= 1, JSON.stringify(door));
+  await page.close();
+} catch (e) { ok('the section ran to its end without throwing', false, e && e.message); }
+
 await browser.close();
 server.close();
 

@@ -4126,6 +4126,8 @@
    Phone-first: every control at the 44px floor, inputs at 16px (the portal's
    rule), the retainer list one column, nothing wider than the screen. */
 .ci-form{scroll-margin-top:12px}
+.ci-wizdoor{margin:10px 0 2px}
+.ci-wizdoor .btn{min-height:44px;white-space:normal;text-align:left}
 .ci-sheetdoor{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:12px;
   padding-top:12px;border-top:1px solid var(--line)}
 .ci-sheetdoor .btn{min-height:44px}
@@ -10583,6 +10585,15 @@ function wizRetainerHtml(w){
         data-act-input="wizRetDirty" value="${esc(w.retainerCustom || "")}"></label>` : ""}
     ${wizNonRefHtml(w)}
     ${wizMinHoursHtml(w)}
+    ${/* THE SIGNED-INTAKE ALTERNATIVE (owner brief 2026-11-04 §9: "From the
+         rate sheet ... prepare a private client intake with the agreed
+         retainer"). A private client only — never a law firm's send, which
+         takes this same sheet — and it carries what this wizard already
+         holds: who, and the retainer chosen or agreed here. It sends
+         nothing; it opens the prepare form, where both amounts are
+         confirmed before any link exists. */""}${wizContext(w) === "private" && !w.legal
+      ? `<div class="ci-wizdoor"><button type="button" class="btn sm ghost" data-act="ciFromWiz"
+          >Prepare a signed client intake with this retainer instead &rarr;</button></div>` : ""}
     <p class="hint">${w.retainerUnrecorded
       /* Said plainly, because the difference is invisible otherwise: the client
          is quoted this figure and the office cannot look it up afterwards. */
@@ -31819,6 +31830,7 @@ async function loadCI(){
   try{
     const d = await api("/client-intakes");
     CI = { state: "ok", links: d.links || [], options: d.options || null, err: "" };
+    ciMatchPreset();
   }catch(e){
     CI = { ...CI, state: "failed", err: e.message };
   }
@@ -31834,6 +31846,38 @@ function ciNewForm(src){
     : { id: null, client_name: "", client_phone: "", client_email: "", choice: "",
         custom: "", nr: "", confirm: false, err: "" };
   CI_SENT = null; CI_OPEN = null; CI_PREVIEW = null; CI_MSG = ""; CI_ERR = "";
+}
+
+/* FROM THE RATE SHEET'S SEND WIZARD: the client it was being sent to, and
+   the retainer chosen or agreed there. The non-refundable amount is carried
+   only if one was TYPED there — the wizard's standard figure is a
+   placeholder, and this form never supplies one by itself (owner, final
+   revision 2026-11-04). The retainer arrives as a custom figure and becomes
+   the matching preset once the preset list has loaded. */
+function ciFromWizard(){
+  const w = SHEET_WIZ;
+  if(!w) return;
+  wizCollect();
+  const want = wizRetainerWanted(w);
+  const cents = want == null ? null : ciCents(String(want));
+  ciNewForm(null);
+  CI_FORM.client_name = w.clientName || "";
+  CI_FORM.client_phone = w.clientPhone || "";
+  CI_FORM.client_email = w.to || "";
+  if(cents != null && cents > 0){ CI_FORM.choice = "custom"; CI_FORM.custom = (cents / 100).toFixed(2); }
+  CI_FORM.nr = w.nonRef || "";
+  CI_FORM.fromSheet = true;
+  SHEET_WIZ = null;
+  TAB = "cintakes"; navClose(); paint(); loadCI();
+  const fm = $("ci-form"); if(fm) fm.scrollIntoView({ block: "start" });
+}
+/* A carried custom figure that IS one of the presets is shown as that preset,
+   so the office sees the choice it would have made by hand. */
+function ciMatchPreset(){
+  if(!CI_FORM || CI_FORM.choice !== "custom" || !CI.options) return;
+  const c = ciCents(CI_FORM.custom);
+  const p = (CI.options.presets || []).find(x => x.retainer_cents === c);
+  if(p){ CI_FORM.choice = p.value; CI_FORM.custom = ""; }
 }
 
 /* The form's inputs are collected on every keystroke and the derived figures
@@ -31871,6 +31915,8 @@ function ciFormHtml(){
     <h2 style="margin:0 0 4px">${f.id ? "Draft client intake" : "Prepare &amp; send client intake"}</h2>
     <p class="note" style="margin-top:0">The client completes and signs it on their own phone. Both amounts you
       enter here are fixed on the link &mdash; the client can read them but cannot change them.</p>
+    ${f.fromSheet ? `<p class="hint ci-fromsheet">Carried over from the rate sheet: the client's details and the
+      retainer. Check them, enter the non-refundable amount if it is blank, and confirm.</p>` : ""}
     <label class="f"><span>Client name</span><input id="ci_name" data-act-input="ciCollect" autocomplete="off" value="${esc(f.client_name)}"></label>
     <label class="f"><span>Phone number</span><input id="ci_phone" type="tel" inputmode="tel" data-act-input="ciCollect" autocomplete="off" value="${esc(f.client_phone)}"></label>
     <label class="f"><span>Email address <span class="optn">(optional)</span></span><input id="ci_email" type="email" data-act-input="ciCollect" autocomplete="off" value="${esc(f.client_email)}"></label>
@@ -34774,6 +34820,7 @@ document.addEventListener("click", ev => {
   }
   else if(act === "openCaseTab"){ openCase(el.dataset.case, el.dataset.tab); }
   /* CLIENT INTAKES (owner brief 2026-11-04). */
+  else if(act === "ciFromWiz"){ ciFromWizard(); }
   else if(act === "ciNew"){ TAB = "cintakes"; navClose(); ciNewForm(null); paint(); loadCI();
     const fm = $("ci-form"); if(fm) fm.scrollIntoView({ block: "start" }); }
   else if(act === "ciCreate"){ ciSave(false); }
