@@ -17840,8 +17840,11 @@ function clientIntakeTerms(r) {
         note: `Investigative time is deducted from the retainer at ${hr} per hour. Field `
             + 'investigation, necessary video review, case documentation and report preparation '
             + 'are handled at this rate and applied against your authorized retainer.' },
-      { label: 'Minimum per surveillance day', value: `${mh}-HOUR MINIMUM PER SURVEILLANCE DAY`,
-        term: true, note: `Each day of surveillance is billed at no less than ${mh} hours.` },
+      /* A short value and the sentence as its note (owner, 2026-11-05): the
+         capitalised sentence used to be the VALUE, and on an iPhone it ran
+         out of its box. The term is unchanged — only how it reads. */
+      { label: 'Minimum per surveillance day', value: `${mh} hours`,
+        term: true, note: `Each surveillance day is billed at no less than ${mh} hours.` },
       { label: 'If additional time is needed', value: `${hr}/hr`,
         note: 'We contact you before exceeding the authorized retainer. Additional investigative '
             + 'time is never incurred without your approval.' },

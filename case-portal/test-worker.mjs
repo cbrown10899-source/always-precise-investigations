@@ -24933,7 +24933,8 @@ section('Client intake links: the client reads the terms and cannot change them'
   ok('the client reads the link without signing in', res.status === 200 && rd.ok);
   ok('the terms state the retainer, its exact half, $100/hr and the 4-hour minimum per surveillance day',
      rd.terms.retainer === '$5,200' && rd.terms.non_refundable === '$2,600' && rd.terms.hourly === '$100/hr'
-     && rd.terms.lines.some(l => l.value === '4-HOUR MINIMUM PER SURVEILLANCE DAY'), JSON.stringify(rd.terms));
+     && rd.terms.lines.some(l => l.label === 'Minimum per surveillance day' && l.value === '4 hours'
+       && l.note === 'Each surveillance day is billed at no less than 4 hours.'), JSON.stringify(rd.terms));
   ok('the services agreement and the law govern balances and refunds, in words',
      /governed by the Always Precise Investigations services agreement and applicable law/.test(rd.terms.conditions));
   ok('the authorization says submission alone is not acceptance',

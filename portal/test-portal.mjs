@@ -33853,7 +33853,8 @@ try {
   const terms = await cp.locator('.terms').innerText();
   ok('the client sees the office\'s retainer, the non-refundable amount it typed, $100/hr and the 4-hour minimum',
      terms.includes('$5,200') && terms.includes('$2,600') && terms.includes('$100/hr')
-     && /4-HOUR MINIMUM PER SURVEILLANCE DAY/.test(terms), terms);
+     && /Minimum per surveillance day\s+4 hours/.test(terms)
+     && terms.includes('Each surveillance day is billed at no less than 4 hours.'), terms);
   ok('nothing on the terms step can edit a figure',
      await cp.locator('[data-step="terms"] input:not([type=checkbox])').count() === 0);
   await over('terms');
@@ -34284,6 +34285,120 @@ try {
   ok('and the case holds the agreed retainer with nothing received — offering payment marked nothing paid',
      r.amount === 2400 && r.received_total === 0 && r.received === false, JSON.stringify(r));
   await page.close();
+} catch (e) { ok('the section ran to its end without throwing', false, e && e.message); }
+
+
+section('Client intake on a phone: every step fits at 320, 375, 390 and 430, and Step 7 reads "Minimum per surveillance day · 4 hours"');
+try {
+  const adm = await newPage();
+  await signIn(adm, 'trever', 'AdminPassword1x');
+  /* One link per width: a submitted link cannot be walked again. */
+  const LINKS = {};
+  for (const w of [320, 375, 390, 430]) {
+    const made = await adm.evaluate(() => api('/client-intakes', { method: 'POST', body: {
+      client_name: 'Maximiliana Featherstonehaugh-Worthington', client_phone: '(434) 555-0177',
+      client_email: 'maximiliana.featherstonehaugh.worthington@longexample.com',
+      retainer_choice: 'custom', custom_retainer: '3999.99', non_refundable: '1234.56', confirm_terms: true } }));
+    LINKS[w] = made.link.url.replace(/^https?:\/\/[^/]+/, SITE);
+  }
+  await adm.close();
+  const LONG = 'Supercalifragilisticexpialidociousandthensomeunbrokenwordthatkeepsgoing';
+  for (const w of [320, 375, 390, 430]) {
+    const ctx = await browser.newContext({ viewport: { width: w, height: w === 320 ? 568 : (w === 430 ? 932 : 812) } });
+    const cp = await ctx.newPage();
+    const errs = []; cp.on('pageerror', e => errs.push(e.message));
+    await cp.goto(LINKS[w]);
+    await cp.waitForSelector('[data-step="client"]', { timeout: 8000 });
+    const probs = [];
+    const audit = async (label) => {
+      const a = await cp.evaluate(() => {
+        const card = document.querySelector('#app .card').getBoundingClientRect();
+        const out = { over: document.documentElement.scrollWidth - innerWidth, outside: [], overlap: [], small: [], clipped: [] };
+        for (const e of document.querySelectorAll('#app .card *')) {
+          const r = e.getBoundingClientRect();
+          if (!r.width || !r.height || e.closest('.sr')) continue;   // visually hidden on purpose
+          if (r.left < card.left - 0.5 || r.right > card.right + 0.5) out.outside.push(`${e.tagName}.${e.className}:${Math.round(r.left)}-${Math.round(r.right)}`);
+          const cs = getComputedStyle(e);
+          if (e.scrollWidth > e.clientWidth + 1 && cs.overflowX !== 'visible' && e.tagName !== 'TEXTAREA' && e.tagName !== 'INPUT')
+            out.clipped.push(`${e.tagName}.${e.className}`);
+        }
+        for (const row of document.querySelectorAll('.terms .row')) {
+          const l = row.querySelector('.lbl').getBoundingClientRect(), v = row.querySelector('.val').getBoundingClientRect();
+          const rr = row.getBoundingClientRect();
+          const inter = !(l.right <= v.left + 0.5 || v.right <= l.left + 0.5 || l.bottom <= v.top + 0.5 || v.bottom <= l.top + 0.5);
+          if (inter) out.overlap.push(row.innerText.slice(0, 40));
+          for (const c of row.children) { const r = c.getBoundingClientRect();
+            if (r.right > rr.right + 0.5 || r.left < rr.left - 0.5) out.outside.push('terms:' + c.className); }
+        }
+        const btns = [...document.querySelectorAll('.nav .btn')].map(b => b.getBoundingClientRect());
+        for (const b of btns) if (b.height < 44 || b.width < 44) out.small.push(Math.round(b.width) + 'x' + Math.round(b.height));
+        if (btns.length === 2 && !(btns[0].right <= btns[1].left + 0.5)) out.overlap.push('Back/Continue');
+        return out;
+      });
+      if (a.over > 0 || a.outside.length || a.overlap.length || a.small.length || a.clipped.length) probs.push(label + ' ' + JSON.stringify(a));
+      // Continue and Back can be brought fully on screen above the bottom edge, with page space below them
+      const nav = await cp.evaluate(() => {
+        const n = document.querySelector('.nav'); if (!n) return { bottom: 0, ih: 1, below: 60 };
+        n.scrollIntoView({ block: 'end', behavior: 'instant' });
+        const r = n.getBoundingClientRect();
+        const main = document.querySelector('main'); const below = main.getBoundingClientRect().bottom - r.bottom;
+        return { bottom: r.bottom, ih: innerHeight, below };
+      });
+      if (!(nav.bottom <= nav.ih + 1 && nav.below >= 60)) probs.push(label + ' nav ' + JSON.stringify(nav));
+    };
+    const next = async () => { await cp.locator('#next').click(); await cp.waitForTimeout(150); };
+    await audit('1 client');
+    await cp.locator('#f_email').fill('maximiliana.featherstonehaugh.worthington@longexample.com');
+    await next();
+    await cp.locator('input[name="r_investigation_type"][value="domestic"]').check(); await cp.waitForTimeout(100);
+    await audit('2 type'); await next();
+    await cp.locator('#f_subject_address').fill('12345 ' + LONG + ' Road, Lynchburg');
+    await audit('3 subject'); await next();
+    await audit('4 vehicle'); await next();
+    await cp.locator('#f_objective').fill(LONG + ' ' + LONG);
+    await audit('5 objective'); await next();
+    await audit('6 schedule'); await next();
+    ok(`${w}: step 7 is the retainer & payment terms`, await cp.locator('[data-step="terms"]').count() === 1);
+    const row = await cp.evaluate(() => {
+      const r = [...document.querySelectorAll('.terms .row')].find(x => x.querySelector('.lbl').innerText.trim() === 'Minimum per surveillance day');
+      if (!r) return null;
+      const l = r.querySelector('.lbl').getBoundingClientRect(), v = r.querySelector('.val').getBoundingClientRect(),
+        n = r.querySelector('.note').getBoundingClientRect();
+      return { val: r.querySelector('.val').innerText, note: r.querySelector('.note').innerText,
+        sideBySide: Math.abs(l.top - v.top) < 4 && v.left >= l.right, noteBelow: n.top >= Math.max(l.bottom, v.bottom) - 0.5,
+        all: document.querySelector('.terms').innerText };
+    });
+    ok(`${w}: the minimum reads "Minimum per surveillance day · 4 hours", then its sentence`,
+       row && row.val === '4 hours' && row.note === 'Each surveillance day is billed at no less than 4 hours.' && row.noteBelow
+       && (w <= 340 || row.sideBySide), JSON.stringify(row).slice(0, 220));
+    ok(`${w}: the old capitalised value is gone and the rate is still $100/hr`,
+       row && !/HOUR MINIMUM PER SURVEILLANCE DAY/.test(row.all) && /Investigative rate\s+\$100\/hr/.test(row.all)
+       && row.all.includes('$3,999.99') && row.all.includes('$1,234.56'), row && row.all);
+    await audit('7 terms');
+    await cp.locator('#ack').check(); await next();
+    await audit('8 sign');
+    const sig = await cp.evaluate(() => { const c = document.getElementById('sig'); const r = c.getBoundingClientRect();
+      const card = document.querySelector('#app .card').getBoundingClientRect();
+      return { w: Math.round(r.width), h: Math.round(r.height), inside: r.left >= card.left && r.right <= card.right,
+        px: c.width, dpr: devicePixelRatio, clear: (() => { const b = document.querySelector('.sigclear').getBoundingClientRect();
+          return b.right <= r.right && b.top >= r.top; })() }; });
+    ok(`${w}: the signature box fills the card width, is tall enough to sign, and its Clear sits inside it`,
+       sig.inside && sig.w >= w - 90 && sig.h >= 160 && sig.px >= sig.w && sig.clear, JSON.stringify(sig));
+    await cp.locator('#f_signed_name').fill('Maximiliana Featherstonehaugh-Worthington');
+    await cp.locator('#agree').check();
+    await cp.locator('#sig').scrollIntoViewIfNeeded();
+    const box = await cp.locator('#sig').boundingBox();
+    await cp.mouse.move(box.x + 20, box.y + 90); await cp.mouse.down();
+    for (let i = 1; i <= 10; i++) await cp.mouse.move(box.x + 20 + i * 18, box.y + 90 - (i % 3) * 20);
+    await cp.mouse.up();
+    await cp.locator('#next').click();
+    await cp.waitForSelector('.msg h1', { timeout: 8000 });
+    await audit('confirmation');
+    ok(`${w}: every step — and the confirmation — fits with nothing outside its box, nothing overlapping and Continue/Back clear of the bottom`,
+       probs.length === 0, probs.join(' | ').slice(0, 900));
+    ok(`${w}: the intake submitted, with no page errors`, /submitted/.test(await cp.locator('.msg h1').innerText()) && !errs.length, errs.join(' | '));
+    await ctx.close();
+  }
 } catch (e) { ok('the section ran to its end without throwing', false, e && e.message); }
 
 await browser.close();
