@@ -27849,7 +27849,7 @@ section('The hybrid pass: seven art cards on Home, and nothing else touched');
        && shape.art.every(c => c.w / c.h >= 1.0 && c.w / c.h <= 1.15),
      JSON.stringify(shape.art[0]));
   ok('and a plain card is SHORTER, because it has no photograph to hold',
-     shape.plain.length === 5 && shape.plain.every(c => c.h < shape.art[0].h),
+     shape.plain.length === 6 && shape.plain.every(c => c.h < shape.art[0].h),
      JSON.stringify({ art: shape.art[0], plain: shape.plain[0] }));
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.waitForTimeout(300);
