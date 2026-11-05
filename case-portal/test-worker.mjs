@@ -25189,6 +25189,189 @@ section('Client intake links: the schema is guarded, swept and classified');
   ok('the office is told the submission no longer exists', after.link.submission_exists === false && after.submission === null);
 }
 
+
+/* ============ SEND PAYMENT OPTIONS (owner brief 2026-11-05) ============ */
+
+const PAY_CA = { handle: '$TreverB', url: 'https://cash.app/$TreverB' };
+const PAY_VE = { handle: '@Trever-Brown-9', url: 'https://venmo.com/u/Trever-Brown-9' };
+async function payCounts(env) {
+  const n = async t => (await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${t}`).first()).n;
+  return { retainer_payment: await n('retainer_payment'), payment_send: await n('payment_send'),
+           invoice_payments: await n('invoice_payments') };
+}
+
+section('Payment options with an intake: the configured accounts, the agreed figures, and no payment');
+{
+  const { env, admin } = await cilSetup();
+  const before = await payCounts(env);
+  const { res, j } = await cilMake(env, admin, { retainer_choice: '2400', include_payment: true, payment_methods: 'both' });
+  ok('a link is created with payment options included', res.status === 201
+     && JSON.stringify(j.link.payment_methods) === '["cash_app","venmo"]', JSON.stringify(j.link || j));
+  const rd = await jsonOf(await call(env, `/client-intake/${cilTok(j.link)}`));
+  const p = rd.payment;
+  ok('the client is shown the agreed retainer and the non-refundable portion from the link',
+     p && p.retainer === '$2,400' && p.non_refundable === '$500', JSON.stringify(p));
+  ok('Cash App is the verified $TreverB account and link',
+     p && p.methods[0].label === 'Cash App' && p.methods[0].handle === PAY_CA.handle && p.methods[0].url === PAY_CA.url,
+     JSON.stringify(p && p.methods));
+  ok('Venmo is the verified @Trever-Brown-9 account, with no @ in the link',
+     p && p.methods[1].label === 'Venmo' && p.methods[1].handle === PAY_VE.handle && p.methods[1].url === PAY_VE.url);
+  ok('and the client is told nothing is charged automatically', p && /Nothing is charged automatically/.test(p.note));
+
+  const sub = await call(env, `/client-intake/${cilTok(j.link)}/submit`, { method: 'POST', body: cilClientBody(rd) });
+  const sj = await jsonOf(sub);
+  ok('the confirmation carries the payment options too', sub.status === 200 && sj.payment && sj.payment.methods.length === 2, JSON.stringify(sj));
+  const again = await call(env, `/client-intake/${cilTok(j.link)}`);
+  const aj = await jsonOf(again);
+  ok('a client who returns after submitting is still shown them', again.status === 409
+     && aj.code === 'already_submitted' && aj.payment && aj.payment.retainer === '$2,400', JSON.stringify(aj));
+  const after = await payCounts(env);
+  ok('NOTHING is recorded as paid, sent or invoiced by offering payment options',
+     JSON.stringify(before) === JSON.stringify(after), JSON.stringify([before, after]));
+  const cr = await env.DB.prepare('SELECT retainer_amount, received_at FROM case_retainer WHERE case_no = ?').bind(sj.case_no).first();
+  ok('the case carries the agreed retainer and no receipt', cr && Number(cr.retainer_amount) === 2400 && !cr.received_at, JSON.stringify(cr));
+  const tr = await jsonOf(await call(env, `/client-intakes/${j.link.id}`, { cookie: admin }));
+  ok("the intake's trail says payment options were included, and which",
+     tr.events.some(e => e.action === 'payment_options_included' && e.detail === 'Cash App + Venmo'));
+
+  const one = await cilMake(env, admin, { retainer_choice: '1600', include_payment: true, payment_methods: 'venmo' });
+  const rd1 = await jsonOf(await call(env, `/client-intake/${cilTok(one.j.link)}`));
+  ok('Venmo alone offers Venmo alone', rd1.payment && rd1.payment.methods.map(m => m.id).join() === 'venmo');
+  const none = await cilMake(env, admin, { retainer_choice: '1600' });
+  const rd0 = await call(env, `/client-intake/${cilTok(none.j.link)}`);
+  const rd0t = await rd0.text();
+  ok('an intake without them shows no payment options and no account at all',
+     JSON.parse(rd0t).payment === null && !rd0t.includes('TreverB') && !rd0t.includes('Trever-Brown'));
+
+  const linksBefore = (await env.DB.prepare('SELECT COUNT(*) AS n FROM client_intake_link').first()).n;
+  for (const bad of [undefined, '', 'paypal', []]) {
+    const r = await cilMake(env, admin, { retainer_choice: '1600', include_payment: true, payment_methods: bad });
+    ok(`including payment options with ${JSON.stringify(bad)} chosen is refused by name`,
+       r.res.status === 400 && r.j.code === 'payment_methods_required', JSON.stringify(r.j));
+  }
+  ok('and a refused choice leaves no link behind',
+     (await env.DB.prepare('SELECT COUNT(*) AS n FROM client_intake_link').first()).n === linksBefore);
+
+  // a draft's choice is edited with the draft, and cleared when unticked
+  const d = await cilMake(env, admin, { retainer_choice: '2000', draft: true, include_payment: true, payment_methods: 'cash_app' });
+  ok('a draft keeps its payment choice', d.res.status === 201 && d.j.link.payment_methods.join() === 'cash_app');
+  const ed = await jsonOf(await call(env, `/client-intakes/${d.j.link.id}`, { method: 'POST', cookie: admin,
+    body: { client_name: 'Jordan Client', client_phone: '434-555-0111', retainer_choice: '2000', non_refundable: '500', confirm_terms: true } }));
+  ok('creating its link with the box unticked removes them', ed.ok && ed.link.payment_methods.length === 0
+     && !(await env.DB.prepare('SELECT 1 FROM client_intake_payopt WHERE link_id = ?').bind(d.j.link.id).first()));
+  const locked = await call(env, `/client-intakes/${j.link.id}`, { method: 'POST', cookie: admin,
+    body: { client_name: 'Jordan Client', client_phone: '434-555-0111', retainer_choice: '2400', non_refundable: '500',
+            confirm_terms: true, include_payment: true, payment_methods: 'cash_app' } });
+  ok('a link already sent keeps what it was sent with', locked.status === 409
+     && (await env.DB.prepare('SELECT methods FROM client_intake_payopt WHERE link_id = ?').bind(j.link.id).first()).methods === 'cash_app,venmo');
+
+  const rv = await cilMake(env, admin, { retainer_choice: '2000', include_payment: true, payment_methods: 'both' });
+  await call(env, `/client-intakes/${rv.j.link.id}/revoke`, { method: 'POST', cookie: admin });
+  const rvr = await call(env, `/client-intake/${cilTok(rv.j.link)}`);
+  const rvt = await rvr.text();
+  ok('a revoked link shows no payment options', rvr.status === 410 && !rvt.includes('TreverB'));
+}
+
+section('Payment options with an intake: Settings decides what is offered, and a broken method is refused');
+{
+  const { env, admin } = await cilSetup();
+  const { j } = await cilMake(env, admin, { retainer_choice: '2400', include_payment: true, payment_methods: 'both' });
+  await env.DB.prepare(
+    `INSERT INTO payment_methods (method, enabled, display_name, handle, url, instructions, updated_at)
+     VALUES ('venmo', 0, 'Venmo', '@Trever-Brown-9', 'https://venmo.com/u/Trever-Brown-9', '', ?)`).bind(new Date().toISOString()).run();
+  const rd = await jsonOf(await call(env, `/client-intake/${cilTok(j.link)}`));
+  ok('Venmo switched off in Settings is no longer shown to the client',
+     rd.payment && rd.payment.methods.map(m => m.id).join() === 'cash_app', JSON.stringify(rd.payment));
+  let r = await cilMake(env, admin, { retainer_choice: '2400', include_payment: true, payment_methods: 'venmo' });
+  ok('and choosing it for a new intake is refused by name', r.res.status === 400 && r.j.code === 'payment_method_off'
+     && /Venmo/.test(r.j.error), JSON.stringify(r.j));
+  await env.DB.prepare(`UPDATE payment_methods SET enabled = 1, url = '' WHERE method = 'venmo'`).run();
+  r = await cilMake(env, admin, { retainer_choice: '2400', include_payment: true, payment_methods: 'both' });
+  ok('a method switched on with no valid link is refused, never guessed', r.res.status === 400
+     && r.j.code === 'payment_method_unusable' && /Venmo/.test(r.j.error), JSON.stringify(r.j));
+  const m = await call(env, '/payment-options/message', { method: 'POST', cookie: admin, body: { methods: 'venmo' } });
+  ok('the message refuses it the same way', m.status === 400 && (await jsonOf(m)).code === 'payment_method_unusable');
+}
+
+section('Send Payment Options: the message is composed in the owner\'s words and sends nothing');
+{
+  const { env, admin } = await cilSetup();
+  const { j } = await cilMake(env, admin, { retainer_choice: '2400' });
+  const before = await payCounts(env);
+  const evBefore = (await env.DB.prepare('SELECT COUNT(*) AS n FROM client_intake_event').first()).n;
+  const msg = async body => { const res = await call(env, '/payment-options/message', { method: 'POST', cookie: admin, body });
+    return { status: res.status, j: await jsonOf(res) }; };
+  let r = await msg({ methods: 'both', include_retainer: true, link_id: j.link.id });
+  const WANT = 'Hello, this is Always Precise Investigations.\n\nYour agreed investigation retainer is $2,400.\n\n'
+    + 'You may use either payment option:\n\nCash App: $TreverB\nhttps://cash.app/$TreverB\n\n'
+    + 'Venmo: @Trever-Brown-9\nhttps://venmo.com/u/Trever-Brown-9\n\n'
+    + 'Please contact us if you have any questions.\n\nThank you,\nAlways Precise Investigations';
+  ok("with a prepared intake, the message is the owner's wording with that intake's retainer",
+     r.status === 200 && r.j.message === WANT && r.j.retainer_source === 'intake', JSON.stringify(r.j.message));
+  ok('and it hands back the client phone the composer is addressed to', r.j.client_phone === '434-555-0111');
+  r = await msg({ methods: 'both', include_retainer: true, link_id: j.link.id, retainer: '99' });
+  ok('a typed figure cannot replace an intake\'s agreed retainer', r.j.message.includes('$2,400') && !r.j.message.includes('$99'));
+  r = await msg({ methods: 'cash_app', include_retainer: false });
+  ok('without the retainer there is no retainer line, and one method reads as one',
+     r.status === 200 && !/retainer/.test(r.j.message) && r.j.message.includes('You may use this payment option:')
+     && r.j.message.includes('Cash App: $TreverB') && !r.j.message.includes('Venmo'), r.j.message);
+  r = await msg({ methods: 'venmo', include_retainer: true, retainer: '2400.50' });
+  ok('with no intake, a typed retainer keeps its cents', r.j.message.includes('$2,400.50') && r.j.retainer_source === 'typed');
+  for (const bad of [undefined, '', '0', '-5', 'abc', '10.001']) {
+    r = await msg({ methods: 'both', include_retainer: true, retainer: bad });
+    ok(`including a retainer of ${JSON.stringify(bad)} with no intake is refused by name`,
+       r.status === 400 && r.j.code === 'retainer_required', JSON.stringify(r.j));
+  }
+  r = await msg({ methods: 'paypal' });
+  ok('no method chosen is refused by name', r.status === 400 && r.j.code === 'payment_methods_required');
+  ok('composing wrote nothing at all', JSON.stringify(before) === JSON.stringify(await payCounts(env))
+     && (await env.DB.prepare('SELECT COUNT(*) AS n FROM client_intake_event').first()).n === evBefore);
+
+  const sh = async body => jsonOf(await call(env, '/payment-options/shared', { method: 'POST', cookie: admin, body }));
+  const s1 = await sh({ via: 'text', link_id: j.link.id, methods: 'both' });
+  const tr = await jsonOf(await call(env, `/client-intakes/${j.link.id}`, { cookie: admin }));
+  ok('opening the text composer is recorded on the intake as exactly that',
+     s1.recorded === true && tr.events.some(e => e.action === 'payment_text_opened' && e.detail === 'Cash App + Venmo'));
+  ok('and it does not change the intake link\'s own status', tr.link.status === 'ready' && !tr.link.shared_via, tr.link.status);
+  const s2 = await sh({ via: 'copy', methods: 'venmo' });
+  ok('with no intake it is not recorded, and says so', s2.ok && s2.recorded === false);
+  const s3 = await call(env, '/payment-options/shared', { method: 'POST', cookie: admin, body: { via: 'carrier-pigeon' } });
+  ok('an unknown way of sharing is refused', s3.status === 400);
+  ok('and still nothing was paid or sent', JSON.stringify(before) === JSON.stringify(await payCounts(env)));
+
+  await call(env, `/client-intakes/${j.link.id}/revoke`, { method: 'POST', cookie: admin });
+  r = await msg({ methods: 'both', include_retainer: true, link_id: j.link.id });
+  ok('a revoked intake\'s retainer is not quoted', r.status === 409 && r.j.code === 'link_revoked');
+
+  const ires = await invite(env, admin, { username: 'payinv', display_name: 'Pay Inv', role: 'investigator' });
+  const itok = new URL((await jsonOf(ires)).url, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${itok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const inv = (await login(env, 'payinv', 'FieldWork2026x')).cookie;
+  for (const pth of ['/payment-options/message', '/payment-options/shared']) {
+    const res = await call(env, pth, { method: 'POST', cookie: inv, body: { methods: 'both', via: 'text' } });
+    ok(`an investigator is refused ${pth}`, res.status === 403);
+  }
+  const anon = await call(env, '/payment-options/message', { method: 'POST', body: { methods: 'both' } });
+  ok('and so is someone signed out', anon.status === 401);
+}
+
+section('Payment options with an intake: before portal-setup adds the table, nothing breaks');
+{
+  const { env, admin } = await cilSetup();
+  await env.DB.prepare('DROP TABLE client_intake_payopt').run();
+  const list = await call(env, '/client-intakes', { cookie: admin });
+  ok('the Client Intakes list still loads', list.status === 200);
+  const plain = await cilMake(env, admin, { retainer_choice: '2000' });
+  ok('an intake without payment options is still created', plain.res.status === 201);
+  const rd = await jsonOf(await call(env, `/client-intake/${cilTok(plain.j.link)}`));
+  ok('and the client still reads it', rd.ok && rd.payment === null);
+  const want = await cilMake(env, admin, { retainer_choice: '2000', include_payment: true, payment_methods: 'both' });
+  ok('asking to include payment options names the workflow instead', want.res.status === 503
+     && want.j.code === 'schema_missing', JSON.stringify(want.j));
+  const m = await call(env, '/payment-options/message', { method: 'POST', cookie: admin, body: { methods: 'both' } });
+  ok('composing the stand-alone message needs no table', m.status === 200);
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));

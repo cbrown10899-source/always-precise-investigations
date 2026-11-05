@@ -107,6 +107,19 @@
   .ok{color:var(--good);font-size:2.2rem;line-height:1;margin-bottom:10px;}
   .ref{font-family:ui-monospace,monospace;color:var(--teal);font-weight:700;}
   footer{max-width:680px;margin:0 auto;padding:0 16px 30px;font-size:.78rem;color:var(--muted);text-align:center;}
+  /* PAYMENT OPTIONS — shown only when the office included them. Each button is
+     an ordinary link to the payment app; nothing on this page charges anyone. */
+  .payopts{text-align:left;border:1px solid var(--line);border-radius:12px;padding:16px;margin:18px 0 4px;background:#fff;}
+  .payopts h2{font-size:1.05rem;margin:0 0 10px;letter-spacing:.04em;}
+  .payopts .prow{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--line);}
+  .payopts .prow b{white-space:nowrap;}
+  .payopts .pbtns{display:flex;flex-direction:column;gap:10px;margin:14px 0 10px;}
+  .payopts .pbtn{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:50px;border-radius:8px;
+    background:var(--teal);color:#fff;font-weight:700;text-decoration:none;padding:12px 16px;text-align:center;}
+  .payopts .pbtn:hover{background:var(--teal-2);}
+  .payopts .pbtn:focus-visible{outline:3px solid var(--gold);outline-offset:2px;}
+  .payopts .handle{display:block;font-weight:400;font-size:.9rem;opacity:.92;}
+  .payopts .pnote{font-size:.86rem;color:var(--muted);margin:0;}
 </style>
 </head>
 <body>
@@ -263,7 +276,9 @@ function stepHtml(){
     ${termsBlock(t)}
     <p class="cond">${esc(t.conditions)}</p>
     <label class="chk"><input type="checkbox" id="ack" data-k="terms_acknowledged" ${S.val.terms_acknowledged ? "checked" : ""}>
-      <span>${esc(t.acknowledgment)}${REQ}</span></label>`;
+      <span>${esc(t.acknowledgment)}${REQ}</span></label>
+    ${S.data.payment ? `<p class="cond" id="paylater">Once you sign and submit, your payment options will be shown on the
+      confirmation screen.</p>` : ""}`;
   // sign — the accepted terms, then the authorization, then the pen.
   return `
     <p class="lead">Please review the terms you are accepting, then sign below them.</p>
@@ -283,6 +298,19 @@ function stepHtml(){
     <p class="when">The date and time are recorded automatically when you submit.</p>`;
 }
 
+/* THE PAYMENT OPTIONS the office chose to include, exactly as the Worker
+   composed them: the agreed figures from this intake and the firm's own
+   accounts. Nothing here is a figure or an account of the page's own. */
+function payHtml(p){
+  if(!p || !p.methods || !p.methods.length) return "";
+  return `<section class="payopts" id="payopts" aria-labelledby="payh"><h2 id="payh">PAYMENT OPTIONS</h2>
+    <div class="prow"><span>Agreed retainer</span><b>${esc(p.retainer)}</b></div>
+    <div class="prow"><span>Non-refundable portion</span><b>${esc(p.non_refundable)}</b></div>
+    <div class="pbtns">${p.methods.map(m => `<a class="pbtn" href="${esc(m.url)}" target="_blank" rel="noopener noreferrer"
+      >Pay with ${esc(m.label)}<span class="handle">${esc(m.handle)}</span></a>`).join("")}</div>
+    <p class="pnote">${esc(p.note)}</p></section>`;
+}
+
 function paint(focus){
   const app = $("app");
   if(S.done){
@@ -293,6 +321,7 @@ function paint(focus){
       <p class="lead" style="margin:0">Reference <span class="ref">${esc(S.done.case_no)}</span></p>
       <p class="lead">Submitting this form does not by itself mean that services have begun. The office
         will review your intake and contact you. Questions? Call <a href="tel:+14349070975">(434) 907-0975</a>.</p>
+      ${payHtml(S.done.payment)}
     </div>`;
     const h = $("h"); if(h) h.focus();
     return;
@@ -373,18 +402,19 @@ async function submit(){
   }
   S.busy = false;
   if(res.ok && j.ok){ clearDraft(); S.done = j; paint(true); return; }
-  if(j.code === "already_submitted"){ clearDraft(); S.done = null; return showMessage("Already submitted", j.error); }
+  if(j.code === "already_submitted"){ clearDraft(); S.done = null; return showMessage("Already submitted", j.error, j.payment); }
   if(j.code === "link_expired" || j.code === "link_revoked" || j.code === "link_not_found") return showMessage("This link can't be used", j.error);
   if(j.code === "terms_changed"){ return showMessage("Please reload", j.error); }
   paint(false);
   err(j.error || "Something went wrong — please press Submit again.");
 }
 
-function showMessage(title, text){
+function showMessage(title, text, payment){
   $("progress").innerHTML = ""; $("stepno").textContent = "";
   $("app").innerHTML = `<div class="card msg" role="status"><h1 tabindex="-1" id="h">${esc(title)}</h1>
     <p class="lead">${esc(text)}</p>
-    <p class="lead">Always Precise Investigations &middot; <a href="tel:+14349070975">(434) 907-0975</a></p></div>`;
+    <p class="lead">Always Precise Investigations &middot; <a href="tel:+14349070975">(434) 907-0975</a></p>
+    ${payHtml(payment)}</div>`;
   const h = $("h"); if(h) h.focus();
 }
 
@@ -430,7 +460,8 @@ async function start(){
   }
   if(!res.ok || !j.ok){
     const title = j.code === "already_submitted" ? "Already submitted" : "This link can't be used";
-    return showMessage(title, j.error || "Please contact Always Precise Investigations at (434) 907-0975.");
+    return showMessage(title, j.error || "Please contact Always Precise Investigations at (434) 907-0975.",
+      j.code === "already_submitted" ? j.payment : null);
   }
   S.data = j;
   loadDraft();

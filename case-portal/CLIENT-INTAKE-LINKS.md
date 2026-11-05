@@ -72,9 +72,48 @@ directory is never deployed.
   cell; deep bronze ground `#6b3f1d` (white 8.92:1, closest other ground 40.5 dE). No
   photograph yet — a ground-only card, which the art system allows.
 
+- **D11 — Rate-sheet carry-over (2026-11-04).** The private send wizard offers
+  *Prepare a signed client intake with this retainer instead*: it carries the client's
+  name, phone and email and the retainer chosen there (a preset when it matches one),
+  and the non-refundable amount only if one was typed there. It creates nothing.
+
+## Send Payment Options (owner brief 2026-11-05)
+
+- **P1 — The accounts are the configured ones, read live.** `paymentOptionsFor` in the
+  private context is the one reader: `$TreverB` → `https://cash.app/$TreverB`,
+  `@Trever-Brown-9` → `https://venmo.com/u/Trever-Brown-9` (the `PAY_METHODS` defaults,
+  overridable in Settings → Private client payment methods). Nothing stores a handle or
+  a link; a method switched off is refused `payment_method_off`, one switched on with no
+  valid link `payment_method_unusable` — never guessed.
+- **P2 — Include Payment Options With Intake** is `client_intake_payopt` (link id →
+  method list), written by `cilSavePay` with the link and fixed with its terms. The
+  client is shown PAYMENT OPTIONS — agreed retainer, non-refundable portion, a Pay with
+  … button per method — on the confirmation screen and again if they reopen a submitted
+  link; the terms step says they come after signing. The buttons are ordinary links.
+- **P3 — The message has one writer**, `paymentMessageText`, the owner's wording.
+  `POST /payment-options/message` composes it and writes nothing: with a prepared intake
+  the retainer is that intake's agreed figure (a typed one is ignored), with none it is
+  typed or left out. A revoked intake's figure is not quoted.
+- **P4 — Text is the phone's composer.** `sms:` with the number and body;
+  `POST /payment-options/shared` records `payment_text_opened` / `payment_copied` on the
+  intake's trail when there is one, and nothing otherwise. It does not touch the link's
+  own shared status and is never written to `payment_send`, whose `ok=1` rows draw as
+  "Payment instructions sent" — a composer opened is not that.
+- **P5 — Nothing is paid by offering payment.** No route here reads or writes
+  `retainer_payment`, `case_retainer` or `invoice_payments` (asserted by row counts).
+  The submitted intake's record has *Record payment received*, the existing
+  `leadRecordPay` door to the case's Record Payment form.
+- **P6 — Doors:** a plain *Send Payment Options* card under Quick Tools → More (no art,
+  by data), the Client Intakes header, the link-ready panel and a prepared intake's
+  record.
+
 ## Schema
 
-`client_intake_link`, `client_intake_event` — additive, no CHECKs, guarded through
+`client_intake_link`, `client_intake_event`, `client_intake_payopt` — additive, no CHECKs, guarded through
 `missingTables()`, in `EXPECTED_TABLES`, swept by `DEMO_SWEEP`. **Adding them means a
 manual `portal-setup.yml` dispatch after merge**; until then the office route and the
 public route answer 503 naming the workflow, and nothing else changes.
+
+`client_intake_payopt` arrived after the first two (2026-11-05) and needs its own
+dispatch. Until it runs, intakes work exactly as before, the stand-alone message works,
+and only *Include Payment Options With Intake* answers 503 naming the workflow.

@@ -166,7 +166,7 @@ published. The stager **fails if a listed path is missing**, so a renamed
 directory is caught at build time instead of by someone finding a 404 later.
 
 ```bash
-node .github/test-deploy.mjs   # 194 checks (2026-10-11, redesign branch, photographs installed): what may and may not be published
+node .github/test-deploy.mjs   # 195 checks (2026-11-05): what may and may not be published
 ```
 
 It runs the real stager and asserts both halves — that the site is complete,
@@ -1965,6 +1965,27 @@ retainer is written to `case_retainer` in the same transaction. The PDF is the
 portal's one writer over `#cidoc`, signature after section 7 and restating the
 accepted figures. **Two additive tables — a manual `portal-setup.yml` dispatch
 after merge.**
+
+### Send Payment Options — the firm's accounts, the agreed figure, and no payment
+
+Owner brief 2026-11-05; P1–P6 in `case-portal/CLIENT-INTAKE-LINKS.md`. The office can
+include the firm's Cash App and Venmo with a prepared intake, and can text them on
+their own from Quick Tools → More, the Client Intakes screen, the link-ready panel and
+a prepared intake's record.
+
+**THE ACCOUNTS ARE READ, NEVER WRITTEN.** `paymentOptionsFor(…, SEND_CONTEXT.PRIVATE)`
+is the one reader — `$TreverB` and `@Trever-Brown-9` with their verified links, as
+`PAY_METHODS` and Settings say — and a method switched off or left without a link is
+refused by name. **THE MESSAGE HAS ONE WRITER**, `paymentMessageText`, the owner's
+wording, and with a prepared intake it states that intake's agreed retainer and no
+typed one. **TEXT IS THE PHONE'S COMPOSER** (`sms:`): the portal records on the
+intake's trail that the composer was opened, never that anything arrived, and never
+in `payment_send` — that table's `ok=1` rows read "Payment instructions sent".
+**OFFERING PAYMENT PAYS NOTHING**: no route here touches `retainer_payment`,
+`case_retainer` or `invoice_payments`, and the record's *Record payment received* is
+the existing door to the case's Record Payment form. The client sees PAYMENT OPTIONS
+only after signing. **`client_intake_payopt` is a third additive table — its own
+`portal-setup.yml` dispatch.**
 
 ## The exact document a client received, and what they signed
 
@@ -4053,7 +4074,7 @@ Things that are load-bearing:
 Tests:
 
 ```bash
-node case-portal/test-worker.mjs   # 4461 checks (2026-10-23): auth, invites, roles, redaction, rates, ingest
+node case-portal/test-worker.mjs   # 4646 checks (2026-11-05): auth, invites, roles, redaction, rates, ingest
 node portal/test-portal.mjs        # 5218 checks (2026-10-15): the page against the real Worker
 node case-portal/test-verify.mjs   # 43 checks (2026-10-23): verify.sh against the real Worker, and zero DB writes
 ```
