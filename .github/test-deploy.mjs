@@ -920,10 +920,11 @@ section('The manifest describes the site honestly');
      deploy.yml runs this suite before it uploads — so the rules that make a
      release finished live here, where a failing one stops the upload. */
   const rel = f => path.relative(site, f).replace(/\\/g, '/');
-  /* The two FORM pages — the formal intake and the short inquiry (2026-11-07) —
-     carry their own focused top bar and no sticky phone bar, which on a form
-     could sit over a field or the Submit button. Both are noindex. */
-  const marketing = publicPages.filter(f => !/^(intake|inquiry)[\\/]/.test(rel(f)));
+  /* The FORM pages — the formal intake, the quick inquiry and the two-option
+     chooser in front of them (2026-11-07) — carry their own focused top bar and
+     no sticky phone bar, which on a form could sit over a field or the Submit
+     button, and on the chooser would only point back at itself. All noindex. */
+  const marketing = publicPages.filter(f => !/^(intake|inquiry|get-started)[\\/]/.test(rel(f)));
   ok('the redesign covers every public marketing page (13 + privacy + 404)',
      marketing.length === 15, marketing.map(rel).join(' | '));
 
@@ -1005,11 +1006,14 @@ section('The manifest describes the site honestly');
      through the private-client intake and a carrier is never shown the consumer
      side; the bar is on every page, so it is where that rule is easiest to
      break. Every page has the bar, and every Call in it is the firm's number. */
-  const DOOR = f => /^legal-investigations/.test(rel(f)) ? 'legal' : /^insurance-investigations/.test(rel(f)) ? 'insurance' : 'private';
+  /* A private page's bar opens the TWO-OPTION CHOOSER (owner, 2026-11-07); the
+     business pages keep their own assignment doors. */
+  const DOOR = f => /^legal-investigations/.test(rel(f)) ? 'legal' : /^insurance-investigations/.test(rel(f)) ? 'insurance' : 'chooser';
   const wrongDoor = [];
   for (const f of marketing) {
     const bar = (readAll(f).match(/<div class="mobile-actions"[\s\S]*?\n<\/div>/) || [''])[0];
-    const doors = [...bar.matchAll(/href="\/intake\/\?assignment=(\w+)"/g)].map(m => m[1]);
+    const doors = [...bar.matchAll(/class="ma-intake" href="([^"]+)"/g)].map(m =>
+      m[1] === '/get-started/' ? 'chooser' : (m[1].match(/^\/intake\/\?assignment=(\w+)$/) || [])[1] || m[1]);
     if (!/href="tel:\+14349070975"/.test(bar) || doors.length !== 1 || doors[0] !== DOOR(f)) wrongDoor.push(`${rel(f)}: ${doors.join(',') || 'no bar'}`);
   }
   ok('every page has the phone bar, its Call is the firm, and its intake is that page\'s own door', wrongDoor.length === 0, wrongDoor.join(' | '));
@@ -1055,7 +1059,7 @@ section('The manifest describes the site honestly');
   const homeTxt = txt(home);
   for (const line of ['PRIVATE · PROFESSIONAL · DISCREET', 'When you need answers, start here.',
     'Get help with child custody concerns, relationship questions, and other private investigation needs.',
-    'Discreet Phone Call', 'Start Confidential Inquiry', 'Fill Out Online Intake', "Choose the option you're most comfortable with.",
+    'Discreet Phone Call', 'Fill Out Online Intake', "Choose the option you're most comfortable with.",
     'HOW CAN WE HELP?', 'Private Investigations', 'Choose your situation to begin your private online intake.',
     'FAMILY MATTERS', 'Child Custody', 'Concerns about care or well-being?', 'PERSONAL MATTERS',
     'Spouse / Relationship', 'Looking for clarity and answers?', 'Start Intake', 'Other Investigation Services',
@@ -1078,23 +1082,48 @@ section('The manifest describes the site honestly');
      other (the M12 lesson, 2026-10-10). */
   const fillHrefs = [...home.matchAll(/<a\b[^>]*href="([^"]+)"[^>]*>((?:(?!<\/a>)[\s\S])*)<\/a>/g)]
     .filter(m => m[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() === 'Fill Out Online Intake').map(m => m[1]);
-  ok('every "Fill Out Online Intake" opens the private intake with nothing preselected',
-     fillHrefs.length >= 1 && fillHrefs.every(h => h === '/intake/?assignment=private'), JSON.stringify(fillHrefs));
+  /* Since 2026-11-07 every one of them opens the two-option chooser, whose
+     Option 2 is that same private intake with nothing preselected. */
+  ok('every "Fill Out Online Intake" opens the two-option chooser',
+     fillHrefs.length === 2 && fillHrefs.every(h => h === '/get-started/'), JSON.stringify(fillHrefs));
   ok('the hero\'s Discreet Phone Call dials the firm', /<a class="btn btn-gold" href="tel:\+14349070975">(?:(?!<\/a>)[\s\S])*Discreet Phone Call<\/a>/.test(home));
   ok('the homepage still offers a Legal door', /href="\/intake\/\?assignment=legal"/.test(home));
 
-  /* THE SHORT CONFIDENTIAL INQUIRY (owner, 2026-11-07). The hero button beside
-     Discreet Phone Call opens a six-question page; the formal intake is kept and
-     is still linked from the contact section and every other door. */
-  ok('the hero\'s second button reads Start Confidential Inquiry and opens /inquiry/',
-     /<div class="hero-actions">\s*<a class="btn btn-gold" href="tel:\+14349070975">(?:(?!<\/a>)[\s\S])*Discreet Phone Call<\/a>\s*<a class="btn btn-light" href="\/inquiry\/">(?:(?!<\/a>)[\s\S])*Start Confidential Inquiry<\/a>\s*<\/div>/.test(home));
+  /* TWO WAYS IN (owner, 2026-11-07). The hero keeps Discreet Phone Call and
+     Fill Out Online Intake, word for word; the second now opens the chooser. */
+  ok('the hero keeps Discreet Phone Call, then Fill Out Online Intake opening the chooser',
+     /<div class="hero-actions">\s*<a class="btn btn-gold" href="tel:\+14349070975">(?:(?!<\/a>)[\s\S])*Discreet Phone Call<\/a>\s*<a class="btn btn-light" href="\/get-started\/">(?:(?!<\/a>)[\s\S])*Fill Out Online Intake<\/a>\s*<\/div>/.test(home));
+  const gs = readAll(path.join(site, 'get-started', 'index.html'));
+  const opts = [...gs.matchAll(/<a class="choice[^"]*" href="([^"]+)">([\s\S]*?)<\/a>/g)]
+    .map(m => [m[1], (m[2].match(/<span class="k">([^<]*)<\/span>\s*<span class="t">([^<]*)<\/span>/) || []).slice(1).join(' | ')]);
+  ok('the chooser offers exactly the two labelled options, each opening its own form',
+     JSON.stringify(opts) === JSON.stringify([['/inquiry/', 'Option 1 | Quick Confidential Inquiry'],
+       ['/intake/?assignment=private', 'Option 2 | Detailed Investigation Intake']]), JSON.stringify(opts));
+  ok('the chooser states no price and asks no agreement to a payment',
+     !/\$\s?\d|retainer|deposit/i.test(gs.replace(/<!--[\s\S]*?-->/g, '')) && /No payment and no signature/.test(gs)
+     && /No payment is taken/.test(gs));
+  ok('the chooser is noindex and not in the sitemap',
+     /<meta name="robots" content="noindex">/.test(gs) && !/\/get-started\//.test(readAll(path.join(site, 'sitemap.xml'))));
   const iq = readAll(path.join(site, 'inquiry', 'index.html'));
   const iqForm = (iq.match(/<form[\s\S]*?<\/form>/) || [''])[0];
   const iqNames = [...iqForm.matchAll(/<(?:input|select|textarea)\b[^>]*\bname="([^"]+)"/g)].map(m => m[1]);
-  ok('the inquiry is ONE form with exactly the six questions (plus a hidden honeypot)',
+  ok('the inquiry is ONE form: name, phone, the best-time section, type, area, description (plus a hidden honeypot)',
      (iq.match(/<form\b/g) || []).length === 1
-     && JSON.stringify([...new Set(iqNames)]) === JSON.stringify(['name', 'phone', 'contact', 'type', 'area', 'description', 'website']),
+     && JSON.stringify([...new Set(iqNames)]) === JSON.stringify(['name', 'phone', 'contact', 'best', 'best_custom', 'text_first', 'type', 'area', 'description', 'website']),
      JSON.stringify(iqNames));
+  /* BEST TIME TO CONTACT YOU (owner, 2026-11-07) — the owner's exact choices, on
+     BOTH forms. The detailed intake draws its section from one function, so its
+     choices are read from the source. */
+  const vals = n => [...iqForm.matchAll(new RegExp(`name="${n}" value="([^"]+)"`, 'g'))].map(m => m[1]);
+  const TIMES = ['Morning (8 AM–12 PM)', 'Afternoon (12 PM–5 PM)', 'Evening (5 PM–9 PM)', 'Anytime'];
+  ok('the inquiry offers Call / Text / Either, the four times plus Custom, and "Please text me before calling."',
+     JSON.stringify(vals('contact')) === JSON.stringify(['Call', 'Text', 'Either'])
+     && JSON.stringify(vals('best')) === JSON.stringify([...TIMES, 'custom']) && /Please text me before calling\./.test(iqForm));
+  const intakeSrc = readAll(path.join(site, 'intake', 'index.html'));
+  ok('the detailed intake carries the same section, from the same list',
+     intakeSrc.includes(`const BEST_TIMES = ${JSON.stringify(TIMES).replace(/,/g, ', ')};`)
+     && /\["Call", "Text", "Either"\]\.map\(v => r\("c_pref", v\)\)/.test(intakeSrc)
+     && /Please text me before calling\./.test(intakeSrc) && /\$\{bestTimeSection\(\)\}/.test(intakeSrc));
   ok('name, phone and investigation type are the required ones, and nothing else is',
      JSON.stringify([...iqForm.matchAll(/<(?:input|select|textarea)\b[^>]*\bid="([^"]+)"[^>]*\brequired/g)].map(m => m[1]))
        === JSON.stringify(['iq_name', 'iq_phone', 'iq_type']));
@@ -1110,8 +1139,9 @@ section('The manifest describes the site honestly');
      /<meta name="robots" content="noindex">/.test(iq)
      && /^\/inquiry\/\*\s*\n  Cache-Control: no-store\n  X-Robots-Tag: noindex, nofollow, noarchive\n  Referrer-Policy: no-referrer/m.test(readAll(path.join(site, '_headers'))));
   ok('the inquiry is not in the sitemap', !/\/inquiry\//.test(readAll(path.join(site, 'sitemap.xml'))));
-  ok('and the formal intake is still published and still linked from the homepage',
-     files.includes('intake/index.html') && /href="\/intake\/\?assignment=private"/.test(home));
+  ok('and the detailed intake is still published, and the chooser links it',
+     files.includes('intake/index.html') && files.includes('get-started/index.html')
+     && /href="\/intake\/\?assignment=private"/.test(gs));
 
   /* THE PALETTE'S PAIRS ARE MEASURED (WCAG relative luminance), from the
      tokens as published. Light gold is never text on the light ground, which

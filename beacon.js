@@ -212,6 +212,11 @@
     try { u = new URL(a.href); } catch (e) { return; }
     if (u.origin !== location.origin) return;
     if (u.hash === '#contact') { act('contact'); return; }
+    /* The two-option chooser (2026-11-07) is where "Fill Out Online Intake" and
+       the private phone bar's "Online Intake" now go, so a tap on it is still the
+       private intake button pressed — the Worker's own 'private' door, whose
+       label is that button's words. */
+    if (u.pathname === '/get-started/') { act('cta', { d: 'private' }); return; }
     if (/^\/intake(\/|$)/.test(u.pathname)) {
       var as = (u.searchParams.get('assignment') || '').toLowerCase();
       var sv = (u.searchParams.get('service') || '').toLowerCase();

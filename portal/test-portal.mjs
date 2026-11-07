@@ -24578,18 +24578,25 @@ section('The owner sees the investigation type a private client chose');
   await page.close();
 }
 
-/* THE SHORT WEBSITE INQUIRY (owner, 2026-11-07). /inquiry/ posts this exact
-   shape to the existing public ingest. The office must read every answer —
-   including the two only an inquiry carries — know it is an inquiry rather
-   than a signed intake, and reach the formal intake's sender from there. */
-section('A website inquiry reads as one, with every answer it carried');
+/* THE QUICK CONFIDENTIAL INQUIRY AND THE BEST-TIME SECTION (owner,
+   2026-11-07). /inquiry/ posts this exact shape to the existing public ingest,
+   and the detailed intake now carries the same three contact preferences. The
+   office must read every answer, know an inquiry from a signed intake, reach
+   the formal intake's sender from there, and find the preferences in the
+   record packet that the PDF is made from. */
+section('A quick inquiry and a detailed intake both show when and how to make contact');
 {
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
-  await post('/ingest', { case_no: 'API-INQ-1', source: 'website_inquiry', service: 'Child Custody',
+  await post('/ingest', { case_no: 'API-INQ-1', intake_form: 'Quick confidential inquiry', service: 'Child Custody',
     client_name: 'Ina Quarry', client_phone: '(434) 555-0161', client_email: '', preferred_contact: 'Text',
+    best_time: 'Evening (5 PM–9 PM)', text_before_call: 'Yes',
     area: 'Forest', objective: 'Concerned about weekend visits', submitted_at: '11/7/2026, 4:00:00 PM' },
     { 'X-Ingest-Key': 'e2e-ingest-key' });
+  await post('/ingest', { case_no: 'API-DET-1', service: 'Other Private Investigation', client_name: 'Dee Tailed',
+    client_phone: '4345550162', subject_name: 'A Subject', objective: 'Understand what is happening',
+    preferred_contact: 'Either', best_time: 'Saturdays before noon', text_before_call: '',
+    signed_name: 'Dee Tailed' }, { 'X-Ingest-Key': 'e2e-ingest-key' });
   await page.evaluate(() => { TAB = 'leads'; VIEW = 'list'; render(); });
   await page.waitForTimeout(900);
   const card = await page.evaluate(() => {
@@ -24598,30 +24605,40 @@ section('A website inquiry reads as one, with every answer it carried');
   });
   ok('the inquiry lands on the Intakes desk with its investigation type',
      !!card && /Investigation type: Child Custody/.test(card), String(card));
-  await page.evaluate(() => openCase('API-INQ-1', 'details'));
-  await page.waitForTimeout(900);
-  const d = await page.evaluate(() => {
-    const cell = k => { const c = [...document.querySelectorAll('.isum-c')].find(x => (x.querySelector('.isum-k') || {}).textContent === k);
-      return c ? c.textContent.replace(k, '').trim() : null; };
-    const dl = {}; document.querySelectorAll('dl.detail dt').forEach(dt => { dl[dt.textContent.trim()] = (dt.nextElementSibling || {}).textContent; });
-    return { type: cell('Intake type'), signed: cell('Signed'), dl,
-      ci: !!document.querySelector('[data-act="ciNew"]'), text: document.body.innerText };
-  });
-  ok('the summary calls it a Website inquiry, unsigned', d.type === 'Website inquiry' && d.signed === 'No', JSON.stringify([d.type, d.signed]));
-  ok('every answer is on the screen: name, phone, preferred contact, area and the description',
-     d.dl['Client'] === 'Ina Quarry' && d.dl['Phone'] === '(434) 555-0161' && d.dl['Preferred contact'] === 'Text'
-     && d.dl['City / area'] === 'Forest' && d.dl['Brief description'] === 'Concerned about weekend visits', JSON.stringify(d.dl));
+  const read = async no => {
+    await page.evaluate(n => openCase(n, 'details'), no);
+    await page.waitForTimeout(900);
+    return page.evaluate(() => {
+      const cell = k => { const c = [...document.querySelectorAll('.isum-c')].find(x => (x.querySelector('.isum-k') || {}).textContent === k);
+        return c ? c.textContent.replace(k, '').trim() : null; };
+      const dl = {}; document.querySelectorAll('dl.detail dt').forEach(dt => { dl[dt.textContent.trim()] = (dt.nextElementSibling || {}).textContent; });
+      return { type: cell('Intake type'), signed: cell('Signed'), dl,
+        ci: !!document.querySelector('[data-act="ciNew"]'), text: document.body.innerText };
+    });
+  };
+  const d = await read('API-INQ-1');
+  ok('the summary calls it a Quick confidential inquiry, unsigned',
+     d.type === 'Quick confidential inquiry' && d.signed === 'No', JSON.stringify([d.type, d.signed]));
+  ok('every answer is on the screen: name, phone, area, the three contact preferences and the description',
+     d.dl['Client'] === 'Ina Quarry' && d.dl['Phone'] === '(434) 555-0161' && d.dl['City / area'] === 'Forest'
+     && d.dl['Preferred contact'] === 'Text' && d.dl['Best time'] === 'Evening (5 PM–9 PM)' && d.dl['Text before calling'] === 'Yes'
+     && d.dl['Brief description'] === 'Concerned about weekend visits', JSON.stringify(d.dl));
   ok('and the formal intake is one tap away from it', d.ci && /send the\s+formal intake/i.test(d.text));
-  /* A signed intake from the formal door does not wear any of this. */
-  await page.evaluate(() => openCase('API-QTYPE-1', 'details'));
-  await page.waitForTimeout(900);
-  const other = await page.evaluate(() => {
-    const c = [...document.querySelectorAll('.isum-c')].find(x => (x.querySelector('.isum-k') || {}).textContent === 'Intake type');
-    return { type: c ? c.textContent.replace('Intake type', '').trim() : null,
-      pc: [...document.querySelectorAll('dl.detail dt')].some(dt => dt.textContent.trim() === 'Preferred contact') };
-  });
-  ok('an ordinary private intake still reads as a Private client, with no inquiry rows',
-     other.type === 'Private client' && !other.pc, JSON.stringify(other));
+  const det = await read('API-DET-1');
+  ok('a detailed intake shows its contact preferences too, and stays a Private client',
+     det.type === 'Private client' && det.dl['Preferred contact'] === 'Either' && det.dl['Best time'] === 'Saturdays before noon'
+     && !('Text before calling' in det.dl) && !('City / area' in det.dl) && det.dl['Objective'] === 'Understand what is happening', JSON.stringify(det));
+  /* An ordinary private intake that carried none of it shows none of it. */
+  const other = await read('API-QTYPE-1');
+  ok('an intake without preferences draws no empty rows for them, and no inquiry label',
+     other.type === 'Private client' && !('Preferred contact' in other.dl) && !('Best time' in other.dl), JSON.stringify(other.dl));
+  /* THE PDF IS MADE FROM THE RECORD PACKET, which prints every payload field
+     the intake carried. The preferences must be among them. */
+  const pkt = await page.evaluate(() => fetch('/portal-api/cases/API-INQ-1/record-packet', { credentials: 'same-origin' }).then(r => r.json()));
+  const prov = Object.fromEntries(((pkt.intake || {}).provided || []).map(f => [f.field, f.value]));
+  ok('the record packet (the intake PDF) carries the contact preferences and names the form',
+     prov.preferred_contact === 'Text' && prov.best_time === 'Evening (5 PM–9 PM)' && prov.text_before_call === 'Yes'
+     && prov.intake_form === 'Quick confidential inquiry', JSON.stringify(prov));
   await page.close();
 }
 

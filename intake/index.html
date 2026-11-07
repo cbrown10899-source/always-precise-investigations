@@ -106,6 +106,20 @@
   .agree h4{margin:10px 0 4px;font-size:.85rem;color:var(--ink);}
   .agree p{margin-bottom:8px;}
   .chk{display:flex;gap:10px;align-items:flex-start;font-size:.88rem;margin-bottom:14px;}
+  /* The best-time section (2026-11-07): large tappable choices, one per row in
+     the time list so the hours never wrap mid-label on a phone. */
+  .besttime{border:1px solid var(--line);border-radius:10px;padding:12px 14px 2px;margin:0 0 14px;min-width:0;}
+  .besttime legend{font-size:.85rem;font-weight:600;padding:0 4px;}
+  .bt-q{font-size:.82rem;font-weight:600;margin:6px 0 6px;}
+  .pickrow{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;}
+  .pickcol{display:flex;flex-direction:column;gap:8px;margin-bottom:10px;}
+  .pickr{display:flex;align-items:center;gap:9px;min-height:44px;padding:8px 14px;border:1.5px solid var(--line);
+    border-radius:9px;cursor:pointer;font-size:.92rem;flex:1 1 90px;}
+  .pickr input{width:20px;height:20px;margin:0;flex:none;}
+  .pickr:has(input:checked){border-color:var(--teal-2);background:#f0f8fa;}
+  #bt_custom[hidden]{display:none;}
+  .besttime .chk{min-height:44px;align-items:center;margin-bottom:10px;cursor:pointer;}
+  .besttime .chk input{margin-top:0;width:20px;height:20px;}
   /* INTAKE-NA: the small "don't have this yet" control under a field. */
   .na{display:flex;gap:7px;align-items:center;font-size:.8rem;color:var(--muted);margin:-8px 0 14px;cursor:pointer;}
   .na input{width:auto;margin:0;}
@@ -501,7 +515,12 @@ const $ = id => document.getElementById(id);
 
 /* keep field values across step re-renders */
 const val = {};
-function capture(scope){ (scope||document).querySelectorAll("[data-k]").forEach(el=>{ val[el.dataset.k] = el.type==="checkbox" ? el.checked : el.value; }); }
+/* A RADIO GROUP shares one data-k, so only the CHECKED one may write it — reading
+   every radio's value would store whichever came last (2026-11-07, the
+   best-time section is the first radio group keyed this way). */
+function capture(scope){ (scope||document).querySelectorAll("[data-k]").forEach(el=>{
+  if(el.type==="radio"){ if(el.checked) val[el.dataset.k] = el.value; else if(!(el.dataset.k in val)) val[el.dataset.k] = ""; return; }
+  val[el.dataset.k] = el.type==="checkbox" ? el.checked : el.value; }); }
 
 /* INTAKE-NA: value and availability are separate things. The control disables
    the input and records the state; toggling back restores the input with
@@ -575,7 +594,33 @@ function render(){
   if(step==="agreement") initSig();
   window.scrollTo(0,0);
 }
-function restore(){ document.querySelectorAll("[data-k]").forEach(el=>{ if(val[el.dataset.k]!==undefined){ if(el.type==="checkbox") el.checked=val[el.dataset.k]; else el.value=val[el.dataset.k]; } }); applyNaStates(); }
+function restore(){ document.querySelectorAll("[data-k]").forEach(el=>{ if(val[el.dataset.k]!==undefined){ if(el.type==="checkbox") el.checked=val[el.dataset.k]; else if(el.type==="radio") el.checked = val[el.dataset.k]===el.value; else el.value=val[el.dataset.k]; } }); applyNaStates(); bestFlip(); }
+
+/* BEST TIME TO CONTACT YOU (owner, 2026-11-07) — the same three optional
+   answers the quick inquiry asks, replacing the free-text "Best time to reach
+   you" field. A custom time is what they type into c_best, the key that field
+   always used; "Custom time" with nothing typed is no answer at all. */
+const BEST_TIMES = ["Morning (8 AM–12 PM)", "Afternoon (12 PM–5 PM)", "Evening (5 PM–9 PM)", "Anytime"];
+function bestTimeSection(){
+  const r = (k, v, t) => `<label class="pickr"><input type="radio" name="${k}" data-k="${k}" value="${v}" onchange="bestFlip()"><span>${t || v}</span></label>`;
+  return `<fieldset class="besttime">
+      <legend>Best time to contact you${OPT}</legend>
+      <div class="bt-q" id="bt_pref_l">Preferred contact method</div>
+      <div class="pickrow" role="radiogroup" aria-labelledby="bt_pref_l">${["Call", "Text", "Either"].map(v => r("c_pref", v)).join("")}</div>
+      <div class="bt-q" id="bt_time_l">Best time to contact</div>
+      <div class="pickcol" role="radiogroup" aria-labelledby="bt_time_l">${BEST_TIMES.map(v => r("c_besttime", v)).join("")}${r("c_besttime", "custom", "Custom time")}</div>
+      <label class="f" id="bt_custom" hidden><span>Custom time${OPT}</span><input type="text" data-k="c_best" maxlength="80" placeholder="e.g. weekdays after 6 PM"></label>
+      <label class="chk"><input type="checkbox" data-k="c_textfirst"><span>Please text me before calling.</span></label>
+    </fieldset>`;
+}
+function bestFlip(){
+  const w = $("bt_custom"); if(!w) return;
+  const on = !!document.querySelector('[data-k="c_besttime"][value="custom"]:checked');
+  w.hidden = !on;
+}
+function bestTimeValue(){
+  return val.c_besttime === "custom" ? (val.c_best || "").trim() : (val.c_besttime || "");
+}
 
 function navButtons(nextLabel){
   return `<div class="nav">
@@ -639,7 +684,7 @@ function view(step){
     </div>
     <p class="hint" style="margin-top:-6px;margin-bottom:12px;">Give us at least one — phone or email.</p>
     <label class="f"><span>Mailing address${OPT}</span><input type="text" data-k="c_addr" autocomplete="street-address" placeholder="Street, City, VA, ZIP"></label>
-    <label class="f"><span>Best time to reach you${OPT}</span><input type="text" data-k="c_best" placeholder="e.g. weekday evenings"></label>
+    ${bestTimeSection()}
     ${navButtons()}
   </div>`;
 
@@ -1239,7 +1284,8 @@ function buildPayload(){
     service:f?f.label:"",
     fee_due:0,          // nothing is quoted or charged at intake any more
     client_name:val.c_name||"", client_phone:val.c_phone||"", client_email:val.c_email||"",
-    client_address:val.c_addr||"", best_time:val.c_best||"",
+    client_address:val.c_addr||"", best_time:bestTimeValue(),
+    preferred_contact:val.c_pref||"", text_before_call:val.c_textfirst ? "Yes" : "",
     subject_name:val.s_name||"", subject_address:val.s_addr||"", subject_description:val.s_desc||"", subject_relationship:val.s_rel||"",
     objective:val.o_goal||"", timeline:val.o_time||"", notes:val.o_notes||"",
     signed_name:val.a_typed||"", signature:S.sig||"",
@@ -1479,7 +1525,7 @@ function renderRecord(p, sent, threw, stored){
     <dl>
       ${claims?`${row("Company",p.carrier)}${row("Service requested",p.service_requested)}${rowS("Claim / reference number",p.claim_number,p.claim_number_status)}${row("Policy number",p.policy_number)}${row("Insured",p.insured_name)}${row("Type of claim",p.claim_type)}${rowS("Date of loss",p.date_of_loss,p.date_of_loss_status)}${row("Handling adjuster",p.adjuster)}${row("Adjuster email",p.adjuster_email)}${row("Adjuster phone",p.adjuster_phone)}${row("Defense counsel",p.defense_counsel)}${row("Prior surveillance",p.prior_surveillance)}`:""}
       ${row(claims?"Referring contact":"Name",p.client_name)}${claims?row("Department / team",p.department):""}${row("Phone",p.client_phone)}${row("Email",p.client_email)}
-      ${claims?"":`${row("Address",p.client_address)}${row("Best time",p.best_time)}`}
+      ${claims?"":`${row("Address",p.client_address)}${row("Preferred contact",p.preferred_contact)}${row("Best time",p.best_time)}${row("Text before calling",p.text_before_call)}`}
       ${row(claims?"Claimant":"Subject",p.subject_name)}${rowS(claims?"Claimant address":"Subject address",p.subject_address,p.subject_address_status)}${rowS("Description",p.subject_description,p.subject_description_status)}${row(claims?"Injury & restrictions":"Relationship",p.subject_relationship)}
       ${row(claims?"Assignment objective":"Objective",p.objective)}${claims?`${rowS("Known schedule / activity",p.known_schedule,p.known_schedule_status)}${rowS("Authorized hours",p.authorized_hours,p.authorized_hours_status)}${row("Not to exceed",p.not_to_exceed)}${rowS("Requested start",p.start_date,p.start_date_status)}${row("Urgency",p.priority)}${row("Permitted days",p.permitted_days)}${row("Permitted times",p.permitted_times)}${row("Weekend",p.weekend_authorized)}${row("Geographic limits",p.geographic_limits)}`:""}${row(claims?"Deadline or key dates":"Timeline",p.timeline)}${row(claims?"Special instructions / restrictions":"Notes",p.notes)}${row("Attachments",p.attachments)}
       ${row("Service",p.service)}

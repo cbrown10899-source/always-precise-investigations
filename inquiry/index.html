@@ -4,18 +4,21 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Confidential Inquiry — Always Precise Investigations</title>
-<!-- THE SHORT FIRST STEP (owner, 2026-11-07). The homepage hero's "Start
-     Confidential Inquiry" opens this page: six questions, one Submit, nothing
-     about the subject, no retainer, no payment and no signature. The formal
-     intake at /intake/ is unchanged and is what the office sends a client after
-     the first conversation.
+<!-- OPTION 1 OF THE TWO-OPTION CHOOSER (owner, 2026-11-07). /get-started/ —
+     where "Fill Out Online Intake" and the private phone bar's "Online Intake"
+     go — offers this short inquiry beside the detailed intake. One page, one
+     Submit: name, phone, investigation type, city or area, a description, and
+     when and how to make contact. Nothing about the subject, no retainer, no
+     payment and no signature. The detailed intake at /intake/ is unchanged, and
+     after a conversation the office can still send the client-specific intake
+     from the portal.
 
      WHERE IT GOES. The inquiry is recorded through the portal's existing public
      ingest — the same route the formal intake uses — so it appears on the
      office's Intakes desk with no new Worker route and no new table. The firm is
      also emailed a NOTICE through Web3Forms, a third party, so it carries only
      the request number, the type of investigation, the name, the phone number
-     and how they would like to be contacted. The city or area and the
+     and when and how they would like to be contacted. The city or area and the
      description go to the portal and nowhere else.
 
      NOTHING TYPED REACHES A URL, ANALYTICS OR A LOG. The form posts by fetch
@@ -57,6 +60,14 @@
     border-radius:9px;cursor:pointer;font-weight:600;flex:1 1 120px}
   .pick input{width:20px;height:20px;accent-color:var(--navy);flex:none}
   .pick label:has(input:checked){border-color:var(--navy);background:#eef2f7}
+  .besttime{border:1px solid var(--line);border-radius:12px;padding:16px 16px 4px;margin:0 0 18px;background:var(--cream)}
+  .bt-h{font-family:var(--sans);font-size:1.02rem;font-weight:800;margin:0 0 12px}
+  .pick-col{flex-direction:column}
+  .pick-col label{flex:none}
+  .bt-custom{margin:10px 0 0}
+  .bt-custom[hidden]{display:none}
+  .tick{display:flex;align-items:center;gap:10px;min-height:48px;font-weight:600;margin:0 0 12px;cursor:pointer}
+  .tick input{width:22px;height:22px;accent-color:var(--navy);flex:none}
   .hp{position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden}
   .iq .send{width:100%;min-height:54px;font-size:1.05rem}
   .iq .note{font-size:.9rem;color:var(--muted);margin-top:14px}
@@ -94,13 +105,30 @@
       <label class="fld"><span>Phone number</span>
         <input type="tel" id="iq_phone" name="phone" autocomplete="tel" inputmode="tel" maxlength="30" required aria-describedby="e_phone">
         <span class="ferr" id="e_phone"></span></label>
-      <fieldset class="fld">
-        <legend>Preferred contact method <span class="optn">(optional)</span></legend>
-        <div class="pick">
-          <label><input type="radio" name="contact" value="Call"> Call</label>
-          <label><input type="radio" name="contact" value="Text"> Text</label>
-        </div>
-      </fieldset>
+      <div class="besttime" role="group" aria-labelledby="bt_h">
+        <h2 class="bt-h" id="bt_h">Best time to contact you <span class="optn">(optional)</span></h2>
+        <fieldset class="fld">
+          <legend>Preferred contact method</legend>
+          <div class="pick">
+            <label><input type="radio" name="contact" value="Call"> Call</label>
+            <label><input type="radio" name="contact" value="Text"> Text</label>
+            <label><input type="radio" name="contact" value="Either"> Either</label>
+          </div>
+        </fieldset>
+        <fieldset class="fld">
+          <legend>Best time to contact</legend>
+          <div class="pick pick-col">
+            <label><input type="radio" name="best" value="Morning (8 AM–12 PM)"> Morning (8 AM–12 PM)</label>
+            <label><input type="radio" name="best" value="Afternoon (12 PM–5 PM)"> Afternoon (12 PM–5 PM)</label>
+            <label><input type="radio" name="best" value="Evening (5 PM–9 PM)"> Evening (5 PM–9 PM)</label>
+            <label><input type="radio" name="best" value="Anytime"> Anytime</label>
+            <label><input type="radio" name="best" value="custom"> Custom time</label>
+          </div>
+          <label class="fld bt-custom" id="bt_custom_wrap" hidden><span>Custom time</span>
+            <input type="text" id="iq_best_custom" name="best_custom" maxlength="80" placeholder="e.g. weekdays after 6 PM"></label>
+        </fieldset>
+        <label class="tick"><input type="checkbox" id="iq_textfirst" name="text_first"> Please text me before calling.</label>
+      </div>
       <label class="fld"><span>Investigation type</span>
         <select id="iq_type" name="type" required aria-describedby="e_type">
           <option value="">Choose one…</option>
@@ -183,6 +211,12 @@ async function notifyFirm(n){
    approved sentence when that is the answer chosen (the 2026-09-13 rule). */
 $("iq_type").addEventListener("change", () => { $("h_type").hidden = $("iq_type").value !== "Process Serving"; });
 
+document.querySelectorAll('input[name="best"]').forEach(r => r.addEventListener("change", () => {
+  const custom = (document.querySelector('input[name="best"]:checked') || {}).value === "custom";
+  $("bt_custom_wrap").hidden = !custom;
+  if(custom) $("iq_best_custom").focus();
+}));
+
 let BUSY = false;
 $("iqForm").addEventListener("submit", async ev => {
   ev.preventDefault();
@@ -190,14 +224,19 @@ $("iqForm").addEventListener("submit", async ev => {
   $("gerr").textContent = "";
   if(!validate()) return;
   const contact = (document.querySelector('input[name="contact"]:checked') || {}).value || "";
+  const bestPick = (document.querySelector('input[name="best"]:checked') || {}).value || "";
+  /* A custom time is what they typed; "custom" with nothing typed is no answer. */
+  const best = bestPick === "custom" ? $("iq_best_custom").value.trim() : bestPick;
   const p = {
     case_no: CASE_NO,
-    source: "website_inquiry",
+    intake_form: "Quick confidential inquiry",
     service: $("iq_type").value,
     client_name: $("iq_name").value.trim(),
     client_phone: $("iq_phone").value.trim(),
     client_email: "",
     preferred_contact: contact,
+    best_time: best,
+    text_before_call: $("iq_textfirst").checked ? "Yes" : "",
     area: $("iq_area").value.trim(),
     objective: $("iq_desc").value.trim(),
     submitted_at: new Date().toLocaleString()
@@ -212,6 +251,8 @@ $("iqForm").addEventListener("submit", async ev => {
     case_no: p.case_no, type: "Website inquiry", service: p.service,
     contact_name: p.client_name, contact_phone: p.client_phone,
     preferred_contact: p.preferred_contact || "Not stated",
+    best_time: p.best_time || "Not stated",
+    text_before_call: p.text_before_call || "No",
     recorded_in_portal: stored ? "yes" : "NO — not recorded, see below",
     where_to_read_it: stored
       ? "Open the case portal at /portal/ and search this request number. The details are deliberately not in this email."
@@ -223,12 +264,14 @@ $("iqForm").addEventListener("submit", async ev => {
 
 function showDone(p, delivered){
   const how = p.preferred_contact === "Text" ? "text" : p.preferred_contact === "Call" ? "call" : "call or text";
+  const first = p.text_before_call && how !== "text" ? " We will text you before calling." : "";
   const box = $("doneBox");
   box.innerHTML = delivered
     ? `<div class="done">
         <h2 tabindex="-1" id="doneH">Thank you — your inquiry was received</h2>
-        <p>A licensed investigator will ${how} you at <b>${esc(p.client_phone)}</b>. Everything you sent is kept confidential.</p>
-        <dl><dt>Request number</dt><dd>${esc(p.case_no)}</dd><dt>Investigation type</dt><dd>${esc(p.service)}</dd></dl>
+        <p>A licensed investigator will ${how} you at <b>${esc(p.client_phone)}</b>.${first} Everything you sent is kept confidential.</p>
+        <dl><dt>Request number</dt><dd>${esc(p.case_no)}</dd><dt>Investigation type</dt><dd>${esc(p.service)}</dd>
+          ${p.best_time ? `<dt>Best time</dt><dd>${esc(p.best_time)}</dd>` : ""}</dl>
         <p>If it is urgent, call us now at <a href="tel:+14349070975"><b>${PHONE}</b></a>.</p>
         <p style="margin-top:16px"><a class="btn btn-navy" href="/">Back to the homepage</a></p>
       </div>`

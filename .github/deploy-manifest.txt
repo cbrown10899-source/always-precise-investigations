@@ -95,9 +95,11 @@ intake/index.html
 # of its own — the retainer is read from the portal for that one link.
 intake/client/index.html
 
-# --- the short confidential inquiry (owner, 2026-11-07) ----------------------
-# Six questions, one Submit; the homepage hero's "Start Confidential Inquiry".
-# It records through the portal's existing public ingest, like the intake.
+# --- two ways in (owner, 2026-11-07) -----------------------------------------
+# "Fill Out Online Intake" and the private phone bar open the chooser; Option 1
+# is the quick confidential inquiry, Option 2 the detailed intake above. The
+# inquiry records through the portal's existing public ingest, like the intake.
+get-started/index.html
 inquiry/index.html
 
 # --- the staff case portal: a PAGE, never the Worker (noindex) ---------------

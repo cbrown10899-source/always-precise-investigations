@@ -278,7 +278,9 @@ def site_header(current=""):
 # private-client intake and a carrier is never shown the consumer side (both
 # standing rules), so Legal passes "legal", Insurance and its Vendor page pass
 # "insurance", and only the consumer pages get the private door.
-DOORS = {"private": ("/intake/?assignment=private", "Online Intake"),
+# THE PRIVATE BAR'S "Online Intake" OPENS THE TWO-OPTION CHOOSER (owner,
+# 2026-11-07): a quick confidential inquiry, or the detailed intake as before.
+DOORS = {"private": ("/get-started/", "Online Intake"),
          "legal": ("/intake/?assignment=legal", "Submit Assignment"),
          "insurance": ("/intake/?assignment=insurance", "Submit Assignment")}
 
