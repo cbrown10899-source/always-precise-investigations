@@ -32594,8 +32594,9 @@ function detailList(s, mode){
     ${/* BEST TIME TO CONTACT (owner, 2026-11-07): both the quick inquiry and the
           detailed intake ask how and when to reach the person, and whether to
           text before calling. The quick inquiry also carries a city or general
-          area, and calls its free text a description. Office-only: none of
-          these keys is in FIELD_KEEP, so an investigator is never sent them. */""}
+          area, and calls its free text a description. Office-only: the
+          Worker's redaction allow-list does not name these keys, so an
+          investigator is never sent them. */""}
     ${claim ? "" : `${row("Address", p.client_address)}${row("City / area", p.area)}
       ${row("Preferred contact", p.preferred_contact)}${row("Best time", p.best_time)}${row("Text before calling", p.text_before_call)}`}
     ${row(claim ? "Claimant" : "Subject", p.subject_name)}
