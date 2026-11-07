@@ -1140,18 +1140,22 @@ section('The homepage leads with the private paths and keeps every door');
   const legDoors = all('Submit a Legal Assignment');
   ok('Submit a Legal Assignment goes through the LEGAL door',
      legDoors.length >= 1 && legDoors.every(a => a.href === '/intake/?assignment=legal'), JSON.stringify(legDoors.map(a => a.href)));
+  /* TWO WAYS IN (owner, 2026-11-07): every Fill Out Online Intake opens the
+     two-option chooser, whose Option 2 is the private door, nothing preselected. */
   const fill = all('Fill Out Online Intake');
-  ok('every Fill Out Online Intake opens the private door with nothing preselected',
-     fill.length >= 1 && fill.every(a => a.href === '/intake/?assignment=private'), JSON.stringify(fill.map(a => a.href)));
+  ok('every Fill Out Online Intake opens the two-option chooser',
+     fill.length === 2 && fill.every(a => a.href === '/get-started/'), JSON.stringify(fill.map(a => a.href)));
   const starts = all('Start Intake').map(a => a.href);
   ok('the two photo cards open the SAME private intake, each on its own answer',
      JSON.stringify(starts) === JSON.stringify(['/intake/?assignment=private&service=custody', '/intake/?assignment=private&service=relationship']),
      JSON.stringify(starts));
-  ok('Online Intake on the phone bar opens the private door',
-     all('Online Intake').filter(a => a.text === 'Online Intake').every(a => a.href === '/intake/?assignment=private'));
+  ok('Online Intake on the phone bar opens the same chooser',
+     all('Online Intake').filter(a => a.text === 'Online Intake').length === 1
+     && all('Online Intake').filter(a => a.text === 'Online Intake').every(a => a.href === '/get-started/'));
   ok('and no homepage label reaches a door meant for another audience',
      [...insDoors, ...legDoors].every(a => !a.href.includes('assignment=private'))
-     && [...fill, ...all('Start Intake')].every(a => a.href.startsWith('/intake/?assignment=private')));
+     && all('Start Intake').every(a => a.href.startsWith('/intake/?assignment=private'))
+     && fill.every(a => a.href === '/get-started/'));
   ok('no bare /intake/ link on the homepage either', (src.match(/href="\/intake\/"/g) || []).length === 0);
   ok('the Discreet Phone Call and the phone bar both dial the firm',
      all('Discreet Phone Call').every(a => a.href === 'tel:+14349070975') && all('Call Privately').every(a => a.href === 'tel:+14349070975')
@@ -2077,8 +2081,22 @@ section('Redesign — each action opens the door it names');
        q.head.trim() === 'What type of private investigation do you need?' && q.ticked, JSON.stringify(q));
     await ctx.close();
   }
+  /* "Fill Out Online Intake" opens the chooser; its Option 2 is this door. */
+  {
+    const { ctx, page } = await homePage(1280);
+    await page.getByRole('link', { name: 'Fill Out Online Intake', exact: true }).first().click();
+    await page.waitForLoadState('load');
+    const at = await page.evaluate(() => ({ url: location.pathname + location.search, h1: document.querySelector('h1').textContent.trim() }));
+    ok('"Fill Out Online Intake" lands on the two-option chooser', at.url === '/get-started/' && at.h1 === 'How would you like to start?', JSON.stringify(at));
+    await page.locator('a.choice[href="/intake/?assignment=private"]').click();
+    await page.waitForLoadState('networkidle');
+    const landed = await page.evaluate(() => ({ url: location.pathname + location.search, svc: S.svc,
+      h1: ((document.querySelector('h1') || {}).textContent || '').trim() }));
+    ok('  and its Option 2 is the detailed private intake, unchanged, nothing preselected',
+       landed.url === '/intake/?assignment=private' && landed.h1 === 'Client Intake' && (landed.svc === null || landed.svc === undefined), JSON.stringify(landed));
+    await ctx.close();
+  }
   for (const [label, url, heading] of [
-        ['Fill Out Online Intake', '/intake/?assignment=private', 'Client Intake'],
         ['Submit an Insurance Assignment', '/intake/?assignment=insurance', 'Secure Assignment Intake'],
         ['Submit a Legal Assignment', '/intake/?assignment=legal', 'Legal Investigation Assignment']]) {
     const { ctx, page } = await homePage(1280);
@@ -2089,8 +2107,6 @@ section('Redesign — each action opens the door it names');
       dollars: (document.body.innerText.match(/\$\s?\d[\d,]*/g) || []).slice(0, 3) }));
     ok(`"${label}" lands on ${url}, which names itself "${heading}"`,
        landed.url === url && landed.h1 === heading && landed.title.startsWith(heading), JSON.stringify(landed));
-    if (label === 'Fill Out Online Intake')
-      ok('  with no answer preselected', landed.svc === null || landed.svc === undefined, String(landed.svc));
     ok('  with no price anywhere on it', landed.dollars.length === 0, JSON.stringify(landed.dollars));
     await ctx.close();
   }
@@ -2899,6 +2915,342 @@ section('The Child Custody door at 1200, 390 and 320');
        && await page.evaluate(() => typeof S !== 'undefined' && S.svc === 'custody'));
     await page.close(); await ctx.close();
   }
+}
+
+/* ============ TWO WAYS IN (owner, 2026-11-07) ============
+   "Fill Out Online Intake" and the private phone bar's "Online Intake" open a
+   two-option chooser: a QUICK CONFIDENTIAL INQUIRY (/inquiry/) or the DETAILED
+   INVESTIGATION INTAKE (/intake/?assignment=private), which is unchanged. Both
+   forms ask the owner's "Best time to contact you" section, all optional. The
+   inquiry reaches the PORTAL whole; the third-party email notice carries only
+   the request number, the type, the name, the phone and the contact
+   preferences; nothing typed reaches a URL or the visitor beacon. Every request
+   the page makes is recorded, so "nowhere else" is measured, not assumed. */
+const INQ = HOME + 'inquiry/';
+const GS = HOME + 'get-started/';
+const TIMES = ['Morning (8 AM–12 PM)', 'Afternoon (12 PM–5 PM)', 'Evening (5 PM–9 PM)', 'Anytime'];
+/* A step that fails by name instead of hanging the run: a click or wait that
+   cannot happen is recorded and the flow stops there (the phPress lesson). */
+async function tryStep(name, fn) {
+  try { await fn(); return true; } catch (e) { ok(`${name} (${String(e.message || e).split('\n')[0]})`, false); return false; }
+}
+async function inquiryPage(width, { ingest = 200, notify = true } = {}) {
+  const ctx = await browser.newContext({ viewport: { width, height: 900 } });
+  /* beacon.js stands down for an automated browser (navigator.webdriver), which
+     would leave the "nothing typed reaches the beacon" check with nothing to
+     read. Present as an ordinary browser so the real beacon runs here. */
+  await ctx.addInitScript(() => Object.defineProperty(Navigator.prototype, 'webdriver', { get: () => false }));
+  const page = await ctx.newPage();
+  page.setDefaultTimeout(5000);
+  const seen = { ingest: [], notice: [], requests: [] };
+  page.on('pageerror', e => ok(`no inquiry page errors at ${width}px (${e.message})`, false));
+  page.on('request', r => seen.requests.push({ url: r.url(), body: r.postData() || '' }));
+  await page.route('**api.web3forms.com/**', route => {
+    seen.notice.push(JSON.parse(route.request().postData() || '{}'));
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: notify }) });
+  });
+  await page.route('**/portal-api/ingest', route => {
+    seen.ingest.push(JSON.parse(route.request().postData() || '{}'));
+    route.fulfill({ status: ingest, contentType: 'application/json', body: ingest === 200 ? '{"ok":true}' : '{"error":"down"}' });
+  });
+  await page.route('**api-visitor-alerts**', route => route.fulfill({ status: 204, body: '' }));
+  await page.goto(INQ);
+  await page.waitForTimeout(150);
+  return { ctx, page, seen };
+}
+async function fillInquiry(page, v) {
+  await page.fill('#iq_name', v.name); await page.fill('#iq_phone', v.phone);
+  if (v.contact) await page.check(`input[name="contact"][value="${v.contact}"]`);
+  if (v.best) await page.check(`input[name="best"][value="${v.best}"]`);
+  if (v.custom) await page.fill('#iq_best_custom', v.custom);
+  if (v.textFirst) await page.check('#iq_textfirst');
+  await page.selectOption('#iq_type', v.type);
+  if (v.area) await page.fill('#iq_area', v.area);
+  if (v.desc) await page.fill('#iq_desc', v.desc);
+}
+/* Controls a person taps: a radio or a checkbox is tapped by its label. */
+const tapTargets = sel => [...document.querySelectorAll(sel)]
+  .filter(e => e.offsetParent !== null)
+  .map(e => (e.type === 'radio' || e.type === 'checkbox') ? e.closest('label') : e)
+  .map(e => ({ id: e.id || e.textContent.trim().slice(0, 30), h: e.getBoundingClientRect().height, r: e.getBoundingClientRect().right }));
+
+section('Two ways in — the homepage button and the chooser');
+for (const w of [1280, 390]) {
+  const { ctx, page } = await homePage(w);
+  const b = await page.evaluate(() => [...document.querySelectorAll('.hero-actions a')].map(a => ({
+    t: a.innerText.trim().replace(/\s+/g, ' '), h: a.getAttribute('href'), hh: a.getBoundingClientRect().height })));
+  ok(`${w}px: the hero keeps Discreet Phone Call and Fill Out Online Intake, the second opening the chooser`,
+     JSON.stringify(b.map(x => [x.t, x.h])) === JSON.stringify([['Discreet Phone Call', 'tel:+14349070975'], ['Fill Out Online Intake', '/get-started/']]), JSON.stringify(b));
+  if (await tryStep(`${w}px: Fill Out Online Intake opens the chooser`, async () => {
+    await page.getByRole('link', { name: 'Fill Out Online Intake', exact: true }).first().click();
+    await page.waitForURL(/\/get-started\/$/);
+  })) {
+    const opts = await page.evaluate(() => [...document.querySelectorAll('a.choice')].map(a => ({
+      href: a.getAttribute('href'), name: a.querySelector('.t').textContent, k: a.querySelector('.k').textContent })));
+    ok(`${w}px: the chooser shows Option 1 Quick Confidential Inquiry and Option 2 Detailed Investigation Intake`,
+       JSON.stringify(opts) === JSON.stringify([{ href: '/inquiry/', name: 'Quick Confidential Inquiry', k: 'Option 1' },
+         { href: '/intake/?assignment=private', name: 'Detailed Investigation Intake', k: 'Option 2' }]), JSON.stringify(opts));
+    if (await tryStep(`${w}px: Option 1 opens the quick inquiry`, async () => {
+      await page.locator('a.choice[href="/inquiry/"]').click(); await page.waitForURL(/\/inquiry\/$/);
+    })) {
+      const at = await page.evaluate(() => ({ search: location.search, h1: document.querySelector('h1').textContent.trim() }));
+      ok(`${w}px: Option 1 is the one-page inquiry, with nothing in the address`,
+         at.search === '' && at.h1 === 'Start a Confidential Inquiry', JSON.stringify(at));
+    }
+  }
+  await ctx.close();
+}
+
+section('Two ways in — the chooser on a phone and a desk');
+for (const w of [320, 390, 768, 1280]) {
+  const ctx = await browser.newContext({ viewport: { width: w, height: 844 } });
+  const page = await ctx.newPage();
+  page.on('pageerror', e => ok(`no chooser errors at ${w}px (${e.message})`, false));
+  await page.goto(GS); await page.waitForTimeout(120);
+  const m = await page.evaluate(() => ({ over: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    cards: [...document.querySelectorAll('a.choice')].map(a => { const r = a.getBoundingClientRect(), g = a.querySelector('.go').getBoundingClientRect();
+      return { l: r.left, r: r.right, go: g.height }; }), vw: document.documentElement.clientWidth,
+    names: [...document.querySelectorAll('a.choice')].map(a => a.innerText.replace(/\s+/g, ' ').trim()),
+    text: document.body.innerText }));
+  ok(`${w}px: the chooser does not scroll sideways`, m.over <= 0, String(m.over));
+  ok(`${w}px: both options sit inside the screen with a 44px+ action`,
+     m.cards.length === 2 && m.cards.every(c => c.l >= -0.5 && c.r <= m.vw + 0.5 && c.go >= 44), JSON.stringify(m.cards));
+  ok(`${w}px: no price on the chooser`, !/\$\s?\d/.test(m.text));
+  await page.keyboard.press('Tab'); await page.keyboard.press('Tab'); await page.keyboard.press('Tab'); await page.keyboard.press('Tab');
+  await ctx.close();
+}
+
+section('Two ways in — the phone bar opens the same chooser');
+for (const path of ['', 'private-investigator/bedford-va/', 'child-custody-investigations/']) {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await ctx.newPage();
+  page.setDefaultTimeout(5000);
+  await page.goto(HOME + path); await page.waitForTimeout(150);
+  const bar = await page.evaluate(() => { const a = document.querySelector('.mobile-actions .ma-intake');
+    const r = a && a.getBoundingClientRect(); return a ? { href: a.getAttribute('href'), t: a.innerText.trim(), vis: r.height >= 44 && r.bottom <= innerHeight + 0.5 } : null; });
+  ok(`/${path}: the phone bar's Online Intake is on screen and opens the chooser`,
+     !!bar && bar.href === '/get-started/' && bar.t === 'Online Intake' && bar.vis, JSON.stringify(bar));
+  if (await tryStep(`/${path}: tapping it`, async () => { await page.locator('.mobile-actions .ma-intake').click(); await page.waitForURL(/\/get-started\/$/); }))
+    ok(`/${path}: tapping it lands on the chooser`, (await page.locator('a.choice').count()) === 2);
+  await ctx.close();
+}
+
+section('Quick inquiry — one page that fits a phone');
+for (const w of [320, 390, 768, 1280]) {
+  const { ctx, page } = await inquiryPage(w);
+  await page.check('input[name="best"][value="custom"]');
+  const m = await page.evaluate((tt) => {
+    const targets = new Function('return ' + tt)()('#iqForm input:not(#iq_hp), #iqForm select, #iqForm textarea, #iqForm button');
+    return { over: document.documentElement.scrollWidth - document.documentElement.clientWidth, targets, vw: document.documentElement.clientWidth,
+      forms: document.querySelectorAll('form').length, submit: document.querySelectorAll('#iqForm [type=submit]').length,
+      inputFont: Math.min(...[...document.querySelectorAll('#iqForm input[type=text]:not(#iq_hp), #iqForm input[type=tel], #iqForm select, #iqForm textarea')].filter(e => e.offsetParent).map(e => parseFloat(getComputedStyle(e).fontSize))) };
+  }, tapTargets.toString());
+  ok(`${w}px: the inquiry page does not scroll sideways`, m.over <= 0, String(m.over));
+  ok(`${w}px: every field, choice and the Submit button clear 44px and sit inside the screen`,
+     m.targets.length >= 15 && m.targets.every(c => c.h >= 44 && c.r <= m.vw + 0.5), JSON.stringify(m.targets.filter(c => c.h < 44 || c.r > m.vw + 0.5)));
+  ok(`${w}px: inputs are 16px or larger, so iOS does not zoom on focus`, m.inputFont >= 16, String(m.inputFont));
+  ok(`${w}px: one form, one Submit`, m.forms === 1 && m.submit === 1);
+  await ctx.close();
+}
+
+section('Quick inquiry — the three required answers, and the optional best-time section');
+{
+  const { ctx, page, seen } = await inquiryPage(390);
+  await page.click('#iqSend');
+  await page.waitForTimeout(150);
+  const e = await page.evaluate(() => ({ name: document.getElementById('e_name').textContent, phone: document.getElementById('e_phone').textContent,
+    type: document.getElementById('e_type').textContent, focus: document.activeElement.id, search: location.search }));
+  ok('an empty Submit names the three missing answers', !!(e.name && e.phone && e.type), JSON.stringify(e));
+  ok('and puts the cursor in the first one', e.focus === 'iq_name', e.focus);
+  ok('and sends nothing anywhere', seen.ingest.length === 0 && seen.notice.length === 0);
+  ok('and nothing reaches the address bar', e.search === '' && !page.url().includes('?'), page.url());
+  await page.fill('#iq_name', 'X'); await page.fill('#iq_phone', '12345'); await page.selectOption('#iq_type', 'Other Private Investigation');
+  await page.click('#iqSend'); await page.waitForTimeout(150);
+  ok('a phone number without an area code is refused by name',
+     /area code/.test(await page.textContent('#e_phone')) && seen.ingest.length === 0);
+  await page.selectOption('#iq_type', 'Process Serving');
+  ok('choosing Process Serving shows the one approved coverage sentence', await page.isVisible('#h_type'));
+  const bt = await page.evaluate(() => ({
+    contact: [...document.querySelectorAll('input[name="contact"]')].map(i => i.value),
+    best: [...document.querySelectorAll('input[name="best"]')].map(i => i.closest('label').textContent.trim()),
+    tick: document.querySelector('#iq_textfirst').closest('label').textContent.trim(),
+    anyRequired: !!document.querySelector('.besttime [required]'),
+    customShown: !document.getElementById('bt_custom_wrap').hidden }));
+  ok('the best-time section offers Call / Text / Either, the four times plus Custom time, and the text-first box',
+     JSON.stringify(bt.contact) === JSON.stringify(['Call', 'Text', 'Either'])
+     && JSON.stringify(bt.best) === JSON.stringify([...TIMES, 'Custom time']) && bt.tick === 'Please text me before calling.', JSON.stringify(bt));
+  ok('none of it is required, and the custom box waits until Custom time is chosen', !bt.anyRequired && !bt.customShown);
+  await page.check('input[name="best"][value="custom"]');
+  ok('choosing Custom time opens its box and puts the cursor in it',
+     await page.isVisible('#iq_best_custom') && await page.evaluate(() => document.activeElement.id === 'iq_best_custom'));
+  await ctx.close();
+}
+
+section('Quick inquiry — delivered to the portal whole, and to email as a notice only');
+{
+  const { ctx, page, seen } = await inquiryPage(390);
+  const V = { name: 'Tess Inquiryname', phone: '434-555-0199', contact: 'Either', best: 'custom', custom: 'Weekdays after 6 PM',
+    textFirst: true, type: 'Child Custody', area: 'Rustburgzz Area', desc: 'Uniquedesc marker 7731 about the weekend' };
+  await fillInquiry(page, V);
+  const before = page.url();
+  await page.click('#iqSend');
+  await tryStep('the confirmation appears', () => page.waitForSelector('#doneH'));
+  const st = seen.ingest[0] || {};
+  ok('the portal receives the whole inquiry, marked as one, with the contact preferences',
+     seen.ingest.length === 1 && st.intake_form === 'Quick confidential inquiry' && st.service === 'Child Custody' && st.client_name === V.name
+     && st.client_phone === V.phone && st.preferred_contact === 'Either' && st.best_time === 'Weekdays after 6 PM'
+     && st.text_before_call === 'Yes' && st.area === V.area && st.objective === V.desc
+     && /^API-\d{8}-\d{4}$/.test(st.case_no), JSON.stringify(st));
+  ok('it carries no subject, vehicle, retainer, payment or signature field',
+     !Object.keys(st).some(k => /subject|vehicle|retainer|payment|signature|signed|fee/.test(k)), Object.keys(st).join(','));
+  const n = seen.notice[0] || {};
+  const nText = JSON.stringify(n);
+  ok('the email notice carries the request number, type, name, phone and contact preferences',
+     seen.notice.length === 1 && n.case_no === st.case_no && n.service === 'Child Custody' && n.contact_name === V.name
+     && n.contact_phone === V.phone && n.preferred_contact === 'Either' && n.best_time === 'Weekdays after 6 PM'
+     && n.text_before_call === 'Yes' && n.recorded_in_portal === 'yes', nText);
+  ok('and never the area or the description', !nText.includes('Rustburgzz') && !nText.includes('Uniquedesc'), nText);
+  /* What each destination may carry: the portal everything; the email notice
+     the name, number and contact preferences only; every other request — the
+     beacon included — nothing typed at all. URLs carry nothing typed. */
+  const typed = [V.name, V.phone, V.custom, V.area, V.desc];
+  const leaks = [];
+  for (const r of seen.requests) {
+    if (typed.some(x => r.url.includes(x) || r.url.includes(encodeURIComponent(x)))) leaks.push('URL ' + r.url);
+    if (/\/portal-api\/ingest$/.test(r.url)) continue;
+    const allowed = /api\.web3forms\.com/.test(r.url) ? [V.name, V.phone, V.custom] : [];
+    for (const x of typed) if (!allowed.includes(x) && r.body.includes(x)) leaks.push(`${r.url} carried "${x}"`);
+  }
+  ok('the visitor beacon did report this page, so the check below had something to read',
+     seen.requests.some(r => /api-visitor-alerts/.test(r.url) && r.body.length > 0), String(seen.requests.filter(r => /api-visitor-alerts/.test(r.url)).length));
+  ok('nothing typed reaches any URL, the visitor beacon or anything else but the portal', leaks.length === 0, JSON.stringify(leaks));
+  ok('the address never changes', page.url() === before && !page.url().includes('?'), page.url());
+  const done = await page.evaluate(() => ({ h: (document.getElementById('doneH') || {}).textContent || '', focus: document.activeElement.id,
+    text: document.getElementById('doneBox').innerText, formHidden: document.getElementById('ask').hidden }));
+  ok('the confirmation says it was received, gives the request number and best time, and takes focus',
+     /inquiry was received/.test(done.h) && done.text.includes(st.case_no) && done.text.includes('Weekdays after 6 PM')
+     && done.focus === 'doneH' && done.formHidden, JSON.stringify(done));
+  ok('and says how they will be contacted, texting first', /will call or text you at/.test(done.text) && done.text.includes(V.phone)
+     && /text you before calling/.test(done.text), done.text);
+  await ctx.close();
+}
+
+section('Quick inquiry — nothing chosen means nothing stated');
+{
+  const { ctx, page, seen } = await inquiryPage(390);
+  await fillInquiry(page, { name: 'Nora Choice', phone: '4345550111', type: 'Spouse / Relationship', best: 'custom' });
+  await page.click('#iqSend');
+  await tryStep('the confirmation appears', () => page.waitForSelector('#doneH'));
+  const st = seen.ingest[0] || {};
+  ok('no preference is invented: blank contact, blank time (Custom with nothing typed), no text-first',
+     st.preferred_contact === '' && st.best_time === '' && st.text_before_call === '', JSON.stringify(st));
+  await ctx.close();
+}
+
+section('Quick inquiry — honest when delivery fails, and quiet to a bot');
+{
+  let { ctx, page, seen } = await inquiryPage(390, { ingest: 500, notify: true });
+  await fillInquiry(page, { name: 'Pat Notice', phone: '4345550100', type: 'Other Private Investigation' });
+  await page.click('#iqSend');
+  if (await tryStep('portal down: the confirmation appears', () => page.waitForSelector('#doneH')))
+    ok('portal down but the email notice went: still received, and the notice says it was NOT recorded',
+       /was received/.test(await page.textContent('#doneH')) && String((seen.notice[0] || {}).recorded_in_portal).startsWith('NO'));
+  await ctx.close();
+  ({ ctx, page, seen } = await inquiryPage(390, { ingest: 500, notify: false }));
+  await fillInquiry(page, { name: 'Pat Nothing', phone: '4345550100', type: 'Other Private Investigation' });
+  await page.click('#iqSend');
+  if (await tryStep('both down: a result appears', () => page.waitForSelector('#doneH'))) {
+    ok('both down: it says it could not confirm, and gives the phone number',
+       /could not confirm/.test(await page.textContent('#doneH')) && (await page.textContent('#doneBox')).includes('(434) 907-0975'));
+    if (await tryStep('Try again is offered', () => page.click('#tryAgain')))
+      ok('and Try again returns to the form with what was typed', await page.isVisible('#iqForm') && (await page.inputValue('#iq_name')) === 'Pat Nothing');
+  }
+  await ctx.close();
+  ({ ctx, page, seen } = await inquiryPage(390));
+  await fillInquiry(page, { name: 'Bot', phone: '4345550100', type: 'Child Custody' });
+  await page.evaluate(() => { document.getElementById('iq_hp').value = 'http://spam.example'; });
+  await page.click('#iqSend');
+  await tryStep('the honeypot run shows a result', () => page.waitForSelector('#doneH'));
+  ok('a filled honeypot sends nothing at all', seen.ingest.length === 0 && seen.notice.length === 0);
+  await ctx.close();
+}
+
+section('Detailed intake — the same best-time section, saved with the submission');
+for (const w of [390, 1280]) {
+  submitted = null; stored = null;
+  const page = await newPage();
+  await page.setViewportSize({ width: w, height: 900 });
+  await page.goto(BASE + '?assignment=private');
+  await page.waitForTimeout(120);
+  const bt = await page.evaluate(() => ({
+    pref: [...document.querySelectorAll('[data-k="c_pref"]')].map(i => i.value),
+    times: [...document.querySelectorAll('[data-k="c_besttime"]')].map(i => i.closest('label').textContent.trim()),
+    tick: (document.querySelector('[data-k="c_textfirst"]') || { closest: () => ({ textContent: '' }) }).closest('label').textContent.trim(),
+    legend: (document.querySelector('.besttime legend') || {}).textContent || '',
+    customHidden: document.getElementById('bt_custom').hidden,
+    over: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    small: [...document.querySelectorAll('.besttime .pickr, .besttime .chk')].filter(l => l.getBoundingClientRect().height < 44).length }));
+  ok(`${w}px: the contact step carries Best time to contact you (optional), with the owner's choices`,
+     /Best time to contact you\s*\(optional\)/.test(bt.legend) && JSON.stringify(bt.pref) === JSON.stringify(['Call', 'Text', 'Either'])
+     && JSON.stringify(bt.times) === JSON.stringify([...TIMES, 'Custom time']) && bt.tick === 'Please text me before calling.', JSON.stringify(bt));
+  ok(`${w}px: its choices are 44px tap targets and nothing scrolls sideways`, bt.small === 0 && bt.over <= 0, JSON.stringify(bt));
+  ok(`${w}px: the custom box waits for Custom time`, bt.customHidden);
+  await set(page, 'c_name', 'Dana Detailed'); await set(page, 'c_phone', '4345550122');
+  await page.locator('[data-k="c_pref"][value="Text"]').check();
+  await page.locator('[data-k="c_besttime"][value="custom"]').check();
+  ok(`${w}px: choosing Custom time opens its box`, await page.isVisible('[data-k="c_best"]'));
+  await set(page, 'c_best', 'Saturdays before noon');
+  await page.locator('[data-k="c_textfirst"]').check();
+  await advance(page);
+  await page.locator('#opt-other').click(); await page.waitForTimeout(80);
+  /* Back to the contact step: the choices are still there. */
+  await page.locator('.btn.ghost', { hasText: 'Back' }).click(); await page.waitForTimeout(80);
+  const kept = await page.evaluate(() => ({ pref: (document.querySelector('[data-k="c_pref"]:checked') || {}).value,
+    time: (document.querySelector('[data-k="c_besttime"]:checked') || {}).value,
+    custom: (document.querySelector('[data-k="c_best"]') || {}).value, tf: (document.querySelector('[data-k="c_textfirst"]') || {}).checked,
+    shown: !document.getElementById('bt_custom').hidden }));
+  ok(`${w}px: Back keeps every choice, the custom time included`,
+     kept.pref === 'Text' && kept.time === 'custom' && kept.custom === 'Saturdays before noon' && kept.tf && kept.shown, JSON.stringify(kept));
+  await advance(page);
+  await page.locator('#opt-other').click(); await page.waitForTimeout(80); await advance(page);
+  await advance(page);                                              // subject: nothing required
+  await set(page, 'o_goal', 'One line.'); await advance(page);
+  await page.locator('[data-k="a_consent"]').check(); await set(page, 'a_typed', 'Dana Detailed');
+  await sign(page); await advance(page); await page.waitForTimeout(500);
+  ok(`${w}px: the submission carries the preferences`,
+     !!stored && stored.preferred_contact === 'Text' && stored.best_time === 'Saturdays before noon' && stored.text_before_call === 'Yes',
+     JSON.stringify(stored && { p: stored.preferred_contact, b: stored.best_time, t: stored.text_before_call }));
+  ok(`${w}px: and the email notice still carries none of them (buildNotice is unchanged)`,
+     !!submitted && !JSON.stringify(submitted).includes('Saturdays') && !('preferred_contact' in submitted) && !('best_time' in submitted), JSON.stringify(submitted));
+  const rec = await page.evaluate(() => document.body.innerText);
+  ok(`${w}px: the client's own record shows them`,
+     /Preferred contact\s*Text/.test(rec) && /Best time\s*Saturdays before noon/.test(rec) && /Text before calling\s*Yes/.test(rec));
+  await page.close();
+}
+{
+  submitted = null; stored = null;
+  const page = await newPage();
+  await page.goto(BASE + '?assignment=private'); await page.waitForTimeout(120);
+  await set(page, 'c_name', 'Nobody Chose'); await set(page, 'c_phone', '4345550123');
+  await page.locator('[data-k="c_besttime"][value="Morning (8 AM–12 PM)"]').check();
+  await advance(page); await page.locator('#opt-other').click(); await page.waitForTimeout(80); await advance(page);
+  await advance(page); await set(page, 'o_goal', 'One line.'); await advance(page);
+  await page.locator('[data-k="a_consent"]').check(); await set(page, 'a_typed', 'Nobody Chose');
+  await sign(page); await advance(page); await page.waitForTimeout(500);
+  ok('a preset time is stored as its own words, and an untouched method or box stays blank',
+     !!stored && stored.best_time === 'Morning (8 AM–12 PM)' && stored.preferred_contact === '' && stored.text_before_call === '',
+     JSON.stringify(stored && { p: stored.preferred_contact, b: stored.best_time, t: stored.text_before_call }));
+  await page.close();
+}
+
+section('Two ways in — the detailed intake is untouched and still reachable');
+{
+  const { ctx, page } = await homePage(1280);
+  const formal = await page.evaluate(() => [...document.querySelectorAll('a[href^="/intake/"]')].map(a => a.getAttribute('href')));
+  ok('the homepage still links the custody, relationship, legal and insurance doors directly',
+     ['/intake/?assignment=private&service=custody', '/intake/?assignment=private&service=relationship',
+      '/intake/?assignment=legal', '/intake/?assignment=insurance'].every(h => formal.includes(h)), JSON.stringify(formal));
+  await ctx.close();
 }
 
 await browser.close();

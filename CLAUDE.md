@@ -1027,6 +1027,45 @@ DCJS line, which stay below the cards. No price, rate or rate-sheet reference
 is introduced — the public-pricing rule above governs these cards like
 everything else, and the tests assert it over the new markup.
 
+## Two ways in: a quick confidential inquiry beside the detailed intake
+
+Owner, 2026-11-07. **"Fill Out Online Intake"** (both homepage buttons) and the
+private phone bar's **"Online Intake"** open `/get-started/`: **Option 1, Quick
+Confidential Inquiry** (`/inquiry/`) or **Option 2, Detailed Investigation
+Intake** (`/intake/?assignment=private`, unchanged). Discreet Phone Call, the
+photo cards, the city/service hero buttons and the Legal and Insurance doors
+still open their intakes directly.
+
+**THE INQUIRY USES THE INTAKE'S OWN PLUMBING, AND ITS BOUNDARY.** One page, one
+Submit: name and phone (required), investigation type (required, the private
+intake's labels), city or area, a description, and the best-time section. It
+posts to the **existing public ingest** — same key, same request-number shape,
+same collision retry — marked `intake_form: "Quick confidential inquiry"` (a
+sentence, because the record packet prints every payload key). No Worker change,
+no table. The Web3Forms notice carries the request number, type, name, phone and
+contact preferences, **never the area or the description**. It POSTs by fetch
+and is `method="post"` without script, so nothing typed can reach a URL; the
+suite records every request the page makes and lets the real beacon run.
+
+**BEST TIME TO CONTACT YOU is on both forms**, all optional: preferred contact
+(Call / Text / Either), best time (Morning 8–12, Afternoon 12–5, Evening 5–9,
+Anytime, or a custom time), and *Please text me before calling*. Stored as
+`preferred_contact`, `best_time` (the choice's own words, or what was typed for
+a custom time — "Custom" with nothing typed is no answer) and
+`text_before_call` ("Yes" or blank). On the detailed intake it replaced the
+free-text "Best time to reach you", keeps the `c_best` key for the custom text,
+and `buildNotice` is unchanged, so none of it reaches the relay. The portal
+shows the three rows on every private submission (office-only: not in
+`FIELD_KEEP`), and the record-packet PDF prints them with the other fields.
+
+**A RADIO GROUP SHARES ONE data-k.** `capture()` used to read every element's
+value, which for radios stores whichever came last; it now writes only the
+checked one, and `restore()` checks the radio whose value matches.
+
+**The beacon counts a tap on `/get-started/` as the `private` CTA** — the
+Worker's own door whose label is "Fill Out Online Intake" — so the Live Visitors
+intake-button count did not silently stop when the button changed destination.
+
 ## Contact and intake
 
 Both forms (homepage and `intake/`) post to Web3Forms. The access key lives in

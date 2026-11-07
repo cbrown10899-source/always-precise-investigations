@@ -32554,6 +32554,7 @@ function detailList(s, mode){
     ? `<dt>${esc(k)}</dt><dd>${esc(v)}${st === "approximate" ? ' <i style="color:var(--muted)">(approximate)</i>' : ""}</dd>`
     : st ? `<dt>${esc(k)}</dt><dd><i style="color:var(--muted)">${esc(NA_WORDS[st] || "Not available yet")}</i></dd>` : "";
   const claim = s.kind === "claims";
+  const inquiry = isWebInquiry(p);
   const sig = safeImage(p.signature);
 
   const needed = stillNeeded(p, claim);
@@ -32590,9 +32591,16 @@ function detailList(s, mode){
                ${row("Adjuster email", p.adjuster_email)}${row("Adjuster phone", p.adjuster_phone)}
                ${row("Defense counsel", p.defense_counsel)}` : ""}
     ${row(claim ? "Assigning contact" : "Client", p.client_name)}${claim ? `${row("Title", p.contact_title)}${row("Department / team", p.department)}${row("Organization type", p.organization_type)}` : ""}${row("Phone", p.client_phone)}${row("Email", p.client_email)}
-    ${claim ? "" : `${row("Address", p.client_address)}${row("Best time", p.best_time)}`}
+    ${/* BEST TIME TO CONTACT (owner, 2026-11-07): both the quick inquiry and the
+          detailed intake ask how and when to reach the person, and whether to
+          text before calling. The quick inquiry also carries a city or general
+          area, and calls its free text a description. Office-only: the
+          Worker's redaction allow-list does not name these keys, so an
+          investigator is never sent them. */""}
+    ${claim ? "" : `${row("Address", p.client_address)}${row("City / area", p.area)}
+      ${row("Preferred contact", p.preferred_contact)}${row("Best time", p.best_time)}${row("Text before calling", p.text_before_call)}`}
     ${row(claim ? "Claimant" : "Subject", p.subject_name)}
-    ${row(claim ? "Scope" : "Objective", p.objective)}
+    ${row(claim ? "Scope" : inquiry ? "Brief description" : "Objective", p.objective)}
     ${claim ? `${rowS("Known schedule / activity", p.known_schedule, p.known_schedule_status)}${row("Special instructions / restrictions", p.notes)}` : ""}
     ${/* MASTER-HANDOFF §7: what the client picked on the intake is REQUESTED.
           Calling it "authorized" would read as though the firm had approved a
@@ -32617,9 +32625,19 @@ function detailList(s, mode){
     : p.signed_name
     ? `<p class="lead">Typed acceptance: <b>${esc(p.signed_name)}</b>. No drawn signature was captured.</p>`
     /* THREE STATES, and the third is a real answer rather than a blank space. */
+    : inquiry
+    ? `<p class="lead">A quick confidential inquiry asks for no signature. After the first conversation, send the
+        formal intake from Prepare &amp; Send Client Intake.</p>
+       ${ME.role === "admin" ? `<button class="btn sm ghost" data-act="ciNew">Prepare &amp; Send Client Intake</button>` : ""}`
     : `<p class="lead">Nothing was signed on this submission.</p>`}
   ${assocSheetHtml()}`;
 }
+
+/* The quick inquiry's marker of record, written by /inquiry/ itself (owner,
+   2026-11-07) — read, never inferred from which fields are blank. It is a
+   readable sentence on purpose: the record packet prints every payload key,
+   and "Intake Form: Quick confidential inquiry" is a line a client can read. */
+function isWebInquiry(p){ return !!p && p.intake_form === "Quick confidential inquiry"; }
 
 /* ==== §11 — TOP SUMMARY, and the ASSOCIATED RATE SHEET ====================
 
@@ -32636,7 +32654,8 @@ function intakeSummaryHtml(s, p, claim){
     ${cell(claim ? "Assigning contact" : "Client", esc(p.client_name || s.client_name || "&mdash;"))}
     ${cell(claim ? "Claimant" : "Subject", esc(p.subject_name || s.subject_name || "&mdash;"))}
     ${cell("Intake type", esc(claim ? "Insurance claim assignment"
-      : (WS && WS.legal_badge) || s.legal ? "Legal assignment" : "Private client"))}
+      : (WS && WS.legal_badge) || s.legal ? "Legal assignment"
+      : isWebInquiry(p) ? "Quick confidential inquiry" : "Private client"))}
     ${/* The private intake's answer to "What type of private investigation do
           you need?" — the submission's own service, shown where the office reads
           the intake first (owner, 2026-10-10). */""}

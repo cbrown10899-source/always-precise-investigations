@@ -53,6 +53,14 @@
   Referrer-Policy: no-referrer
   X-Frame-Options: DENY
 
+# The short inquiry is a form like the intake: never cached, never indexed,
+# and no Referer leaves it.
+/inquiry/*
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow, noarchive
+  Referrer-Policy: no-referrer
+  X-Frame-Options: DENY
+
 /portal/*
   # private, no-cache — NOT no-store (closeout audit, 2026-09-02). The page
   # holds no user data (every datum arrives from the Worker, which is no-store
