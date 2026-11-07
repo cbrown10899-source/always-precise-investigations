@@ -2901,6 +2901,177 @@ section('The Child Custody door at 1200, 390 and 320');
   }
 }
 
+/* ============ THE SHORT CONFIDENTIAL INQUIRY (owner, 2026-11-07) ============
+   The hero's second button opens /inquiry/: six questions, one Submit. The
+   inquiry reaches the PORTAL whole; the third-party email notice carries only
+   the request number, the type, the name, the phone and how to reach them; and
+   nothing typed ever reaches a URL or the visitor beacon. Every request the
+   page makes is recorded, so "nowhere else" is measured, not assumed. */
+const INQ = HOME + 'inquiry/';
+async function inquiryPage(width, { ingest = 200, notify = true } = {}) {
+  const ctx = await browser.newContext({ viewport: { width, height: 900 } });
+  /* beacon.js stands down for an automated browser (navigator.webdriver), which
+     would leave the "nothing typed reaches the beacon" check below with nothing
+     to read. Present as an ordinary browser so the real beacon runs here. */
+  await ctx.addInitScript(() => Object.defineProperty(Navigator.prototype, 'webdriver', { get: () => false }));
+  const page = await ctx.newPage();
+  const seen = { ingest: [], notice: [], requests: [] };
+  page.on('pageerror', e => ok(`no inquiry page errors at ${width}px (${e.message})`, false));
+  page.on('request', r => seen.requests.push({ url: r.url(), body: r.postData() || '' }));
+  await page.route('**api.web3forms.com/**', route => {
+    seen.notice.push(JSON.parse(route.request().postData() || '{}'));
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: notify }) });
+  });
+  await page.route('**/portal-api/ingest', route => {
+    seen.ingest.push(JSON.parse(route.request().postData() || '{}'));
+    route.fulfill({ status: ingest, contentType: 'application/json', body: ingest === 200 ? '{"ok":true}' : '{"error":"down"}' });
+  });
+  await page.route('**api-visitor-alerts**', route => route.fulfill({ status: 204, body: '' }));
+  await page.goto(INQ);
+  await page.waitForTimeout(150);
+  return { ctx, page, seen };
+}
+async function fillInquiry(page, v) {
+  await page.fill('#iq_name', v.name); await page.fill('#iq_phone', v.phone);
+  if (v.contact) await page.check(`input[name="contact"][value="${v.contact}"]`);
+  await page.selectOption('#iq_type', v.type);
+  if (v.area) await page.fill('#iq_area', v.area);
+  if (v.desc) await page.fill('#iq_desc', v.desc);
+}
+
+section('Inquiry — the homepage button');
+for (const w of [1280, 390]) {
+  const { ctx, page } = await homePage(w);
+  const b = await page.evaluate(() => [...document.querySelectorAll('.hero-actions a')].map(a => ({
+    t: a.innerText.trim().replace(/\s+/g, ' '), h: a.getAttribute('href'), hh: a.getBoundingClientRect().height })));
+  ok(`${w}px: the hero keeps Discreet Phone Call, then Start Confidential Inquiry`,
+     JSON.stringify(b.map(x => [x.t, x.h])) === JSON.stringify([['Discreet Phone Call', 'tel:+14349070975'], ['Start Confidential Inquiry', '/inquiry/']]), JSON.stringify(b));
+  ok(`${w}px: both hero buttons clear the 44px tap floor`, b.every(x => x.hh >= 44), JSON.stringify(b.map(x => x.hh)));
+  await page.getByRole('link', { name: 'Start Confidential Inquiry', exact: true }).click();
+  await page.waitForLoadState('load');
+  const at = await page.evaluate(() => ({ path: location.pathname, search: location.search, h1: document.querySelector('h1').textContent.trim() }));
+  ok(`${w}px: it opens the one-page inquiry, with nothing in the address`,
+     at.path === '/inquiry/' && at.search === '' && at.h1 === 'Start a Confidential Inquiry', JSON.stringify(at));
+  await ctx.close();
+}
+
+section('Inquiry — one page that fits a phone');
+for (const w of [320, 390, 768, 1280]) {
+  const { ctx, page } = await inquiryPage(w);
+  const m = await page.evaluate(() => {
+    const ctl = [...document.querySelectorAll('#iqForm input:not(#iq_hp), #iqForm select, #iqForm textarea, #iqForm button')]
+      .map(e => (e.type === 'radio' ? e.closest('label') : e)).map(e => ({ id: e.id || e.textContent.trim(), h: e.getBoundingClientRect().height, r: e.getBoundingClientRect().right }));
+    return { over: document.documentElement.scrollWidth - document.documentElement.clientWidth, ctl, vw: document.documentElement.clientWidth,
+      forms: document.querySelectorAll('form').length, submit: document.querySelectorAll('#iqForm [type=submit]').length,
+      inputFont: Math.min(...[...document.querySelectorAll('#iqForm input:not([type=radio]):not(#iq_hp), #iqForm select, #iqForm textarea')].map(e => parseFloat(getComputedStyle(e).fontSize))) };
+  });
+  ok(`${w}px: the inquiry page does not scroll sideways`, m.over <= 0, String(m.over));
+  ok(`${w}px: every field and the Submit button clear 44px and sit inside the screen`,
+     m.ctl.every(c => c.h >= 44 && c.r <= m.vw + 0.5), JSON.stringify(m.ctl));
+  ok(`${w}px: inputs are 16px or larger, so iOS does not zoom on focus`, m.inputFont >= 16, String(m.inputFont));
+  ok(`${w}px: one form, one Submit`, m.forms === 1 && m.submit === 1);
+  await ctx.close();
+}
+
+section('Inquiry — the three required answers, and nothing sent without them');
+{
+  const { ctx, page, seen } = await inquiryPage(390);
+  await page.click('#iqSend');
+  await page.waitForTimeout(150);
+  const e = await page.evaluate(() => ({ name: document.getElementById('e_name').textContent, phone: document.getElementById('e_phone').textContent,
+    type: document.getElementById('e_type').textContent, focus: document.activeElement.id, search: location.search }));
+  ok('an empty Submit names all three missing answers', !!(e.name && e.phone && e.type), JSON.stringify(e));
+  ok('and puts the cursor in the first one', e.focus === 'iq_name', e.focus);
+  ok('and sends nothing anywhere', seen.ingest.length === 0 && seen.notice.length === 0);
+  ok('and nothing reaches the address bar', e.search === '' && !page.url().includes('?'), page.url());
+  await page.fill('#iq_name', 'X'); await page.fill('#iq_phone', '12345'); await page.selectOption('#iq_type', 'Other Private Investigation');
+  await page.click('#iqSend'); await page.waitForTimeout(150);
+  ok('a phone number without an area code is refused by name',
+     /area code/.test(await page.textContent('#e_phone')) && seen.ingest.length === 0);
+  await page.selectOption('#iq_type', 'Process Serving');
+  ok('choosing Process Serving shows the one approved coverage sentence', await page.isVisible('#h_type'));
+  await ctx.close();
+}
+
+section('Inquiry — delivered to the portal whole, and to email as a notice only');
+{
+  const { ctx, page, seen } = await inquiryPage(390);
+  const V = { name: 'Tess Inquiryname', phone: '434-555-0199', contact: 'Text', type: 'Child Custody',
+    area: 'Rustburgzz Area', desc: 'Uniquedesc marker 7731 about the weekend' };
+  await fillInquiry(page, V);
+  const before = page.url();
+  await page.click('#iqSend');
+  await page.waitForSelector('#doneH');
+  const st = seen.ingest[0] || {};
+  ok('the portal receives the whole inquiry, marked as one',
+     seen.ingest.length === 1 && st.source === 'website_inquiry' && st.service === 'Child Custody' && st.client_name === V.name
+     && st.client_phone === V.phone && st.preferred_contact === 'Text' && st.area === V.area && st.objective === V.desc
+     && /^API-\d{8}-\d{4}$/.test(st.case_no), JSON.stringify(st));
+  ok('it carries no subject, vehicle, retainer, payment or signature field',
+     !Object.keys(st).some(k => /subject|vehicle|retainer|payment|signature|signed|fee/.test(k)), Object.keys(st).join(','));
+  const n = seen.notice[0] || {};
+  const nText = JSON.stringify(n);
+  ok('the email notice carries the request number, type, name, phone and preferred contact',
+     seen.notice.length === 1 && n.case_no === st.case_no && n.service === 'Child Custody' && n.contact_name === V.name
+     && n.contact_phone === V.phone && n.preferred_contact === 'Text' && n.recorded_in_portal === 'yes', nText);
+  ok('and never the area or the description', !nText.includes('Rustburgzz') && !nText.includes('Uniquedesc'), nText);
+  /* What each destination may carry: the portal everything; the email notice
+     the name and number only; every other request — the beacon included —
+     nothing typed at all. URLs carry nothing typed, anywhere. */
+  const typed = [V.name, V.phone, V.area, V.desc];
+  const leaks = [];
+  for (const r of seen.requests) {
+    if (typed.some(x => r.url.includes(x) || r.url.includes(encodeURIComponent(x)))) leaks.push('URL ' + r.url);
+    if (/\/portal-api\/ingest$/.test(r.url)) continue;
+    const allowed = /api\.web3forms\.com/.test(r.url) ? [V.name, V.phone] : [];
+    for (const x of typed) if (!allowed.includes(x) && r.body.includes(x)) leaks.push(`${r.url} carried "${x}"`);
+  }
+  ok('the visitor beacon did report this page, so the check below had something to read',
+     seen.requests.some(r => /api-visitor-alerts/.test(r.url) && r.body.length > 0), String(seen.requests.filter(r => /api-visitor-alerts/.test(r.url)).length));
+  ok('nothing typed reaches any URL, the visitor beacon or anything else but the portal', leaks.length === 0, JSON.stringify(leaks));
+  ok('the address never changes', page.url() === before && !page.url().includes('?'), page.url());
+  const done = await page.evaluate(() => ({ h: document.getElementById('doneH').textContent, focus: document.activeElement.id,
+    text: document.getElementById('doneBox').innerText, formHidden: document.getElementById('ask').hidden }));
+  ok('the confirmation says it was received, gives the request number, and takes focus',
+     /inquiry was received/.test(done.h) && done.text.includes(st.case_no) && done.focus === 'doneH' && done.formHidden, JSON.stringify(done));
+  ok('and says how they will be contacted', /will text you at/.test(done.text) && done.text.includes(V.phone));
+  await ctx.close();
+}
+
+section('Inquiry — honest when delivery fails, and quiet to a bot');
+{
+  let { ctx, page, seen } = await inquiryPage(390, { ingest: 500, notify: true });
+  await fillInquiry(page, { name: 'Pat Notice', phone: '4345550100', type: 'Other Private Investigation' });
+  await page.click('#iqSend'); await page.waitForSelector('#doneH');
+  ok('portal down but the email notice went: still received, and the notice says it was NOT recorded',
+     /was received/.test(await page.textContent('#doneH')) && (seen.notice[0] || {}).recorded_in_portal.startsWith('NO'));
+  await ctx.close();
+  ({ ctx, page, seen } = await inquiryPage(390, { ingest: 500, notify: false }));
+  await fillInquiry(page, { name: 'Pat Nothing', phone: '4345550100', type: 'Other Private Investigation' });
+  await page.click('#iqSend'); await page.waitForSelector('#doneH');
+  ok('both down: it says it could not confirm, and gives the phone number',
+     /could not confirm/.test(await page.textContent('#doneH')) && (await page.textContent('#doneBox')).includes('(434) 907-0975'));
+  await page.click('#tryAgain');
+  ok('and Try again returns to the form with what was typed', await page.isVisible('#iqForm') && (await page.inputValue('#iq_name')) === 'Pat Nothing');
+  await ctx.close();
+  ({ ctx, page, seen } = await inquiryPage(390));
+  await fillInquiry(page, { name: 'Bot', phone: '4345550100', type: 'Child Custody' });
+  await page.evaluate(() => { document.getElementById('iq_hp').value = 'http://spam.example'; });
+  await page.click('#iqSend'); await page.waitForSelector('#doneH');
+  ok('a filled honeypot sends nothing at all', seen.ingest.length === 0 && seen.notice.length === 0);
+  await ctx.close();
+}
+
+section('Inquiry — the formal intake is untouched and still reachable');
+{
+  const { ctx, page } = await homePage(1280);
+  const formal = await page.evaluate(() => [...document.querySelectorAll('a[href^="/intake/"]')].map(a => a.getAttribute('href')));
+  ok('the homepage still links the formal private, custody, relationship, legal and insurance doors',
+     ['/intake/?assignment=private', '/intake/?assignment=private&service=custody', '/intake/?assignment=private&service=relationship',
+      '/intake/?assignment=legal', '/intake/?assignment=insurance'].every(h => formal.includes(h)), JSON.stringify(formal));
+  await ctx.close();
+}
+
 await browser.close();
 server.close();
 

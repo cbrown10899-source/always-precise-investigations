@@ -24578,6 +24578,53 @@ section('The owner sees the investigation type a private client chose');
   await page.close();
 }
 
+/* THE SHORT WEBSITE INQUIRY (owner, 2026-11-07). /inquiry/ posts this exact
+   shape to the existing public ingest. The office must read every answer —
+   including the two only an inquiry carries — know it is an inquiry rather
+   than a signed intake, and reach the formal intake's sender from there. */
+section('A website inquiry reads as one, with every answer it carried');
+{
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await post('/ingest', { case_no: 'API-INQ-1', source: 'website_inquiry', service: 'Child Custody',
+    client_name: 'Ina Quarry', client_phone: '(434) 555-0161', client_email: '', preferred_contact: 'Text',
+    area: 'Forest', objective: 'Concerned about weekend visits', submitted_at: '11/7/2026, 4:00:00 PM' },
+    { 'X-Ingest-Key': 'e2e-ingest-key' });
+  await page.evaluate(() => { TAB = 'leads'; VIEW = 'list'; render(); });
+  await page.waitForTimeout(900);
+  const card = await page.evaluate(() => {
+    const c = [...document.querySelectorAll('.pcard')].find(x => x.innerText.includes('Ina Quarry'));
+    return c ? c.innerText : null;
+  });
+  ok('the inquiry lands on the Intakes desk with its investigation type',
+     !!card && /Investigation type: Child Custody/.test(card), String(card));
+  await page.evaluate(() => openCase('API-INQ-1', 'details'));
+  await page.waitForTimeout(900);
+  const d = await page.evaluate(() => {
+    const cell = k => { const c = [...document.querySelectorAll('.isum-c')].find(x => (x.querySelector('.isum-k') || {}).textContent === k);
+      return c ? c.textContent.replace(k, '').trim() : null; };
+    const dl = {}; document.querySelectorAll('dl.detail dt').forEach(dt => { dl[dt.textContent.trim()] = (dt.nextElementSibling || {}).textContent; });
+    return { type: cell('Intake type'), signed: cell('Signed'), dl,
+      ci: !!document.querySelector('[data-act="ciNew"]'), text: document.body.innerText };
+  });
+  ok('the summary calls it a Website inquiry, unsigned', d.type === 'Website inquiry' && d.signed === 'No', JSON.stringify([d.type, d.signed]));
+  ok('every answer is on the screen: name, phone, preferred contact, area and the description',
+     d.dl['Client'] === 'Ina Quarry' && d.dl['Phone'] === '(434) 555-0161' && d.dl['Preferred contact'] === 'Text'
+     && d.dl['City / area'] === 'Forest' && d.dl['Brief description'] === 'Concerned about weekend visits', JSON.stringify(d.dl));
+  ok('and the formal intake is one tap away from it', d.ci && /send the\s+formal intake/i.test(d.text));
+  /* A signed intake from the formal door does not wear any of this. */
+  await page.evaluate(() => openCase('API-QTYPE-1', 'details'));
+  await page.waitForTimeout(900);
+  const other = await page.evaluate(() => {
+    const c = [...document.querySelectorAll('.isum-c')].find(x => (x.querySelector('.isum-k') || {}).textContent === 'Intake type');
+    return { type: c ? c.textContent.replace('Intake type', '').trim() : null,
+      pc: [...document.querySelectorAll('dl.detail dt')].some(dt => dt.textContent.trim() === 'Preferred contact') };
+  });
+  ok('an ordinary private intake still reads as a Private client, with no inquiry rows',
+     other.type === 'Private client' && !other.pc, JSON.stringify(other));
+  await page.close();
+}
+
 section('Intakes: tapping a submitted intake opens what the client signed');
 {
   const page = await newPage();

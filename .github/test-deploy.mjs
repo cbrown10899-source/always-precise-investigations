@@ -920,7 +920,10 @@ section('The manifest describes the site honestly');
      deploy.yml runs this suite before it uploads — so the rules that make a
      release finished live here, where a failing one stops the upload. */
   const rel = f => path.relative(site, f).replace(/\\/g, '/');
-  const marketing = publicPages.filter(f => !/^intake[\\/]/.test(rel(f)));
+  /* The two FORM pages — the formal intake and the short inquiry (2026-11-07) —
+     carry their own focused top bar and no sticky phone bar, which on a form
+     could sit over a field or the Submit button. Both are noindex. */
+  const marketing = publicPages.filter(f => !/^(intake|inquiry)[\\/]/.test(rel(f)));
   ok('the redesign covers every public marketing page (13 + privacy + 404)',
      marketing.length === 15, marketing.map(rel).join(' | '));
 
@@ -1052,7 +1055,7 @@ section('The manifest describes the site honestly');
   const homeTxt = txt(home);
   for (const line of ['PRIVATE · PROFESSIONAL · DISCREET', 'When you need answers, start here.',
     'Get help with child custody concerns, relationship questions, and other private investigation needs.',
-    'Discreet Phone Call', 'Fill Out Online Intake', "Choose the option you're most comfortable with.",
+    'Discreet Phone Call', 'Start Confidential Inquiry', 'Fill Out Online Intake', "Choose the option you're most comfortable with.",
     'HOW CAN WE HELP?', 'Private Investigations', 'Choose your situation to begin your private online intake.',
     'FAMILY MATTERS', 'Child Custody', 'Concerns about care or well-being?', 'PERSONAL MATTERS',
     'Spouse / Relationship', 'Looking for clarity and answers?', 'Start Intake', 'Other Investigation Services',
@@ -1079,6 +1082,36 @@ section('The manifest describes the site honestly');
      fillHrefs.length >= 1 && fillHrefs.every(h => h === '/intake/?assignment=private'), JSON.stringify(fillHrefs));
   ok('the hero\'s Discreet Phone Call dials the firm', /<a class="btn btn-gold" href="tel:\+14349070975">(?:(?!<\/a>)[\s\S])*Discreet Phone Call<\/a>/.test(home));
   ok('the homepage still offers a Legal door', /href="\/intake\/\?assignment=legal"/.test(home));
+
+  /* THE SHORT CONFIDENTIAL INQUIRY (owner, 2026-11-07). The hero button beside
+     Discreet Phone Call opens a six-question page; the formal intake is kept and
+     is still linked from the contact section and every other door. */
+  ok('the hero\'s second button reads Start Confidential Inquiry and opens /inquiry/',
+     /<div class="hero-actions">\s*<a class="btn btn-gold" href="tel:\+14349070975">(?:(?!<\/a>)[\s\S])*Discreet Phone Call<\/a>\s*<a class="btn btn-light" href="\/inquiry\/">(?:(?!<\/a>)[\s\S])*Start Confidential Inquiry<\/a>\s*<\/div>/.test(home));
+  const iq = readAll(path.join(site, 'inquiry', 'index.html'));
+  const iqForm = (iq.match(/<form[\s\S]*?<\/form>/) || [''])[0];
+  const iqNames = [...iqForm.matchAll(/<(?:input|select|textarea)\b[^>]*\bname="([^"]+)"/g)].map(m => m[1]);
+  ok('the inquiry is ONE form with exactly the six questions (plus a hidden honeypot)',
+     (iq.match(/<form\b/g) || []).length === 1
+     && JSON.stringify([...new Set(iqNames)]) === JSON.stringify(['name', 'phone', 'contact', 'type', 'area', 'description', 'website']),
+     JSON.stringify(iqNames));
+  ok('name, phone and investigation type are the required ones, and nothing else is',
+     JSON.stringify([...iqForm.matchAll(/<(?:input|select|textarea)\b[^>]*\bid="([^"]+)"[^>]*\brequired/g)].map(m => m[1]))
+       === JSON.stringify(['iq_name', 'iq_phone', 'iq_type']));
+  ok('the investigation types are the private intake\'s own labels',
+     JSON.stringify([...(iqForm.match(/<select[\s\S]*?<\/select>/) || [''])[0].matchAll(/<option[^>]*>([^<]*)<\/option>/g)].map(m => m[1]))
+       === JSON.stringify(['Choose one…', 'Child Custody', 'Spouse / Relationship', 'Process Serving', 'Other Private Investigation']));
+  ok('it asks nothing about a subject, a vehicle, a retainer, a payment or a signature',
+     !/subject|vehicle|plate|retainer|cash ?app|venmo|signature|<canvas|\$\s?\d/i.test(iqForm));
+  ok('one Submit Inquiry button, and the form POSTs (typed values can never land in a URL)',
+     (iqForm.match(/type="submit"/g) || []).length === 1 && />Submit Inquiry<\/button>/.test(iqForm)
+     && /<form id="iqForm" method="post"/.test(iqForm) && !/\baction="/.test(iqForm));
+  ok('the inquiry page is noindex, and _headers gives it no-store, noindex and no Referer',
+     /<meta name="robots" content="noindex">/.test(iq)
+     && /^\/inquiry\/\*\s*\n  Cache-Control: no-store\n  X-Robots-Tag: noindex, nofollow, noarchive\n  Referrer-Policy: no-referrer/m.test(readAll(path.join(site, '_headers'))));
+  ok('the inquiry is not in the sitemap', !/\/inquiry\//.test(readAll(path.join(site, 'sitemap.xml'))));
+  ok('and the formal intake is still published and still linked from the homepage',
+     files.includes('intake/index.html') && /href="\/intake\/\?assignment=private"/.test(home));
 
   /* THE PALETTE'S PAIRS ARE MEASURED (WCAG relative luminance), from the
      tokens as published. Light gold is never text on the light ground, which
