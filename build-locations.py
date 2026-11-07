@@ -41,7 +41,7 @@ GBP_URL = "https://maps.google.com/?cid=1285488950812777376"
 # would stop matching the one generated after it, and the deploy guard would
 # fail on the NEXT day rather than this one. Bump this by hand when the location
 # content actually changes.
-CONTENT_REVISED = "2026-09-24"
+CONTENT_REVISED = "2026-11-07"
 FACEBOOK = "https://www.facebook.com/AlwaysPreciseInvestigations/"
 
 # THE GEOGRAPHY HIERARCHY HAS ONE WRITER (owner, 2026-09-13, finalization).
@@ -223,7 +223,7 @@ BY_SLUG = {p["slug"]: p for p in PLACES}
 # The owner chose it on 2026-10-10 from a side-by-side of the live header and the
 # white diamond. Only its height is set, in site.css; the width and height
 # attributes are the file's own 240x68 viewbox proportions.
-SITE_CSS = "/assets/site.css?v=1"
+SITE_CSS = "/assets/site.css?v=2"
 NAV = [("/#private", "Private Investigations"),
        ("/child-custody-investigations/", "Child Custody"),
        ("/infidelity-investigations/", "Spouse / Relationship"),
@@ -263,6 +263,7 @@ def site_header(current=""):
 {nav}
       <a class="nav-cta" href="{cta_h}">{cta_t}</a>
     </nav>
+    <a class="head-call" href="tel:{PHONE_LINK}">{ICON_PHONE}<span>{PHONE_DISPLAY}</span></a>
     <details class="menu">
       <summary><span class="bars" aria-hidden="true"></span>Menu</summary>
       <nav aria-label="Main">
@@ -300,9 +301,33 @@ def site_footer(current="", door="private"):
 </footer>
 
 <div class="mobile-actions" aria-label="Quick contact">
-  <a href="tel:{PHONE_LINK}">{ICON_PHONE}Call Privately</a>
+  <a href="tel:{PHONE_LINK}">{ICON_PHONE}<span class="ma-call">Call Privately<span class="ma-num">{PHONE_DISPLAY}</span></span></a>
   <a class="ma-intake" href="{door_h}">{ICON_PEN}{door_t}</a>
 </div>"""
+
+# THE PRINTED NUMBER CAME BACK TO THE HEADER (owner, 2026-11-07, from the
+# November audit in docs/SEO-AUDIT-2026-11.md). Until the 2026-10-10 redesign
+# every page's header said "Call (434) 907-0975"; the redesign dropped it, and a
+# desktop visitor landing on a city or service page then saw no number and no
+# button in the first screen. A desktop "tel:" link often dials nothing, so the
+# DIGITS are what matter there. It sits OUTSIDE the nav (the nav is the brief's
+# six), shows from 721px up, and on a phone the sticky bar carries the digits
+# under "Call Privately" instead, because the phone header has no room for them.
+
+# THE LANDING PAGE'S OWN ACTIONS, ONE WRITER (same audit). The hero already
+# promised a "free confidential consultation" with nothing to press. Each page
+# passes its own door: the city pages and the hub the private door, Infidelity
+# and Child Custody the same door with their answer preselected. The hand-written
+# pages carry these bytes, and a deploy guard holds every one to its door.
+HERO_DOORS = {"private": "/intake/?assignment=private",
+              "custody": "/intake/?assignment=private&amp;service=custody",
+              "relationship": "/intake/?assignment=private&amp;service=relationship"}
+
+def hero_actions(door="private"):
+    return f"""  <div class="hero-acts">
+    <a class="btn btn-gold" href="tel:{PHONE_LINK}">{ICON_PHONE}Call {PHONE_DISPLAY}</a>
+    <a class="btn btn-light" href="{HERO_DOORS[door]}">{ICON_PEN}Start Online Intake</a>
+  </div>"""
 
 def esc(t): return html.escape(t, quote=True)
 
@@ -519,6 +544,7 @@ def page(p):
   cheating-spouse and adultery evidence, background checks, custody documentation, insurance claim
   work and investigative support for law firms. Covering {esc(covers)}. Free confidential
   consultation.</p>
+{hero_actions()}
 </div></div>
 
 <section><div class="wrap">
@@ -711,6 +737,7 @@ def hub():
   <p class="lede">We are licensed and insured in Virginia and have worked Central Virginia since 2014 —
   from Lynchburg and Roanoke to Charlottesville, Danville, Farmville and the counties in between. Pick
   your area below, or simply call; the first conversation is free and confidential.</p>
+{hero_actions()}
 </div></div>
 
 <section><div class="wrap">

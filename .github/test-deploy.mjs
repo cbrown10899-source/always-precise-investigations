@@ -1010,6 +1010,38 @@ section('The manifest describes the site honestly');
     if (!/href="tel:\+14349070975"/.test(bar) || doors.length !== 1 || doors[0] !== DOOR(f)) wrongDoor.push(`${rel(f)}: ${doors.join(',') || 'no bar'}`);
   }
   ok('every page has the phone bar, its Call is the firm, and its intake is that page\'s own door', wrongDoor.length === 0, wrongDoor.join(' | '));
+  /* THE PRINTED NUMBER IS BACK IN THE HEADER (owner, 2026-11-07). The redesign
+     of 2026-10-10 dropped it, and a desktop visitor on a city page then had no
+     number and no button in the first screen. The DIGITS must be visible text,
+     not just a tel: link behind a word, because a desktop dials nothing. */
+  const hdr = [...heads][0] || '';
+  ok('the header prints (434) 907-0975 as a link that dials the firm, outside the six-item nav',
+     /<a class="head-call" href="tel:\+14349070975">(?:(?!<\/a>)[\s\S])*\(434\) 907-0975(?:(?!<\/a>)[\s\S])*<\/a>/.test(hdr)
+     && !/head-call/.test((hdr.match(/<nav class="site-nav"[\s\S]*?<\/nav>/) || [''])[0]));
+  const noDigits = marketing.filter(f => !/<div class="mobile-actions"[\s\S]*?<span class="ma-num">\(434\) 907-0975<\/span>[\s\S]*?<\/div>/.test(readAll(f))).map(rel);
+  ok('every phone bar prints the digits under Call Privately', noDigits.length === 0, noDigits.join(' | '));
+
+  /* EVERY LANDING PAGE OFFERS CALL AND INTAKE IN ITS HERO, EACH THROUGH ITS OWN
+     DOOR (same audit). The city pages and the hub open the private door with
+     nothing preselected; Infidelity and Child Custody open the same door on
+     their own answer. Every landing page is checked, not "at least one". */
+  const LANDING = { 'private-investigator/index.html': '/intake/?assignment=private',
+    'infidelity-investigations/index.html': '/intake/?assignment=private&amp;service=relationship',
+    'child-custody-investigations/index.html': '/intake/?assignment=private&amp;service=custody' };
+  for (const c of ['lynchburg', 'bedford', 'roanoke', 'charlottesville', 'danville', 'farmville'])
+    LANDING[`private-investigator/${c}-va/index.html`] = '/intake/?assignment=private';
+  const badHero = [];
+  for (const [f, door] of Object.entries(LANDING)) {
+    const t = readAll(path.join(site, f));
+    const hero = (t.match(/<div class="hero"><div class="wrap">[\s\S]*?<\/div><\/div>/) || [''])[0];
+    const acts = [...hero.matchAll(/<a class="btn[^"]*" href="([^"]+)">((?:(?!<\/a>)[\s\S])*)<\/a>/g)]
+      .map(m => [m[1], m[2].replace(/<[^>]+>/g, '').trim()]);
+    const ok1 = acts.length === 2 && acts[0][0] === 'tel:+14349070975' && acts[0][1] === 'Call (434) 907-0975'
+      && acts[1][0] === door && acts[1][1] === 'Start Online Intake' && /<h1>/.test(hero);
+    if (!ok1) badHero.push(`${f}: ${JSON.stringify(acts)}`);
+  }
+  ok('all nine landing pages carry Call (434) 907-0975 and Start Online Intake in the hero, each through its own door',
+     badHero.length === 0, badHero.join(' | '));
   const badTel = marketing.filter(f => [...readAll(f).matchAll(/href="tel:([^"]+)"/g)].some(m => m[1] !== '+14349070975')).map(rel);
   ok('every tel: link on the public site dials (434) 907-0975', badTel.length === 0, badTel.join(' | '));
 
@@ -1027,7 +1059,14 @@ section('The manifest describes the site honestly');
     'Getting started is simple.', 'Tell us your concern', 'Discuss your options', 'Choose your next step',
     'Call Privately', 'Online Intake'])
     ok(`the homepage carries the approved copy: "${line}"`, homeTxt.toLowerCase().includes(line.toLowerCase()));
-  ok('the homepage H1 is the approved line', /<h1[^>]*>When you need answers, start here\.<\/h1>/.test(home));
+  /* THE H1 NAMES THE SERVICE AND THE PLACE, AND THE OWNER'S LINE STANDS UNDER IT
+     (owner, 2026-11-07, docs/SEO-AUDIT-2026-11.md). The line is not dropped:
+     it must be the very next element, word for word. */
+  ok('the homepage H1 is the approved heading',
+     /<h1[^>]*>Private Investigator in Lynchburg &amp; Central Virginia<\/h1>/.test(home));
+  ok('and the owner\'s line stands directly beneath it',
+     /<\/h1>\s*<p class="standfirst">When you need answers, start here\.<\/p>/.test(home));
+  ok('there is exactly one H1 on the homepage', (home.match(/<h1[\s>]/g) || []).length === 1);
   const card = k => (home.match(new RegExp(`<a class="art art-${k}" href="([^"]+)"`)) || [])[1];
   ok('the Child Custody card opens the private intake on Child Custody', card('custody') === '/intake/?assignment=private&amp;service=custody', card('custody'));
   ok('the Spouse / Relationship card opens the same intake on Spouse / Relationship', card('relationship') === '/intake/?assignment=private&amp;service=relationship', card('relationship'));
