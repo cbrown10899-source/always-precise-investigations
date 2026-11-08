@@ -210,8 +210,11 @@ await run('The beacon on the real pages', async () => {
   ok('the journey recorded the visitor, the visit and the page',
     rowsOf(env, 'SELECT COUNT(*) AS n FROM visitor')[0].n === 1 && rowsOf(env, "SELECT service FROM visitor_event WHERE kind = 'page'")[0].service === 'custody');
 
-  // The custody page's own door into the intake.
-  await page.locator('.cta a[href*="/intake/"]').first().click();
+  // The custody page's own door, through the chooser, into the intake.
+  await page.locator('.cta a[href*="/get-started/"]').first().click();
+  await page.waitForURL(/\/get-started\//);
+  await humanOn(page);
+  await page.locator('a.choice:not(.quick)').click();
   await page.waitForURL(/\/intake\//);
   await humanOn(page);
   await settle(page, 700);
@@ -320,7 +323,10 @@ await run('Analytics fails open: the Worker unreachable changes nothing on the s
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(ORIGIN + '/child-custody-investigations/');
   await humanOn(page);
-  await page.locator('.cta a[href*="/intake/"]').first().click();
+  await page.locator('.cta a[href*="/get-started/"]').first().click();
+  await page.waitForURL(/\/get-started\//);
+  await humanOn(page);
+  await page.locator('a.choice:not(.quick)').click();
   await page.waitForURL(/\/intake\//);
   ok('the intake button still navigates', page.url().includes('/intake/') && page.url().includes('service=custody'));
   const set = (k, v) => page.locator(`[data-k="${k}"]`).fill(v);
