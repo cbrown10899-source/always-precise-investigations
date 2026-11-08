@@ -1032,11 +1032,13 @@ section('The manifest describes the site honestly');
      DOOR (same audit). The city pages and the hub open the private door with
      nothing preselected; Infidelity and Child Custody open the same door on
      their own answer. Every landing page is checked, not "at least one". */
-  const LANDING = { 'private-investigator/index.html': '/intake/?assignment=private',
-    'infidelity-investigations/index.html': '/intake/?assignment=private&amp;service=relationship',
-    'child-custody-investigations/index.html': '/intake/?assignment=private&amp;service=custody' };
+  /* Since 2026-11-08 they open the two-option chooser, carrying the page's
+     investigation type, so the chooser's Detailed Intake opens on it. */
+  const LANDING = { 'private-investigator/index.html': '/get-started/',
+    'infidelity-investigations/index.html': '/get-started/?service=relationship',
+    'child-custody-investigations/index.html': '/get-started/?service=custody' };
   for (const c of ['lynchburg', 'bedford', 'roanoke', 'charlottesville', 'danville', 'farmville'])
-    LANDING[`private-investigator/${c}-va/index.html`] = '/intake/?assignment=private';
+    LANDING[`private-investigator/${c}-va/index.html`] = '/get-started/';
   const badHero = [];
   for (const [f, door] of Object.entries(LANDING)) {
     const t = readAll(path.join(site, f));
@@ -1075,8 +1077,8 @@ section('The manifest describes the site honestly');
      /<\/h1>\s*<p class="standfirst">When you need answers, start here\.<\/p>/.test(home));
   ok('there is exactly one H1 on the homepage', (home.match(/<h1[\s>]/g) || []).length === 1);
   const card = k => (home.match(new RegExp(`<a class="art art-${k}" href="([^"]+)"`)) || [])[1];
-  ok('the Child Custody card opens the private intake on Child Custody', card('custody') === '/intake/?assignment=private&amp;service=custody', card('custody'));
-  ok('the Spouse / Relationship card opens the same intake on Spouse / Relationship', card('relationship') === '/intake/?assignment=private&amp;service=relationship', card('relationship'));
+  ok('the Child Custody card opens the chooser carrying Child Custody', card('custody') === '/get-started/?service=custody', card('custody'));
+  ok('the Spouse / Relationship card opens the chooser carrying Spouse / Relationship', card('relationship') === '/get-started/?service=relationship', card('relationship'));
   /* EVERY link with that label — the hero's and the contact section's. Checking
      that one well-formed copy exists passed a mutation that preselected the
      other (the M12 lesson, 2026-10-10). */
@@ -1139,6 +1141,17 @@ section('The manifest describes the site honestly');
      /<meta name="robots" content="noindex">/.test(iq)
      && /^\/inquiry\/\*\s*\n  Cache-Control: no-store\n  X-Robots-Tag: noindex, nofollow, noarchive\n  Referrer-Policy: no-referrer/m.test(readAll(path.join(site, '_headers'))));
   ok('the inquiry is not in the sitemap', !/\/inquiry\//.test(readAll(path.join(site, 'sitemap.xml'))));
+  /* EVERY PUBLIC PRIVATE-CLIENT INTAKE BUTTON OPENS THE CHOOSER (owner,
+     2026-11-08). Written as a class over every public page, so a new button
+     wired straight to the private intake fails here by name. The chooser is
+     the one page that links into it; Legal and Insurance keep their doors. */
+  const straight = publicPages.filter(f => !/^(intake|get-started)[\\/]/.test(rel(f)))
+    .filter(f => /href="[^"]*\/intake\/(\?assignment=private[^"]*)?"/.test(readAll(f).replace(/<script[\s\S]*?<\/script>/g, ''))).map(rel);
+  ok('no public page links straight into the private intake — every private button opens the chooser',
+     straight.length === 0, straight.join(' | '));
+  ok('the chooser carries a known type into Option 2, and only the private intake\'s own keys',
+     /var KEYS = \{ custody: 1, relationship: 1, other: 1, process: 1 \};/.test(gs)
+     && /a\.setAttribute\("href", "\/intake\/\?assignment=private&service=" \+ s\)/.test(gs));
   ok('and the detailed intake is still published, and the chooser links it',
      files.includes('intake/index.html') && files.includes('get-started/index.html')
      && /href="\/intake\/\?assignment=private"/.test(gs));

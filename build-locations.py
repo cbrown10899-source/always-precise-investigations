@@ -321,9 +321,13 @@ def site_footer(current="", door="private"):
 # passes its own door: the city pages and the hub the private door, Infidelity
 # and Child Custody the same door with their answer preselected. The hand-written
 # pages carry these bytes, and a deploy guard holds every one to its door.
-HERO_DOORS = {"private": "/intake/?assignment=private",
-              "custody": "/intake/?assignment=private&amp;service=custody",
-              "relationship": "/intake/?assignment=private&amp;service=relationship"}
+# Since 2026-11-08 every public private-client intake button opens the
+# two-option chooser, carrying the page's investigation type so the chooser's
+# Detailed Intake opens on it (owner: "preserve the investigation type when
+# known"). The chooser itself holds the one link into /intake/.
+HERO_DOORS = {"private": "/get-started/",
+              "custody": "/get-started/?service=custody",
+              "relationship": "/get-started/?service=relationship"}
 
 def hero_actions(door="private"):
     return f"""  <div class="hero-acts">

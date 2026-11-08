@@ -216,12 +216,12 @@ async function checkTapFloor(pg, id, where, selector, who, floor = 44) {
   await pg.goto(SITE + '/');
   await pg.waitForTimeout(300);
   const doors = await pg.evaluate(() => ({
-    cards: [...document.querySelectorAll('a[href*="/intake/"]')].map(a => a.getAttribute('href')),
+    cards: [...document.querySelectorAll('a[href*="/intake/"], a[href^="/get-started/"]')].map(a => a.getAttribute('href')),
     tel: !!document.querySelector('a[href^="tel:"]'),
   }));
   gate('home:doors', doors.cards.some(h => h.includes('assignment=insurance'))
     && doors.cards.some(h => h.includes('assignment=legal'))
-    && doors.cards.some(h => h.includes('assignment=private')), 'FAIL', {
+    && doors.cards.some(h => h.startsWith('/get-started/')), 'FAIL', {
     what: 'The homepage is missing one of the three intake doors.',
     why: 'A client who cannot find their door phones instead — the delay the portal exists to remove.',
     path: 'Open / and look for the three cards.', fix: 'Restore the missing card link.',

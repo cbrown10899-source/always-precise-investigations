@@ -17740,7 +17740,14 @@ const CLIENT_INTAKE_TYPES = [
   ['background', 'Background / Due Diligence'], ['civil', 'Civil / Legal Support'],
   ['other', 'Other'],
 ];
-const CLIENT_INTAKE_CONTACT = [['call', 'Phone call'], ['text', 'Text message'], ['email', 'Email']];
+/* BEST TIME TO CONTACT YOU (owner, 2026-11-08): the staff-prepared intake asks
+   the same optional section as the public forms — Call / Text / Either, a best
+   time, and "please text before calling". Email stays a choice here because
+   this form always offered it; nothing a client could choose before is gone. */
+const CLIENT_INTAKE_CONTACT = [['call', 'Phone call'], ['text', 'Text message'], ['either', 'Either'],
+  ['email', 'Email']];
+const CLIENT_INTAKE_BEST = [['morning', 'Morning (8 AM–12 PM)'], ['afternoon', 'Afternoon (12 PM–5 PM)'],
+  ['evening', 'Evening (5 PM–9 PM)'], ['anytime', 'Anytime'], ['custom', 'Custom time']];
 const CLIENT_INTAKE_URGENCY = [['standard', 'Standard'], ['soon', 'Within the next few days'],
   ['urgent', 'Urgent — as soon as possible']];
 const CIL_TOKEN_RE = /^[0-9a-f]{64}$/;
@@ -18444,6 +18451,7 @@ async function cilPublicRead(env, token) {
     payment: await cilPayBlock(env, row),
     types: CLIENT_INTAKE_TYPES.map(([value, label]) => ({ value, label })),
     contact_methods: CLIENT_INTAKE_CONTACT.map(([value, label]) => ({ value, label })),
+    best_times: CLIENT_INTAKE_BEST.map(([value, label]) => ({ value, label })),
     urgency: CLIENT_INTAKE_URGENCY.map(([value, label]) => ({ value, label })),
   });
 }
@@ -18459,6 +18467,8 @@ function cilSubmittedFields(b) {
     full_name: t('full_name', 120), preferred_name: t('preferred_name', 80),
     phone: t('phone', 40), email: t('email', 200), address: t('address', 300),
     contact_method: t('contact_method', 20),
+    best_time: t('best_time', 20), best_time_custom: t('best_time_custom', 80),
+    text_before_call: b.text_before_call === true ? 'yes' : '',
     investigation_type: t('investigation_type', 20), type_other: t('type_other', 120),
     description: long('description'),
     subject_name: t('subject_name', 120), subject_age: t('subject_age', 60),
@@ -18491,6 +18501,11 @@ function cilSubmittedFields(b) {
   }
   if (f.email && !cilEmailOk(f.email)) return { error: 'That email address does not look complete.', code: 'bad_email' };
   if (f.contact_method && !CLIENT_INTAKE_CONTACT.some(([v]) => v === f.contact_method)) f.contact_method = '';
+  /* A best time is one of the list or nothing; a custom time is kept only when
+     Custom was the choice, and Custom with nothing typed is no answer at all. */
+  if (f.best_time && !CLIENT_INTAKE_BEST.some(([v]) => v === f.best_time)) f.best_time = '';
+  if (f.best_time !== 'custom') f.best_time_custom = '';
+  if (f.best_time === 'custom' && !f.best_time_custom) f.best_time = '';
   if (!CLIENT_INTAKE_TYPES.some(([v]) => v === f.investigation_type)) {
     return { error: 'Please choose the type of investigation.', code: 'type_required' };
   }
@@ -18538,6 +18553,11 @@ function cilPayload(caseNo, row, f, terms, termsHash, sig, signedName, signedAt)
     service: type,
     client_name: f.full_name, client_phone: f.phone, client_email: f.email,
     client_address: f.address,
+    /* The same three keys the public forms write, so every intake screen and
+       the record packet read them one way. Office-only by the allow-list. */
+    preferred_contact: label(CLIENT_INTAKE_CONTACT, f.contact_method),
+    best_time: f.best_time === 'custom' ? f.best_time_custom : label(CLIENT_INTAKE_BEST, f.best_time),
+    text_before_call: f.text_before_call ? 'Yes' : '',
     subject_name: f.subject_name, subject_address: f.subject_address,
     subject_description: desc, objective: f.objective, known_schedule: f.known_schedule,
     timeline: f.description, notes, start_date: f.start_date,

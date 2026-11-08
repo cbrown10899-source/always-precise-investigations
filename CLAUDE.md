@@ -1032,9 +1032,22 @@ everything else, and the tests assert it over the new markup.
 Owner, 2026-11-07. **"Fill Out Online Intake"** (both homepage buttons) and the
 private phone bar's **"Online Intake"** open `/get-started/`: **Option 1, Quick
 Confidential Inquiry** (`/inquiry/`) or **Option 2, Detailed Investigation
-Intake** (`/intake/?assignment=private`, unchanged). Discreet Phone Call, the
-photo cards, the city/service hero buttons and the Legal and Insurance doors
-still open their intakes directly.
+Intake** (`/intake/?assignment=private`, unchanged). **Since 2026-11-08 every
+public private-client door opens the chooser** — the photo cards, the custody and
+relationship pages and the city heroes too — carrying `?service=` when the page
+knows the type, which the chooser's own script copies onto Option 2 only
+(private keys only; the quick inquiry is never handed it). A deploy guard fails
+any public page outside `intake/` and `get-started/` that links the private
+intake directly. Discreet Phone Call and the Legal and Insurance doors still
+open their intakes directly.
+
+**The staff-sent client intake asks the same three** (`/intake/client/`):
+preferred contact (Call / Text / Either / Email — Email kept because that form
+always offered it), best time (the four presets or Custom), and *Please text me
+before calling*, all optional. `cilSubmittedFields` drops anything outside the
+lists, `cilPayload` stores them under the same three top-level keys the public
+intakes use, and `#cidoc` prints them. The terms, their hash, the retainer and
+the payment options are untouched.
 
 **THE INQUIRY USES THE INTAKE'S OWN PLUMBING, AND ITS BOUNDARY.** One page, one
 Submit: name and phone (required), investigation type (required, the private

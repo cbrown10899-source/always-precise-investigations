@@ -32190,7 +32190,8 @@ function ciListHtml(){
 /* ---- one prepared intake, read in full ---------------------------------- */
 const CI_FIELDS = [
   ["1. Client information", [["full_name", "Full legal name"], ["preferred_name", "Preferred name"],
-    ["phone", "Phone"], ["email", "Email"], ["address", "Address"], ["contact_method", "Preferred contact method", "contact"]]],
+    ["phone", "Phone"], ["email", "Email"], ["address", "Address"], ["contact_method", "Preferred contact method", "contact"],
+    ["best_time", "Best time to contact", "best"], ["text_before_call", "Please text before calling", "yes"]]],
   ["2. Type of investigation", [["investigation_type", "Type", "type"], ["type_other", "Other — described"],
     ["description", "Description and timeline"]]],
   ["3. Subject information", [["subject_name", "Subject name"], ["subject_age", "Approximate age / DOB"],
@@ -32205,13 +32206,19 @@ const CI_FIELDS = [
     ["start_location", "Starting location"], ["safety_notes", "Access, parking and safety"], ["urgency", "Urgency", "urgency"]]],
 ];
 const CI_WORDS = {
-  contact: { call: "Phone call", text: "Text message", email: "Email" },
+  contact: { call: "Phone call", text: "Text message", either: "Either", email: "Email" },
+  /* Best time to contact (owner, 2026-11-08). A custom time prints what the
+     client typed; "yes" is the text-before-calling box. */
+  best: { morning: "Morning (8 AM–12 PM)", afternoon: "Afternoon (12 PM–5 PM)", evening: "Evening (5 PM–9 PM)",
+    anytime: "Anytime" },
+  yes: { yes: "Yes" },
   type: { surveillance: "Surveillance", domestic: "Domestic / Infidelity", custody: "Custody / Family Matter",
     locate: "Person Locate", background: "Background / Due Diligence", civil: "Civil / Legal Support", other: "Other" },
   urgency: { standard: "Standard", soon: "Within the next few days", urgent: "Urgent — as soon as possible" },
 };
 function ciFieldValue(f, k, words){
   const v = f[k];
+  if(k === "best_time" && v === "custom") return f.best_time_custom || "";
   if(v) return words ? (CI_WORDS[words][v] || v) : v;
   const st = f[k + "_status"] || (k.startsWith("vehicle_") && !["vehicle_more"].includes(k) ? f.vehicle_status : "");
   return st === "unknown" ? "Not known to the client" : "";
