@@ -24928,6 +24928,62 @@ section('Client intake links: the link is unpredictable and carries nothing abou
      (await call(env, '/client-intake/XYZ')).status === 401);
 }
 
+/* BEST TIME TO CONTACT YOU on the staff-prepared intake (owner, 2026-11-08):
+   the public forms' optional section — Call / Text / Either (Email kept), a
+   best time from the list or a custom time, and "please text before calling".
+   Saved in the client's own record and on the same three payload keys the
+   public forms write; nothing about the terms or the retainer moves. */
+section('Client intake links: the contact preferences are offered, optional and saved');
+{
+  const { env, admin } = await cilSetup();
+  const { j } = await cilMake(env, admin, { retainer_choice: '2000' });
+  const tok = cilTok(j.link);
+  const rd = await jsonOf(await call(env, `/client-intake/${tok}`));
+  ok('the link offers Call / Text / Either and keeps Email',
+     JSON.stringify(rd.contact_methods.map(o => o.value)) === JSON.stringify(['call', 'text', 'either', 'email']), JSON.stringify(rd.contact_methods));
+  ok('and the four best times plus Custom, in the owner\'s words',
+     JSON.stringify(rd.best_times.map(o => o.label)) === JSON.stringify(['Morning (8 AM–12 PM)', 'Afternoon (12 PM–5 PM)',
+       'Evening (5 PM–9 PM)', 'Anytime', 'Custom time']), JSON.stringify(rd.best_times));
+  let res = await call(env, `/client-intake/${tok}/submit`, { method: 'POST',
+    body: cilClientBody(rd, { contact_method: 'either', best_time: 'custom', best_time_custom: 'Weekdays after 6 PM', text_before_call: true }) });
+  const sub = await jsonOf(res);
+  ok('a submission carrying the preferences is accepted', res.status === 200 && sub.ok, JSON.stringify(sub));
+  const pl = JSON.parse((await env.DB.prepare('SELECT payload FROM submissions WHERE case_no = ?').bind(sub.case_no).first()).payload);
+  ok('the client\'s own record keeps them as chosen',
+     pl.client_intake.contact_method === 'either' && pl.client_intake.best_time === 'custom'
+     && pl.client_intake.best_time_custom === 'Weekdays after 6 PM' && pl.client_intake.text_before_call === 'yes', JSON.stringify(pl.client_intake));
+  ok('and the intake screens\' three keys read them in words',
+     pl.preferred_contact === 'Either' && pl.best_time === 'Weekdays after 6 PM' && pl.text_before_call === 'Yes',
+     JSON.stringify([pl.preferred_contact, pl.best_time, pl.text_before_call]));
+  ok('the signed terms are untouched by them', pl.retainer_terms.retainer_cents === 200000 && pl.signed_name === 'Jordan Q. Client');
+
+  const { j: j2 } = await cilMake(env, admin, { retainer_choice: '2000' });
+  const t2 = cilTok(j2.link); const rd2 = await jsonOf(await call(env, `/client-intake/${t2}`));
+  const s2 = await jsonOf(await call(env, `/client-intake/${t2}/submit`, { method: 'POST',
+    body: cilClientBody(rd2, { contact_method: 'carrier pigeon', best_time: 'midnight', best_time_custom: 'ignored', text_before_call: 'true' }) }));
+  const p2 = JSON.parse((await env.DB.prepare('SELECT payload FROM submissions WHERE case_no = ?').bind(s2.case_no).first()).payload);
+  ok('a value outside the lists is dropped, a stray custom text is not kept, and only a real true ticks the box',
+     s2.ok && p2.client_intake.contact_method === '' && p2.client_intake.best_time === '' && p2.client_intake.best_time_custom === ''
+     && p2.client_intake.text_before_call === '' && p2.preferred_contact === '' && p2.best_time === '' && p2.text_before_call === '',
+     JSON.stringify(p2.client_intake));
+
+  const { j: j3 } = await cilMake(env, admin, { retainer_choice: '2000' });
+  const t3 = cilTok(j3.link); const rd3 = await jsonOf(await call(env, `/client-intake/${t3}`));
+  const s3 = await jsonOf(await call(env, `/client-intake/${t3}/submit`, { method: 'POST',
+    body: cilClientBody(rd3, { best_time: 'custom', best_time_custom: '' }) }));
+  const p3 = JSON.parse((await env.DB.prepare('SELECT payload FROM submissions WHERE case_no = ?').bind(s3.case_no).first()).payload);
+  ok('Custom with nothing typed is no answer, and leaving it all blank still submits',
+     s3.ok && p3.client_intake.best_time === '' && p3.best_time === '' && p3.preferred_contact === '', JSON.stringify(p3.client_intake));
+  const { j: j4 } = await cilMake(env, admin, { retainer_choice: '2000' });
+  const t4 = cilTok(j4.link); const rd4 = await jsonOf(await call(env, `/client-intake/${t4}`));
+  const s4 = await jsonOf(await call(env, `/client-intake/${t4}/submit`, { method: 'POST',
+    body: cilClientBody(rd4, { contact_method: 'text', best_time: 'morning', best_time_custom: 'left over from a change of mind' }) }));
+  const p4 = JSON.parse((await env.DB.prepare('SELECT payload FROM submissions WHERE case_no = ?').bind(s4.case_no).first()).payload);
+  ok('a preset time is stored as its own words, and custom text typed before switching is not kept',
+     s4.ok && p4.best_time === 'Morning (8 AM–12 PM)' && p4.preferred_contact === 'Text message'
+     && p4.client_intake.best_time_custom === '' && p4.text_before_call === '', JSON.stringify([p4.best_time, p4.preferred_contact, p4.client_intake.best_time_custom]));
+}
+
 section('Client intake links: the client reads the terms and cannot change them');
 {
   const { env, admin } = await cilSetup();

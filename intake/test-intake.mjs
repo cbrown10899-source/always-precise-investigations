@@ -1128,7 +1128,8 @@ section('The homepage leads with the private paths and keeps every door');
   /* IT CHECKS THE DOORS, NOT THE WORDS — the lesson of the first widening,
      which matched the word "legal" in a comment and passed with the Legal card
      removed. Each audience is proven by its own intake door. */
-  const doors = ['insurance', 'legal', 'private'].filter(k => top.includes(`/intake/?assignment=${k}`));
+  /* The private door is the two-option chooser since 2026-11-07/08. */
+  const doors = ['insurance', 'legal', 'private'].filter(k => top.includes(k === 'private' ? '/get-started/' : `/intake/?assignment=${k}`));
   ok('the top of the page offers insurance, legal and private clients their own doors',
      doors.length === 3, `doors found: ${doors.join(', ') || 'none'}`);
   const anchors = [...src.matchAll(/<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g)]
@@ -1146,15 +1147,15 @@ section('The homepage leads with the private paths and keeps every door');
   ok('every Fill Out Online Intake opens the two-option chooser',
      fill.length === 2 && fill.every(a => a.href === '/get-started/'), JSON.stringify(fill.map(a => a.href)));
   const starts = all('Start Intake').map(a => a.href);
-  ok('the two photo cards open the SAME private intake, each on its own answer',
-     JSON.stringify(starts) === JSON.stringify(['/intake/?assignment=private&service=custody', '/intake/?assignment=private&service=relationship']),
+  ok('the two photo cards open the SAME chooser, each carrying its own answer',
+     JSON.stringify(starts) === JSON.stringify(['/get-started/?service=custody', '/get-started/?service=relationship']),
      JSON.stringify(starts));
   ok('Online Intake on the phone bar opens the same chooser',
      all('Online Intake').filter(a => a.text === 'Online Intake').length === 1
      && all('Online Intake').filter(a => a.text === 'Online Intake').every(a => a.href === '/get-started/'));
   ok('and no homepage label reaches a door meant for another audience',
      [...insDoors, ...legDoors].every(a => !a.href.includes('assignment=private'))
-     && all('Start Intake').every(a => a.href.startsWith('/intake/?assignment=private'))
+     && all('Start Intake').every(a => a.href.startsWith('/get-started/?service='))
      && fill.every(a => a.href === '/get-started/'));
   ok('no bare /intake/ link on the homepage either', (src.match(/href="\/intake\/"/g) || []).length === 0);
   ok('the Discreet Phone Call and the phone bar both dial the firm',
@@ -2036,8 +2037,8 @@ section('Redesign — two photo cards into one private intake');
      cards.map(c => c.title).join(' | ') === 'Child Custody | Spouse / Relationship', cards.map(c => c.title).join(' | '));
   for (const [k, title] of CARDS) {
     const c = cards.find(x => x.title === title) || {};
-    ok(`"${title}" opens the private intake with its own answer chosen`,
-       c.href === `/intake/?assignment=private&service=${k}`, c.href);
+    ok(`"${title}" opens the chooser carrying its own answer`,
+       c.href === `/get-started/?service=${k}`, c.href);
   }
   ok('each card is a real anchor with nothing focusable inside it', cards.every(c => c.tag === 'A' && c.focusables === 0));
   ok('the artwork is decorative on both, and no meaning rides on an <img>',
@@ -2066,7 +2067,14 @@ section('Redesign — each action opens the door it names');
     const { ctx, page } = await homePage(1280);
     await page.locator(`a.art-${k}`).click();
     await page.waitForLoadState('networkidle');
-    const landed = await page.evaluate(() => ({ url: location.pathname + location.search, svc: S.svc,
+    /* Through the chooser (owner, 2026-11-08): the card lands there, and its
+       Detailed Intake opens the private intake on the card's own answer. */
+    const via = await page.evaluate(() => ({ url: location.pathname + location.search,
+      o2: (document.querySelector('a.choice:not(.quick)') || {}).getAttribute?.('href') }));
+    ok(`"${title}" lands on the chooser, whose Detailed Intake carries ${k}`,
+       via.url === `/get-started/?service=${k}` && via.o2 === `/intake/?assignment=private&service=${k}`, JSON.stringify(via));
+    if (via.o2) { await page.locator('a.choice:not(.quick)').click(); await page.waitForLoadState('networkidle'); }
+    const landed = await page.evaluate(() => ({ url: location.pathname + location.search, svc: typeof S === 'undefined' ? null : S.svc,
       h1: ((document.querySelector('h1') || {}).textContent || '').trim(),
       dollars: (document.body.innerText.match(/\$\s?\d[\d,]*/g) || []).slice(0, 3) }));
     ok(`"${title}" lands on the private intake with ${k} chosen`,
@@ -2252,7 +2260,7 @@ section('Redesign — contrast, focus and keyboard on the homepage');
     if (f) stops.push(f); else if (stops.length) break;
   }
   ok('tabbing reaches each card exactly once, Child Custody then Spouse / Relationship',
-     stops.map(s => s.href).join('|') === '/intake/?assignment=private&service=custody|/intake/?assignment=private&service=relationship',
+     stops.map(s => s.href).join('|') === '/get-started/?service=custody|/get-started/?service=relationship',
      JSON.stringify(stops.map(s => s.href)));
   ok('and the ring that appears is the 3px gold one', stops.length === 2 && stops.every(s => s.ring === '3px solid rgb(220, 186, 126)'),
      JSON.stringify(stops.map(s => s.ring)));
@@ -2718,20 +2726,27 @@ section('Child Custody page → CTA → private intake, preselected');
      assertion about it rather than throwing on the first one and taking the
      rest of the chain with it — the lesson the section above already paid for. */
   const door = await page.evaluate(() => {
-    const a = document.querySelector('.cta a[href*="/intake/"]');
-    return { n: document.querySelectorAll('.cta a[href*="/intake/"]').length,
+    const a = document.querySelector('.cta a[href*="/get-started/"]');
+    return { n: document.querySelectorAll('.cta a[href*="/get-started/"]').length,
+             bare: document.querySelectorAll('.cta a[href*="/intake/"]').length,
              href: a ? a.getAttribute('href') : null,
              text: a ? a.innerText : '',
              tel: document.querySelectorAll('.cta a[href^="tel:"]').length };
   });
-  ok('the page carries exactly one door into the intake', door.n === 1, String(door.n));
-  ok('and it is the PRIVATE door, carrying the custody preselect',
-     door.href === '/intake/?assignment=private&service=custody', String(door.href));
+  ok('the page carries exactly one door into the intake chooser', door.n === 1, String(door.n));
+  ok('and no door that skips the chooser', door.bare === 0, String(door.bare));
+  ok('it carries the custody type to the chooser',
+     door.href === '/get-started/?service=custody', String(door.href));
   ok('the label names the action in client language',
      /child custody/i.test(door.text), door.text);
   ok('the Call button is still there beside it', door.tel === 1, String(door.tel));
 
-  if (door.n) { await page.locator('.cta a[href*="/intake/"]').first().click(); }
+  if (door.n) { await page.locator('.cta a[href*="/get-started/"]').first().click(); await page.waitForTimeout(200); }
+  const opt2 = await page.locator('a.choice:not(.quick)').count() === 1
+    ? await page.locator('a.choice:not(.quick)').getAttribute('href') : null;
+  ok('it lands on the chooser, whose Option 2 opens the PRIVATE door on Child Custody',
+     page.url().includes('/get-started/') && opt2 === '/intake/?assignment=private&service=custody', String(opt2));
+  if (opt2) { await page.locator('a.choice:not(.quick)').click(); }
   else { await page.goto(BASE + '?assignment=private'); }
   await page.waitForTimeout(200);
   ok('it lands on the intake', page.url().includes('/intake/'));
@@ -2888,7 +2903,7 @@ section('The Child Custody door at 1200, 390 and 320');
     await page.waitForTimeout(140);
 
     const m = await page.evaluate(() => {
-      const a = document.querySelector('.cta a[href*="/intake/"]');
+      const a = document.querySelector('.cta a[href*="/get-started/"]');
       const r = a ? a.getBoundingClientRect() : { left: -1e6, right: 1e6, height: 0 };
       const tel = document.querySelector('.cta a[href^="tel:"]');
       const t = tel ? tel.getBoundingClientRect() : null;
@@ -2908,10 +2923,12 @@ section('The Child Custody door at 1200, 390 and 320');
 
     /* Follow it through at this width too — a door that is only measured is a
        door nobody has opened. */
-    const present = await page.locator('.cta a[href*="/intake/"]').count() === 1;
-    if (present) { await page.locator('.cta a[href*="/intake/"]').click(); await page.waitForTimeout(200); }
+    const present = await page.locator('.cta a[href*="/get-started/"]').count() === 1;
+    if (present) { await page.locator('.cta a[href*="/get-started/"]').click(); await page.waitForTimeout(200); }
+    const via = present && await page.locator('a.choice:not(.quick)').count() === 1;
+    if (via) { await page.locator('a.choice:not(.quick)').click(); await page.waitForTimeout(200); }
     ok(`at ${w} following it opens the intake on Child Custody`,
-       present && page.url().includes('/intake/')
+       via && page.url().includes('/intake/')
        && await page.evaluate(() => typeof S !== 'undefined' && S.svc === 'custody'));
     await page.close(); await ctx.close();
   }
@@ -3246,11 +3263,26 @@ for (const w of [390, 1280]) {
 section('Two ways in — the detailed intake is untouched and still reachable');
 {
   const { ctx, page } = await homePage(1280);
-  const formal = await page.evaluate(() => [...document.querySelectorAll('a[href^="/intake/"]')].map(a => a.getAttribute('href')));
-  ok('the homepage still links the custody, relationship, legal and insurance doors directly',
-     ['/intake/?assignment=private&service=custody', '/intake/?assignment=private&service=relationship',
-      '/intake/?assignment=legal', '/intake/?assignment=insurance'].every(h => formal.includes(h)), JSON.stringify(formal));
+  const hrefs = await page.evaluate(() => [...document.querySelectorAll('a[href]')].map(a => a.getAttribute('href')));
+  ok('the homepage links the legal and insurance doors directly, and custody and relationship through the chooser',
+     ['/get-started/?service=custody', '/get-started/?service=relationship',
+      '/intake/?assignment=legal', '/intake/?assignment=insurance'].every(h => hrefs.includes(h)), JSON.stringify(hrefs.filter(h => /intake|get-started/.test(h))));
+  ok('and no homepage link opens the private intake without the chooser',
+     !hrefs.some(h => /^\/intake\/(\?assignment=private.*)?$/.test(h)), JSON.stringify(hrefs.filter(h => /^\/intake\//.test(h))));
   await ctx.close();
+  /* The chooser carries the type into Option 2, and refuses anything that is
+     not one of the private intake's own answers. */
+  for (const [q, want] of [['custody', '/intake/?assignment=private&service=custody'],
+                           ['relationship', '/intake/?assignment=private&service=relationship'],
+                           ['claims', '/intake/?assignment=private'], ['', '/intake/?assignment=private']]) {
+    const pg = await browser.newPage();
+    await pg.goto(GS + (q ? '?service=' + q : '')); await pg.waitForTimeout(100);
+    const h = await pg.locator('a.choice:not(.quick)').getAttribute('href');
+    const quick = await pg.locator('a.choice.quick').getAttribute('href');
+    ok(`chooser ?service=${q || '(none)'}: Option 2 is ${want}, and Option 1 carries nothing`,
+       h === want && quick === '/inquiry/', JSON.stringify({ h, quick }));
+    await pg.close();
+  }
 }
 
 await browser.close();

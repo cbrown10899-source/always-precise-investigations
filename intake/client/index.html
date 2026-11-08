@@ -69,6 +69,9 @@
   .choice.sel{border-color:var(--teal-2);background:#f0f8fa;}
   .chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;}
   .chips .choice{margin:0;flex:1 1 140px;}
+  .bt-q{font-size:.86rem;font-weight:600;margin:4px 0 8px;}
+  .bt-col{margin-bottom:10px;}
+  .bt-tick{min-height:48px;align-items:center;}
 
   .terms{border:1px solid #cfe6ec;background:#f0f8fa;border-radius:10px;padding:4px 16px;margin:4px 0 14px;}
   /* EVERY CELL MAY SHRINK AND WRAP. The value used to be `nowrap` and the
@@ -224,6 +227,23 @@ function radios(k, list, opt){
     <span>${esc(o.label)}</span></label>`).join("");
 }
 
+/* BEST TIME TO CONTACT YOU (owner, 2026-11-08) — the public forms' optional
+   section, on this staff-prepared intake too. The choices come from the
+   portal (contact_methods, best_times), so the page holds no list of its own;
+   a portal that has not sent best_times yet draws only the contact method,
+   exactly as before. Nothing here is required. */
+function bestTimeSection(){
+  const times = S.data.best_times || [];
+  return `<h2 class="sub">Best time to contact you${OPT}</h2>
+    <div class="bt-q">Preferred contact method</div>
+    <div class="chips">${radios("contact_method", S.data.contact_methods)}</div>
+    ${times.length ? `<div class="bt-q">Best time to contact</div>
+    <div class="bt-col">${radios("best_time", times)}</div>
+    ${v("best_time") === "custom" ? field("best_time_custom", "Custom time", { ph: "e.g. weekdays after 6 PM" }) : ""}
+    <label class="chk bt-tick"><input type="checkbox" id="f_text_before_call" data-k="text_before_call" ${S.val.text_before_call ? "checked" : ""}>
+      <span>Please text me before calling.</span></label>` : ""}`;
+}
+
 function termsBlock(t){
   return `<div class="terms">${t.lines.map(l => `<div class="row${l.term ? " term" : ""}">
       <div class="lbl">${esc(l.label)}</div>
@@ -244,8 +264,7 @@ function stepHtml(){
       ${field("email", "Email", { type: "email", auto: "email" })}
     </div>
     ${field("address", "Address", { auto: "street-address" })}
-    <h2 class="sub">Preferred contact method${OPT}</h2>
-    <div class="chips">${radios("contact_method", S.data.contact_methods)}</div>`;
+    ${bestTimeSection()}`;
   if(key === "type") return `
     <p class="lead">Choose the one that fits best.</p>
     <fieldset style="border:0"><legend class="sr" style="position:absolute;left:-9999px">Type of investigation</legend>

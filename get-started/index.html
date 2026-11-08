@@ -87,6 +87,21 @@
     </a>
   </div>
 </main>
+<script>
+/* THE TYPE TRAVELS (owner, 2026-11-08). A button on a custody or relationship
+   page opens this chooser with ?service=; Option 2 then opens the detailed
+   intake already on that answer, through the intake's own existing ?service=
+   preselect. Only the private intake's own keys are carried, so a link can
+   never route a visitor onto a door this page does not offer. Without script,
+   Option 2 is the plain private intake, which still works. */
+(function(){
+  var KEYS = { custody: 1, relationship: 1, other: 1, process: 1 };
+  var s = ""; try{ s = new URLSearchParams(location.search).get("service") || ""; }catch(e){}
+  if(!Object.prototype.hasOwnProperty.call(KEYS, s)) return;
+  var a = document.querySelector('a.choice[href="/intake/?assignment=private"]');
+  if(a) a.setAttribute("href", "/intake/?assignment=private&service=" + s);
+})();
+</script>
 <script src="/beacon.js" defer></script>
 </body>
 </html>

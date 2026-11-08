@@ -33896,6 +33896,19 @@ try {
   await cp.locator('#f_full_name').fill('');
   await cp.locator('#next').click(); await cp.waitForTimeout(100);
   ok('the full legal name is required to continue', /full legal name/.test(await cp.locator('#err').innerText()));
+  /* BEST TIME TO CONTACT YOU (owner, 2026-11-08): optional, on the client's
+     first step, saved with the intake and printed on its PDF. */
+  ok('the first step asks the contact preferences, all optional',
+     await cp.locator('input[name="r_contact_method"][value="either"]').count() === 1
+     && await cp.locator('input[name="r_best_time"]').count() === 5
+     && await cp.locator('#f_text_before_call').count() === 1
+     && /Best time to contact you \(optional\)/.test(await cp.locator('[data-step="client"]').innerText()));
+  await cp.locator('input[name="r_contact_method"][value="text"]').check(); await cp.waitForTimeout(80);
+  ok('the custom box appears only once Custom is chosen', await cp.locator('#f_best_time_custom').count() === 0);
+  await cp.locator('input[name="r_best_time"][value="custom"]').check(); await cp.waitForTimeout(80);
+  await cp.locator('#f_best_time_custom').fill('Weekdays after 6 PM');
+  await cp.locator('#f_text_before_call').check();
+  await over('client with contact preferences');
   await stepFlow(async () => { await cp.locator('#f_full_name').fill('Morgan A. Phone-Client'); });
   ok('step 2 is the type of investigation', await cp.locator('[data-step="type"]').count() === 1);
   await cp.locator('#next').click(); await cp.waitForTimeout(100);
@@ -33995,6 +34008,15 @@ try {
     '6. Scheduling'].every(h => doc.t.includes(h)) && doc.t.includes('Not known to the client') && doc.t.includes('Toyota'));
   ok('and the signature comes after every financial term', doc.terms > 0 && doc.auth > doc.terms && doc.sigAfter && doc.sigLoaded,
      JSON.stringify({ terms: doc.terms, auth: doc.auth, sigAfter: doc.sigAfter, loaded: doc.sigLoaded }));
+  ok('the document prints the contact preferences the client chose',
+     /Preferred contact method:\s*Text message/.test(doc.t) && /Best time to contact:\s*Weekdays after 6 PM/.test(doc.t)
+     && /Please text before calling:\s*Yes/.test(doc.t),
+     (doc.t.match(/Preferred contact[^\n]*|Best time[^\n]*|Please text[^\n]*/g) || []).join(' | '));
+  ok('and the intake record holds them as the portal reads them', await page.evaluate(() => {
+    const p = (CI_OPEN.data.submission && CI_OPEN.data.submission.payload) || CI_OPEN.data.payload || {};
+    const x = typeof p === 'string' ? JSON.parse(p) : p;
+    return x.preferred_contact === 'Text message' && x.best_time === 'Weekdays after 6 PM' && x.text_before_call === 'Yes';
+  }).catch(() => false));
   ok('it carries the typed name, the time and the terms record', doc.t.includes('Morgan A. Phone-Client')
      && /Terms record \(SHA-256\): [0-9a-f]{64}/.test(doc.t) && doc.t.includes('$2,600'));
   const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 15000 }),
@@ -34003,6 +34025,7 @@ try {
   ok('Download completed PDF produces a PDF', bytes.startsWith('%PDF-1.4') && /\.pdf$/.test(dl.suggestedFilename()), dl.suggestedFilename());
   const pT = bytes.indexOf('(7. Retainer'), pNR = bytes.indexOf('Non-refundable portion: $2,600'),
         pSig = bytes.indexOf('(Signed below the retainer'), pImg = bytes.lastIndexOf(' Do Q');
+  ok('the PDF prints the contact preferences', bytes.includes('Weekdays after 6 PM') && bytes.includes('Please text before calling'));
   ok('in the PDF, the terms come before the authorization and the signature image after both',
      pT > 0 && pNR > pT && pSig > pNR && pImg > pSig, JSON.stringify({ pT, pNR, pSig, pImg }));
   ok('it is the firm\'s document: banner, footer page numbers', /\/Im1 Do/.test(bytes) && /Page 1 of \d/.test(bytes));
