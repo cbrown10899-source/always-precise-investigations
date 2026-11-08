@@ -34009,8 +34009,9 @@ try {
   ok('and the signature comes after every financial term', doc.terms > 0 && doc.auth > doc.terms && doc.sigAfter && doc.sigLoaded,
      JSON.stringify({ terms: doc.terms, auth: doc.auth, sigAfter: doc.sigAfter, loaded: doc.sigLoaded }));
   ok('the document prints the contact preferences the client chose',
-     /Preferred contact method\s*Text message/.test(doc.t) && /Best time to contact\s*Weekdays after 6 PM/.test(doc.t)
-     && /Please text before calling\s*Yes/.test(doc.t), doc.t.slice(0, 900));
+     /Preferred contact method:\s*Text message/.test(doc.t) && /Best time to contact:\s*Weekdays after 6 PM/.test(doc.t)
+     && /Please text before calling:\s*Yes/.test(doc.t),
+     (doc.t.match(/Preferred contact[^\n]*|Best time[^\n]*|Please text[^\n]*/g) || []).join(' | '));
   ok('and the intake record holds them as the portal reads them', await page.evaluate(() => {
     const p = (CI_OPEN.data.submission && CI_OPEN.data.submission.payload) || CI_OPEN.data.payload || {};
     const x = typeof p === 'string' ? JSON.parse(p) : p;
