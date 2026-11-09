@@ -18,18 +18,57 @@ FAIL=0
 ok()   { printf '  PASS  %s\n' "$1"; PASS=$((PASS+1)); }
 bad()  { printf '  FAIL  %s\n'   "$1"; printf '        %s\n' "$2"; FAIL=$((FAIL+1)); }
 note() { printf '  ----  %s\n' "$1"; }
+# A check that could not run because what it reads was never fetched. It
+# counts as a failure: "nothing was checked" must never read as a pass.
+not_checked() { bad "$1" "NOT CHECKED — $2"; }
 
-curljson() { curl -sS --max-time 20 "$@" 2>/dev/null; }
-code()     { local c; c=$(curl -sS --max-time 20 -o /dev/null -w '%{http_code}' "$@" 2>/dev/null); echo "${c:-000}"; }
+# curl's whole-request limit. Only test-verify.mjs shortens it, so a timeout
+# costs its suite seconds rather than minutes; the live run uses 20.
+MAXT="${VERIFY_MAX_TIME:-20}"
+
+# A request that did not complete reads as nothing: no partial body, and no
+# status code curl happened to see before the transfer failed.
+curljson() { local b; b=$(curl -sS --max-time "$MAXT" "$@" 2>/dev/null) || b=''; printf '%s' "$b"; }
+code()     { local c; c=$(curl -sS --max-time "$MAXT" -o /dev/null -w '%{http_code}' "$@" 2>/dev/null) || c=000; echo "${c:-000}"; }
+
+# fetch_page URL — a site page, read with its status: sets PAGE_CODE (000 when
+# the request did not complete) and leaves the body in PAGE_FILE, empty unless
+# the request completed. Checks grep the FILE: `printf "$big" | grep -q` under
+# pipefail reads a match as a miss once the page outgrows a pipe buffer.
+# SITE PAGES ONLY, never $API: test-worker.mjs finds the Worker probes as
+# $(code …)/$(curljson …) lines, and a probe written any other way would
+# escape its no-write guard.
+PAGE_FILE=$(mktemp) || { echo "verify.sh: could not create a temporary file" >&2; exit 2; }
+trap 'rm -f "$PAGE_FILE"' EXIT
+fetch_page() {
+  : > "$PAGE_FILE"
+  PAGE_CODE=$(curl -sS --max-time "$MAXT" -o "$PAGE_FILE" -w '%{http_code}' "$@" 2>/dev/null) || PAGE_CODE=000
+  PAGE_CODE=${PAGE_CODE:-000}
+  [ "$PAGE_CODE" = 000 ] && : > "$PAGE_FILE"
+}
+page_why() {
+  if [ "$PAGE_CODE" = 000 ]; then echo "no complete response (unreachable, refused or timed out)"
+  else echo "HTTP $PAGE_CODE"; fi
+}
 
 printf '\nChecking %s\n\n' "$SITE"
 
 # 1. The Worker answers on the site's own domain. If this fails nothing else
 #    matters — a portal on a workers.dev hostname cannot hold a session.
+#    Something answering is not enough: a detached route lets Pages answer
+#    with its own 404 page, so the body must be the Worker's health report.
+#    When this fails, 2 and 2b read nothing and say so.
 HEALTH=$(curljson "$API/health")
 if [ -z "$HEALTH" ]; then
   bad "the Worker answers at /portal-api/" \
       "No response. The route in wrangler.toml is not attached — run 'npx wrangler deploy' from case-portal/."
+  not_checked "the D1 binding and INGEST_KEY are both set" "the Worker did not answer (check 1)."
+  not_checked "every table this build expects is on the database" "the Worker did not answer (check 1)."
+elif ! grep -q '"ok":true' <<<"$HEALTH"; then
+  bad "the Worker answers at /portal-api/" \
+      "something answered, but not the portal Worker's health report — the route may be detached and Pages answering in its place."
+  not_checked "the D1 binding and INGEST_KEY are both set" "the Worker's health report was not received (check 1)."
+  not_checked "every table this build expects is on the database" "the Worker's health report was not received (check 1)."
 else
   ok "the Worker answers at /portal-api/ on the site's own domain"
 
@@ -165,29 +204,38 @@ else
   bad "the portal carries a Content-Security-Policy" "_headers is not being applied to /portal/*."
 fi
 
-# 7. The intake form is wired to the portal.
-INTAKE=$(curljson "$SITE/intake/")
-if [ -z "$INTAKE" ]; then
-  bad "the intake form is wired to the portal" "could not fetch $SITE/intake/ — nothing was checked."
-elif printf '%s' "$INTAKE" | grep -q 'PORTAL_INGEST_KEY = "PASTE_INGEST_KEY"'; then
+# 7. The intake form is wired to the portal. Only the intake page itself
+#    counts: a 404 page, an error or the homepage served in its place carries
+#    no placeholder either, and used to read as wired.
+fetch_page "$SITE/intake/"
+INTAKE_READ=0
+if [ "$PAGE_CODE" != 200 ]; then
+  bad "the intake form is wired to the portal" "could not read $SITE/intake/ — $(page_why); nothing was checked."
+elif ! grep -q 'PORTAL_INGEST_KEY' "$PAGE_FILE"; then
+  bad "the intake form is wired to the portal" \
+      "$SITE/intake/ answered 200, but it is not the intake form (no PORTAL_INGEST_KEY) — nothing was checked."
+elif grep -q 'PORTAL_INGEST_KEY = "PASTE_INGEST_KEY"' "$PAGE_FILE"; then
   # Match the placeholder AS THE ASSIGNED VALUE. The bare string also appears in
   # the page's own guard (`=== "PASTE_INGEST_KEY"`), which made this check fail
   # on a perfectly wired form for as long as the guard has existed.
+  INTAKE_READ=1
   bad "the intake form is wired to the portal" \
       "intake/index.html still has the placeholder — submissions will email but record nothing."
 else
+  INTAKE_READ=1
   ok "the intake form is wired to the portal"
 fi
 
 # 8. No price is published anywhere a visitor can reach. Quotes go out from
-#    the portal as rate sheets; a figure on the public site is a leak.
-if [ -n "$INTAKE" ]; then
-  if printf '%s' "$INTAKE" | grep -qE '\$[0-9]'; then
-    bad "the intake form publishes no price" \
-        "a dollar figure is in the served intake page — pricing belongs in the portal's rate sheets."
-  else
-    ok "the intake form publishes no price"
-  fi
+#    the portal as rate sheets; a figure on the public site is a leak. It reads
+#    the page check 7 fetched, and says so when there was none to read.
+if [ "$INTAKE_READ" != 1 ]; then
+  not_checked "the intake form publishes no price" "the intake form could not be read (check 7)."
+elif grep -qE '\$[0-9]' "$PAGE_FILE"; then
+  bad "the intake form publishes no price" \
+      "a dollar figure is in the served intake page — pricing belongs in the portal's rate sheets."
+else
+  ok "the intake form publishes no price"
 fi
 
 # 9. Internal files must 404 on the live site. Each of these was served
@@ -213,13 +261,40 @@ for p in pricing sheets summary users invites; do
   fi
 done
 
-# 11. The portal is hidden, not advertised: robots.txt must not mention it.
-ROBOTS=$(curljson "$SITE/robots.txt")
-if printf '%s' "$ROBOTS" | grep -qi 'portal'; then
-  bad "robots.txt does not advertise the portal" \
-      "a portal path is in robots.txt — that hides nothing and points straight at it."
+# 11. robots.txt is served, is a robots file, and does not advertise the
+#     portal. Until 2026-10-23 this only looked for the word "portal" in
+#     whatever came back — so a 404 page, an error, an empty answer or a site
+#     that was not there at all read as PASS. 11b and 11c read what 11a
+#     fetched, and say NOT CHECKED when there was nothing to read.
+fetch_page "$SITE/robots.txt"
+ROBOTS_READ=0
+if [ "$PAGE_CODE" != 200 ]; then
+  bad "robots.txt is served" "could not read $SITE/robots.txt — $(page_why)."
+elif [ ! -s "$PAGE_FILE" ]; then
+  bad "robots.txt is served" "HTTP 200 with an empty body — there is no robots file to check."
+elif ! grep -qiE '^[[:space:]]*user-agent:[[:space:]]*[^[:space:]]' "$PAGE_FILE"; then
+  bad "robots.txt is served" \
+      "HTTP 200, but no User-agent line — this is not a robots file (an error page or the wrong file?)."
 else
-  ok "robots.txt does not advertise the portal"
+  ROBOTS_READ=1
+  ok "robots.txt is served"
+fi
+if [ "$ROBOTS_READ" != 1 ]; then
+  not_checked "robots.txt points crawlers at the sitemap" "robots.txt could not be read (11a)."
+  not_checked "robots.txt does not advertise the portal" "robots.txt could not be read (11a)."
+else
+  if grep -qiE '^[[:space:]]*sitemap:[[:space:]]*https?://[^[:space:]]+/sitemap\.xml' "$PAGE_FILE"; then
+    ok "robots.txt points crawlers at the sitemap"
+  else
+    bad "robots.txt points crawlers at the sitemap" "no Sitemap line pointing at /sitemap.xml."
+  fi
+  # The portal is hidden, not advertised: robots.txt must not mention it.
+  if grep -qi 'portal' "$PAGE_FILE"; then
+    bad "robots.txt does not advertise the portal" \
+        "a portal path is in robots.txt — that hides nothing and points straight at it."
+  else
+    ok "robots.txt does not advertise the portal"
+  fi
 fi
 
 printf '\n  %s passed, %s failed\n\n' "$PASS" "$FAIL"
