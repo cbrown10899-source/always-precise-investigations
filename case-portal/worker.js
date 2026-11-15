@@ -368,6 +368,8 @@ async function handleIngest(request, env) {
 
   let p;
   try { p = JSON.parse(raw); } catch { return json({ error: 'invalid json' }, 400); }
+  // A body that is not an object (null, a number, a list) is not a submission.
+  if (!p || typeof p !== 'object' || Array.isArray(p)) return json({ error: 'invalid body' }, 400);
   const caseNo = String(p.case_no || '').trim();
   if (!caseNo) return json({ error: 'case_no is required' }, 400);
   // A case number reaches the admin's browser, so its shape is checked here
@@ -391,7 +393,11 @@ async function handleIngest(request, env) {
      only ever let a message through, never lose one. */
   const screen = await screenPublicForm(env, request, ingestFormOf(p), ingestTexts(p), pick(p, 'client_name', 'contact_name'));
   if (screen.refused) return json({ error: SPAM_RATE_MSG, code: 'rate_limited' }, 429);
-  if (screen.spam && await quarantineForm(env, {
+  /* A retry of a submission ALREADY on the desk is that submission, whatever
+     it scores now — it goes on to the identical-retry answer below. */
+  const onDesk = screen.spam && await env.DB.prepare(
+    'SELECT 1 FROM submissions WHERE case_no = ? AND payload = ?').bind(caseNo, raw).first();
+  if (screen.spam && !onDesk && await quarantineForm(env, {
     form: ingestFormOf(p), request_no: caseNo, name: pick(p, 'client_name', 'contact_name'),
     phone: pick(p, 'client_phone'), email: pick(p, 'client_email'), message: null, payload: raw,
     score: screen.score, reasons: screen.reasons,

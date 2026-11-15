@@ -262,7 +262,7 @@ $("iqForm").addEventListener("submit", async ev => {
   SCREEN = "";
   const stored = await recordInPortal(p);
   if(SCREEN === "limited"){ showDone(p, false); BUSY = false; return; }
-  const hold = SCREEN === "hold" || (bot && !stored);
+  const hold = SCREEN === "hold" || bot;
   const notified = hold ? true : await notifyFirm({
     case_no: p.case_no, type: "Website inquiry", service: p.service,
     contact_name: p.client_name, contact_phone: p.client_phone,

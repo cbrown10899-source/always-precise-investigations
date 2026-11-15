@@ -25585,6 +25585,21 @@ section('Spam screening: clearly identified spam is quarantined, kept, and nobod
      && await subExists(env, rec.case_no + '-R1'), JSON.stringify(rr));
 }
 
+section('Spam screening: a retry of a submission already on the desk is never split off into the folder');
+{
+  const { env } = await spamSetup();
+  const p = inquiry();
+  const first = await jsonOf(await formPost(env, '/ingest', p));
+  ok('scores under the line the first time, so it is on the desk', !('relay' in first) && await subExists(env, p.case_no));
+  const retry = await jsonOf(await formPost(env, '/ingest', p, { hp: 'autofill' }));
+  ok('its identical retry, even one that scores as spam, is the same submission — not quarantined', retry.duplicate === true
+     && (await spamCount(env)) === 0, JSON.stringify(retry));
+  for (const body of ['null', '7', '"x"', '[]']) {
+    const r = await call(env, '/ingest', { method: 'POST', headers: { 'X-Ingest-Key': env.INGEST_KEY }, body });
+    ok(`a body of ${body} is refused as not a submission`, r.status === 400, String(r.status));
+  }
+}
+
 section('Spam screening: repeated text is one signal, and with links it is held');
 {
   const { env } = await spamSetup();

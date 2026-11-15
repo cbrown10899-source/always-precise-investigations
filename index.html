@@ -529,6 +529,7 @@
                  'X-Form-Elapsed':String(CONTACT_OPENED ? Date.now() - CONTACT_OPENED : -1)},
         body:JSON.stringify({name:name, phone:phone, message:message})});
       var d = {}; try{ d = await r.json(); }catch(_){}
+      if(hp) return 'hold';
       if(r.ok) return d.relay === false ? 'hold' : 'send';
       if(r.status === 429 && d.code === 'rate_limited') return 'limited';
       if(r.status === 400 && d.code === 'invalid') return {invalid: d.error || 'Please check the form and try again.'};

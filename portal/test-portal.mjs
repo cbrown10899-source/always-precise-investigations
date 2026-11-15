@@ -34488,6 +34488,80 @@ try {
   }
 } catch (e) { ok('the section ran to its end without throwing', false, e && e.message); }
 
+/* PUBLIC-FORM SPAM SCREENING (owner brief 2026-11-15), end to end: the real
+   homepage and the real Worker, then the office's Spam folder in the portal. */
+section('Spam screening: the homepage form against the real Worker, and the Spam folder');
+try {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const hp = await ctx.newPage();
+  const relayed = [];
+  await hp.route('**api.web3forms.com/**', r => { relayed.push(JSON.parse(r.request().postData() || '{}'));
+    r.fulfill({ status: 200, contentType: 'application/json', body: '{"success":true}' }); });
+  await hp.route('**api-visitor-alerts**', r => r.fulfill({ status: 204, body: '' }));
+  /* The page carries the production submission key; this Worker runs on the
+     suite's own. Swap only the key, so everything else is the page's. */
+  await hp.route('**/portal-api/contact', r => r.continue({ headers: { ...r.request().headers(), 'x-ingest-key': 'e2e-ingest-key' } }));
+  await hp.goto(SITE + '/');
+  const send = async (name, message) => {
+    await hp.evaluate(() => openContact());
+    await hp.fill('#contactModal input[name=name]', name);
+    await hp.fill('#contactModal input[name=phone]', '434-555-0177');
+    await hp.fill('#contactModal textarea[name=message]', message);
+    await hp.click('#contactModal .send');
+    await hp.waitForFunction(() => !/Sending/.test(document.getElementById('c-status').textContent), null, { timeout: 8000 });
+    const st = await hp.textContent('#c-status');
+    await hp.evaluate(() => closeContact());
+    return st;
+  };
+  await hp.waitForTimeout(3200);   // a person's pace, so timing is not a signal here
+  let st = await send('Genuine Gail', 'My ex is not following the custody order. Can you help document it?');
+  ok('a genuine homepage message is emailed exactly as before', relayed.length === 1 && relayed[0].name === 'Genuine Gail' && /Thank you/.test(st), st);
+  st = await send('Growth Team', 'Hello, I came across your website and noticed it is not on the first page of Google. '
+    + 'Our SEO agency can increase your traffic. Reply STOP to unsubscribe.');
+  ok('an SEO pitch is not emailed, and the sender sees the ordinary thank-you', relayed.length === 1 && /Thank you/.test(st), st);
+  await ctx.close();
+
+  /* A held quick inquiry, through the real ingest, with the honeypot filled. */
+  await post('/ingest', { case_no: 'API-20261115-7311', intake_form: 'Quick confidential inquiry', service: 'Child Custody',
+    client_name: 'Held Hannah', client_phone: '4345550188', objective: 'Need help with custody.' },
+    { 'X-Ingest-Key': 'e2e-ingest-key', 'X-Form-Hp': 'filled by autofill' });
+
+  const page = await newPage();
+  await signIn(page, 'trever', 'AdminPassword1x');
+  await page.locator('.tabs button[data-tab="leads"]').click();
+  await page.waitForTimeout(500);
+  ok('the held inquiry is not on the Intakes desk', await page.locator('.pcard', { hasText: 'Held Hannah' }).count() === 0);
+  ok('the Spam folder is closed until asked for', await page.locator('[data-act="spamOpen"]').count() === 1
+     && await page.locator('.spamrow').count() === 0);
+  await page.locator('[data-act="spamOpen"]').first().click();
+  await page.waitForSelector('.spamrow', { timeout: 5000 });
+  const rows = await page.locator('.spamrow').allInnerTexts();
+  ok('the folder lists both held submissions with who, which form and why', rows.length === 2
+     && rows.some(t => /Growth Team/.test(t) && /Homepage message/.test(t) && /SEO pitch/.test(t))
+     && rows.some(t => /Held Hannah/.test(t) && /Quick inquiry/.test(t) && /hidden field filled/.test(t)), rows.join(' || '));
+  const hannah = page.locator('.spamrow', { hasText: 'Held Hannah' });
+  await hannah.locator('[data-do="release"]').click();
+  await page.waitForTimeout(800);
+  ok('Not spam puts it on the desk under its own number, and says nothing was emailed',
+     /API-20261115-7311/.test(await page.locator('.note', { hasText: 'Nothing was emailed' }).first().innerText().catch(() => ''))
+     && await page.locator('.pcard', { hasText: 'Held Hannah' }).count() >= 1);
+  page.once('dialog', d => d.accept());
+  await page.locator('.spamrow', { hasText: 'Growth Team' }).locator('[data-do="confirm"]').click();
+  await page.waitForTimeout(800);
+  ok('Confirm spam keeps it, under Confirmed spam', await page.locator('.spamrow').count() === 0
+     && /Confirmed spam \(1\)/.test(await page.locator('[data-act="spamStatus"][data-status="confirmed"]').innerText()));
+  await page.locator('[data-act="spamStatus"][data-status="confirmed"]').click();
+  await page.waitForSelector('.spamrow', { timeout: 5000 });
+  for (const w of [390, 320]) {
+    await page.setViewportSize({ width: w, height: 800 }); await page.waitForTimeout(250);
+    const m = await page.evaluate(() => ({ over: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      out: [...document.querySelectorAll('.spamrow, .spamrow button, [data-act^="spam"]')].filter(e => e.getBoundingClientRect().right > innerWidth + 0.5).length }));
+    ok(`${w}px: the Spam folder fits the phone, nothing scrolls sideways`, m.over <= 0 && m.out === 0, JSON.stringify(m));
+    if (w === 390 && process.env.SPAM_SHOT) await page.screenshot({ path: process.env.SPAM_SHOT, fullPage: false });
+  }
+  await page.close();
+} catch (e) { ok('the spam section ran to its end without throwing', false, e && e.message); }
+
 await browser.close();
 server.close();
 

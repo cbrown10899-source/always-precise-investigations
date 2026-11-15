@@ -1079,6 +1079,60 @@ checked one, and `restore()` checks the radio whose value matches.
 Worker's own door whose label is "Fill Out Online Intake" — so the Live Visitors
 intake-button count did not silently stop when the button changed destination.
 
+## Public forms are screened for spam on our own server, and spam is kept, not dropped
+
+Owner brief 2026-11-15. All three public forms — the homepage **Contact Us**
+modal, the **Quick Confidential Inquiry** and the **detailed intake** (all three
+doors) — are screened by the case-portal Worker before anything is written or
+emailed. `screenPublicForm` / `spamScore` in `case-portal/worker.js` are the
+one writer of the verdict. The staff-sent `/intake/client/` link is token-gated
+and is not screened.
+
+**THE SIGNALS, AND WHICH ONE DECIDES ALONE.** A filled honeypot (`X-Form-Hp`) is
+spam by itself. Everything else is weak and only counts in combination toward
+`SPAM_THRESHOLD` (6): faster than `SPAM_MIN_MS` (`X-Form-Elapsed`, +2),
+several links (+3, six or more +6), repeated text (+3), a source already past
+`SPAM_SOURCE_SOFT` this hour (+3), and the phrasing of unsolicited SEO,
+marketing, cold outreach, recruiting/staffing and bulk mail (one category +2,
+two +5, three or more +7). **The writer's own words about a personal or legal
+matter subtract 3** — a husband "hiring a web designer" is not spam — and the
+words scored are the fields a person TYPES (`SPAM_TEXT_KEYS`), never the
+service label: "Spouse / Relationship" is the form's word, and reading it as
+the writer's cancelled every pitch on the first run.
+
+**THE PAYLOAD DID NOT CHANGE.** The honeypot and the timing ride as request
+headers, so a stored submission is byte for byte what it always was (the
+identical-retry rule compares raw bodies, and the record packet prints every
+payload key).
+
+**QUARANTINED, NEVER DROPPED.** Spam goes to `spam_quarantine`, never to
+`submissions`; no alert, receipt or office notice is sent; the page is answered
+`relay: false` and sends no Web3Forms notice either. A genuine response is
+byte-identical to before (no `relay` key). The Intakes desk has a **Spam
+folder** (admin-only, loaded only when opened): **Not spam** files an intake or
+inquiry through the same `insertSubmissionRow` the ingest uses (a number taken
+meanwhile gets `-R1`), emailing nobody; **Confirm spam** keeps the row. Nothing
+deletes. `request_no`, not `case_no`, because no case exists for a held row.
+
+**THE HOMEPAGE FORM STILL WRITES NOTHING FOR A GENUINE MESSAGE.** `POST
+/contact` only answers whether the page should email it; it stores only a spam
+verdict. That form never wrote to the portal and a genuine message still does
+not.
+
+**RATE LIMITS ARE PER SOURCE, IN `ingest_rate`, AND THE ADDRESS IS NEVER
+STORED** — hourly `src:<hour>:<salted hash>` rows, swept after a day. Over 12 in
+an hour or 40 in a day from one connection is refused `rate_limited` (429) and
+nothing is stored; the pages then tell the visitor to call and send no notice.
+With no `CF-Connecting-IP` (local tests) there is no source to count.
+
+**EVERY FAILURE FAILS OPEN.** A screen that throws, a table not yet created, a
+check the homepage cannot reach — each lets the message through exactly as
+before. A filled honeypot is the one thing a page never emails, whatever the
+server answered. **`spam_quarantine` means a manual `portal-setup.yml`
+dispatch after merge**; until then spam goes through as it always did. A bot
+that skips the page and posts to Web3Forms with the public key is not stopped
+by any of this — Cloudflare Turnstile is the named next step if it is needed.
+
 ## Contact and intake
 
 Both forms (homepage and `intake/`) post to Web3Forms. The access key lives in
