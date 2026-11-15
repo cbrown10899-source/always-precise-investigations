@@ -4195,6 +4195,16 @@
   .ci-trow{flex-direction:column;gap:2px}
   .ci-trow b{text-align:left}
 }
+  /* THE SPAM FOLDER ON A PHONE (2026-11-15). The CEO and Assistant pills float
+     on the right above the bottom nav, and the shell's padding clears only the
+     nav — so the folder's last row ended under the pills at every scroll
+     position. The card ends with the pills' own height of room beneath it
+     (built from --pillgap, the number the pill stack is built from), so every
+     control can be scrolled clear of them. Its links meet the tap floor. */
+  @media(max-width:899px){
+    body.hasmnav .spamcard{margin-bottom:calc(var(--pillgap) + 64px);}
+  }
+  .spamcall{display:inline-flex;align-items:center;min-height:44px;font-weight:700;color:var(--info-ink);}
 </style>
 </head>
 <body>
@@ -8908,9 +8918,14 @@ const SPAM_REASON = {honeypot: "hidden field filled", fast: "submitted very fast
   pitch_recruiting: "recruiting / staffing pitch", pitch_bulk: "bulk-mail wording", repetitive: "repeated text",
   repeated_chars: "repeated characters", personal_matter: "mentions a personal matter"};
 const SPAM_FORM = {contact: "Homepage message", inquiry: "Quick inquiry", intake: "Detailed intake"};
+/* A held message's number as something a phone can dial: digits and a leading
+   plus only, or nothing — the text came from the public, so it never becomes a
+   link of any other shape. */
+const spamTel = v => { const d = String(v || "").replace(/[^\d+]/g, "").replace(/(?!^)\+/g, "");
+  return d.replace(/\D/g, "").length >= 7 && d.length <= 16 ? d : ""; };
 function spamFolderHtml(){
   const n = SPAM.counts.quarantined;
-  if(!SPAM.open) return `<div class="card"><div class="bar"><h2 style="margin:0;font-size:1.05rem">Spam folder</h2>
+  if(!SPAM.open) return `<div class="card spamcard"><div class="bar"><h2 style="margin:0;font-size:1.05rem">Spam folder</h2>
       <button class="btn sm ghost" data-act="spamOpen" style="margin-left:auto">Review spam folder</button></div>
     <p class="lead" style="margin:6px 0 0">Website submissions held back as likely spam. Nothing in it was emailed, and nothing is deleted.</p></div>`;
   const tabs = [["quarantined", "Held"], ["released", "Released"], ["confirmed", "Confirmed spam"]].map(([v, l]) =>
@@ -8921,7 +8936,8 @@ function spamFolderHtml(){
     : SPAM.rows === null ? `<div class="empty">Loading&hellip;</div>`
     : !SPAM.rows.length ? `<div class="empty">${SPAM.status === "quarantined" ? "Nothing held. Every recent submission went through as normal." : "None."}</div>`
     : `<div class="pkgcards">${SPAM.rows.map(r => `<div class="pcard spamrow">
-        <div><b>${esc(r.name || "No name given")}</b>${r.phone ? ` &middot; ${esc(r.phone)}` : ""}${r.email ? ` &middot; ${esc(r.email)}` : ""}</div>
+        <div><b>${esc(r.name || "No name given")}</b>${spamTel(r.phone) ? ` &middot; <a class="spamcall" href="tel:${esc(spamTel(r.phone))}">${esc(r.phone)}</a>`
+          : r.phone ? ` &middot; ${esc(r.phone)}` : ""}${r.email ? ` &middot; <a class="spamcall" href="mailto:${esc(r.email)}">${esc(r.email)}</a>` : ""}</div>
         <div class="opt">${esc(SPAM_FORM[r.form] || r.form)}${r.service ? ` &middot; ${esc(r.service)}` : ""}${r.request_no ? ` &middot; ${esc(r.request_no)}` : ""}
           &middot; ${esc(new Date(r.received_at).toLocaleString())}</div>
         ${r.text ? `<p style="white-space:pre-wrap;margin:8px 0;max-height:12em;overflow:auto">${esc(r.text)}</p>` : ""}
@@ -8932,7 +8948,7 @@ function spamFolderHtml(){
           <button class="btn sm ghost" data-act="spamDecide" data-do="confirm" data-id="${esc(r.id)}"${SPAM.busy === r.id ? " disabled" : ""}>Confirm spam</button>
         </div>` : r.released_as ? `<div class="opt">Filed on the desk as ${esc(r.released_as)}.</div>` : ""}
       </div>`).join("")}</div>`;
-  return `<div class="card"><div class="bar"><h2 style="margin:0;font-size:1.05rem">Spam folder</h2>
+  return `<div class="card spamcard"><div class="bar"><h2 style="margin:0;font-size:1.05rem">Spam folder</h2>
       <span class="count">${n ? `${n} held` : ""}</span>
       <button class="btn sm ghost" data-act="spamClose" style="margin-left:auto">Close</button></div>
     <p class="lead" style="margin:6px 0 10px">Held submissions were not emailed. Released ones are filed exactly as they arrived; homepage messages were never portal records, so releasing one only marks it not spam &mdash; call them back from the number shown.</p>

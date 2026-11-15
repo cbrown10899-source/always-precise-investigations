@@ -25690,6 +25690,23 @@ section('Spam screening: the homepage contact check stores nothing for a genuine
   ok('an oversized body is refused before it is read in full', big.status === 413);
 }
 
+section('Spam screening: a held homepage message is recoverable whole, and contactable');
+{
+  const { env, admin } = await spamSetup();
+  await formPost(env, '/contact', { name: 'Legit Lena', phone: '(434) 555-0123', message: 'Please call me about my custody case.' }, { hp: 'autofill' });
+  const held = (await jsonOf(await call(env, '/spam', { cookie: admin }))).rows || [];
+  ok('the autofilled honeypot held a real client\'s message', held.length === 1 && held[0].form === 'contact');
+  const r = await jsonOf(await call(env, `/spam/${(held[0] || {}).id}/release`, { method: 'POST', cookie: admin, body: {} }));
+  ok('releasing it marks it not spam and emails nobody', r.ok && r.row.status === 'released' && r.emailed === false && r.released_as === null);
+  const rel = ((await jsonOf(await call(env, '/spam?status=released', { cookie: admin }))).rows || [])[0] || {};
+  ok('under Released it keeps the name, the number and the whole message', rel.name === 'Legit Lena'
+     && rel.phone === '(434) 555-0123' && rel.text === 'Please call me about my custody case.', JSON.stringify(rel));
+  ok('and it never became a portal record — exactly as a genuine homepage message never did',
+     Number((await env.DB.prepare('SELECT COUNT(*) AS n FROM submissions').first()).n) === 0);
+  ok('an unknown status reads as Held rather than failing', (await jsonOf(await call(env, '/spam?status=bogus', { cookie: admin }))).status === 'quarantined');
+  ok('a decision on a row that does not exist is a 404', (await call(env, '/spam/99999/release', { method: 'POST', cookie: admin, body: {} })).status === 404);
+}
+
 section('Spam screening: before portal-setup adds the table, spam goes through as it always did');
 {
   const { env } = await spamSetup();

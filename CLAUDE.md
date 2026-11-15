@@ -1113,6 +1113,12 @@ folder** (admin-only, loaded only when opened): **Not spam** files an intake or
 inquiry through the same `insertSubmissionRow` the ingest uses (a number taken
 meanwhile gets `-R1`), emailing nobody; **Confirm spam** keeps the row. Nothing
 deletes. `request_no`, not `case_no`, because no case exists for a held row.
+A held homepage message's number is a `tel:` link (digits and a leading plus
+only), so a false positive released from the folder can be called back from it.
+**On a phone the folder ends `--pillgap + 64px` above the page end**: the shell's
+padding clears only the bottom nav, so without it the last row's *Confirm spam*
+sat under the floating CEO/Assistant pills at 390 (measured 711 vs 624); the
+suite hit-tests the last row's controls at 390 and 320.
 
 **THE HOMEPAGE FORM STILL WRITES NOTHING FOR A GENUINE MESSAGE.** `POST
 /contact` only answers whether the page should email it; it stores only a spam

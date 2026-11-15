@@ -34526,6 +34526,11 @@ try {
     client_name: 'Held Hannah', client_phone: '4345550188', objective: 'Need help with custody.' },
     { 'X-Ingest-Key': 'e2e-ingest-key', 'X-Form-Hp': 'filled by autofill' });
 
+  /* A REAL CLIENT whose browser autofilled the hidden field: the false
+     positive the folder exists for. */
+  await post('/contact', { name: 'Legit Lena', phone: '(434) 555-0123', message: 'Please call me about my custody case.' },
+    { 'X-Ingest-Key': 'e2e-ingest-key', 'X-Form-Hp': 'autofilled', 'X-Form-Elapsed': '45000' });
+
   const page = await newPage();
   await signIn(page, 'trever', 'AdminPassword1x');
   await page.locator('.tabs button[data-tab="leads"]').click();
@@ -34536,9 +34541,55 @@ try {
   await page.locator('[data-act="spamOpen"]').first().click();
   await page.waitForSelector('.spamrow', { timeout: 5000 });
   const rows = await page.locator('.spamrow').allInnerTexts();
-  ok('the folder lists both held submissions with who, which form and why', rows.length === 2
+  ok('the folder lists all three held submissions with who, which form and why', rows.length === 3
      && rows.some(t => /Growth Team/.test(t) && /Homepage message/.test(t) && /SEO pitch/.test(t))
      && rows.some(t => /Held Hannah/.test(t) && /Quick inquiry/.test(t) && /hidden field filled/.test(t)), rows.join(' || '));
+  /* THE FLOATING PILLS ON A PHONE. Scrolled to the very end, the folder's last
+     row — its text and both decision buttons — must be the thing under a
+     thumb, not the CEO or Assistant pill. Hit-tested at the centre and four
+     corners of each control, the instrument this file uses for every overlap. */
+  for (const w of [390, 320]) {
+    await page.setViewportSize({ width: w, height: 800 }); await page.waitForTimeout(250);
+    await page.evaluate(() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' }));
+    await page.waitForTimeout(200);
+    const m = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('.spamrow')];
+      const last = rows[rows.length - 1];
+      const ctrls = [...last.querySelectorAll('button, a')];
+      const pts = r => [[r.left + r.width / 2, r.top + r.height / 2], [r.left + 3, r.top + 3], [r.right - 3, r.top + 3],
+                        [r.left + 3, r.bottom - 3], [r.right - 3, r.bottom - 3]];
+      const covered = ctrls.filter(c => pts(c.getBoundingClientRect()).some(([x, y]) => {
+        const hit = document.elementFromPoint(x, y); return !hit || !(hit === c || c.contains(hit)); }))
+        .map(c => c.textContent.trim());
+      const fab = document.querySelector('.ceo-fab'), pill = document.querySelector('.asst-pill');
+      const vis = e => e && getComputedStyle(e).display !== 'none' && e.getBoundingClientRect().height > 0;
+      const lr = last.getBoundingClientRect();
+      const tops = [fab, pill].filter(vis).map(e => e.getBoundingClientRect().top);
+      return { n: ctrls.length, covered, fab: vis(fab), pill: vis(pill), rowBottom: lr.bottom, pillTop: Math.min(...tops) };
+    });
+    ok(`${w}px: the CEO and Assistant pills are still there`, m.fab && m.pill, JSON.stringify(m));
+    ok(`${w}px: scrolled to the end, the folder's last row ends above the floating pills`, m.rowBottom <= m.pillTop, JSON.stringify(m));
+    ok(`${w}px: and every control in it is the thing under the thumb`, m.n >= 3 && m.covered.length === 0, JSON.stringify(m));
+  }
+  await page.setViewportSize({ width: 1200, height: 900 }); await page.waitForTimeout(250);
+
+  const lena = page.locator('.spamrow', { hasText: 'Legit Lena' });
+  ok('a held homepage message shows the number as a tap-to-call link',
+     await lena.locator('a.spamcall[href="tel:4345550123"]').count() === 1);
+  await lena.locator('[data-do="release"]').click();
+  await page.waitForTimeout(800);
+  ok('Not spam on a homepage message says it is marked, and that nothing was emailed',
+     await page.locator('.note', { hasText: 'Marked not spam. Nothing was emailed.' }).count() === 1);
+  await page.locator('[data-act="spamStatus"][data-status="released"]').click();
+  await page.waitForSelector('.spamrow', { timeout: 5000 });
+  const relLena = page.locator('.spamrow', { hasText: 'Legit Lena' });
+  ok('under Released it is recoverable whole: who, the message, and a number to call',
+     await relLena.count() === 1 && /Please call me about my custody case\./.test(await relLena.innerText())
+     && await relLena.locator('a.spamcall[href="tel:4345550123"]').count() === 1, await relLena.innerText().catch(() => ''));
+  ok('and a reviewed row offers no second decision', await relLena.locator('[data-act="spamDecide"]').count() === 0);
+  await page.locator('[data-act="spamStatus"][data-status="quarantined"]').click();
+  await page.waitForSelector('.spamrow', { timeout: 5000 });
+
   const hannah = page.locator('.spamrow', { hasText: 'Held Hannah' });
   await hannah.locator('[data-do="release"]').click();
   await page.waitForTimeout(800);
@@ -34548,10 +34599,16 @@ try {
   page.once('dialog', d => d.accept());
   await page.locator('.spamrow', { hasText: 'Growth Team' }).locator('[data-do="confirm"]').click();
   await page.waitForTimeout(800);
+  ok('the Held view is empty once all three are decided, and says so',
+     await page.locator('.spamrow').count() === 0 && /Nothing held/.test(await page.locator('.spamcard').innerText()));
   ok('Confirm spam keeps it, under Confirmed spam', await page.locator('.spamrow').count() === 0
      && /Confirmed spam \(1\)/.test(await page.locator('[data-act="spamStatus"][data-status="confirmed"]').innerText()));
   await page.locator('[data-act="spamStatus"][data-status="confirmed"]').click();
   await page.waitForSelector('.spamrow', { timeout: 5000 });
+  ok('Confirmed spam shows the pitch, kept, with no decision left on it',
+     await page.locator('.spamrow', { hasText: 'Growth Team' }).count() === 1 && await page.locator('[data-act="spamDecide"]').count() === 0);
+  ok('Released now holds both the inquiry and the homepage message',
+     /Released \(2\)/.test(await page.locator('[data-act="spamStatus"][data-status="released"]').innerText()));
   for (const w of [390, 320]) {
     await page.setViewportSize({ width: w, height: 800 }); await page.waitForTimeout(250);
     const m = await page.evaluate(() => ({ over: document.documentElement.scrollWidth - document.documentElement.clientWidth,
