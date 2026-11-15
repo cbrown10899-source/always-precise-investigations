@@ -4374,6 +4374,10 @@ const LEAD_LABEL = {lead:"Lead", rate_sheet_sent:"Rate sheet sent", intake_sent:
   intake_received:"Intake received", contacted:"Contacted", more_info_requested:"More info requested",
   converted:"Converted to case", declined:"Declined", closed_lead:"Closed lead"};
 let LEAD_MSG = "";    // one-shot confirmation on the leads desk
+/* THE SPAM FOLDER (owner brief 2026-11-15). Public submissions the Worker's
+   spam screen held back, read only when an admin opens the folder. Three
+   states kept apart: never loaded (rows null), failed (err), loaded. */
+let SPAM = {open: false, rows: null, err: "", status: "quarantined", counts: {}, msg: "", busy: 0, missing: false};
 /* WHICH INTAKE IS BEING ACCEPTED RIGHT NOW, or "" — the in-flight guard for
    the one-tap acceptance, held as a CASE NUMBER rather than a boolean because
    the Intakes desk draws many cards at once and only the one that was pressed
@@ -8890,7 +8894,71 @@ function leadsView(){
       : `<div class="empty">Nothing waiting. New submissions and phoned-in leads land here the moment they exist.</div>`}
     ${accepted.length ? `<h3 style="margin:18px 0 6px;font-size:1rem">Recently accepted</h3>
       <div class="pkgcards">${accepted.map(card).join("")}</div>` : ""}
-  </div>`;
+  </div>
+  ${ME && ME.role === "admin" ? spamFolderHtml() : ""}`;
+}
+
+/* The Spam folder, below the desk. Closed until asked for, so the desk itself
+   costs no extra read. Release puts an intake or inquiry on the desk exactly as
+   it would have arrived, and marks a homepage message "not spam"; Confirm keeps
+   it as spam. Nothing here deletes anything, and nothing here sends email. */
+const SPAM_REASON = {honeypot: "hidden field filled", fast: "submitted very fast", frequent: "many from one connection",
+  many_links: "many links", links: "several links", link_with_pitch: "link with a sales pitch", link_in_name: "link in the name",
+  pitch_seo: "SEO pitch", pitch_marketing: "marketing pitch", pitch_outreach: "cold outreach wording",
+  pitch_recruiting: "recruiting / staffing pitch", pitch_bulk: "bulk-mail wording", repetitive: "repeated text",
+  repeated_chars: "repeated characters", personal_matter: "mentions a personal matter"};
+const SPAM_FORM = {contact: "Homepage message", inquiry: "Quick inquiry", intake: "Detailed intake"};
+function spamFolderHtml(){
+  const n = SPAM.counts.quarantined;
+  if(!SPAM.open) return `<div class="card"><div class="bar"><h2 style="margin:0;font-size:1.05rem">Spam folder</h2>
+      <button class="btn sm ghost" data-act="spamOpen" style="margin-left:auto">Review spam folder</button></div>
+    <p class="lead" style="margin:6px 0 0">Website submissions held back as likely spam. Nothing in it was emailed, and nothing is deleted.</p></div>`;
+  const tabs = [["quarantined", "Held"], ["released", "Released"], ["confirmed", "Confirmed spam"]].map(([v, l]) =>
+    `<button class="btn sm${SPAM.status === v ? "" : " ghost"}" data-act="spamStatus" data-status="${v}">${l}${
+      SPAM.counts[v] ? ` (${SPAM.counts[v]})` : ""}</button>`).join(" ");
+  const body = SPAM.err ? `<div class="err">${esc(SPAM.err)} <button class="btn sm ghost" data-act="spamOpen">Try again</button></div>`
+    : SPAM.missing ? `<div class="note">The spam folder is not set up on this database yet. Run the portal-setup workflow once; until then every submission goes through as normal.</div>`
+    : SPAM.rows === null ? `<div class="empty">Loading&hellip;</div>`
+    : !SPAM.rows.length ? `<div class="empty">${SPAM.status === "quarantined" ? "Nothing held. Every recent submission went through as normal." : "None."}</div>`
+    : `<div class="pkgcards">${SPAM.rows.map(r => `<div class="pcard spamrow">
+        <div><b>${esc(r.name || "No name given")}</b>${r.phone ? ` &middot; ${esc(r.phone)}` : ""}${r.email ? ` &middot; ${esc(r.email)}` : ""}</div>
+        <div class="opt">${esc(SPAM_FORM[r.form] || r.form)}${r.service ? ` &middot; ${esc(r.service)}` : ""}${r.request_no ? ` &middot; ${esc(r.request_no)}` : ""}
+          &middot; ${esc(new Date(r.received_at).toLocaleString())}</div>
+        ${r.text ? `<p style="white-space:pre-wrap;margin:8px 0;max-height:12em;overflow:auto">${esc(r.text)}</p>` : ""}
+        <div class="opt">Why: ${esc(r.reasons.map(x => SPAM_REASON[x] || x).join(", ") || "—")} (score ${esc(r.score)})</div>
+        ${r.status === "quarantined" ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+          <button class="btn sm" data-act="spamDecide" data-do="release" data-id="${esc(r.id)}"${SPAM.busy === r.id ? " disabled" : ""}>${
+            r.form === "contact" ? "Not spam" : "Not spam &mdash; put on the desk"}</button>
+          <button class="btn sm ghost" data-act="spamDecide" data-do="confirm" data-id="${esc(r.id)}"${SPAM.busy === r.id ? " disabled" : ""}>Confirm spam</button>
+        </div>` : r.released_as ? `<div class="opt">Filed on the desk as ${esc(r.released_as)}.</div>` : ""}
+      </div>`).join("")}</div>`;
+  return `<div class="card"><div class="bar"><h2 style="margin:0;font-size:1.05rem">Spam folder</h2>
+      <span class="count">${n ? `${n} held` : ""}</span>
+      <button class="btn sm ghost" data-act="spamClose" style="margin-left:auto">Close</button></div>
+    <p class="lead" style="margin:6px 0 10px">Held submissions were not emailed. Released ones are filed exactly as they arrived; homepage messages were never portal records, so releasing one only marks it not spam &mdash; call them back from the number shown.</p>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${tabs}</div>
+    ${SPAM.msg ? `<div class="note">${esc(SPAM.msg)}</div>` : ""}
+    ${body}</div>`;
+}
+async function spamLoad(){
+  SPAM.err = ""; SPAM.rows = null; paint();
+  try{
+    const d = await api(`/spam?status=${encodeURIComponent(SPAM.status)}`);
+    SPAM.rows = d.rows || []; SPAM.counts = d.counts || {}; SPAM.missing = !!d.missing;
+  }catch(e){ SPAM.err = "The spam folder could not be read. " + e.message; }
+  paint();
+}
+async function spamDecide(id, what){
+  if(what === "confirm" && !confirm("Mark this submission as spam? It stays in the folder and nothing is deleted.")) return;
+  SPAM.busy = id; SPAM.msg = ""; paint();
+  try{
+    const d = await api(`/spam/${encodeURIComponent(id)}/${what}`, {method: "POST", body: {}});
+    SPAM.msg = what === "confirm" ? "Marked as spam." : d.released_as
+      ? `Put on the Intakes desk as ${d.released_as}. Nothing was emailed.` : "Marked not spam. Nothing was emailed.";
+  }catch(e){ SPAM.msg = e.message; }
+  SPAM.busy = 0;
+  await spamLoad();
+  if(what === "release") await render();
 }
 
 /* ================================================== UNIT 7: CLIENTS & FIRMS
@@ -24334,6 +24402,7 @@ function sessionForget(){
      client names and carriers; USERS and INVITES are admin-only; LAST_LINK and
      RESET_BOX are a live invitation and a live password-reset URL. */
   CASES = []; USERS = []; INVITES = []; PKGS = null; OUT_NOW = null;
+  SPAM = {open: false, rows: null, err: "", status: "quarantined", counts: {}, msg: "", busy: 0, missing: false};
   // The archived/deleted set is case data too, and its lens is a view choice
   // that should not follow one person's session into the next one.
   CASES_Q = null; TOTAL_Q = 0; CASES_Q_OK = false; CASE_VIEW = "all";
@@ -35824,6 +35893,10 @@ document.addEventListener("click", ev => {
     SHEET_MSG = ""; wizPaymentLoad(); wizSheetLoad(); paint();
   }
   else if(act === "intakeDel"){ intakeQuickDelete(el.dataset.case, el.dataset.name); }
+  else if(act === "spamOpen"){ SPAM.open = true; spamLoad(); }
+  else if(act === "spamClose"){ SPAM = {...SPAM, open: false, rows: null, msg: "", err: ""}; paint(); }
+  else if(act === "spamStatus"){ SPAM.status = el.dataset.status; SPAM.msg = ""; spamLoad(); }
+  else if(act === "spamDecide"){ spamDecide(Number(el.dataset.id), el.dataset.do); }
   else if(act === "feedHide"){ feedHide(el.dataset.kind, el.dataset.ref, el.dataset.line); }
   else if(act === "leadIntake"){
     const c = CASES.find(x => x.case_no === el.dataset.case) || {};

@@ -25434,6 +25434,276 @@ section('Payment options with an intake: before portal-setup adds the table, not
   ok('composing the stand-alone message needs no table', m.status === 200);
 }
 
+
+/* ======================================== PUBLIC-FORM SPAM SCREENING (2026-11-15)
+
+   Owner: honeypot, timing as ONE signal, persistent per-source rate limits,
+   conservative scoring that never rejects a real request for its vocabulary,
+   quarantine for review with no alert, and genuine submissions exactly as
+   before. Every half is asserted from the database and the mail provider. */
+async function spamSetup() {
+  const env = freshEnv();
+  env.INGEST_PER_MINUTE = '500';
+  env.RESEND_API_KEY = 'k';
+  await bootstrapAdmin(env);
+  const admin = (await login(env, 'trever', 'FirstAdminPass1')).cookie;
+  await env.DB.prepare(`INSERT INTO notify_recipient (label, email, enabled, alert_intakes, created_at, updated_at)
+    VALUES ('Office', 'office@example.com', 1, 1, ?1, ?1)`).bind(new Date().toISOString()).run();
+  return { env, admin };
+}
+const spamMails = [];
+async function withMail(fn) {
+  const realFetch = globalThis.fetch;
+  spamMails.length = 0;
+  globalThis.fetch = async (u, init) => {
+    if (String(u).includes('api.resend.com')) { spamMails.push(JSON.parse(init.body)); return new Response('{"id":"x"}', { status: 200 }); }
+    return realFetch(u, init);
+  };
+  try { return await fn(); } finally { globalThis.fetch = realFetch; }
+}
+const formPost = (env, p, body, { ip = '', hp = '', elapsed = '60000', key } = {}) => call(env, p, {
+  method: 'POST', body,
+  headers: { 'X-Ingest-Key': key === undefined ? env.INGEST_KEY : key, 'X-Form-Hp': hp, 'X-Form-Elapsed': elapsed,
+    ...(ip ? { 'CF-Connecting-IP': ip } : {}) },
+});
+let spamSeq = 0;
+const inquiry = (over = {}) => ({
+  case_no: `API-20261115-${String(1000 + (++spamSeq)).slice(-4)}`, intake_form: 'Quick confidential inquiry',
+  service: 'Spouse / Relationship', client_name: 'Dana Real', client_phone: '434-555-0100', client_email: '',
+  objective: 'I think my husband is having an affair. Can someone follow him on Friday evenings?',
+  submitted_at: '11/15/2026, 9:00:00 AM', ...over,
+});
+const spamCount = async (env, status) => Number((await env.DB.prepare(
+  `SELECT COUNT(*) AS n FROM spam_quarantine${status ? ' WHERE status = ?' : ''}`).bind(...(status ? [status] : [])).first()).n);
+const subExists = async (env, no) => !!(await env.DB.prepare('SELECT 1 FROM submissions WHERE case_no = ?').bind(no).first());
+const SEO_PITCH = 'Hello, I came across your website and noticed it is not on the first page of Google. '
+  + 'Our SEO agency can increase your traffic and generate more leads. Reply STOP to unsubscribe.';
+
+section('Spam screening: a genuine inquiry is recorded and alerted exactly as before');
+{
+  const { env } = await spamSetup();
+  const p = inquiry({ objective: 'My husband says he is hiring a web designer and a developer for his business and works late '
+    + 'every night. I think he is cheating. He also posted his resume on a job site. Technical stuff: he uses an API and SEO tools.' });
+  const res = await withMail(() => formPost(env, '/ingest', p, { ip: '203.0.113.5' }));
+  const j = await jsonOf(res);
+  ok('a real matter full of technical and hiring words is accepted', res.status === 200 && j.ok && j.case_no === p.case_no, JSON.stringify(j));
+  ok('and its response is the response it always was (no relay key)', !('relay' in j), JSON.stringify(j));
+  ok('it is on the desk, not in the spam folder', await subExists(env, p.case_no) && (await spamCount(env)) === 0);
+  ok('and the office alert went as normal', spamMails.length === 1, String(spamMails.length));
+  const stored = await env.DB.prepare('SELECT payload FROM submissions WHERE case_no = ?').bind(p.case_no).first();
+  ok('the stored payload is byte for byte what was sent', stored.payload === JSON.stringify(p));
+
+  const q = inquiry({ objective: 'Attorney here — need process service on my client\'s ex. Docs at https://a.example.com/1 '
+    + 'https://b.example.com/2 and https://c.example.com/3. Court date is Dec 4.' });
+  const r2 = await formPost(env, '/ingest', q, { elapsed: '1200' });
+  ok('three links and a fast submit on a real legal matter still go through', r2.status === 200
+     && !('relay' in (await jsonOf(r2))) && await subExists(env, q.case_no));
+
+  const fast = inquiry();
+  const r3 = await formPost(env, '/ingest', fast, { elapsed: '300' });
+  ok('a very fast submission alone is NOT enough to hold it', r3.status === 200 && await subExists(env, fast.case_no));
+
+  const six = inquiry({ objective: 'My husband\'s accounts: https://a.example.com https://b.example.com https://c.example.com '
+    + 'https://d.example.com https://e.example.com https://f.example.com — I think he is meeting someone.' });
+  const r5 = await formPost(env, '/ingest', six);
+  ok('six links on a real personal matter still go through', r5.status === 200 && await subExists(env, six.case_no));
+  const one = inquiry({ objective: 'I came across your website. Need a background check on a contractor I am hiring.' });
+  const r4 = await formPost(env, '/ingest', one);
+  ok('one outreach-sounding phrase alone is NOT enough to hold it', r4.status === 200 && await subExists(env, one.case_no));
+}
+
+section('Spam screening: clearly identified spam is quarantined, kept, and nobody is emailed');
+{
+  const { env, admin } = await spamSetup();
+  const logs = [];
+  const realErr = console.error, realLog = console.log, realWarn = console.warn;
+  console.error = (...a) => logs.push(a.join(' ')); console.warn = console.error; console.log = console.error;
+  let hpRes, seoRes, recRes;
+  const hp = inquiry({ objective: 'Totally normal text' });
+  const seo = inquiry({ client_name: 'Marketing Mike', objective: SEO_PITCH });
+  const rec = inquiry({ objective: 'Hope this message finds you well. We are a staffing agency with pre-vetted candidates '
+    + 'for your firm. See https://staffing.example.com' });
+  try {
+    await withMail(async () => {
+      hpRes = await formPost(env, '/ingest', hp, { hp: 'http://spam.example' });
+      seoRes = await formPost(env, '/ingest', seo);
+      recRes = await formPost(env, '/ingest', rec);
+    });
+  } finally { console.error = realErr; console.log = realLog; console.warn = realWarn; }
+  const hj = await jsonOf(hpRes), sj = await jsonOf(seoRes), rj = await jsonOf(recRes);
+  ok('a filled honeypot is answered like a success, told not to relay', hpRes.status === 200 && hj.ok && hj.relay === false
+     && hj.case_no === hp.case_no, JSON.stringify(hj));
+  ok('an SEO pitch is held', sj.relay === false, JSON.stringify(sj));
+  ok('a recruiting / staffing pitch with a link is held', rj.relay === false, JSON.stringify(rj));
+  ok('none of them reached submissions', !(await subExists(env, hp.case_no)) && !(await subExists(env, seo.case_no))
+     && !(await subExists(env, rec.case_no)));
+  ok('all three are in the spam folder, held', (await spamCount(env, 'quarantined')) === 3);
+  ok('and no alert email was sent for any of them', spamMails.length === 0, String(spamMails.length));
+  ok('nothing anyone typed reached a log line', !logs.some(l => /Marketing|SEO|staffing|Totally normal|Dana/.test(l)), logs.join(' | '));
+  const row = (await env.DB.prepare('SELECT * FROM spam_quarantine WHERE request_no = ?').bind(seo.case_no).first()) || {};
+  ok('the reasons are codes, never an excerpt', /^[a-z_,]+$/.test(String(row.reasons)) && String(row.reasons).includes('pitch_seo'), String(row.reasons));
+  ok('the body is kept exactly as received, so a release loses nothing', row.payload === JSON.stringify(seo));
+  const again = await formPost(env, '/ingest', seo);
+  ok('an identical resend files nothing new', (await jsonOf(again)).relay === false && (await spamCount(env)) === 3);
+
+  /* The admin folder. */
+  const list = await jsonOf(await call(env, '/spam', { cookie: admin }));
+  ok('the admin folder lists the three held submissions', (list.rows || []).length === 3 && list.counts.quarantined === 3, JSON.stringify(list.counts));
+  const seoRow = (list.rows || []).find(r => r.request_no === seo.case_no) || {};
+  ok('a row shows who, which form, why and what they wrote', seoRow && seoRow.name === 'Marketing Mike' && seoRow.form === 'inquiry'
+     && seoRow.reasons.includes('pitch_seo') && seoRow.text.includes('first page of Google'));
+  const inv = await invite(env, admin, { username: 'spaminv', display_name: 'Spam Inv', role: 'investigator' });
+  const itok = new URL((await jsonOf(inv)).url, 'https://x.test').searchParams.get('invite');
+  await call(env, `/invite/${itok}/accept`, { method: 'POST', body: { password: 'FieldWork2026x' } });
+  const icookie = (await login(env, 'spaminv', 'FieldWork2026x')).cookie;
+  ok('an investigator cannot read the folder', (await call(env, '/spam', { cookie: icookie })).status === 403);
+  ok('or decide anything in it', (await call(env, `/spam/${seoRow.id}/release`, { method: 'POST', cookie: icookie, body: {} })).status === 403);
+  ok('and signed out it is closed', (await call(env, '/spam')).status === 401);
+
+  /* Release: on the desk exactly as the ingest would have stored it, and no email. */
+  const hpRow = (list.rows || []).find(r => r.request_no === hp.case_no) || {};
+  let rel;
+  await withMail(async () => { rel = await jsonOf(await call(env, `/spam/${hpRow.id}/release`, { method: 'POST', cookie: admin, body: {} })); });
+  ok('releasing a held inquiry files it under its own number', rel.ok && rel.released_as === hp.case_no && await subExists(env, hp.case_no), JSON.stringify(rel));
+  const relSub = await env.DB.prepare('SELECT * FROM submissions WHERE case_no = ?').bind(hp.case_no).first();
+  ok('exactly as the ingest would have stored it', relSub.payload === JSON.stringify(hp) && relSub.client_name === 'Dana Real'
+     && relSub.kind === 'consumer' && relSub.service === 'Spouse / Relationship');
+  ok('and releasing emails nobody', spamMails.length === 0 && rel.emailed === false);
+  const twice = await call(env, `/spam/${hpRow.id}/release`, { method: 'POST', cookie: admin, body: {} });
+  ok('a second decision on the same row is refused by name', twice.status === 409 && (await jsonOf(twice)).code === 'already_reviewed');
+  const conf = await jsonOf(await call(env, `/spam/${seoRow.id}/confirm`, { method: 'POST', cookie: admin, body: {} }));
+  ok('confirming keeps the row, marked spam', conf.ok && conf.row.status === 'confirmed' && !(await subExists(env, seo.case_no)));
+  ok('nothing was deleted', (await spamCount(env)) === 3);
+  const after = await jsonOf(await call(env, '/spam?status=released', { cookie: admin }));
+  ok('the Released view shows what was released', (after.rows || []).length === 1 && after.rows[0].released_as === hp.case_no);
+
+  /* A number taken by a real submission while the held one waited. */
+  const recRow = (list.rows || []).find(r => r.request_no === rec.case_no) || {};
+  await ingest(env, inquiry({ case_no: rec.case_no }));
+  const rr = await jsonOf(await call(env, `/spam/${recRow.id}/release`, { method: 'POST', cookie: admin, body: {} }));
+  ok('a release whose number was taken meanwhile files under a suffixed number', rr.released_as === rec.case_no + '-R1'
+     && await subExists(env, rec.case_no + '-R1'), JSON.stringify(rr));
+}
+
+section('Spam screening: repeated text is one signal, and with links it is held');
+{
+  const { env } = await spamSetup();
+  const rep = inquiry({ objective: 'Best deal best price act now. '.repeat(20) });
+  ok('repetition alone is not enough', !('relay' in (await jsonOf(await formPost(env, '/ingest', rep)))) && await subExists(env, rep.case_no));
+  const repl = inquiry({ objective: 'Best deal best price act now. '.repeat(20) + ' http://a.example http://b.example http://c.example' });
+  ok('repetition with several links is held', (await jsonOf(await formPost(env, '/ingest', repl))).relay === false
+     && !(await subExists(env, repl.case_no)));
+}
+
+section('Spam screening: a held carrier assignment sends no receipt and no office notice');
+{
+  const { env, admin } = await spamSetup();
+  await call(env, '/billing-settings', { method: 'POST', cookie: admin, body: { owner_record_email: 'record@example.com' } });
+  const p = { case_no: 'API-20261115-7001', carrier: 'Acme Mutual', claim_number: 'C-1', client_name: 'Adj Uster',
+    client_email: 'adj@carrier.example', objective: 'normal' };
+  let r;
+  await withMail(async () => { r = await jsonOf(await formPost(env, '/ingest', p, { hp: 'x' })); });
+  ok('held', r.relay === false && !(await subExists(env, p.case_no)));
+  ok('no receipt, no notice, no alert', spamMails.length === 0, spamMails.map(m => m.subject).join(' | '));
+  let g;
+  await withMail(async () => { g = await jsonOf(await formPost(env, '/ingest', { ...p, case_no: 'API-20261115-7002' })); });
+  ok('the same assignment without the honeypot sends what it always sent', g.ok && g.receipt === 'sent' && spamMails.length === 3,
+     String(spamMails.length));
+}
+
+section('Spam screening: per-source rate limits are persistent and generous');
+{
+  const { env } = await spamSetup();
+  const ip = '198.51.100.7';
+  const answers = [];
+  for (let i = 0; i < 12; i++) answers.push(await formPost(env, '/ingest', inquiry(), { ip }));
+  ok('twelve submissions in an hour from one connection are all accepted', answers.every(a => a.status === 200),
+     answers.map(a => a.status).join(','));
+  const thirteenth = inquiry();
+  const over = await formPost(env, '/ingest', thirteenth, { ip });
+  const oj = await jsonOf(over);
+  ok('the thirteenth is refused by name', over.status === 429 && oj.code === 'rate_limited', JSON.stringify(oj));
+  ok('and nothing about it is stored anywhere', !(await subExists(env, thirteenth.case_no)) && (await spamCount(env)) === 0);
+  ok('another connection is unaffected', (await formPost(env, '/ingest', inquiry(), { ip: '198.51.100.8' })).status === 200);
+  const keys = (await env.DB.prepare(`SELECT minute FROM ingest_rate WHERE minute LIKE 'src:%'`).all()).results.map(r => r.minute);
+  ok('the address itself is never stored — only a salted hash', keys.length >= 2 && !keys.some(k => k.includes('198.51')), keys.join(','));
+  const rows = (await env.DB.prepare(`SELECT n FROM ingest_rate WHERE minute LIKE 'src:%' ORDER BY n DESC`).all()).results;
+  ok('over the limit wrote nothing more (read before write)', rows.length && Number(rows[0].n) === 12, JSON.stringify(rows));
+  /* Persistent: a fresh request object, the same database, still refused. */
+  ok('the count lives in the database, not in memory', (await formPost(env, '/contact',
+     { name: 'A', phone: '4345550100', message: 'hi' }, { ip })).status === 429);
+
+  /* The soft signal: frequent submission is one more weak signal, not a verdict. */
+  const env2 = (await spamSetup()).env;
+  for (let i = 0; i < 4; i++) await formPost(env2, '/ingest', inquiry(), { ip: '192.0.2.1' });
+  const fifth = inquiry();
+  const f5 = await jsonOf(await formPost(env2, '/ingest', fifth, { ip: '192.0.2.1', elapsed: '500' }));
+  ok('frequent + fast is still not enough on a real matter', !('relay' in f5) && await subExists(env2, fifth.case_no));
+  const sixth = inquiry({ objective: 'Hope this message finds you well. Check https://deal.example.com for our services.' });
+  const f6 = await jsonOf(await formPost(env2, '/ingest', sixth, { ip: '192.0.2.1', elapsed: '500' }));
+  ok('frequent + fast + an outreach pitch with a link is held', f6.relay === false);
+
+  /* Old rows are swept. */
+  await env2.DB.prepare(`INSERT INTO ingest_rate (minute, n) VALUES ('src:2020-01-01T00:abc', 3)`).run();
+  await formPost(env2, '/ingest', inquiry(), { ip: '192.0.2.99' });
+  ok('a source row older than a day is swept', !(await env2.DB.prepare(`SELECT 1 FROM ingest_rate WHERE minute = 'src:2020-01-01T00:abc'`).first()));
+}
+
+section('Spam screening: the homepage contact check stores nothing for a genuine message');
+{
+  const { env } = await spamSetup();
+  const good = await jsonOf(await formPost(env, '/contact', { name: 'Pat Jones', phone: '(434) 555-0199',
+    message: 'Need help with a custody matter. Please call after 5.' }));
+  ok('a genuine message is answered "send it"', good.ok && good.relay === true, JSON.stringify(good));
+  ok('and nothing about it is stored', (await spamCount(env)) === 0
+     && Number((await env.DB.prepare('SELECT COUNT(*) AS n FROM submissions').first()).n) === 0);
+  const spam = await jsonOf(await formPost(env, '/contact', { name: 'SEO Team', phone: '+1 212 555 0100', message: SEO_PITCH }));
+  ok('a pitch is answered "do not send" and held', spam.ok && spam.relay === false && (await spamCount(env, 'quarantined')) === 1);
+  const hp = await jsonOf(await formPost(env, '/contact', { name: 'Bot', phone: '4345550100', message: 'hi' }, { hp: 'x' }));
+  ok('a filled honeypot is held', hp.relay === false);
+  const dirty = await jsonOf(await formPost(env, '/contact', { name: 'Bob‮\u0007 Smith', phone: '4345550100',
+    message: 'aaaa\u0000bbbb ' + 'http://x.example/1 http://x.example/2 http://x.example/3 http://x.example/4 http://x.example/5 http://x.example/6' }));
+  const drow = await env.DB.prepare(`SELECT name, message FROM spam_quarantine WHERE name LIKE 'Bob%'`).first();
+  ok('six links is held, and what is stored is cleaned of control characters', dirty.relay === false && drow
+     && drow.name === 'Bob Smith' && !/[\u0000-\u0008‮]/.test(drow.message), JSON.stringify(drow));
+  const bad = await formPost(env, '/contact', { name: 'A', phone: '12', message: 'x' });
+  ok('a phone number that cannot be one is refused by name', bad.status === 400 && (await jsonOf(bad)).code === 'invalid');
+  ok('so is an empty message', (await formPost(env, '/contact', { name: 'A', phone: '4345550100', message: '  ' })).status === 400);
+  ok('a wrong key is refused', (await formPost(env, '/contact', { name: 'A', phone: '4345550100', message: 'x' }, { key: 'nope' })).status === 401);
+  ok('so is a body that is not an object', (await formPost(env, '/contact', [1, 2])).status === 400);
+  const big = await formPost(env, '/contact', { name: 'A', phone: '4345550100', message: 'x'.repeat(20000) });
+  ok('an oversized body is refused before it is read in full', big.status === 413);
+}
+
+section('Spam screening: before portal-setup adds the table, spam goes through as it always did');
+{
+  const { env } = await spamSetup();
+  await env.DB.prepare('DROP TABLE spam_quarantine').run();
+  const p = inquiry({ objective: SEO_PITCH });
+  const r = await withMail(() => formPost(env, '/ingest', p, { hp: 'x' }));
+  const j = await jsonOf(r);
+  ok('it is recorded and alerted exactly as before — nothing is lost', r.status === 200 && !('relay' in j)
+     && await subExists(env, p.case_no) && spamMails.length === 1, JSON.stringify(j));
+  const c = await jsonOf(await formPost(env, '/contact', { name: 'X', phone: '4345550100', message: SEO_PITCH }));
+  ok('the homepage check says "send it" too', c.relay === true);
+}
+
+section('Spam screening: the scorer is wired as the source says');
+{
+  const src = fs.readFileSync(path.join(HERE, 'worker.js'), 'utf8');
+  const ingestFn = (src.match(/async function handleIngest\([\s\S]*?\n}\n/) || [''])[0];
+  ok('the ingest screens before it writes a submission', ingestFn.indexOf('screenPublicForm') > 0
+     && ingestFn.indexOf('screenPublicForm') < ingestFn.indexOf('insertSubmissionRow'));
+  const decideFn = (src.match(/async function spamDecide\([\s\S]*?\n}\n/) || [''])[0];
+  ok('the ingest and the release share one INSERT into submissions', !/INSERT INTO submissions/.test(ingestFn)
+     && !/INSERT INTO submissions/.test(decideFn) && /insertSubmissionRow\(/.test(ingestFn) && /insertSubmissionRow\(/.test(decideFn));
+  const block = (src.match(/PUBLIC-FORM SPAM SCREENING[\s\S]*?===== THE ASSIGNMENT RECEIPT/) || [''])[0];
+  ok('the spam block deletes nothing but expired rate rows', block.length > 0
+     && (block.match(/DELETE FROM/g) || []).length === 1 && /DELETE FROM ingest_rate WHERE minute LIKE 'src:%'/.test(block));
+  ok('and its log lines carry no field value', /console\.error/.test(block)
+     && !/console\.(log|error|warn)\([^)]*(name|message|payload|text|phone)/.test(block.replace(/\be\.message\b/g, 'ERR')));
+}
+
 /* ------------------------------------------------------------------ report */
 
 console.log(results.join('\n'));

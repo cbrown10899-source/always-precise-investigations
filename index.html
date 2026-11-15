@@ -90,6 +90,9 @@
 </script>
 <link rel="stylesheet" href="/assets/site.css?v=2">
 <style>
+  /* The contact form's honeypot: off screen, out of the tab order and the
+     accessibility tree. A person never fills it; a form-filling script does. */
+  .hp{position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden}
   /* THE HOMEPAGE'S OWN LAYOUT. Header, footer, type, colour and the sticky phone
      bar come from /assets/site.css, shared with every public page. Approved
      copy and order: the owner's redesign package of 2026-10-10. */
@@ -494,6 +497,7 @@
       <label class="field"><span>Your name</span><input type="text" name="name" autocomplete="name" required></label>
       <label class="field"><span>Phone number</span><input type="tel" name="phone" autocomplete="tel" required></label>
       <label class="field"><span>How can we help?</span><textarea name="message" placeholder="Briefly describe what you need…" required></textarea></label>
+      <label class="hp" aria-hidden="true">Leave this empty<input type="text" name="website" tabindex="-1" autocomplete="off"></label>
       <button type="submit" class="btn btn-navy send">Send message</button>
       <div id="c-status"></div>
     </form>
@@ -509,15 +513,43 @@
      a public submission endpoint, not a secret; it is safe in page source, and
      unlike the old setup it keeps the firm's email address out of the HTML. */
   var WEB3FORMS_KEY = "71016cd4-875b-4e71-9cb8-1a1c13f50c43";
-  function openContact(){var m=document.getElementById('contactModal');m.hidden=false;document.body.style.overflow='hidden';var n=m.querySelector('input[name=name]');if(n)n.focus();}
+  /* Before a message is emailed it is checked on our own server. A normal
+     message is then sent exactly as before; one the check holds back is kept
+     for the office to review rather than discarded. If the check cannot be
+     reached the message is sent as it always was. The key is the same public
+     submission key the intake form uses, not a secret. */
+  var PORTAL_INGEST_KEY = "8d9ad57784dbc7e00d86806d2c186d60337fb4f762ea5f100ef311f70a84eb7b";
+  var CONTACT_OPENED = 0;
+  async function screenContact(name, phone, message, hp){
+    var ctl = window.AbortController ? new AbortController() : null;
+    var t = ctl ? setTimeout(function(){ ctl.abort(); }, 6000) : 0;
+    try{
+      var r = await fetch('/portal-api/contact', {method:'POST', signal: ctl ? ctl.signal : undefined,
+        headers:{'Content-Type':'application/json','X-Ingest-Key':PORTAL_INGEST_KEY,'X-Form-Hp':hp,
+                 'X-Form-Elapsed':String(CONTACT_OPENED ? Date.now() - CONTACT_OPENED : -1)},
+        body:JSON.stringify({name:name, phone:phone, message:message})});
+      var d = {}; try{ d = await r.json(); }catch(_){}
+      if(r.ok) return d.relay === false ? 'hold' : 'send';
+      if(r.status === 429 && d.code === 'rate_limited') return 'limited';
+      if(r.status === 400 && d.code === 'invalid') return {invalid: d.error || 'Please check the form and try again.'};
+      return 'send';
+    }catch(_){ return hp ? 'hold' : 'send'; }
+    finally{ if(t) clearTimeout(t); }
+  }
+  function openContact(){if(!CONTACT_OPENED)CONTACT_OPENED=Date.now();var m=document.getElementById('contactModal');m.hidden=false;document.body.style.overflow='hidden';var n=m.querySelector('input[name=name]');if(n)n.focus();}
   function closeContact(){document.getElementById('contactModal').hidden=true;document.body.style.overflow='';}
   document.addEventListener('keydown',function(e){if(e.key==='Escape')closeContact();});
   async function sendContact(e){
     e.preventDefault();
     var f=e.target, btn=f.querySelector('.send'), status=document.getElementById('c-status');
     var name=f.elements.name.value.trim(), phone=f.elements.phone.value.trim(), message=f.elements.message.value.trim();
+    var hp=(f.elements.website && f.elements.website.value) || '';
     btn.disabled=true; status.textContent='Sending…';
     try{
+      var verdict=await screenContact(name, phone, message, hp);
+      if(verdict==='hold'){ f.reset(); status.innerHTML='<b>Thank you!</b> Your message was sent — we’ll be in touch shortly.'; btn.disabled=false; return; }
+      if(verdict==='limited'){ status.innerHTML='<b>We couldn’t send your message just now.</b> Please call <b>(434) 907-0975</b> so we don’t miss you.'; btn.disabled=false; return; }
+      if(verdict && verdict.invalid){ status.textContent=verdict.invalid; btn.disabled=false; return; }
       var res, d={};
       if(WEB3FORMS_KEY){
         res=await fetch('https://api.web3forms.com/submit',{

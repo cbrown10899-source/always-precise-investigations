@@ -192,6 +192,10 @@
   <div class="progress" id="progress"></div>
 
   <div id="app"></div>
+  <!-- A honeypot: off screen, out of the tab order and the accessibility tree.
+       A person never fills it; a form-filling script does. -->
+  <div aria-hidden="true" style="position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden">
+    <label>Leave this empty<input type="text" id="hp_website" name="website" tabindex="-1" autocomplete="off"></label></div>
 </main>
 <div class="foot">Confidential. Submitted only to Always Precise Investigations. Licensed &amp; insured · Va DCJS #11-9159.<br>
   <a class="home2" href="https://alwayspreciseinvestigations.net/">Return to Always Precise Investigations</a></div>
@@ -1435,15 +1439,25 @@ async function notifyFirm(notice){
 /* What the portal answered — kept so the confirmation can say an emailed
    receipt went ONLY when the Worker says it did. */
 let INGEST_REPLY = null;
+/* When the page opened, and the honeypot's value, for the server's spam check.
+   They travel as headers, so the stored submission is byte for byte what it
+   always was. RATE_LIMITED is the server refusing for too many submissions
+   from this connection; INGEST_REPLY.relay === false is a submission it kept
+   for review, which is not emailed. */
+const OPENED_AT = Date.now();
+let RATE_LIMITED = false;
 /* The case portal is the record. This is the write that has to succeed. */
 async function recordInPortal(p, retried){
   if(!PORTAL_INGEST_KEY || PORTAL_INGEST_KEY === "PASTE_INGEST_KEY") return false;
   try{
+    const hp = document.getElementById("hp_website");
     const r = await fetch(PORTAL_API + "/ingest", {
       method:"POST",
-      headers:{"Content-Type":"application/json","X-Ingest-Key":PORTAL_INGEST_KEY},
+      headers:{"Content-Type":"application/json","X-Ingest-Key":PORTAL_INGEST_KEY,
+        "X-Form-Hp": hp ? hp.value : "", "X-Form-Elapsed": String(Date.now() - OPENED_AT)},
       body:JSON.stringify(p)
     });
+    if(r.status === 429){ try{ RATE_LIMITED = (await r.clone().json()).code === "rate_limited"; }catch(e){} }
     /* The number is minted here from 9,000 daily values, so it can collide.
        The Worker answers a collision by name (closeout audit, 2026-09-02);
        mint once more and try again, so a chance clash costs the client
@@ -1463,9 +1477,14 @@ async function finish(){
   btn.disabled=true; btn.textContent="Sending…"; if(err) err.textContent="";
 
   // Store first, then notify — the notice reports whether the store worked.
+  RATE_LIMITED = false; INGEST_REPLY = null;
   const stored = await recordInPortal(p);
   let notified=false, threw=false;
-  try{ notified = await notifyFirm(buildNotice(p, stored)); }catch(e){ threw=true; }
+  /* Held for review: recorded on our side, and no email notice goes. Refused
+     for volume: nothing was recorded, and the client is told to call. */
+  const held = stored && INGEST_REPLY && INGEST_REPLY.relay === false;
+  if(held) notified = true;
+  else if(!RATE_LIMITED){ try{ notified = await notifyFirm(buildNotice(p, stored)); }catch(e){ threw=true; } }
 
   // The client is told it landed only if the firm can actually act on it:
   // either the details are recorded, or someone has their number to call.

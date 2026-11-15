@@ -183,14 +183,25 @@ function validate(){
 /* The portal is the record — the same ingest, the same collision rule: a
    request number taken by a DIFFERENT submission is minted once more. */
 let CASE_NO = mintCaseNo();
+/* When the page opened, for the server's timing check, and the honeypot's
+   value. Both travel as headers so the stored submission is unchanged. */
+const OPENED_AT = Date.now();
+/* What the server said about this submission beyond "recorded": HOLD means it
+   was kept for review and no email notice should go; LIMITED means it was
+   refused for too many submissions from this connection. */
+let SCREEN = "";
 async function recordInPortal(p, retried){
   try{
     const r = await fetch(PORTAL_API + "/ingest", { method:"POST",
-      headers:{ "Content-Type":"application/json", "X-Ingest-Key":PORTAL_INGEST_KEY }, body:JSON.stringify(p) });
+      headers:{ "Content-Type":"application/json", "X-Ingest-Key":PORTAL_INGEST_KEY,
+        "X-Form-Hp": $("iq_hp").value, "X-Form-Elapsed": String(Date.now() - OPENED_AT) },
+      body:JSON.stringify(p) });
     if(r.status === 409 && !retried){
       let code = ""; try{ code = (await r.json()).code || ""; }catch(e){}
       if(code === "case_no_taken"){ CASE_NO = mintCaseNo(); p.case_no = CASE_NO; return recordInPortal(p, true); }
     }
+    if(r.ok){ try{ if((await r.json()).relay === false) SCREEN = "hold"; }catch(e){} }
+    else if(r.status === 429){ try{ if((await r.json()).code === "rate_limited") SCREEN = "limited"; }catch(e){} }
     return r.ok;
   }catch(e){ return false; }
 }
@@ -243,11 +254,16 @@ $("iqForm").addEventListener("submit", async ev => {
   };
   const btn = $("iqSend");
   BUSY = true; btn.disabled = true; btn.textContent = "Sending…";
-  /* A filled honeypot is a script, not a person: it is shown the same
-     confirmation and nothing is sent anywhere. */
+  /* A filled honeypot is a script, not a person. The server is told, keeps
+     the submission for review, and the page shows the same confirmation. If
+     the server cannot be reached nothing is sent anywhere. A submission the
+     server holds back is not emailed; one refused for volume is told to call. */
   const bot = $("iq_hp").value !== "";
-  const stored = bot ? true : await recordInPortal(p);
-  const notified = bot ? true : await notifyFirm({
+  SCREEN = "";
+  const stored = await recordInPortal(p);
+  if(SCREEN === "limited"){ showDone(p, false); BUSY = false; return; }
+  const hold = SCREEN === "hold" || (bot && !stored);
+  const notified = hold ? true : await notifyFirm({
     case_no: p.case_no, type: "Website inquiry", service: p.service,
     contact_name: p.client_name, contact_phone: p.client_phone,
     preferred_contact: p.preferred_contact || "Not stated",
@@ -258,7 +274,7 @@ $("iqForm").addEventListener("submit", async ev => {
       ? "Open the case portal at /portal/ and search this request number. The details are deliberately not in this email."
       : "THIS INQUIRY WAS NOT RECORDED. Call or text the contact above today."
   });
-  showDone(p, stored || notified);
+  showDone(p, stored || notified || hold);
   BUSY = false;
 });
 

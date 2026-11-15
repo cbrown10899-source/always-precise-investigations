@@ -380,17 +380,27 @@ async function handleIngest(request, env) {
      a legal payload that also carried a carrier field must not silently file
      as a claim. */
   const legal = p.assignment === 'legal';
-  const kind = !legal && (p.claim_number || p.carrier) ? 'claims' : 'consumer';
+  const kind = ingestKind(p);
+
+  /* SPAM SCREENING (owner brief 2026-11-15). After the request is known to be
+     well formed and before anything is written: a caller over the per-source
+     limit is refused here and nothing is stored, and a submission that scores
+     as spam is QUARANTINED — kept for the office to review, never written to
+     submissions, and no alert or receipt goes. Every failure inside the
+     screen falls through to the ordinary path, so an outage of the screen can
+     only ever let a message through, never lose one. */
+  const screen = await screenPublicForm(env, request, ingestFormOf(p), ingestTexts(p), pick(p, 'client_name', 'contact_name'));
+  if (screen.refused) return json({ error: SPAM_RATE_MSG, code: 'rate_limited' }, 429);
+  if (screen.spam && await quarantineForm(env, {
+    form: ingestFormOf(p), request_no: caseNo, name: pick(p, 'client_name', 'contact_name'),
+    phone: pick(p, 'client_phone'), email: pick(p, 'client_email'), message: null, payload: raw,
+    score: screen.score, reasons: screen.reasons,
+  })) {
+    return json({ ok: true, case_no: caseNo, relay: false });
+  }
+
   try {
-    await env.DB.prepare(
-      `INSERT INTO submissions
-         (case_no, kind, service, client_name, client_email, client_phone,
-          subject_name, carrier, claim_number, payload, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .bind(caseNo, kind, pick(p, 'service'),
-        pick(p, 'client_name'), pick(p, 'client_email'), pick(p, 'client_phone'),
-        pick(p, 'subject_name'), pick(p, 'carrier'), pick(p, 'claim_number'),
-        raw, nowIso()).run();
+    await insertSubmissionRow(env, caseNo, kind, p, raw);
   } catch (e) {
     if (String(e).includes('UNIQUE')) {
       /* A browser RETRY resends the identical body and must not surface as an
@@ -442,6 +452,345 @@ async function handleIngest(request, env) {
   const notice = await assignmentOfficeNotice(env, caseNo, p, r);
   await notifyAdmins(env, 'intakes', caseNo, { skip: notice.sent ? [notice.to] : [] });
   return json({ ok: true, case_no: caseNo, receipt: r.receipt, receipt_reason: r.receipt_reason });
+}
+
+/* The one INSERT into submissions from a public form — the ingest's own write,
+   and the write a released quarantined submission makes, so the two cannot
+   store a submission differently. */
+async function insertSubmissionRow(env, caseNo, kind, p, raw) {
+  await env.DB.prepare(
+    `INSERT INTO submissions
+       (case_no, kind, service, client_name, client_email, client_phone,
+        subject_name, carrier, claim_number, payload, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(caseNo, kind, pick(p, 'service'),
+      pick(p, 'client_name'), pick(p, 'client_email'), pick(p, 'client_phone'),
+      pick(p, 'subject_name'), pick(p, 'carrier'), pick(p, 'claim_number'),
+      raw, nowIso()).run();
+}
+
+/* A legal marker files as consumer (Unit 6 D1); a carrier field makes a claim. */
+function ingestKind(p) {
+  return p.assignment !== 'legal' && (p.claim_number || p.carrier) ? 'claims' : 'consumer';
+}
+
+/* ===== PUBLIC-FORM SPAM SCREENING (owner brief 2026-11-15) ==================
+
+   "Lightweight, server-side spam protection to all public contact forms ...
+   Quarantine suspicious messages in an admin-reviewable Spam folder ...
+   Suppress normal email alerts for clearly identified spam ... Do not
+   automatically reject a legitimate investigation request simply because it
+   contains technical or hiring terminology."
+
+   ONE SCORE, MANY WEAK SIGNALS, ONE DEFINITIVE ONE. A filled honeypot is a
+   script and is spam on its own. Everything else is a signal that only counts
+   in combination: a submission faster than a person could type it, many links,
+   repeated text, a source that has already submitted several times this hour,
+   and the phrasing of unsolicited sales, recruiting and bulk outreach — the
+   last capped, and cancelled by the words of a real personal matter, so a
+   client whose husband "says he is hiring a web designer" is not spam.
+
+   QUARANTINED, NEVER DROPPED. A spam verdict files the message in
+   `spam_quarantine` for the office to read, release or confirm. Nothing about
+   it reaches `submissions`, no alert or receipt is sent, and the page is told
+   `relay: false` so it does not send its own email notice either. If the
+   table is not there yet (portal-setup not run) the message is NOT quarantined
+   and goes through exactly as it always did.
+
+   RATE LIMITS ARE PER SOURCE, PERSISTENT, AND GENEROUS. Keyed on a salted hash
+   of the caller's address (the address itself is never stored), in hourly
+   rows of the existing ingest_rate table, so they survive isolates and need no
+   new table. A source past SPAM_SOURCE_SOFT this hour gains a signal; one past
+   the hard hourly or daily limit is refused by name and nothing is stored.
+
+   NOTHING TYPED IS LOGGED. Reasons are short codes, never excerpts, and no
+   console line in this block carries a field value.
+
+   Cloudflare Turnstile is the planned next step if this is ever not enough. */
+const SPAM_THRESHOLD = 6;
+const SPAM_MIN_MS = { contact: 3000, inquiry: 4000, intake: 15000 };
+const SPAM_SOURCE_SOFT = 4;     // submissions already this hour before one counts as a signal
+const SPAM_SOURCE_HOUR = 12;    // hard limit per source per hour
+const SPAM_SOURCE_DAY = 40;     // hard limit per source per rolling day
+const SPAM_RATE_MSG = 'Too many submissions from this connection. Please call (434) 907-0975.';
+const SPAM_STATUSES = ['quarantined', 'released', 'confirmed'];
+
+/* The phrasing of unsolicited outreach, by category. A category counts once
+   however many of its phrases appear. Plain words a client might use about
+   their own matter — hiring, job, resume, website, developer — are absent on
+   purpose; what is matched is the PITCH. */
+const SPAM_PITCH = [
+  ['seo', /\b(?:seo|search engine optimi[sz]ation|first page (?:of|on) google|rank(?:ing)? (?:higher|#?1|on google|your (?:site|website|business))|backlinks?|guest posts?)\b/i],
+  ['marketing', /\b(?:web ?design(?:er|ing)? services|website (?:redesign|development services)|digital marketing|marketing (?:agency|services|solutions)|social media (?:management|marketing)|lead generation|generate (?:more )?(?:leads|clients)|increase (?:your )?(?:traffic|sales|revenue|leads))\b/i],
+  ['outreach', /\b(?:i (?:came across|found|noticed|visited|was (?:browsing|looking at)) your (?:website|site|business|company|page|listing)|dear (?:sir|madam|sir\/madam|business owner|website owner|site owner)|to whom it may concern|hope this (?:email|message|note) finds you)\b/i],
+  ['recruiting', /\b(?:staffing (?:agency|solutions|services|firm)|recruit(?:ment|ing) (?:services|agency|solutions|firm)|top talent|pre-?vetted (?:candidates|developers|talent|professionals)|virtual assistants?|outsourc(?:e|ing) (?:your|services)|offshore (?:team|staff|developers))\b/i],
+  ['bulk', /\b(?:unsubscribe|opt[- ]out|reply (?:stop|remove|no)\b|no longer wish to receive|limited[- ]time offer|special offer|free (?:trial|audit|website audit|seo audit)|crypto(?:currency)?|bitcoin|forex|investment opportunity|business (?:loan|funding)|merchant (?:cash advance|services))\b/i],
+];
+/* A real personal or legal matter in the writer's own words. Deliberately NOT
+   "investigation" or "private investigator" — a pitch addressed to this firm
+   says those too. */
+const SPAM_PERSONAL = /\b(?:spouse|husband|wife|boyfriend|girlfriend|fianc[eé]e?|cheat(?:ing|ed|s)?|affair|custody|my (?:child|children|kids?|son|daughter|ex|partner)|divorce|serve (?:papers|him|her|them)|subpoena|summons|claimant|adjuster|workers'? comp(?:ensation)?|my attorney|our client|court (?:date|order|hearing))\b/i;
+const SPAM_LINK_RE = /\bhttps?:\/\/[^\s]+|\bwww\.[^\s]+|(?<![@\w.-])[a-z0-9-]+\.(?:com|net|org|info|biz|io|co|us|xyz|online|site|top|ru|cn|shop|store|app|dev|ly|me|click|link)\b(?:\/[^\s]*)?/gi;
+
+/* Control, bidi and zero-width characters out; newlines kept only where asked;
+   length bounded. The one cleaner for anything this block stores or scores. */
+function cleanFormText(v, max, multiline = false) {
+  let t = String(v == null ? '' : v)
+    .replace(/[\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g, '')
+    .replace(multiline ? /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g
+                       : /[\u0000-\u001f\u007f-\u009f]/g, multiline ? '' : ' ');
+  t = multiline ? t.replace(/\r\n?/g, '\n').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n')
+                : t.replace(/\s+/g, ' ');
+  t = t.trim();
+  return t.length > max ? t.slice(0, max) : t;
+}
+
+/* Which public form an ingest body came from. The quick inquiry names itself;
+   every other public body is the detailed intake. */
+function ingestFormOf(p) {
+  return p && p.intake_form === 'Quick confidential inquiry' ? 'inquiry' : 'intake';
+}
+
+/* The free text an ingest body carries, for scoring only: the fields a person
+   WRITES IN, by name. Names, the carrier, the service and every picker are
+   left out on purpose — "Spouse / Relationship" is the form's own label, not
+   the writer's words, and an email address is a domain. */
+const SPAM_TEXT_KEYS = ['objective', 'description', 'message', 'notes', 'known_schedule', 'area',
+  'subject_description', 'timeline', 'special_instructions', 'billing_notes', 'prior_surveillance'];
+function ingestTexts(p) {
+  const out = [];
+  for (const k of SPAM_TEXT_KEYS) {
+    const v = p && p[k];
+    if (typeof v !== 'string' || /^data:/i.test(v)) continue;
+    const t = cleanFormText(v, 4000, true);
+    if (t) out.push(t);
+  }
+  return out.join('\n');
+}
+
+/* The score itself. Pure: the same inputs always give the same answer, and the
+   reasons are codes a person can read on the Spam folder. */
+function spamScore({ form, honeypot, elapsed, text, name, recent }) {
+  const reasons = [];
+  let score = 0;
+  if (honeypot) { score += 10; reasons.push('honeypot'); }
+  const min = SPAM_MIN_MS[form] || 3000;
+  if (Number.isFinite(elapsed) && elapsed >= 0 && elapsed < min) { score += 2; reasons.push('fast'); }
+  if (recent >= SPAM_SOURCE_SOFT) { score += 3; reasons.push('frequent'); }
+
+  const body = String(text || '');
+  const links = (body.match(SPAM_LINK_RE) || []).length;
+  const pitches = SPAM_PITCH.filter(([, re]) => re.test(body)).map(([id]) => id);
+  if (links >= 6) { score += 6; reasons.push('many_links'); }
+  else if (links >= 3) { score += 3; reasons.push('links'); }
+  else if (links >= 1 && pitches.length) { score += 1; reasons.push('link_with_pitch'); }
+  if (new RegExp(SPAM_LINK_RE.source, 'i').test(String(name || ''))) { score += 4; reasons.push('link_in_name'); }
+
+  if (pitches.length) {
+    score += pitches.length === 1 ? 2 : pitches.length === 2 ? 5 : 7;
+    reasons.push(...pitches.map(id => 'pitch_' + id));
+  }
+
+  const words = body.toLowerCase().match(/[a-z0-9']+/g) || [];
+  const lines = body.split('\n').map(l => l.trim().toLowerCase()).filter(l => l.length >= 10);
+  const lineCounts = new Map();
+  for (const l of lines) lineCounts.set(l, (lineCounts.get(l) || 0) + 1);
+  if ((words.length >= 40 && new Set(words).size / words.length < 0.3)
+      || [...lineCounts.values()].some(n => n >= 3)) { score += 3; reasons.push('repetitive'); }
+  else if (/(.)\1{19,}/.test(body)) { score += 2; reasons.push('repeated_chars'); }
+
+  /* A real matter cancels the soft signals. It never cancels a honeypot. */
+  if (!honeypot && SPAM_PERSONAL.test(body)) {
+    score = Math.max(0, score - 3); reasons.push('personal_matter');
+  }
+  return { score, reasons, spam: score >= SPAM_THRESHOLD };
+}
+
+/* The caller's source, as a salted hash, and how many times it has submitted
+   in this hour and in the last day. With no address header (local tests, or a
+   runtime that does not set it) there is no source to count, and only the
+   global minute cap applies. The salt is the ingest secret, which this route
+   cannot run without. */
+async function formSource(env, request) {
+  const ip = String(request.headers.get('CF-Connecting-IP') || '').trim();
+  if (!ip || !env.INGEST_KEY) return null;
+  const src = (await sha256Hex(env.INGEST_KEY + '|form-source|' + ip)).slice(0, 24);
+  const hour = nowIso().slice(0, 13);
+  const dayAgo = new Date(Date.now() - 86_400_000).toISOString().slice(0, 13);
+  const { results } = await env.DB.prepare(
+    `SELECT minute, n FROM ingest_rate WHERE minute > ? AND minute < 'src;' AND minute LIKE ?`)
+    .bind('src:' + dayAgo, '%:' + src).all();
+  const key = 'src:' + hour + ':' + src;
+  let inHour = 0, inDay = 0;
+  for (const r of results || []) { inDay += Number(r.n) || 0; if (r.minute === key) inHour += Number(r.n) || 0; }
+  return { key, inHour, inDay };
+}
+
+/* Read first, write only for a caller under the limit — a guard must not be
+   the cost it guards (closeout audit, 2026-09-03). */
+async function screenPublicForm(env, request, form, text, name) {
+  try {
+    const honeypot = cleanFormText(request.headers.get('X-Form-Hp') || '', 200) !== '';
+    const el = parseInt(request.headers.get('X-Form-Elapsed') || '', 10);
+    let recent = 0;
+    const src = await formSource(env, request);
+    if (src) {
+      if (src.inHour >= SPAM_SOURCE_HOUR || src.inDay >= SPAM_SOURCE_DAY) return { refused: true };
+      recent = src.inHour;
+      await env.DB.prepare(
+        `INSERT INTO ingest_rate (minute, n) VALUES (?, 1)
+           ON CONFLICT(minute) DO UPDATE SET n = n + 1`).bind(src.key).run();
+      const cutoff = new Date(Date.now() - 26 * 3_600_000).toISOString().slice(0, 13);
+      await env.DB.prepare(`DELETE FROM ingest_rate WHERE minute LIKE 'src:%' AND minute < ?`)
+        .bind('src:' + cutoff).run();
+    }
+    return spamScore({ form, honeypot, elapsed: Number.isFinite(el) ? el : NaN, text, name, recent });
+  } catch (e) {
+    console.error('form screening failed', e && e.message ? e.message : e);
+    return { spam: false, score: 0, reasons: [] };
+  }
+}
+
+/* File a spam verdict for review. True only when it was filed — anything else
+   (table absent, write refused) returns false and the caller carries on with
+   the ordinary path. An identical resend files nothing new. */
+async function quarantineForm(env, row) {
+  try {
+    if ((await missingTables(env)).includes('spam_quarantine')) return false;
+    if (row.payload) {
+      const prior = await env.DB.prepare(
+        'SELECT id FROM spam_quarantine WHERE request_no = ? AND payload = ?')
+        .bind(row.request_no || '', row.payload).first();
+      if (prior) return true;
+    }
+    await env.DB.prepare(
+      `INSERT INTO spam_quarantine (form, request_no, name, phone, email, message, payload,
+         score, reasons, received_at, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'quarantined')`)
+      .bind(row.form, row.request_no || null,
+        row.name ? cleanFormText(row.name, 120) : null,
+        row.phone ? cleanFormText(row.phone, 40) : null,
+        row.email ? cleanFormText(row.email, 200) : null,
+        row.message || null, row.payload || null,
+        row.score, (row.reasons || []).join(','), nowIso()).run();
+    return true;
+  } catch (e) {
+    console.error('quarantine write failed', e && e.message ? e.message : e);
+    return false;
+  }
+}
+
+/* THE HOMEPAGE CONTACT FORM'S CHECK. That form emails the firm through
+   Web3Forms from the browser and has never written to the portal, and a
+   genuine message still does exactly that: this route stores NOTHING for a
+   genuine message, it only answers whether the page should send it. A spam
+   verdict is quarantined here and answered `relay: false`. */
+async function handleContactScreen(request, env) {
+  const supplied = request.headers.get('X-Ingest-Key') || '';
+  if (!env.INGEST_KEY || !(await secretEqual(supplied, env.INGEST_KEY))) {
+    return json({ error: 'not authorised' }, 401);
+  }
+  const raw = await readBounded(request, 16 * 1024);
+  if (raw === null) return json({ error: 'payload too large' }, 413);
+  if (!(await withinRateLimit(env))) return json({ error: 'too many submissions' }, 429);
+  let b;
+  try { b = JSON.parse(raw); } catch { return json({ error: 'invalid json' }, 400); }
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return json({ error: 'invalid body' }, 400);
+  const name = cleanFormText(b.name, 120);
+  const phone = cleanFormText(b.phone, 40);
+  const message = cleanFormText(b.message, 4000, true);
+  const digits = phone.replace(/\D/g, '');
+  if (!name) return json({ error: 'Please enter your name.', code: 'invalid', field: 'name' }, 400);
+  if (digits.length < 7 || digits.length > 15) {
+    return json({ error: 'Please enter a full phone number, including the area code.', code: 'invalid', field: 'phone' }, 400);
+  }
+  if (!message) return json({ error: 'Please tell us briefly how we can help.', code: 'invalid', field: 'message' }, 400);
+
+  const screen = await screenPublicForm(env, request, 'contact', message, name);
+  if (screen.refused) return json({ error: SPAM_RATE_MSG, code: 'rate_limited' }, 429);
+  if (screen.spam && await quarantineForm(env, {
+    form: 'contact', request_no: null, name, phone, email: null, message, payload: null,
+    score: screen.score, reasons: screen.reasons,
+  })) return json({ ok: true, relay: false });
+  return json({ ok: true, relay: true });
+}
+
+/* The office's review of the folder. Admin-only; the folder is message
+   content from the public and some of it may be a real client's. */
+function spamView(r) {
+  let p = {};
+  if (r.payload) { try { p = JSON.parse(r.payload) || {}; } catch { p = {}; } }
+  const text = r.message || p.objective || p.description || ingestTexts(p);
+  return {
+    id: r.id, form: r.form, request_no: r.request_no, status: r.status,
+    name: r.name, phone: r.phone, email: r.email,
+    service: r.payload ? cleanFormText(p.service || p.service_requested || '', 120) : '',
+    text: cleanFormText(text, 1500, true),
+    score: r.score, reasons: String(r.reasons || '').split(',').filter(Boolean),
+    received_at: r.received_at, reviewed_at: r.reviewed_at, released_as: r.released_as,
+  };
+}
+
+async function spamList(request, env, user) {
+  if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  if ((await missingTables(env)).includes('spam_quarantine')) {
+    return json({ rows: [], counts: {}, missing: true });
+  }
+  const want = new URL(request.url).searchParams.get('status') || 'quarantined';
+  const status = SPAM_STATUSES.includes(want) ? want : 'quarantined';
+  const { results } = await env.DB.prepare(
+    `SELECT * FROM spam_quarantine WHERE status = ? ORDER BY received_at DESC, id DESC LIMIT 100`)
+    .bind(status).all();
+  const c = await env.DB.prepare(
+    `SELECT status, COUNT(*) AS n FROM spam_quarantine GROUP BY status`).all();
+  const counts = {};
+  for (const r of c.results || []) counts[r.status] = Number(r.n);
+  return json({ rows: (results || []).map(spamView), counts, status });
+}
+
+/* RELEASE puts a quarantined intake or inquiry on the Intakes desk exactly as
+   the ingest would have stored it — the same INSERT, the same legal row, the
+   same acceptance link — and emails nobody: the person releasing it is the
+   office, already reading it. A contact message never was a portal record, so
+   releasing one only marks it "not spam"; its name and number are on screen.
+   CONFIRM keeps the row and marks it spam. Nothing here deletes. */
+async function spamDecide(env, user, id, action) {
+  if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  if ((await missingTables(env)).includes('spam_quarantine')) {
+    return json({ error: 'The spam folder is not set up on this database yet. Run the portal-setup workflow once.' }, 503);
+  }
+  const row = await env.DB.prepare('SELECT * FROM spam_quarantine WHERE id = ?').bind(id).first();
+  if (!row) return json({ error: 'not found' }, 404);
+  if (row.status !== 'quarantined') {
+    return json({ error: 'That message has already been reviewed.', code: 'already_reviewed', row: spamView(row) }, 409);
+  }
+  let releasedAs = null;
+  if (action === 'release' && row.payload) {
+    let p;
+    try { p = JSON.parse(row.payload); } catch { return json({ error: 'The stored submission could not be read.' }, 500); }
+    let caseNo = String(row.request_no || '');
+    if (!CASE_NO_RE.test(caseNo)) return json({ error: 'The stored request number is not valid.' }, 500);
+    const kind = ingestKind(p);
+    for (let i = 0; i < 4; i++) {
+      try { await insertSubmissionRow(env, caseNo, kind, p, row.payload); releasedAs = caseNo; break; }
+      catch (e) {
+        if (!String(e).includes('UNIQUE')) throw e;
+        /* The number was taken by a real submission while this one waited. */
+        caseNo = (String(row.request_no).slice(0, 58) + '-R' + (i + 1));
+      }
+    }
+    if (!releasedAs) return json({ error: 'That request number is already in use.', code: 'case_no_taken' }, 409);
+    if (p.assignment === 'legal' && !(await missingTables(env)).includes('legal_intake')) {
+      try { await writeLegalRow(env, releasedAs, p, null); } catch { /* payload holds it */ }
+    }
+    await linkAcceptance(env, releasedAs, p);
+  }
+  await env.DB.prepare(
+    `UPDATE spam_quarantine SET status = ?, reviewed_by = ?, reviewed_at = ?, released_as = ?
+      WHERE id = ? AND status = 'quarantined'`)
+    .bind(action === 'release' ? 'released' : 'confirmed', user.id, nowIso(), releasedAs, id).run();
+  const fresh = await env.DB.prepare('SELECT * FROM spam_quarantine WHERE id = ?').bind(id).first();
+  return json({ ok: true, row: spamView(fresh), released_as: releasedAs, emailed: false });
 }
 
 /* ===== THE ASSIGNMENT RECEIPT (owner brief 2026-09-24, Part E) ==============
@@ -18734,6 +19083,7 @@ const EXPECTED_TABLES = [
   'sent_document', 'document_send_attempt', 'document_acceptance', 'document_record_copy',
   'packet_generation', 'sent_document_custom',
   'client_intake_link', 'client_intake_event', 'client_intake_payopt',
+  'spam_quarantine',
 ];
 
 async function missingTables(env) {
@@ -21859,6 +22209,7 @@ async function route(request, env) {
   if (p === '/auth/login' && method === 'POST') return handleLogin(request, env);
   if (p === '/auth/logout' && method === 'POST') return handleLogout(request, env);
   if (p === '/ingest' && method === 'POST') return handleIngest(request, env);
+  if (p === '/contact' && method === 'POST') return handleContactScreen(request, env);
   if (p === '/setup' && method === 'POST') return handleBootstrap(request, env);
 
   /* A PRIVATE CLIENT'S PREPARED INTAKE. Necessarily unauthenticated — the
@@ -22333,6 +22684,9 @@ async function route(request, env) {
      "stop drawing it", the underlying record stays exactly where it was, and
      the marker keeps who hid it and when. Idempotent by PRIMARY KEY — a double
      tap on a flaky connection is not an error the office has to interpret. */
+  if (p === '/spam' && method === 'GET') return spamList(request, env, user);
+  let spm = p.match(/^\/spam\/(\d+)\/(release|confirm)$/);
+  if (spm && method === 'POST') return spamDecide(env, user, Number(spm[1]), spm[2]);
   if (p === '/feed/hide' && method === 'POST') {
     if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
     if ((await missingTables(env)).includes('feed_hidden')) {
