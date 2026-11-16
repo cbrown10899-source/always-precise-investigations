@@ -342,7 +342,7 @@ Vitals are in Search Console → Experience (NEEDS DATA).
 | T1 | **Homepage H1 has no service or place** since #351 (was set deliberately by #324) | Medium | CONFIRMED |
 | T2 | NAP conflict between schema street address (13 pages) and SEO.md §10's service-area instruction (§4 above) | Medium, until the GBP is checked | CONFIRMED conflict; which is right NEEDS DATA |
 | T3 | Sitemap `lastmod` is 2026-09-24 for every URL, though the homepage content changed 2026-10-10 (`CONTENT_REVISED` was not bumped) | Low | CONFIRMED |
-| T4 | Retired city URLs **without** a trailing slash return 404 (e.g. `/private-investigator/forest-va` → 404; `/private-investigator/forest-va/` → 301 correctly). Only matters if an old link omits the slash | Low | CONFIRMED |
+| T4 | Retired city URLs **without** a trailing slash return 404 (e.g. `/private-investigator/forest-va` → 404; `/private-investigator/forest-va/` → 301 correctly). Only matters if an old link omits the slash | Low | CONFIRMED — **FIXED 2026-11-16**: all 26 wildcard rules gained a bare-path twin; a deploy guard holds the class |
 | T5 | `www.alwayspreciseinvestigations.net` could not be checked (blocked here). If it does not resolve or redirect, anyone typing `www.` gets nothing | Unknown | NEEDS DATA — owner: open it in a browser |
 
 **Checked and healthy:** `http → https` 301; `/index.html` and `/privacy.html`
