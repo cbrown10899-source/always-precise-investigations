@@ -3319,7 +3319,7 @@ async function sendContactForm(page, { hp = '' } = {}) {
   await page.fill('#contactModal input[name=name]', 'Casey Genuine');
   await page.fill('#contactModal input[name=phone]', '434-555-0142');
   await page.fill('#contactModal textarea[name=message]', 'Need help with a custody matter.');
-  if (hp) await page.evaluate(v => { document.querySelector('#contactModal input[name=website]').value = v; }, hp);
+  if (hp) await page.evaluate(v => { document.querySelector('#contactModal input[name=ref_note]').value = v; }, hp);
   await page.click('#contactModal .send');
   await page.waitForFunction(() => !/Sending/.test(document.getElementById('c-status').textContent), null, { timeout: 8000 }).catch(() => {});
   return page.textContent('#c-status');
@@ -3329,7 +3329,7 @@ section('Spam screening — the homepage contact form');
 {
   let { ctx, page, seen } = await contactPage({ body: { ok: true, relay: true } });
   const hpBox = await page.evaluate(() => {
-    const i = document.querySelector('#contactModal input[name=website]'); const r = i.getBoundingClientRect();
+    const i = document.querySelector('#contactModal input[name=ref_note]'); const r = i.getBoundingClientRect();
     return { tab: i.tabIndex, hidden: i.closest('[aria-hidden="true"]') !== null, off: r.right < 0 || r.left < -1000, ac: i.autocomplete };
   });
   ok('the honeypot is off screen, out of the tab order and the accessibility tree', hpBox.tab === -1 && hpBox.hidden && hpBox.off
@@ -3381,6 +3381,28 @@ section('Spam screening — every public form carries the same submission key');
      keys.every(k => k && k === keys[0]), JSON.stringify(keys.map(k => k && k.slice(0, 6))));
 }
 
+section('Spam screening — no honeypot can be filled by browser autofill or a password manager');
+{
+  /* Autofill picks a field by its name, id, label and autocomplete token. A
+     honeypot a client's browser fills by itself would hold a real client's
+     message as spam, so every honeypot must offer autofill nothing to match:
+     a neutral name, no contact-shaped word anywhere, autocomplete off, out of
+     the tab order and the accessibility tree. */
+  const AUTOFILL = /name|mail|tel|phone|mobile|fax|addr|street|city|state|zip|postal|country|company|organi[sz]ation|url|web|site|home|user|login|pass|card|cc-|birth|bday|title|nick/i;
+  for (const f of ['index.html', 'inquiry/index.html', 'intake/index.html']) {
+    const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
+    const m = src.match(/<label[^>]*>Leave this empty(<input[^>]*>)<\/label>/);
+    const input = m ? m[1] : '';
+    const attr = a => (input.match(new RegExp(`\\b${a}="([^"]*)"`)) || [])[1];
+    const nm = attr('name') || '', id = attr('id') || '';
+    ok(`${f}: the honeypot exists`, !!input, '');
+    ok(`${f}: its name and id give autofill nothing to match`, !!nm && !AUTOFILL.test(nm) && !AUTOFILL.test(id), JSON.stringify({ nm, id }));
+    ok(`${f}: autocomplete is off, it is out of the tab order, and it sits in an aria-hidden wrapper`,
+       attr('autocomplete') === 'off' && attr('tabindex') === '-1'
+       && /aria-hidden="true"[^<]*(<label[^>]*>)?Leave this empty/.test(src.slice(Math.max(0, src.indexOf(input) - 260), src.indexOf(input))), input);
+  }
+}
+
 section('Spam screening — the quick inquiry');
 {
   const answer = async (route, status, body) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -3413,7 +3435,7 @@ section('Spam screening — the detailed intake keeps its payload, and honours a
   const page = await newPage();
   await page.goto(BASE + '?assignment=private');
   await page.waitForTimeout(150);
-  const hpEl = await page.evaluate(() => { const i = document.getElementById('hp_website');
+  const hpEl = await page.evaluate(() => { const i = document.getElementById('hp_ref');
     return i ? { tab: i.tabIndex, hidden: !!i.closest('[aria-hidden="true"]'), inApp: !!i.closest('#app') } : null; });
   ok('the intake carries a honeypot outside the wizard, out of the tab order and the accessibility tree',
      hpEl && hpEl.tab === -1 && hpEl.hidden && !hpEl.inApp, JSON.stringify(hpEl));

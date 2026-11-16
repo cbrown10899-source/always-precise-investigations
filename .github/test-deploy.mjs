@@ -1111,7 +1111,7 @@ section('The manifest describes the site honestly');
   const iqNames = [...iqForm.matchAll(/<(?:input|select|textarea)\b[^>]*\bname="([^"]+)"/g)].map(m => m[1]);
   ok('the inquiry is ONE form: name, phone, the best-time section, type, area, description (plus a hidden honeypot)',
      (iq.match(/<form\b/g) || []).length === 1
-     && JSON.stringify([...new Set(iqNames)]) === JSON.stringify(['name', 'phone', 'contact', 'best', 'best_custom', 'text_first', 'type', 'area', 'description', 'website']),
+     && JSON.stringify([...new Set(iqNames)]) === JSON.stringify(['name', 'phone', 'contact', 'best', 'best_custom', 'text_first', 'type', 'area', 'description', 'ref_note']),
      JSON.stringify(iqNames));
   /* BEST TIME TO CONTACT YOU (owner, 2026-11-07) — the owner's exact choices, on
      BOTH forms. The detailed intake draws its section from one function, so its

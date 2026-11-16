@@ -195,7 +195,7 @@
   <!-- A honeypot: off screen, out of the tab order and the accessibility tree.
        A person never fills it; a form-filling script does. -->
   <div aria-hidden="true" style="position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden">
-    <label>Leave this empty<input type="text" id="hp_website" name="website" tabindex="-1" autocomplete="off"></label></div>
+    <label>Leave this empty<input type="text" id="hp_ref" name="ref_note" tabindex="-1" autocomplete="off"></label></div>
 </main>
 <div class="foot">Confidential. Submitted only to Always Precise Investigations. Licensed &amp; insured · Va DCJS #11-9159.<br>
   <a class="home2" href="https://alwayspreciseinvestigations.net/">Return to Always Precise Investigations</a></div>
@@ -1450,7 +1450,7 @@ let RATE_LIMITED = false;
 async function recordInPortal(p, retried){
   if(!PORTAL_INGEST_KEY || PORTAL_INGEST_KEY === "PASTE_INGEST_KEY") return false;
   try{
-    const hp = document.getElementById("hp_website");
+    const hp = document.getElementById("hp_ref");
     const r = await fetch(PORTAL_API + "/ingest", {
       method:"POST",
       headers:{"Content-Type":"application/json","X-Ingest-Key":PORTAL_INGEST_KEY,
@@ -1482,7 +1482,7 @@ async function finish(){
   let notified=false, threw=false;
   /* Held for review: recorded on our side, and no email notice goes. Refused
      for volume: nothing was recorded, and the client is told to call. */
-  const hpEl = document.getElementById("hp_website");
+  const hpEl = document.getElementById("hp_ref");
   const held = (stored && INGEST_REPLY && INGEST_REPLY.relay === false) || !!(hpEl && hpEl.value);
   if(held) notified = true;
   else if(!RATE_LIMITED){ try{ notified = await notifyFirm(buildNotice(p, stored)); }catch(e){ threw=true; } }
