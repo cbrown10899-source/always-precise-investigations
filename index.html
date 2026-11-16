@@ -494,9 +494,9 @@
     <h3>Contact Us</h3>
     <p class="msub">Send a brief message with your name and number, and we'll call you back. Confidential, no obligation.</p>
     <form onsubmit="sendContact(event)">
-      <label class="field"><span>Your name</span><input type="text" name="name" autocomplete="name" required></label>
-      <label class="field"><span>Phone number</span><input type="tel" name="phone" autocomplete="tel" required></label>
-      <label class="field"><span>How can we help?</span><textarea name="message" placeholder="Briefly describe what you need…" required></textarea></label>
+      <label class="field"><span>Your name</span><input type="text" name="name" autocomplete="name" maxlength="200" required></label>
+      <label class="field"><span>Phone number</span><input type="tel" name="phone" autocomplete="tel" maxlength="40" required></label>
+      <label class="field"><span>How can we help?</span><textarea name="message" placeholder="Briefly describe what you need…" maxlength="5000" required></textarea></label>
       <label class="hp" aria-hidden="true">Leave this empty<input type="text" name="ref_note" tabindex="-1" autocomplete="off"></label>
       <button type="submit" class="btn btn-navy send">Send message</button>
       <div id="c-status"></div>

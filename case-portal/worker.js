@@ -436,28 +436,36 @@ async function handleIngest(request, env) {
      of the record; after the row, because it needs the submission's id. */
   await linkAcceptance(env, caseNo, p);
   // The case is recorded; telling the office is a courtesy that cannot fail it.
-  if (kind !== 'claims') {
-    await notifyAdmins(env, 'intakes', caseNo);
-    return json({ ok: true, case_no: caseNo });
-  }
-  /* THE ADJUSTER'S RECEIPT (owner, 2026-09-24), on the carrier path only and
-     only on a FRESH insert — the identical retry above returned before this,
-     so a browser retry cannot email a second receipt. Every other kind answers
-     exactly as it always did: no key is added to a response nothing asked to
-     change.
+  const told = await announceIntake(env, caseNo, p, kind);
+  if (kind !== 'claims') return json({ ok: true, case_no: caseNo });
+  return json({ ok: true, case_no: caseNo, receipt: told.receipt, receipt_reason: told.receipt_reason });
+}
 
-     THEN THE OFFICE, ONCE (owner, 2026-09-24: "avoid sending Corey two
-     redundant office emails"). The receipt goes first so the office's notice
-     can say whether the adjuster actually got it; the notice goes to the
-     business record address with the assignment's detail and a link into the
-     portal; and the privacy-safe intake alert then skips that one inbox and
-     still reaches every other recipient. When no notice went — no address set,
-     or the provider refused it — nothing is skipped and the alert is the
-     office's notice exactly as before, so the office always hears. */
+/* WHO IS TOLD ABOUT A NEWLY RECORDED PUBLIC SUBMISSION — the ingest's own
+   notification tail, and the one a submission released from the Spam folder
+   runs, so a released intake is announced exactly as it would have been.
+   Never throws: every sender inside it already reports instead of throwing.
+
+   A private or legal intake: the privacy-safe intake alert, as ever.
+
+   A carrier assignment: THE ADJUSTER'S RECEIPT (owner, 2026-09-24), then THE
+   OFFICE, ONCE (owner, 2026-09-24: "avoid sending Corey two redundant office
+   emails"). The receipt goes first so the office's notice can say whether the
+   adjuster actually got it; the notice goes to the business record address
+   with the assignment's detail and a link into the portal; and the
+   privacy-safe intake alert then skips that one inbox and still reaches every
+   other recipient. When no notice went — no address set, or the provider
+   refused it — nothing is skipped and the alert is the office's notice
+   exactly as before, so the office always hears. */
+async function announceIntake(env, caseNo, p, kind) {
+  if (kind !== 'claims') {
+    const a = await notifyAdmins(env, 'intakes', caseNo);
+    return { alert: a || {} };
+  }
   const r = await sendAssignmentReceipt(env, caseNo, p);
   const notice = await assignmentOfficeNotice(env, caseNo, p, r);
-  await notifyAdmins(env, 'intakes', caseNo, { skip: notice.sent ? [notice.to] : [] });
-  return json({ ok: true, case_no: caseNo, receipt: r.receipt, receipt_reason: r.receipt_reason });
+  const a = await notifyAdmins(env, 'intakes', caseNo, { skip: notice.sent ? [notice.to] : [] });
+  return { alert: a || {}, receipt: r.receipt, receipt_reason: r.receipt_reason, notice: !!notice.sent };
 }
 
 /* The one INSERT into submissions from a public form — the ingest's own write,
@@ -674,9 +682,9 @@ async function quarantineForm(env, row) {
          score, reasons, received_at, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'quarantined')`)
       .bind(row.form, row.request_no || null,
-        row.name ? cleanFormText(row.name, 120) : null,
-        row.phone ? cleanFormText(row.phone, 40) : null,
-        row.email ? cleanFormText(row.email, 200) : null,
+        row.name ? cleanFormText(row.name, 300) : null,
+        row.phone ? cleanFormText(row.phone, 300) : null,
+        row.email ? cleanFormText(row.email, 300) : null,
         row.message || null, row.payload || null,
         row.score, (row.reasons || []).join(','), nowIso()).run();
     return true;
@@ -690,27 +698,37 @@ async function quarantineForm(env, row) {
    Web3Forms from the browser and has never written to the portal, and a
    genuine message still does exactly that: this route stores NOTHING for a
    genuine message, it only answers whether the page should send it. A spam
-   verdict is quarantined here and answered `relay: false`. */
+   verdict is quarantined here and answered `relay: false`.
+
+   NOTHING ACCEPTED IS CUT SHORT (owner, 2026-11-16). Each field has a stated
+   limit — the same one the form's own maxlength shows the visitor — and a
+   field over it is REFUSED BY NAME rather than trimmed, so the message the
+   office can read in the folder is the whole message that was accepted. */
+const CONTACT_MAX = { name: 200, phone: 40, message: 5000 };
 async function handleContactScreen(request, env) {
   const supplied = request.headers.get('X-Ingest-Key') || '';
   if (!env.INGEST_KEY || !(await secretEqual(supplied, env.INGEST_KEY))) {
     return json({ error: 'not authorised' }, 401);
   }
-  const raw = await readBounded(request, 16 * 1024);
+  const raw = await readBounded(request, 64 * 1024);
   if (raw === null) return json({ error: 'payload too large' }, 413);
   if (!(await withinRateLimit(env))) return json({ error: 'too many submissions' }, 429);
   let b;
   try { b = JSON.parse(raw); } catch { return json({ error: 'invalid json' }, 400); }
   if (!b || typeof b !== 'object' || Array.isArray(b)) return json({ error: 'invalid body' }, 400);
-  const name = cleanFormText(b.name, 120);
-  const phone = cleanFormText(b.phone, 40);
-  const message = cleanFormText(b.message, 4000, true);
+  const name = cleanFormText(b.name, Infinity);
+  const phone = cleanFormText(b.phone, Infinity);
+  const message = cleanFormText(b.message, Infinity, true);
   const digits = phone.replace(/\D/g, '');
+  const tooLong = (field, label) => json({ error: `Please keep the ${label} under ${CONTACT_MAX[field].toLocaleString('en-US')} characters, or call (434) 907-0975.`,
+    code: 'invalid', field, reason: 'too_long', max: CONTACT_MAX[field] }, 400);
   if (!name) return json({ error: 'Please enter your name.', code: 'invalid', field: 'name' }, 400);
-  if (digits.length < 7 || digits.length > 15) {
+  if (name.length > CONTACT_MAX.name) return tooLong('name', 'name');
+  if (phone.length > CONTACT_MAX.phone || digits.length < 7 || digits.length > 15) {
     return json({ error: 'Please enter a full phone number, including the area code.', code: 'invalid', field: 'phone' }, 400);
   }
   if (!message) return json({ error: 'Please tell us briefly how we can help.', code: 'invalid', field: 'message' }, 400);
+  if (message.length > CONTACT_MAX.message) return tooLong('message', 'message');
 
   const screen = await screenPublicForm(env, request, 'contact', message, name);
   if (screen.refused) return json({ error: SPAM_RATE_MSG, code: 'rate_limited' }, 429);
@@ -722,8 +740,10 @@ async function handleContactScreen(request, env) {
 }
 
 /* The office's review of the folder. Admin-only; the folder is message
-   content from the public and some of it may be a real client's. */
-function spamView(r) {
+   content from the public and some of it may be a real client's. The text is
+   returned WHOLE — the folder is where a false positive is read, and a
+   shortened copy there is a shortened message. */
+function spamView(r, events) {
   let p = {};
   if (r.payload) { try { p = JSON.parse(r.payload) || {}; } catch { p = {}; } }
   const text = r.message || p.objective || p.description || ingestTexts(p);
@@ -731,10 +751,49 @@ function spamView(r) {
     id: r.id, form: r.form, request_no: r.request_no, status: r.status,
     name: r.name, phone: r.phone, email: r.email,
     service: r.payload ? cleanFormText(p.service || p.service_requested || '', 120) : '',
-    text: cleanFormText(text, 1500, true),
+    text: cleanFormText(text, Infinity, true),
     score: r.score, reasons: String(r.reasons || '').split(',').filter(Boolean),
     received_at: r.received_at, reviewed_at: r.reviewed_at, released_as: r.released_as,
+    events: events || [],
   };
+}
+
+/* THE AUDIT TRAIL of every decision on a held message, append-only: who
+   moved it from what to what, and when. Written best-effort, the
+   retention_event rule — a failed audit row never breaks the decision it
+   describes — and the decision reports whether it was recorded. */
+async function spamEvent(env, spamId, action, from, to, user, detail) {
+  try {
+    if ((await missingTables(env)).includes('spam_event')) return false;
+    await env.DB.prepare(
+      `INSERT INTO spam_event (spam_id, action, from_status, to_status, detail, actor, at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .bind(spamId, action, from, to, detail || null, user.id, nowIso()).run();
+    return true;
+  } catch (e) {
+    console.error('spam audit write failed', e && e.message ? e.message : e);
+    return false;
+  }
+}
+
+/* The events for a set of rows, read through ONE bounded statement keyed on
+   the same page of rows the list returns — never a bind per row. */
+async function spamEvents(env, status, onlyId) {
+  if ((await missingTables(env)).includes('spam_event')) return new Map();
+  const sql = onlyId
+    ? `SELECT e.*, u.display_name AS actor_name FROM spam_event e LEFT JOIN users u ON u.id = e.actor
+        WHERE e.spam_id = ? ORDER BY e.id`
+    : `SELECT e.*, u.display_name AS actor_name FROM spam_event e LEFT JOIN users u ON u.id = e.actor
+        JOIN (SELECT id FROM spam_quarantine WHERE status = ? ORDER BY received_at DESC, id DESC LIMIT 100) q
+          ON q.id = e.spam_id ORDER BY e.id`;
+  const { results } = await env.DB.prepare(sql).bind(onlyId || status).all();
+  const by = new Map();
+  for (const e of results || []) {
+    if (!by.has(e.spam_id)) by.set(e.spam_id, []);
+    by.get(e.spam_id).push({ action: e.action, from: e.from_status, to: e.to_status, detail: e.detail,
+      by: e.actor_name || 'An admin', at: e.at });
+  }
+  return by;
 }
 
 async function spamList(request, env, user) {
@@ -747,19 +806,143 @@ async function spamList(request, env, user) {
   const { results } = await env.DB.prepare(
     `SELECT * FROM spam_quarantine WHERE status = ? ORDER BY received_at DESC, id DESC LIMIT 100`)
     .bind(status).all();
+  const events = await spamEvents(env, status);
   const c = await env.DB.prepare(
     `SELECT status, COUNT(*) AS n FROM spam_quarantine GROUP BY status`).all();
   const counts = {};
   for (const r of c.results || []) counts[r.status] = Number(r.n);
-  return json({ rows: (results || []).map(spamView), counts, status });
+  return json({ rows: (results || []).map(r => spamView(r, events.get(r.id))), counts, status });
 }
 
-/* RELEASE puts a quarantined intake or inquiry on the Intakes desk exactly as
-   the ingest would have stored it — the same INSERT, the same legal row, the
-   same acceptance link — and emails nobody: the person releasing it is the
-   office, already reading it. A contact message never was a portal record, so
-   releasing one only marks it "not spam"; its name and number are on screen.
-   CONFIRM keeps the row and marks it spam. Nothing here deletes. */
+/* The Intakes desk's Spam Review count: how many are held awaiting review.
+   One indexed COUNT, admin-only, and "unknown" is never drawn as zero —
+   the table not being there yet answers `missing`, not a count. */
+async function spamCount(env, user) {
+  if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
+  if ((await missingTables(env)).includes('spam_quarantine')) return json({ held: null, missing: true });
+  const r = await env.DB.prepare(`SELECT COUNT(*) AS n FROM spam_quarantine WHERE status = 'quarantined'`).first();
+  return json({ held: Number((r && r.n) || 0) });
+}
+
+const ALERT_NOT_SENT = {
+  not_configured: 'email is not configured on the portal',
+  not_set_up: 'alert recipients are not set up on this database',
+  no_recipients: 'no alert recipients are set up for new intakes (Settings)',
+  rate_limited: 'too many emails in the last minute',
+  test_case: 'a TEST- case raises no alert',
+  told_in_detail: 'the office was told by its detailed notice',
+};
+
+/* RELEASING A HELD INTAKE OR INQUIRY puts it on the desk exactly as the ingest
+   would have stored it — the same INSERT, legal row and acceptance link — and
+   then ANNOUNCES it exactly as the ingest would have: the intake alert, and on
+   a carrier assignment the adjuster's receipt and the office's one notice
+   (`announceIntake`, the ingest's own tail). If the very same submission is
+   already on the desk — an identical resend that got through — it is that
+   submission: nothing is inserted and nothing is sent twice. */
+async function releaseIntake(env, row) {
+  let p;
+  try { p = JSON.parse(row.payload); } catch { throw new Error('stored submission unreadable'); }
+  let caseNo = String(row.request_no || '');
+  if (!CASE_NO_RE.test(caseNo)) throw new Error('stored request number invalid');
+  const kind = ingestKind(p);
+  const prior = await env.DB.prepare('SELECT payload FROM submissions WHERE case_no = ?').bind(caseNo).first();
+  if (prior && prior.payload === row.payload) {
+    return { released_as: caseNo, already_on_desk: true, alerted: false,
+      note: `Already on the Intakes desk as ${caseNo}; it was announced when it arrived, so nothing was sent again.` };
+  }
+  let filed = null;
+  for (let i = 0; i < 4 && !filed; i++) {
+    try { await insertSubmissionRow(env, caseNo, kind, p, row.payload); filed = caseNo; }
+    catch (e) {
+      if (!String(e).includes('UNIQUE')) throw e;
+      /* The number was taken by a different submission while this one waited. */
+      caseNo = String(row.request_no).slice(0, 58) + '-R' + (i + 1);
+    }
+  }
+  if (!filed) throw new Error('no free request number');
+  if (p.assignment === 'legal' && !(await missingTables(env)).includes('legal_intake')) {
+    try { await writeLegalRow(env, filed, p, null); } catch { /* payload holds it */ }
+  }
+  await linkAcceptance(env, filed, p);
+  const told = await announceIntake(env, filed, p, kind);
+  /* The note says what WENT, from what each sender reported — never that a
+     notification was sent because one was attempted. */
+  const n = Number(told.alert.sent) || 0;
+  const alertLine = n ? ` The usual new-intake alert was emailed to ${n} recipient${n === 1 ? '' : 's'}.`
+    : told.notice ? ''
+    : ` The new-intake alert was not emailed: ${ALERT_NOT_SENT[told.alert.reason] || 'it did not go through'}.`;
+  const noticeLine = told.notice ? ' The office was emailed its detailed assignment notice.' : '';
+  const receiptLine = kind === 'claims'
+    ? (told.receipt === 'sent' ? ' The adjuster\'s receipt was emailed.'
+      : ` The adjuster's receipt was not sent: ${NOTICE_RECEIPT[told.receipt_reason] || 'the email provider did not accept it'}.`)
+    : '';
+  return { released_as: filed, alerted: n > 0 || told.notice === true, receipt: told.receipt || null,
+    receipt_reason: told.receipt_reason || null,
+    note: `Put on the Intakes desk as ${filed}.${alertLine}${noticeLine}${receiptLine}` };
+}
+
+/* RELEASING A HELD HOMEPAGE MESSAGE follows the homepage's own workflow: the
+   firm is emailed the message, and it is never turned into an intake. The
+   page sends that email through Web3Forms from the visitor's browser; the
+   portal's own page may not reach a third party (its CSP is 'self' only), so
+   the release sends the same fields — name, phone and the whole message,
+   under the same generic subject — through the portal's one sender to the
+   business notification email, the inbox already trusted with full record
+   copies. With no address set nothing can be sent, and the answer says so. */
+const CONTACT_SUBJECT = 'New website inquiry — Always Precise Investigations';
+const CONTACT_NOT_EMAILED = {
+  not_configured: 'email is not configured',
+  no_record_address: 'no business notification email is set',
+  rate_limited: 'too many emails that minute',
+};
+async function releaseContact(env, row, user) {
+  const done = (emailed, why, note) => ({ released_as: null, emailed, email_reason: why || '', note });
+  try {
+    if (!env.RESEND_API_KEY) return done(false, 'not_configured', 'Marked not spam. It was not emailed: email is not configured on the portal.');
+    const to = String((await billingSettings(env)).owner_record_email || '').trim();
+    if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      return done(false, 'no_record_address', 'Marked not spam. It was not emailed: no business notification email is set (Settings → Invoice defaults). Call them back from the number shown.');
+    }
+    if (!(await withinRateLimit(env, 'mail'))) return done(false, 'rate_limited', 'Marked not spam. It was not emailed: too many emails in the last minute. Call them back from the number shown.');
+    const when = receiptWhen(row.received_at);
+    const text = `New website message (Contact Us form)
+
+Name: ${row.name || ''}
+Phone: ${row.phone || ''}
+Received: ${when}
+
+${row.message || ''}
+
+This message was held by the website's spam filter and released by ${user.display_name || 'an admin'} from the portal's Spam folder.`;
+    const html = `<div style="font-family:'Segoe UI',Arial,sans-serif;color:#1c2531;line-height:1.55;max-width:600px">
+  <h2 style="margin:0 0 8px;font-size:18px;color:#12305a">New website message (Contact Us form)</h2>
+  <table style="border-collapse:collapse;font-size:14px;margin:0 0 12px">
+    <tr><td style="padding:2px 14px 2px 0;color:#5c6775">Name</td><td><b>${escHtml(row.name || '')}</b></td></tr>
+    <tr><td style="padding:2px 14px 2px 0;color:#5c6775">Phone</td><td><b>${escHtml(row.phone || '')}</b></td></tr>
+    <tr><td style="padding:2px 14px 2px 0;color:#5c6775">Received</td><td>${escHtml(when)}</td></tr></table>
+  <p style="white-space:pre-wrap;margin:0 0 14px">${escHtml(row.message || '')}</p>
+  <p style="font-size:.85rem;color:#5c6775">This message was held by the website's spam filter and released by
+    ${escHtml(user.display_name || 'an admin')} from the portal's Spam folder.</p></div>`;
+    const mail = await sendMail(env, { to, subject: CONTACT_SUBJECT, text, html });
+    if (!mail.sent) return done(false, mail.reason || 'failed', 'Marked not spam. The email to the business notification email did not go through — call them back from the number shown.');
+    return done(true, '', 'Marked not spam and emailed to the business notification email, like any other website message.');
+  } catch (e) {
+    console.error('contact release email failed', e && e.message ? e.message : e);
+    return done(false, 'failed', 'Marked not spam. The email did not go through — call them back from the number shown.');
+  }
+}
+
+/* A DECISION ON A HELD MESSAGE. Release is offered from Held AND from
+   Confirmed Spam (owner, 2026-11-16: an accidental confirmation must be
+   reversible); Confirm only from Held. Nothing here deletes.
+
+   THE ROW IS CLAIMED BEFORE ANYTHING IS SENT. The status moves in one
+   conditional UPDATE naming the status it was read in, so of two releases —
+   two admins, a double tap, a retry after a dropped response — exactly one
+   moves it, and only that one files and announces. The loser is told the
+   message was already reviewed and sends nothing. If filing then fails, the
+   row is put back so it can be released again; a sender never throws. */
 async function spamDecide(env, user, id, action) {
   if (user.role !== 'admin') return json({ error: ADMIN_ONLY }, 403);
   if ((await missingTables(env)).includes('spam_quarantine')) {
@@ -767,36 +950,38 @@ async function spamDecide(env, user, id, action) {
   }
   const row = await env.DB.prepare('SELECT * FROM spam_quarantine WHERE id = ?').bind(id).first();
   if (!row) return json({ error: 'not found' }, 404);
-  if (row.status !== 'quarantined') {
-    return json({ error: 'That message has already been reviewed.', code: 'already_reviewed', row: spamView(row) }, 409);
-  }
-  let releasedAs = null;
-  if (action === 'release' && row.payload) {
-    let p;
-    try { p = JSON.parse(row.payload); } catch { return json({ error: 'The stored submission could not be read.' }, 500); }
-    let caseNo = String(row.request_no || '');
-    if (!CASE_NO_RE.test(caseNo)) return json({ error: 'The stored request number is not valid.' }, 500);
-    const kind = ingestKind(p);
-    for (let i = 0; i < 4; i++) {
-      try { await insertSubmissionRow(env, caseNo, kind, p, row.payload); releasedAs = caseNo; break; }
-      catch (e) {
-        if (!String(e).includes('UNIQUE')) throw e;
-        /* The number was taken by a real submission while this one waited. */
-        caseNo = (String(row.request_no).slice(0, 58) + '-R' + (i + 1));
-      }
+  const from = row.status;
+  const allowed = action === 'release' ? ['quarantined', 'confirmed'] : ['quarantined'];
+  const reviewed = () => json({ error: 'That message has already been reviewed.', code: 'already_reviewed', row: spamView(row) }, 409);
+  if (!allowed.includes(from)) return reviewed();
+  const to = action === 'release' ? 'released' : 'confirmed';
+  const claim = await env.DB.prepare(
+    `UPDATE spam_quarantine SET status = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ? AND status = ?`)
+    .bind(to, user.id, nowIso(), id, from).run();
+  if (!claim || !claim.meta || Number(claim.meta.changes) !== 1) return reviewed();
+
+  let out = { released_as: null, note: 'Marked as spam. It stays in the folder and nothing was deleted.' };
+  if (to === 'released') {
+    try {
+      out = row.payload ? await releaseIntake(env, row) : await releaseContact(env, row, user);
+    } catch (e) {
+      await env.DB.prepare(
+        `UPDATE spam_quarantine SET status = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ? AND status = ?`)
+        .bind(from, row.reviewed_by, row.reviewed_at, id, to).run();
+      console.error('spam release failed', e && e.message ? e.message : e);
+      return json({ error: 'That message could not be released. Nothing was sent; please try again.' }, 500);
     }
-    if (!releasedAs) return json({ error: 'That request number is already in use.', code: 'case_no_taken' }, 409);
-    if (p.assignment === 'legal' && !(await missingTables(env)).includes('legal_intake')) {
-      try { await writeLegalRow(env, releasedAs, p, null); } catch { /* payload holds it */ }
+    if (out.released_as) {
+      await env.DB.prepare('UPDATE spam_quarantine SET released_as = ? WHERE id = ?').bind(out.released_as, id).run();
     }
-    await linkAcceptance(env, releasedAs, p);
   }
-  await env.DB.prepare(
-    `UPDATE spam_quarantine SET status = ?, reviewed_by = ?, reviewed_at = ?, released_as = ?
-      WHERE id = ? AND status = 'quarantined'`)
-    .bind(action === 'release' ? 'released' : 'confirmed', user.id, nowIso(), releasedAs, id).run();
+  const detail = out.released_as ? `filed as ${out.released_as}` : out.emailed === true ? 'emailed to the office'
+    : out.email_reason ? `not emailed (${CONTACT_NOT_EMAILED[out.email_reason] || 'the email did not go through'})` : null;
+  const audited = await spamEvent(env, id, from === 'confirmed' ? 'reversed' : to, from, to, user, detail);
   const fresh = await env.DB.prepare('SELECT * FROM spam_quarantine WHERE id = ?').bind(id).first();
-  return json({ ok: true, row: spamView(fresh), released_as: releasedAs, emailed: false });
+  return json({ ok: true, row: spamView(fresh, (await spamEvents(env, null, id)).get(id)),
+    released_as: out.released_as || null, note: out.note, audited,
+    alerted: !!out.alerted, receipt: out.receipt || null, emailed: out.emailed === true });
 }
 
 /* ===== THE ASSIGNMENT RECEIPT (owner brief 2026-09-24, Part E) ==============
@@ -19089,7 +19274,7 @@ const EXPECTED_TABLES = [
   'sent_document', 'document_send_attempt', 'document_acceptance', 'document_record_copy',
   'packet_generation', 'sent_document_custom',
   'client_intake_link', 'client_intake_event', 'client_intake_payopt',
-  'spam_quarantine',
+  'spam_quarantine', 'spam_event',
 ];
 
 async function missingTables(env) {
@@ -22691,6 +22876,7 @@ async function route(request, env) {
      the marker keeps who hid it and when. Idempotent by PRIMARY KEY — a double
      tap on a flaky connection is not an error the office has to interpret. */
   if (p === '/spam' && method === 'GET') return spamList(request, env, user);
+  if (p === '/spam/count' && method === 'GET') return spamCount(env, user);
   let spm = p.match(/^\/spam\/(\d+)\/(release|confirm)$/);
   if (spm && method === 'POST') return spamDecide(env, user, Number(spm[1]), spm[2]);
   if (p === '/feed/hide' && method === 'POST') {

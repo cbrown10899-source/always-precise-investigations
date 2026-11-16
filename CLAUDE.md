@@ -1108,17 +1108,42 @@ payload key).
 **QUARANTINED, NEVER DROPPED.** Spam goes to `spam_quarantine`, never to
 `submissions`; no alert, receipt or office notice is sent; the page is answered
 `relay: false` and sends no Web3Forms notice either. A genuine response is
-byte-identical to before (no `relay` key). The Intakes desk has a **Spam
-folder** (admin-only, loaded only when opened): **Not spam** files an intake or
-inquiry through the same `insertSubmissionRow` the ingest uses (a number taken
-meanwhile gets `-R1`), emailing nobody; **Confirm spam** keeps the row. Nothing
-deletes. `request_no`, not `case_no`, because no case exists for a held row.
-A held homepage message's number is a `tel:` link (digits and a leading plus
-only), so a false positive released from the folder can be called back from it.
-**On a phone the folder ends `--pillgap + 64px` above the page end**: the shell's
-padding clears only the bottom nav, so without it the last row's *Confirm spam*
-sat under the floating CEO/Assistant pills at 390 (measured 711 vs 624); the
-suite hit-tests the last row's controls at 390 and 320.
+byte-identical to before (no `relay` key). Nothing in the folder is deleted.
+`request_no`, not `case_no`, because no case exists for a held row.
+
+**THE DESK SAYS WHEN SOMETHING IS HELD** (owner, 2026-11-16). The Intakes
+header carries an admin-only **Spam review · N held** count (`GET /spam/count`,
+one indexed COUNT, fetched only on the desk); it is the door — one tap opens the
+folder on Held, scrolled to and focused. A failed or not-yet-set-up read draws
+**no** count: "0 held" is a claim. The chip is gold while anything waits and
+must stay gold under the pointer — `.btn:hover` outranks a single class, and
+the first build's chip measured **2.74:1** hovered; the suite measures both.
+
+**RELEASE ANNOUNCES EXACTLY AS THE INGEST WOULD HAVE, ONCE.** An inquiry or
+intake is filed through `insertSubmissionRow` and announced through
+`announceIntake` — the ingest's own tail: the intake alert, and on a carrier
+assignment the adjuster's receipt and the office's one notice. A homepage
+message is **never made an intake**: it is emailed under the homepage form's own
+generic subject, with the name, number and whole message, to the business
+notification email (the portal page cannot reach Web3Forms — its CSP is
+`'self'` — so the firm's own sender carries it). **The row is CLAIMED before
+anything is sent** — one conditional UPDATE naming the status it was read in —
+so two admins or a double tap file and email once; the suite races two releases
+deterministically (each claim waits until both have read the row), and dropping
+the condition emails a homepage message twice by name. An identical submission
+already on the desk is linked, not refiled or re-announced. **The note says what
+WENT**, from what each sender reported — never "sent" because it was attempted.
+
+**CONFIRMED SPAM IS REVERSIBLE, AND THE TRAIL IS APPEND-ONLY.** Release is
+offered from Held and from Confirmed Spam (recorded as `reversed`); Confirm only
+from Held; a released row takes no further decision. `spam_event` keeps every
+decision — action, from, to, who, when, a worded outcome, never content — written
+best-effort (the `retention_event` rule; the response says `audited`).
+
+**NOTHING ACCEPTED IS CUT SHORT.** The homepage form's limits — name 200, phone
+40, message 5,000 — are its `maxlength` AND the server's, and a field over them
+is **refused by name** (`reason: 'too_long'`), never trimmed; the body cap is
+64 KB so a full message in any script fits. The folder shows held text whole.
 
 **THE HOMEPAGE FORM STILL WRITES NOTHING FOR A GENUINE MESSAGE.** `POST
 /contact` only answers whether the page should email it; it stores only a spam
@@ -1134,8 +1159,8 @@ With no `CF-Connecting-IP` (local tests) there is no source to count.
 **EVERY FAILURE FAILS OPEN.** A screen that throws, a table not yet created, a
 check the homepage cannot reach — each lets the message through exactly as
 before. A filled honeypot is the one thing a page never emails, whatever the
-server answered. **`spam_quarantine` means a manual `portal-setup.yml`
-dispatch after merge**; until then spam goes through as it always did. A bot
+server answered. **`spam_quarantine` and `spam_event` mean one manual
+`portal-setup.yml` dispatch after merge**; until then spam goes through as it always did. A bot
 that skips the page and posts to Web3Forms with the public key is not stopped
 by any of this — Cloudflare Turnstile is the named next step if it is needed.
 

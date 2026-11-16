@@ -34536,10 +34536,37 @@ try {
   await page.locator('.tabs button[data-tab="leads"]').click();
   await page.waitForTimeout(500);
   ok('the held inquiry is not on the Intakes desk', await page.locator('.pcard', { hasText: 'Held Hannah' }).count() === 0);
-  ok('the Spam folder is closed until asked for', await page.locator('[data-act="spamOpen"]').count() === 1
+  ok('the Spam folder is closed until asked for', await page.locator('.spamcard [data-act="spamOpen"]').count() === 1
      && await page.locator('.spamrow').count() === 0);
-  await page.locator('[data-act="spamOpen"]').first().click();
+  /* THE SPAM REVIEW COUNT on the desk's own header, admin-only, and it is the
+     door: one tap opens the folder on what is held, brought to the person. */
+  await page.waitForSelector('.spamchip', { timeout: 5000 }).catch(() => {});
+  const chip = page.locator('.spamchip');
+  ok('the Intakes desk shows a Spam Review count of the held messages', await chip.count() === 1
+     && /Spam review\s*·\s*3 held/.test(await chip.innerText().catch(() => '')), await chip.innerText().catch(() => 'no chip'));
+  ok('it names itself for a screen reader', /3 held messages awaiting review/.test(await chip.getAttribute('aria-label').catch(() => '') || ''));
+  /* Readable at rest AND under the pointer — .btn:hover repaints a plain
+     button navy, and a gold label on navy was the first build's chip. */
+  const chipContrast = () => chip.evaluate(el => {
+    const rgb = c => (c.match(/\d+(\.\d+)?/g) || []).slice(0, 3).map(Number);
+    const lum = ([r, g, b]) => { const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+    const cs = getComputedStyle(el); const a = lum(rgb(cs.color)), b = lum(rgb(cs.backgroundColor));
+    return Math.round(((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)) * 100) / 100; });
+  const atRest = await chipContrast();
+  await chip.hover(); await page.waitForTimeout(150);
+  const underPointer = await chipContrast();
+  await page.mouse.move(0, 0);
+  ok('the count reads at 4.5:1 or better, at rest and under the pointer', atRest >= 4.5 && underPointer >= 4.5,
+     JSON.stringify({ atRest, underPointer }));
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await chip.click();
   await page.waitForSelector('.spamrow', { timeout: 5000 });
+  await page.waitForTimeout(200);
+  const opened = await page.evaluate(() => { const c = document.querySelector('.spamcard'); const r = c.getBoundingClientRect();
+    return { top: r.top, inView: r.top >= -2 && r.top < innerHeight, focus: document.activeElement === c.querySelector('h2'),
+      held: !!document.querySelector('[data-act="spamStatus"][data-status="quarantined"]:not(.ghost)') }; });
+  ok('tapping it opens the folder on Held, scrolled to and focused', opened.inView && opened.focus && opened.held, JSON.stringify(opened));
   const rows = await page.locator('.spamrow').allInnerTexts();
   ok('the folder lists all three held submissions with who, which form and why', rows.length === 3
      && rows.some(t => /Growth Team/.test(t) && /Homepage message/.test(t) && /SEO pitch/.test(t))
@@ -34576,46 +34603,73 @@ try {
   const lena = page.locator('.spamrow', { hasText: 'Legit Lena' });
   ok('a held homepage message shows the number as a tap-to-call link',
      await lena.locator('a.spamcall[href="tel:4345550123"]').count() === 1);
+  let asked = '';
+  page.once('dialog', d => { asked = d.message(); d.accept(); });
   await lena.locator('[data-do="release"]').click();
-  await page.waitForTimeout(800);
-  ok('Not spam on a homepage message says it is marked, and that nothing was emailed',
-     await page.locator('.note', { hasText: 'Marked not spam. Nothing was emailed.' }).count() === 1);
+  await page.waitForTimeout(900);
+  ok('releasing a homepage message says first that it is emailed as a website message and not made an intake',
+     /emailed to the office/.test(asked) && /does not become an intake/.test(asked), asked);
+  ok('and afterwards says truthfully what happened (this test portal has no email configured)',
+     await page.locator('.note', { hasText: 'Marked not spam. It was not emailed: email is not configured' }).count() === 1);
   await page.locator('[data-act="spamStatus"][data-status="released"]').click();
   await page.waitForSelector('.spamrow', { timeout: 5000 });
   const relLena = page.locator('.spamrow', { hasText: 'Legit Lena' });
   ok('under Released it is recoverable whole: who, the message, and a number to call',
      await relLena.count() === 1 && /Please call me about my custody case\./.test(await relLena.innerText())
      && await relLena.locator('a.spamcall[href="tel:4345550123"]').count() === 1, await relLena.innerText().catch(() => ''));
-  ok('and a reviewed row offers no second decision', await relLena.locator('[data-act="spamDecide"]').count() === 0);
+  ok('and a released row offers no second decision', await relLena.locator('[data-act="spamDecide"]').count() === 0);
+  ok('and its audit trail names who released it', /Released by Trever Brown/.test(await relLena.innerText()));
   await page.locator('[data-act="spamStatus"][data-status="quarantined"]').click();
   await page.waitForSelector('.spamrow', { timeout: 5000 });
 
   const hannah = page.locator('.spamrow', { hasText: 'Held Hannah' });
+  asked = '';
+  page.once('dialog', d => { asked = d.message(); d.accept(); });
   await hannah.locator('[data-do="release"]').click();
-  await page.waitForTimeout(800);
-  ok('Not spam puts it on the desk under its own number, and says nothing was emailed',
-     /API-20261115-7311/.test(await page.locator('.note', { hasText: 'Nothing was emailed' }).first().innerText().catch(() => ''))
-     && await page.locator('.pcard', { hasText: 'Held Hannah' }).count() >= 1);
+  await page.waitForTimeout(900);
+  ok('releasing an inquiry says first that it is filed and the usual notification sent', /filed on the Intakes desk/.test(asked)
+     && /usual new-intake notification/.test(asked), asked);
+  const hNote = await page.locator('.note', { hasText: 'Put on the Intakes desk as' }).first().innerText().catch(() => '');
+  ok('it goes on the desk under its own number, and the note says what was and was not sent',
+     /API-20261115-7311/.test(hNote) && /alert was not emailed: email is not configured/.test(hNote)
+     && await page.locator('.pcard', { hasText: 'Held Hannah' }).count() >= 1, hNote);
   page.once('dialog', d => d.accept());
   await page.locator('.spamrow', { hasText: 'Growth Team' }).locator('[data-do="confirm"]').click();
-  await page.waitForTimeout(800);
+  await page.waitForTimeout(900);
   ok('the Held view is empty once all three are decided, and says so',
      await page.locator('.spamrow').count() === 0 && /Nothing held/.test(await page.locator('.spamcard').innerText()));
-  ok('Confirm spam keeps it, under Confirmed spam', await page.locator('.spamrow').count() === 0
-     && /Confirmed spam \(1\)/.test(await page.locator('[data-act="spamStatus"][data-status="confirmed"]').innerText()));
+  ok('and the desk\'s Spam Review count follows the decisions to 0', /Spam review\s*·\s*0 held/.test(await page.locator('.spamchip').innerText().catch(() => '')));
+  ok('Confirm spam keeps it, under Confirmed spam',
+     /Confirmed spam \(1\)/.test(await page.locator('[data-act="spamStatus"][data-status="confirmed"]').innerText()));
   await page.locator('[data-act="spamStatus"][data-status="confirmed"]').click();
   await page.waitForSelector('.spamrow', { timeout: 5000 });
-  ok('Confirmed spam shows the pitch, kept, with no decision left on it',
-     await page.locator('.spamrow', { hasText: 'Growth Team' }).count() === 1 && await page.locator('[data-act="spamDecide"]').count() === 0);
-  ok('Released now holds both the inquiry and the homepage message',
-     /Released \(2\)/.test(await page.locator('[data-act="spamStatus"][data-status="released"]').innerText()));
+  const growth = page.locator('.spamrow', { hasText: 'Growth Team' });
+  ok('Confirmed Spam shows the pitch, its trail, and one way back: release, never a second confirm',
+     await growth.count() === 1 && /Confirmed spam by Trever Brown/.test(await growth.innerText())
+     && await growth.locator('[data-do="release"]').count() === 1 && await growth.locator('[data-do="confirm"]').count() === 0);
   for (const w of [390, 320]) {
     await page.setViewportSize({ width: w, height: 800 }); await page.waitForTimeout(250);
     const m = await page.evaluate(() => ({ over: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-      out: [...document.querySelectorAll('.spamrow, .spamrow button, [data-act^="spam"]')].filter(e => e.getBoundingClientRect().right > innerWidth + 0.5).length }));
-    ok(`${w}px: the Spam folder fits the phone, nothing scrolls sideways`, m.over <= 0 && m.out === 0, JSON.stringify(m));
-    if (w === 390 && process.env.SPAM_SHOT) await page.screenshot({ path: process.env.SPAM_SHOT, fullPage: false });
+      out: [...document.querySelectorAll('.spamrow, .spamrow button, .spamrow a, [data-act^="spam"]')].filter(e => e.getBoundingClientRect().right > innerWidth + 0.5).length,
+      low: [...document.querySelectorAll('.spamrow button, .spamchip')].filter(e => e.getBoundingClientRect().height < 44).length }));
+    ok(`${w}px: the Spam folder and its count fit the phone, nothing scrolls sideways, and its buttons clear 44px`,
+       m.over <= 0 && m.out === 0 && m.low === 0, JSON.stringify(m));
+    if (w === 390 && process.env.SPAM_SHOT) await page.screenshot({ path: process.env.SPAM_SHOT });
   }
+  await page.setViewportSize({ width: 1200, height: 900 }); await page.waitForTimeout(250);
+  asked = '';
+  page.once('dialog', d => { asked = d.message(); d.accept(); });
+  await growth.locator('[data-do="release"]').click();
+  await page.waitForTimeout(900);
+  ok('reversing a Confirmed Spam decision asks first, naming it as a reversal', /marked as spam\. Reverse that/.test(asked), asked);
+  await page.locator('[data-act="spamStatus"][data-status="released"]').click();
+  await page.waitForSelector('.spamrow', { timeout: 5000 });
+  const growthRel = page.locator('.spamrow', { hasText: 'Growth Team' });
+  const gt = await growthRel.innerText().catch(() => '');
+  ok('the trail is written in words, never an internal code', !/[a-z]+_[a-z]+/.test(gt.split('Why:')[1] || gt), gt);
+  ok('the reversed message is under Released, and its trail keeps BOTH decisions in order',
+     /Confirmed spam by Trever Brown[\s\S]*Spam decision reversed and released by Trever Brown/.test(gt), gt);
+  ok('Released now holds all three', /Released \(3\)/.test(await page.locator('[data-act="spamStatus"][data-status="released"]').innerText()));
   await page.close();
 } catch (e) { ok('the spam section ran to its end without throwing', false, e && e.message); }
 
