@@ -190,6 +190,7 @@ const OPENED_AT = Date.now();
    was kept for review and no email notice should go; LIMITED means it was
    refused for too many submissions from this connection. */
 let SCREEN = "";
+let OFFICE_NOTICE = false;
 async function recordInPortal(p, retried){
   try{
     const r = await fetch(PORTAL_API + "/ingest", { method:"POST",
@@ -200,7 +201,7 @@ async function recordInPortal(p, retried){
       let code = ""; try{ code = (await r.json()).code || ""; }catch(e){}
       if(code === "case_no_taken"){ CASE_NO = mintCaseNo(); p.case_no = CASE_NO; return recordInPortal(p, true); }
     }
-    if(r.ok){ try{ if((await r.json()).relay === false) SCREEN = "hold"; }catch(e){} }
+    if(r.ok){ try{ const response = await r.json(); if(response.relay === false) SCREEN = "hold"; if(response.office_notice === true) OFFICE_NOTICE = true; }catch(e){} }
     else if(r.status === 429){ try{ if((await r.json()).code === "rate_limited") SCREEN = "limited"; }catch(e){} }
     return r.ok;
   }catch(e){ return false; }
@@ -259,11 +260,11 @@ $("iqForm").addEventListener("submit", async ev => {
      the server cannot be reached nothing is sent anywhere. A submission the
      server holds back is not emailed; one refused for volume is told to call. */
   const bot = $("iq_hp").value !== "";
-  SCREEN = "";
+  SCREEN = ""; OFFICE_NOTICE = false;
   const stored = await recordInPortal(p);
   if(SCREEN === "limited"){ showDone(p, false); BUSY = false; return; }
   const hold = SCREEN === "hold" || bot;
-  const notified = hold ? true : await notifyFirm({
+  const notified = hold || (stored && OFFICE_NOTICE) ? true : await notifyFirm({
     case_no: p.case_no, type: "Website inquiry", service: p.service,
     contact_name: p.client_name, contact_phone: p.client_phone,
     preferred_contact: p.preferred_contact || "Not stated",
