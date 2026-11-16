@@ -643,9 +643,10 @@ section('Carrier assignment: the adjuster is emailed a receipt, and only a recei
   /* Address, injury, signature, authorization and billing reference — and the
      objective, the known schedule and the insured, which the portal holds and
      an inbox does not need. */
-  ok('and it carries none of what the office did not ask to be emailed',
-     !/Hidden Lane|Lumbar|SIGBYTES|3,600|INV-REF-7|physical activity|Physical therapy|Example Employer/
-       .test(n0.text + n0.html), n0.text);
+  ok('the full internal copy includes the claimant address, injuries, restrictions, objective, billing and schedule but never the raw signature',
+      ['Hidden Lane','Lumbar strain','3,600','INV-REF-7','physical activity','Physical therapy','Example Employer'].every(v=>n0.text.includes(v))
+      && !n0.text.includes('SIGBYTES') && !n0.html.includes('SIGBYTES'), n0.text);
+  
   const alert = mails.filter(m => m.to === 'desk@firm.test');
   ok('a different inbox still gets the intake alert, once, and it still names no one',
      alert.length === 1 && /Insurance/.test(alert[0].subject)
@@ -691,17 +692,39 @@ section('Carrier assignment: the adjuster is emailed a receipt, and only a recei
     client_name: 'Private Person', client_email: 'person@example.test', subject_name: 'S' }));
   ok('a private intake is emailed no receipt', !mails.some(m => m.to === 'person@example.test'));
   ok('and its response carries no receipt key', !('receipt' in pc) && !('receipt_reason' in pc), JSON.stringify(pc));
-  ok('a private intake still alerts the office inbox the way it always did — no notice',
-     toOffice().length === 1 && /^New intake received — Private/.test(toOffice()[0].subject),
-     JSON.stringify(toOffice().map(o => o.subject)));
+  ok('private intake sends one detailed internal message, not a duplicate alert',
+      toOffice().length === 1 && /^New private investigation intake/.test(toOffice()[0].subject)
+      && toOffice()[0].text.includes('Private Person') && toOffice()[0].text.includes('Surveillance')
+      && pc.office_notice === true, JSON.stringify(toOffice().map(o => o.subject)));
+  
   mails = [];
   const lc = await jsonOf(await ingest(env, { case_no: 'API-JS-L', assignment: 'legal',
     client_name: 'Para Legal', client_email: 'para@firm.example', firm_name: 'Smith Law', subject_name: 'S' }));
   ok('a legal intake is emailed no receipt either',
      !mails.some(m => m.to === 'para@firm.example') && !('receipt' in lc), JSON.stringify(lc));
-  ok('and a legal intake alerts the office inbox the way it always did — no notice',
-     toOffice().length === 1 && /^New intake received — Legal/.test(toOffice()[0].subject),
-     JSON.stringify(toOffice().map(o => o.subject)));
+  ok('legal intake sends its law-firm details only to the record inbox',
+      toOffice().length === 1 && /^New legal investigation intake/.test(toOffice()[0].subject)
+      && toOffice()[0].text.includes('Smith Law') && toOffice()[0].text.includes('Para Legal')
+      && lc.office_notice === true, JSON.stringify(toOffice().map(o => o.subject)));
+
+  /* An inquiry's own area, complete description, and contact preferences also
+     reach the record inbox; other alert recipients still get the generic alert. */
+  mails = [];
+  const quick = await jsonOf(await ingest(env, {
+    case_no:'API-JS-Q',intake_form:'Quick confidential inquiry',service:'Other Private Investigation',
+    client_name:'Pat Full',client_phone:'434-555-0188',preferred_contact:'Text',
+    best_time:'Saturdays after lunch',area:'Near Timberlake Road',
+    objective:'First line of case detail.\nSecond line with the whole explanation.'
+  }));
+  const qr = toOffice();
+  ok('quick inquiry sends complete location and multiline description to business inbox',
+      quick.office_notice === true && qr.length === 1 && /^New confidential inquiry/.test(qr[0].subject)
+      && qr[0].text.includes('Near Timberlake Road')
+      && qr[0].text.includes('Saturdays after lunch')
+      && qr[0].text.includes('First line of case detail.\nSecond line with the whole explanation.')
+      && !/Pat Full/.test(qr[0].subject), JSON.stringify(qr.map(o => o.subject)));
+
+  /* WITHOUT AN ADDRESS
 
   /* WITHOUT AN ADDRESS, OR WITHOUT A PROVIDER, THE ASSIGNMENT STILL LANDS. */
   mails = [];
