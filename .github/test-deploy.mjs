@@ -852,6 +852,25 @@ section('The manifest describes the site honestly');
      !lands('/private-investigator/nowhere-va/') && lands('/private-investigator/forest-va/')
      && lands('/private-investigator/lynchburg-va/'));
 
+  /* --- A RETIRED URL ANSWERS WITH OR WITHOUT ITS TRAILING SLASH -------------
+     November audit T4, measured live: /private-investigator/forest-va/ 301'd
+     to Lynchburg while /private-investigator/forest-va (no slash) was a 404 —
+     a Pages splat `/x/*` does not match `/x`. Any old link, bookmark or
+     directory listing typed without the slash lost the visitor. So every splat
+     rule has a bare sibling sending the bare path to the SAME destination, the
+     shape `/assignment` already had. Held as a class, so a redirect added
+     later without its twin fails here rather than on a live 404. */
+  {
+    const rules = [...reds.matchAll(/^(\/\S*)\s+(\S+)\s+(\d{3})\s*$/gm)].map(m => ({ src: m[1], dst: m[2], code: m[3] }));
+    const splats = rules.filter(r => r.src.endsWith('/*'));
+    const orphans = splats.filter(s => !rules.some(r => r.src === s.src.slice(0, -2) && r.dst === s.dst && r.code === s.code));
+    ok(`every wildcard redirect has a bare-path twin to the same place (${splats.length} rules)`,
+       splats.length >= 26 && orphans.length === 0, orphans.map(o => o.src).join(' '));
+    const ctl = [{ src: '/x/*', dst: '/y/', code: '301' }];
+    ok('and that check would refuse a splat with no twin (control)',
+       ctl.filter(s => !ctl.some(r => r.src === s.src.slice(0, -2))).length === 1);
+  }
+
   /* --- THE CARRIER PAGES NEVER SEND AN ADJUSTER THROUGH ANOTHER DOOR -------- */
   for (const rel of ['insurance-investigations/index.html', 'insurance-investigations/vendor-information/index.html']) {
     const t = readAll(path.join(site, rel));
