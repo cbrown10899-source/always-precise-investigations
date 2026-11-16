@@ -724,8 +724,6 @@ section('Carrier assignment: the adjuster is emailed a receipt, and only a recei
       && qr[0].text.includes('First line of case detail.\nSecond line with the whole explanation.')
       && !/Pat Full/.test(qr[0].subject), JSON.stringify(qr.map(o => o.subject)));
 
-  /* WITHOUT AN ADDRESS
-
   /* WITHOUT AN ADDRESS, OR WITHOUT A PROVIDER, THE ASSIGNMENT STILL LANDS. */
   mails = [];
   const noAddr = await jsonOf(await ingest(env, { ...JORDAN, case_no: 'API-JS-2', client_email: '' }));
