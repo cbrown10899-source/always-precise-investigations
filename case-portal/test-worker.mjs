@@ -699,12 +699,17 @@ section('Carrier assignment: the adjuster is emailed a receipt, and only a recei
   
   mails = [];
   const lc = await jsonOf(await ingest(env, { case_no: 'API-JS-L', assignment: 'legal',
-    client_name: 'Para Legal', client_email: 'para@firm.example', firm_name: 'Smith Law', subject_name: 'S' }));
+    client_name: 'Para Legal', client_email: 'para@firm.example', firm_name: 'Smith Law', subject_name: 'S',
+     matter_number: 'MAT-923', court_jurisdiction: 'Bedford County Circuit Court',
+     special_instructions: 'Review the complete interview memo before any fieldwork.' }));
   ok('a legal intake is emailed no receipt either',
      !mails.some(m => m.to === 'para@firm.example') && !('receipt' in lc), JSON.stringify(lc));
   ok('legal intake sends its law-firm details only to the record inbox',
       toOffice().length === 1 && /^New legal investigation intake/.test(toOffice()[0].subject)
       && toOffice()[0].text.includes('Smith Law') && toOffice()[0].text.includes('Para Legal')
+      && toOffice()[0].text.includes('MAT-923')
+      && toOffice()[0].text.includes('Bedford County Circuit Court')
+      && toOffice()[0].text.includes('Review the complete interview memo')
       && lc.office_notice === true, JSON.stringify(toOffice().map(o => o.subject)));
 
   /* An inquiry's own area, complete description, and contact preferences also
