@@ -3188,7 +3188,9 @@ section('Quick inquiry — honest when delivery fails, and quiet to a bot');
   await page.evaluate(() => { document.getElementById('iq_hp').value = 'http://spam.example'; });
   await page.click('#iqSend');
   await tryStep('the honeypot run shows a result', () => page.waitForSelector('#doneH'));
-  ok('a filled honeypot sends nothing at all', seen.ingest.length === 0 && seen.notice.length === 0);
+  /* Since 2026-11-15 the server classifies it: the page hands it over (so it
+     can be quarantined for review rather than vanish), and never emails it. */
+  ok('a filled honeypot is handed to the server and never emailed', seen.ingest.length === 1 && seen.notice.length === 0);
   await ctx.close();
 }
 
@@ -3281,6 +3283,188 @@ section('Two ways in — the detailed intake is untouched and still reachable');
     const quick = await pg.locator('a.choice.quick').getAttribute('href');
     ok(`chooser ?service=${q || '(none)'}: Option 2 is ${want}, and Option 1 carries nothing`,
        h === want && quick === '/inquiry/', JSON.stringify({ h, quick }));
+    await pg.close();
+  }
+}
+
+/* ======================================== SPAM SCREENING ON THE PUBLIC FORMS (2026-11-15)
+
+   The Worker decides; these assert what each page DOES with the answer. A
+   genuine message is emailed exactly as before; a held one is not emailed and
+   the visitor sees the ordinary thank-you; a refusal for volume is not emailed
+   and the visitor is told to call; a check that cannot be reached changes
+   nothing. The honeypot and the timing travel as headers, so the stored
+   submission is byte for byte what it was. */
+async function contactPage(check) {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await ctx.newPage();
+  page.setDefaultTimeout(5000);
+  const seen = { check: [], notice: [] };
+  page.on('pageerror', e => ok(`no homepage errors (${e.message})`, false));
+  await page.route('**api.web3forms.com/**', r => { seen.notice.push(JSON.parse(r.request().postData() || '{}'));
+    r.fulfill({ status: 200, contentType: 'application/json', body: '{"success":true}' }); });
+  await page.route('**formsubmit.co/**', r => r.abort());
+  await page.route('**api-visitor-alerts**', r => r.fulfill({ status: 204, body: '' }));
+  await page.route('**/portal-api/contact', r => {
+    seen.check.push({ body: JSON.parse(r.request().postData() || '{}'), headers: r.request().headers() });
+    if (check === 'abort') return r.abort();
+    r.fulfill({ status: check.status || 200, contentType: 'application/json', body: JSON.stringify(check.body || {}) });
+  });
+  await page.goto(HOME);
+  await page.waitForTimeout(100);
+  await page.evaluate(() => openContact());
+  return { ctx, page, seen };
+}
+async function sendContactForm(page, { hp = '' } = {}) {
+  await page.fill('#contactModal input[name=name]', 'Casey Genuine');
+  await page.fill('#contactModal input[name=phone]', '434-555-0142');
+  await page.fill('#contactModal textarea[name=message]', 'Need help with a custody matter.');
+  if (hp) await page.evaluate(v => { document.querySelector('#contactModal input[name=ref_note]').value = v; }, hp);
+  await page.click('#contactModal .send');
+  await page.waitForFunction(() => !/Sending/.test(document.getElementById('c-status').textContent), null, { timeout: 8000 }).catch(() => {});
+  return page.textContent('#c-status');
+}
+
+section('Spam screening — the homepage contact form');
+{
+  let { ctx, page, seen } = await contactPage({ body: { ok: true, relay: true } });
+  const hpBox = await page.evaluate(() => {
+    const i = document.querySelector('#contactModal input[name=ref_note]'); const r = i.getBoundingClientRect();
+    return { tab: i.tabIndex, hidden: i.closest('[aria-hidden="true"]') !== null, off: r.right < 0 || r.left < -1000, ac: i.autocomplete };
+  });
+  ok('the honeypot is off screen, out of the tab order and the accessibility tree', hpBox.tab === -1 && hpBox.hidden && hpBox.off
+     && hpBox.ac === 'off', JSON.stringify(hpBox));
+  let st = await sendContactForm(page);
+  const c = seen.check[0] || { body: {}, headers: {} };
+  ok('a genuine message is checked first, with the timing and an empty honeypot', seen.check.length === 1
+     && c.body.name === 'Casey Genuine' && c.headers['x-form-hp'] === '' && Number(c.headers['x-form-elapsed']) >= 0, JSON.stringify(c));
+  ok('and then emailed exactly as before', seen.notice.length === 1 && seen.notice[0].name === 'Casey Genuine'
+     && seen.notice[0].message === 'Need help with a custody matter.' && /Thank you/.test(st), st);
+  await ctx.close();
+
+  ({ ctx, page, seen } = await contactPage({ body: { ok: true, relay: false } }));
+  st = await sendContactForm(page);
+  ok('a message the server holds is NOT emailed, and the visitor sees the ordinary thank-you',
+     seen.check.length === 1 && seen.notice.length === 0 && /Thank you/.test(st), st);
+  await ctx.close();
+
+  ({ ctx, page, seen } = await contactPage({ status: 429, body: { code: 'rate_limited', error: 'x' } }));
+  st = await sendContactForm(page);
+  ok('a refusal for volume is not emailed, and the visitor is told to call', seen.notice.length === 0 && /\(434\) 907-0975/.test(st), st);
+  await ctx.close();
+
+  ({ ctx, page, seen } = await contactPage({ status: 400, body: { code: 'invalid', error: 'Please enter a full phone number, including the area code.' } }));
+  st = await sendContactForm(page);
+  ok('a message the server finds invalid says why and is not sent', seen.notice.length === 0 && /area code/.test(st), st);
+  await ctx.close();
+
+  for (const down of ['abort', { status: 500 }, { status: 503 }]) {
+    ({ ctx, page, seen } = await contactPage(down));
+    st = await sendContactForm(page);
+    ok(`a check that cannot answer (${down === 'abort' ? 'unreachable' : down.status}) changes nothing: the message is emailed`,
+       seen.notice.length === 1 && /Thank you/.test(st), st);
+    await ctx.close();
+  }
+
+  ({ ctx, page, seen } = await contactPage('abort'));
+  st = await sendContactForm(page, { hp: 'http://spam.example' });
+  ok('a filled honeypot is never emailed, even with the check unreachable', seen.check.length === 1
+     && seen.check[0].headers['x-form-hp'] === 'http://spam.example' && seen.notice.length === 0 && /Thank you/.test(st), st);
+  await ctx.close();
+}
+
+section('Spam screening — every public form carries the same submission key');
+{
+  const key = f => (fs.readFileSync(path.join(ROOT, f), 'utf8').match(/PORTAL_INGEST_KEY\s*=\s*"([0-9a-f]{64})"/) || [])[1];
+  const keys = ['index.html', 'inquiry/index.html', 'intake/index.html'].map(key);
+  ok('the homepage, the inquiry and the intake send one key, so no form can be quietly unscreened by a wrong one',
+     keys.every(k => k && k === keys[0]), JSON.stringify(keys.map(k => k && k.slice(0, 6))));
+}
+
+section('Spam screening — no honeypot can be filled by browser autofill or a password manager');
+{
+  /* Autofill picks a field by its name, id, label and autocomplete token. A
+     honeypot a client's browser fills by itself would hold a real client's
+     message as spam, so every honeypot must offer autofill nothing to match:
+     a neutral name, no contact-shaped word anywhere, autocomplete off, out of
+     the tab order and the accessibility tree. */
+  const AUTOFILL = /name|mail|tel|phone|mobile|fax|addr|street|city|state|zip|postal|country|company|organi[sz]ation|url|web|site|home|user|login|pass|card|cc-|birth|bday|title|nick/i;
+  for (const f of ['index.html', 'inquiry/index.html', 'intake/index.html']) {
+    const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
+    const m = src.match(/<label[^>]*>Leave this empty(<input[^>]*>)<\/label>/);
+    const input = m ? m[1] : '';
+    const attr = a => (input.match(new RegExp(`\\b${a}="([^"]*)"`)) || [])[1];
+    const nm = attr('name') || '', id = attr('id') || '';
+    ok(`${f}: the honeypot exists`, !!input, '');
+    ok(`${f}: its name and id give autofill nothing to match`, !!nm && !AUTOFILL.test(nm) && !AUTOFILL.test(id), JSON.stringify({ nm, id }));
+    ok(`${f}: autocomplete is off, it is out of the tab order, and it sits in an aria-hidden wrapper`,
+       attr('autocomplete') === 'off' && attr('tabindex') === '-1'
+       && /aria-hidden="true"[^<]*(<label[^>]*>)?Leave this empty/.test(src.slice(Math.max(0, src.indexOf(input) - 260), src.indexOf(input))), input);
+  }
+}
+
+section('Spam screening — the quick inquiry');
+{
+  const answer = async (route, status, body) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+  for (const [label, status, body, wantNotice, wantDone] of [
+    ['held', 200, { ok: true, case_no: 'x', relay: false }, 0, /was received/],
+    ['refused for volume', 429, { code: 'rate_limited', error: 'x' }, 0, /could not confirm/],
+    ['the ordinary limit (no code)', 429, { error: 'too many submissions' }, 1, /was received/],
+  ]) {
+    const { ctx, page, seen } = await inquiryPage(390);
+    let hdr = {};
+    await page.unroute('**/portal-api/ingest');
+    await page.route('**/portal-api/ingest', r => { seen.ingest.push(JSON.parse(r.request().postData() || '{}')); hdr = r.request().headers(); answer(r, status, body); });
+    await fillInquiry(page, { name: 'Pat Screen', phone: '4345550100', type: 'Child Custody' });
+    await page.click('#iqSend');
+    if (await tryStep(`${label}: a result appears`, () => page.waitForSelector('#doneH'))) {
+      ok(`${label}: ${wantNotice ? 'the email notice still goes' : 'no email notice goes'}`, seen.notice.length === wantNotice, String(seen.notice.length));
+      ok(`${label}: the visitor sees the right screen`, wantDone.test(await page.textContent('#doneH')), await page.textContent('#doneH'));
+    }
+    if (label === 'held') {
+      ok('the timing and honeypot ride as headers, and the stored body carries neither',
+         hdr['x-form-hp'] === '' && Number(hdr['x-form-elapsed']) > 0
+         && !Object.keys(seen.ingest[0] || {}).some(k => /hp|honey|elapsed|website/i.test(k)), JSON.stringify({ hdr, keys: Object.keys(seen.ingest[0] || {}) }));
+    }
+    await ctx.close();
+  }
+}
+
+section('Spam screening — the detailed intake keeps its payload, and honours a hold');
+{
+  const page = await newPage();
+  await page.goto(BASE + '?assignment=private');
+  await page.waitForTimeout(150);
+  const hpEl = await page.evaluate(() => { const i = document.getElementById('hp_ref');
+    return i ? { tab: i.tabIndex, hidden: !!i.closest('[aria-hidden="true"]'), inApp: !!i.closest('#app') } : null; });
+  ok('the intake carries a honeypot outside the wizard, out of the tab order and the accessibility tree',
+     hpEl && hpEl.tab === -1 && hpEl.hidden && !hpEl.inApp, JSON.stringify(hpEl));
+  await page.close();
+  for (const [label, status, body, wantNotice] of [
+    ['an ordinary answer', 200, { ok: true }, 1],
+    ['held', 200, { ok: true, relay: false }, 0],
+    ['refused for volume', 429, { code: 'rate_limited', error: 'x' }, 0],
+    ['the portal down', 500, { error: 'down' }, 1],
+  ]) {
+    submitted = null; stored = null;
+    const pg = await newPage();
+    let hdr = {};
+    await pg.unroute('**/portal-api/ingest');
+    await pg.route('**/portal-api/ingest', r => { stored = JSON.parse(r.request().postData() || '{}'); hdr = r.request().headers();
+      r.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) }); });
+    await pg.goto(BASE + '?assignment=private'); await pg.waitForTimeout(120);
+    await set(pg, 'c_name', 'Sam Screen'); await set(pg, 'c_phone', '4345550133');
+    await advance(pg); await pg.locator('#opt-other').click(); await pg.waitForTimeout(80); await advance(pg);
+    await advance(pg);
+    await set(pg, 'o_goal', 'One line.'); await advance(pg);
+    await pg.locator('[data-k="a_consent"]').check(); await set(pg, 'a_typed', 'Sam Screen');
+    await sign(pg); await advance(pg); await pg.waitForTimeout(600);
+    ok(`detailed intake, ${label}: the portal was asked, with the timing header`, !!stored && stored.client_name === 'Sam Screen'
+       && Number(hdr['x-form-elapsed']) > 0 && hdr['x-form-hp'] === '', JSON.stringify(hdr));
+    ok(`detailed intake, ${label}: ${wantNotice ? 'the email notice goes as before' : 'no email notice goes'}`,
+       wantNotice ? !!submitted : submitted === null, JSON.stringify(submitted));
+    ok(`detailed intake, ${label}: the stored body carries no spam-check field`,
+       !!stored && !Object.keys(stored).some(k => /hp|honey|elapsed|website/i.test(k)));
     await pg.close();
   }
 }

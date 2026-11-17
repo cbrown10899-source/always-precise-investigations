@@ -2278,3 +2278,49 @@ CREATE TABLE IF NOT EXISTS client_intake_payopt (
   set_by     INTEGER REFERENCES users(id),
   set_at     TEXT    NOT NULL
 );
+
+-- PUBLIC-FORM SPAM QUARANTINE (owner brief 2026-11-15). A public submission
+-- that scores as spam is filed here for the office to review instead of being
+-- written to submissions, and no alert goes. Nothing is deleted from it:
+-- RELEASE files an intake or inquiry on the desk exactly as the ingest would
+-- have (released_as is the number it was filed under) or marks a homepage
+-- contact message "not spam" (and emails it, as a website message), and CONFIRM
+-- keeps it marked spam until a release reverses it. `request_no` is
+-- the number the page minted; no case exists for a quarantined row. Reasons
+-- are short codes, never excerpts. No CHECK on form or status (the Unit 7 rule).
+CREATE TABLE IF NOT EXISTS spam_quarantine (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  form        TEXT    NOT NULL,                  -- contact | inquiry | intake
+  request_no  TEXT,
+  name        TEXT,
+  phone       TEXT,
+  email       TEXT,
+  message     TEXT,                              -- a contact message, cleaned
+  payload     TEXT,                              -- an ingest body exactly as received
+  score       INTEGER NOT NULL,
+  reasons     TEXT    NOT NULL,
+  received_at TEXT    NOT NULL,
+  status      TEXT    NOT NULL DEFAULT 'quarantined',  -- quarantined | released | confirmed
+  reviewed_by INTEGER REFERENCES users(id),
+  reviewed_at TEXT,
+  released_as TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_spam_status  ON spam_quarantine(status, received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_spam_request ON spam_quarantine(request_no);
+
+-- THE SPAM FOLDER'S AUDIT TRAIL (owner, 2026-11-16). One row per decision on a
+-- held message, append-only: confirmed, released, or reversed (a Confirmed
+-- Spam decision released after all), with the status it moved from and to,
+-- who did it and when. `detail` is a short outcome ("filed as API-...",
+-- "emailed"), never message content.
+CREATE TABLE IF NOT EXISTS spam_event (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  spam_id     INTEGER NOT NULL REFERENCES spam_quarantine(id),
+  action      TEXT    NOT NULL,
+  from_status TEXT    NOT NULL,
+  to_status   TEXT    NOT NULL,
+  detail      TEXT,
+  actor       INTEGER REFERENCES users(id),
+  at          TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_spam_event_row ON spam_event(spam_id, id);
