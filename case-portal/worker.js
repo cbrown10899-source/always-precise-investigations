@@ -437,8 +437,9 @@ async function handleIngest(request, env) {
   await linkAcceptance(env, caseNo, p);
   // The case is recorded; telling the office is a courtesy that cannot fail it.
   const told = await announceIntake(env, caseNo, p, kind);
-  if (kind !== 'claims') return json({ ok: true, case_no: caseNo });
-  return json({ ok: true, case_no: caseNo, receipt: told.receipt, receipt_reason: told.receipt_reason });
+  if (kind !== 'claims') return json({ ok: true, case_no: caseNo, office_notice: !!told.notice });
+  return json({ ok: true, case_no: caseNo, receipt: told.receipt, receipt_reason: told.receipt_reason,
+    office_notice: !!told.notice });
 }
 
 /* WHO IS TOLD ABOUT A NEWLY RECORDED PUBLIC SUBMISSION — the ingest's own
@@ -459,8 +460,9 @@ async function handleIngest(request, env) {
    exactly as before, so the office always hears. */
 async function announceIntake(env, caseNo, p, kind) {
   if (kind !== 'claims') {
-    const a = await notifyAdmins(env, 'intakes', caseNo);
-    return { alert: a || {} };
+    const notice = await fullIntakeOfficeNotice(env, caseNo, p, kind, null);
+    const a = await notifyAdmins(env, 'intakes', caseNo, { skip: notice.sent ? [notice.to] : [] });
+    return { alert: a || {}, notice: !!notice.sent };
   }
   const r = await sendAssignmentReceipt(env, caseNo, p);
   const notice = await assignmentOfficeNotice(env, caseNo, p, r);
@@ -1201,66 +1203,99 @@ function noticePhone(v) {
   return t.length <= 32 && t.replace(/\D/g, '').length >= 7 ? t : '';
 }
 
-async function assignmentOfficeNotice(env, caseNo, p, receipt) {
-  try {
-    /* A TEST- case raises no alert (notifyAdmins), so it raises no notice. */
-    if (/^TEST-/i.test(String(caseNo || ''))) return { sent: false, reason: 'test_case' };
-    if (!env.RESEND_API_KEY) return { sent: false, reason: 'not_configured' };
-    const to = String((await billingSettings(env)).owner_record_email || '').trim();
-    if (!to) return { sent: false, reason: 'no_record_address' };
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return { sent: false, reason: 'invalid_address' };
-    if (!(await withinRateLimit(env, 'mail'))) return { sent: false, reason: 'rate_limited' };
+function officeSubmissionSections(p){
+  const groups=[
+    ["Assignment",["intake_form","service","service_requested","legal_service","assignment_type","submitted_at"]],
+    ["Contact",["contact_name","client_name","contact_title","organization_type","department","client_phone","client_email","client_address","preferred_contact","best_time","text_before_call"]],
+    ["Insurance claim",["carrier","claim_number","policy_number","insured_name","claim_type","date_of_loss","adjuster","adjuster_email","adjuster_phone","defense_counsel","prior_surveillance"]],
+    ["Law firm and matter",["firm_name","firm_address","firm_phone","firm_email","attorney_name","attorney_email","attorney_phone","paralegal_name","paralegal_email","paralegal_phone","matter_number","court_case_number","court_jurisdiction","conflict_names","deadline","hearing_date","trial_date","other_date_label","other_date"]],
+    ["Investigation details",["subject_name","subject_address","subject_description","subject_relationship","area","objective","known_schedule","authorized_hours","not_to_exceed","start_date","permitted_days","permitted_times","weekend_authorized","priority","geographic_limits","timeline"]],
+    ["Billing and additional instructions",["billing_name","billing_email","billing_phone","billing_reference","billing_notes","po_number","invoice_reference","payment_arrangement","payment_method","documents_to_serve","special_instructions","notes","attachments","signed_name"]],
+  ];
+  const names={
+    intake_form:"Form",client_name:p.assignment==="legal"?"Law firm's client":"Client / contact",
+    contact_name:"Submitting person",client_phone:"Contact phone",client_email:"Contact email",
+    subject_name:"Subject / claimant",subject_address:"Subject / claimant address",
+    subject_relationship:p.carrier?"Injury and restrictions":"Relationship",
+    objective:"Investigation objective",known_schedule:"Known schedule / activity",
+    claim_number:"Claim / reference number",insured_name:"Insured",date_of_loss:"Date of loss",
+    authorized_hours:"Authorized hours",not_to_exceed:"Not-to-exceed authorization",
+    start_date:"Requested start",priority:"Urgency",service_requested:"Service requested",
+    text_before_call:"Text before calling",area:"Area / location",firm_name:"Law firm",
+    court_jurisdiction:"Court / jurisdiction",conflict_names:"Conflict-check names",
+    po_number:"Purchase order",signed_name:"Typed signature name",
+  };
+  const states={not_available:"Not available at submission",unknown:"Unknown at submission",
+    approximate:"Approximate",asap:"As soon as available",flexible:"Flexible",
+    tbd:"To be determined",pending:"Authorization pending"};
+  const seen=new Set(),skip=new Set(["case_no","fee_due","doc_ref","signature","assignment"]);
+  const field=k=>{
+    if(seen.has(k)||skip.has(k)||k.endsWith("_status")||/(_token|_key|_secret|password|^_)/i.test(k))return null;
+    seen.add(k);
+    const raw=p[k];let v=typeof raw==="string"?raw:typeof raw==="number"||typeof raw==="boolean"?String(raw):"";
+    const state=typeof p[k+"_status"]==="string"?p[k+"_status"]:"";
+    if(/^(data:|blob:)/i.test(v.trim())||v.length>220000)v="See the secure portal (file data not emailed)";
+    if(!v.trim()&&!state)return null;
+    if(!v.trim())v=states[state]||state.replace(/_/g," ");else if(state==="approximate")v+=" (approximate)";
+    const label=names[k]||k.replace(/_/g," ").replace(/\b\w/g,a=>a.toUpperCase());
+    return {label,value:v};
+  };
+  const sections=[];
+  for(const [heading,keys] of groups){const rows=keys.map(field).filter(Boolean);if(rows.length)sections.push({heading,rows});}
+  const remaining=Object.keys(p).filter(k=>/^[a-z][a-z0-9_]*$/i.test(k)).map(field).filter(Boolean);
+  if(remaining.length)sections.push({heading:"Other completed answers",rows:remaining});
+  if(p.signature)sections.push({heading:"Signature",rows:[{label:"Signature image",value:"On file in the secure portal (not emailed)"}]});
+  return sections;
+}
 
-    const f = assignmentReceiptFacts(caseNo, p);
-    const email = String(p.client_email || '').trim();
-    const contactEmail = email.length <= 200 && /^[^\s@]+@[^\s@.]+\.[^\s@]+$/.test(email) ? email : '';
-    const title = receiptText(p.contact_title);
-    const handling = receiptText(p.adjuster);
-    const rc = receipt || {};
-    const receiptLine = rc.receipt === 'sent'
-      ? `Emailed to ${rc.to || contactEmail}`
-      : `Not sent — ${NOTICE_RECEIPT[rc.receipt_reason] || 'the email provider did not accept it'}`;
-    const origin = String(env.SITE_ORIGIN || '').replace(/\/+$/, '');
-    const link = origin ? `${origin}/portal/?case=${encodeURIComponent(caseNo)}` : '';
-    /* A value that does not apply is ABSENT, never "N/A" — the intake form's
-       own rule, and the record copy's. */
-    const rows = [
-      ['Request number', caseNo],
-      ['Company', f.company],
-      ['Contact', f.contact ? `${f.contact}${title ? ` — ${title}` : ''}` : ''],
-      ['Contact email', contactEmail],
-      ['Contact phone', noticePhone(p.client_phone)],
-      ['Handling adjuster', handling && handling !== f.contact ? handling : ''],
-      ['Claimant / subject', f.subject],
-      ['Claim / reference', f.claim],
-      ['Service requested', f.service],
-      ['Requested start', f.start],
-      ['Urgency', NOTICE_URGENCY.includes(p.priority) ? p.priority : ''],
-      ['Submitted', f.when],
-      ['Adjuster receipt', receiptLine],
-    ].filter(([, v]) => String(v || '').trim() !== '');
-    const subject = `New insurance assignment — ${caseNo}`;
-    const text = ['NEW INSURANCE ASSIGNMENT', '',
-      'An assignment was submitted through the insurance form. It is recorded in the portal.', '',
-      ...rows.map(([k, v]) => `${k}: ${v}`),
-      ...(link ? ['', `Open it in the portal: ${link}`] : []),
-    ].join('\n');
-    const html = `<div style="font-family:Segoe UI,system-ui,Arial,sans-serif;color:#1c2531;max-width:560px">
-      <h2 style="margin:0 0 4px;font-size:17px;color:#12305a">New insurance assignment</h2>
-      <p style="margin:0 0 14px;color:#5c6775;font-size:13px">Submitted through the insurance form
-        and recorded in the portal.</p>
-      <table style="border-collapse:collapse;font-size:14px">${rows.map(([k, v]) =>
-        `<tr><td style="padding:3px 14px 3px 0;color:#5c6775">${escHtml(k)}</td>
-         <td style="padding:3px 0"><b>${escHtml(String(v))}</b></td></tr>`).join('')}</table>
-      ${link ? `<p style="margin:16px 0 0"><a href="${escHtml(link)}"
-        style="display:inline-block;padding:10px 16px;background:#12305a;color:#fff;border-radius:8px;text-decoration:none">Open it in the portal</a></p>` : ''}
-    </div>`;
-    const r = await sendMail(env, { to, subject, text, html });
-    return { sent: !!r.sent, to, reason: r.sent ? '' : (r.reason || 'failed') };
-  } catch (e) {
-    console.error('assignment notice failed', e && e.message ? e.message : e);
-    return { sent: false, reason: 'failed' };
-  }
+function officeSubmissionMarkup(p){
+  const sections=officeSubmissionSections(p);
+  return {
+    text:sections.flatMap(x=>["","— "+x.heading.toUpperCase()+" —",...x.rows.map(r=>r.label+": "+r.value)]).join("\n"),
+    html:sections.map(x=>`<h3 style="font-size:15px;color:#12305a;border-bottom:1px solid #dae2ea;padding:8px 0 5px;margin:18px 0 7px">${escHtml(x.heading)}</h3>
+      <table role="presentation" style="border-collapse:collapse;width:100%;font-size:14px">${x.rows.map(r=>`<tr>
+        <td style="width:36%;vertical-align:top;color:#5c6775;padding:4px 12px 4px 0">${escHtml(r.label)}</td>
+        <td style="vertical-align:top;padding:4px 0;font-weight:600;white-space:pre-wrap;overflow-wrap:anywhere">${escHtml(String(r.value))}</td></tr>`).join("")}</table>`).join("")
+  };
+}
+
+async function fullIntakeOfficeNotice(env,caseNo,p,kind,receipt){
+  try{
+    if(/^TEST-/i.test(String(caseNo||"")))return {sent:false,reason:"test_case"};
+    if(!env.RESEND_API_KEY)return {sent:false,reason:"not_configured"};
+    const to=String((await billingSettings(env)).owner_record_email||"").trim();
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to))return {sent:false,reason:"no_record_address"};
+    if(!(await withinRateLimit(env,"mail")))return {sent:false,reason:"rate_limited"};
+    const label=kind==="claims"?"New insurance assignment":p.assignment==="legal"?"New legal investigation intake":
+      p.intake_form==="Quick confidential inquiry"?"New confidential inquiry":"New private investigation intake";
+    const rc=receipt||{};
+    const receiptLine=kind==="claims"?(rc.receipt==="sent"
+      ?"Emailed to "+(rc.to||String(p.client_email||""))
+      :"Not sent — "+(NOTICE_RECEIPT[rc.receipt_reason]||"the email provider did not accept it")):"";
+    const detail=officeSubmissionMarkup(p);
+    const origin=String(env.SITE_ORIGIN||"").replace(/\/+$/,"");
+    const link=origin?origin+"/portal/?case="+encodeURIComponent(caseNo):"";
+    const subject=label+" — "+caseNo;
+    const text=[label.toUpperCase(),"Request number: "+caseNo,
+      "Confidential business record copy — intended only for the configured internal record inbox.",detail.text,
+      ...(receiptLine?["","Adjuster receipt: "+receiptLine]:[]),
+      ...(link?["","Open it in the portal: "+link]:[]),
+      "","The secure portal remains the official record. Attachments and signature images are not embedded."].join("\n");
+    const html=`<div style="font-family:Segoe UI,Arial,sans-serif;color:#1c2531;line-height:1.55;max-width:650px">
+      <h2 style="font-size:18px;color:#12305a;margin:0 0 8px">${escHtml(label)}</h2>
+      <p><b>Request number: ${escHtml(caseNo)}</b></p>
+      <p style="font-size:12px;color:#5c6775">Confidential business record copy — internal office use only.</p>
+      ${detail.html}
+      ${receiptLine?`<p><b>Adjuster receipt:</b> ${escHtml(receiptLine)}</p>`:""}
+      ${link?`<p style="margin:16px 0"><a href="${escHtml(link)}" style="background:#12305a;color:white;padding:10px 14px;border-radius:6px;text-decoration:none">Open it in the portal</a></p>`:""}
+      <p style="font-size:12px;color:#5c6775">The secure portal remains the official record. Attachments and signature images are not embedded.</p></div>`;
+    const mail=await sendMail(env,{to,subject,text,html});
+    return {sent:!!mail.sent,to,reason:mail.sent?"":(mail.reason||"failed")};
+  }catch(e){console.error("full intake office notice failed",e&&e.message?e.message:e);return {sent:false,reason:"failed"};}
+}
+
+async function assignmentOfficeNotice(env, caseNo, p, receipt) {
+  return fullIntakeOfficeNotice(env, caseNo, p, 'claims', receipt);
 }
 
 /* ==== READING A PRESERVED DOCUMENT (owner brief 2026-09-07 §11/§18) =======

@@ -1485,6 +1485,7 @@ async function finish(){
   const hpEl = document.getElementById("hp_ref");
   const held = (stored && INGEST_REPLY && INGEST_REPLY.relay === false) || !!(hpEl && hpEl.value);
   if(held) notified = true;
+  else if(stored && INGEST_REPLY && INGEST_REPLY.office_notice === true) notified = true;
   else if(!RATE_LIMITED){ try{ notified = await notifyFirm(buildNotice(p, stored)); }catch(e){ threw=true; } }
 
   // The client is told it landed only if the firm can actually act on it:
