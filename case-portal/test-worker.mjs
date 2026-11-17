@@ -25821,7 +25821,19 @@ section('Spam release: two releases racing — two admins, or a double tap — f
     } finally { restore(); }
     const codes = both.map(r => r.status).sort();
     ok(`${kind}: exactly one racing release wins and the other is told it was already reviewed`, JSON.stringify(codes) === '[200,409]', JSON.stringify(codes));
-    ok(`${kind}: one email`, spamMails.length === 1, String(spamMails.length));
+    const recipients = spamMails.map(m => String(m.to).trim().toLowerCase());
+    if (kind === 'inquiry') {
+      const detailed = spamMails.find(m => String(m.to).trim().toLowerCase() === 'record@example.com');
+      const minimal = spamMails.find(m => String(m.to).trim().toLowerCase() === 'office@example.com');
+      ok('inquiry: one complete internal email and one privacy-safe alert, with no duplicates',
+        spamMails.length === 2 && recipients.filter(x => x === 'record@example.com').length === 1
+        && recipients.filter(x => x === 'office@example.com').length === 1
+        && detailed && detailed.text.includes(p.objective)
+        && minimal && !minimal.text.includes(p.objective), JSON.stringify(recipients));
+    } else {
+      ok('contact: one email on a racing release — no duplicate',
+        spamMails.length === 1 && recipients[0] === 'record@example.com', JSON.stringify(recipients));
+    }
     ok(`${kind}: one audit row`, Number((await env.DB.prepare('SELECT COUNT(*) AS n FROM spam_event').first()).n) === 1);
     if (kind === 'inquiry') ok('inquiry: one submission', Number((await env.DB.prepare('SELECT COUNT(*) AS n FROM submissions WHERE case_no LIKE ?').bind(p.case_no + '%').first()).n) === 1);
   }
