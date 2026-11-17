@@ -729,6 +729,44 @@ section('Carrier assignment: the adjuster is emailed a receipt, and only a recei
       && qr[0].text.includes('First line of case detail.\nSecond line with the whole explanation.')
       && !/Pat Full/.test(qr[0].subject), JSON.stringify(qr.map(o => o.subject)));
 
+  /* The owner explicitly approved their existing Gmail intake recipient for
+     the same full detail as the business inbox. No other recipient expands. */
+  env.MAIL_PER_MINUTE = '100';
+  const personal = 'cbrown10899@gmail.com';
+  const added = await jsonOf(await call(env, '/notify-recipients', {method:'POST',cookie:admin,
+    body:{label:'Owner personal copy',email:personal,enabled:true,
+      alerts:{intakes:true,payments:false,reports:false,packages:false,tasks:false}}}));
+  for (const [suffix, fields] of [
+    ['PRIVATE',{client_name:'Private detail',subject_name:'Subject detail'}],
+    ['LEGAL',{assignment:'legal',firm_name:'Legal detail',matter_number:'MAT-OWNER'}],
+    ['CLAIMS',{carrier:'Carrier detail',claim_number:'CLAIM-OWNER',client_email:''}],
+    ['QUICK',{intake_form:'Quick confidential inquiry',area:'Location detail'}],
+  ]) {
+    mails=[];
+    await ingest(env,{case_no:'API-OWNER-'+suffix,service:'Other Private Investigation',
+      objective:'Complete first line.\nComplete second line.',...fields});
+    const copy=mails.filter(m=>m.to===personal);
+    ok(suffix+': owner Gmail gets exactly one full email with multiline detail',
+      copy.length===1 && copy[0].text.includes('Complete first line.\nComplete second line.')
+      && copy[0].html.includes('Complete second line.')
+      && toOffice().length===1 && copy[0].text===toOffice()[0].text);
+    const desk=mails.filter(m=>m.to==='desk@firm.test');
+    ok(suffix+': other alert recipients still get only the brief alert',
+      desk.length===1 && !desk[0].text.includes('Complete first line.'));
+  }
+  mails=[];
+  reject=m=>m.to===personal && /^New confidential inquiry/.test(m.subject);
+  await ingest(env,{case_no:'API-OWNER-FAIL',intake_form:'Quick confidential inquiry',service:'Other Private Investigation'});
+  reject=null;
+  ok('a rejected personal detail copy falls back to a brief alert for that inbox only',
+    mails.filter(m=>m.to===personal).length===1
+    && /^New intake received/.test(mails.find(m=>m.to===personal)?.subject||'')
+    && toOffice().length===1);
+  await call(env,'/notify-recipients/'+added.recipient.id+'/delete',{method:'POST',cookie:admin});
+  mails=[];
+  await ingest(env,{case_no:'API-OWNER-REMOVED',service:'Other Private Investigation'});
+  ok('removing the personal recipient stops its detail copies',!mails.some(m=>m.to===personal));
+
   /* WITHOUT AN ADDRESS, OR WITHOUT A PROVIDER, THE ASSIGNMENT STILL LANDS. */
   mails = [];
   const noAddr = await jsonOf(await ingest(env, { ...JORDAN, case_no: 'API-JS-2', client_email: '' }));

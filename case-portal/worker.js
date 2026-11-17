@@ -461,12 +461,12 @@ async function handleIngest(request, env) {
 async function announceIntake(env, caseNo, p, kind) {
   if (kind !== 'claims') {
     const notice = await fullIntakeOfficeNotice(env, caseNo, p, kind, null);
-    const a = await notifyAdmins(env, 'intakes', caseNo, { skip: notice.sent ? [notice.to] : [] });
+    const a = await notifyAdmins(env, 'intakes', caseNo, { skip: notice.delivered || [] });
     return { alert: a || {}, notice: !!notice.sent };
   }
   const r = await sendAssignmentReceipt(env, caseNo, p);
   const notice = await assignmentOfficeNotice(env, caseNo, p, r);
-  const a = await notifyAdmins(env, 'intakes', caseNo, { skip: notice.sent ? [notice.to] : [] });
+  const a = await notifyAdmins(env, 'intakes', caseNo, { skip: notice.delivered || [] });
   return { alert: a || {}, receipt: r.receipt, receipt_reason: r.receipt_reason, notice: !!notice.sent };
 }
 
@@ -1259,6 +1259,10 @@ function officeSubmissionMarkup(p){
   };
 }
 
+/* Owner-approved full-detail copy (2026-11-17). Only this named additional
+   inbox may receive confidential intake details; other alert recipients keep
+   their brief notice. The existing enabled/intakes switches still control it. */
+const INTAKE_DETAIL_COPY_INBOX = 'cbrown10899@gmail.com';
 async function fullIntakeOfficeNotice(env,caseNo,p,kind,receipt){
   try{
     if(/^TEST-/i.test(String(caseNo||"")))return {sent:false,reason:"test_case"};
@@ -1289,8 +1293,25 @@ async function fullIntakeOfficeNotice(env,caseNo,p,kind,receipt){
       ${receiptLine?`<p><b>Adjuster receipt:</b> ${escHtml(receiptLine)}</p>`:""}
       ${link?`<p style="margin:16px 0"><a href="${escHtml(link)}" style="background:#12305a;color:white;padding:10px 14px;border-radius:6px;text-decoration:none">Open it in the portal</a></p>`:""}
       <p style="font-size:12px;color:#5c6775">The secure portal remains the official record. Attachments and signature images are not embedded.</p></div>`;
-    const mail=await sendMail(env,{to,subject,text,html});
-    return {sent:!!mail.sent,to,reason:mail.sent?"":(mail.reason||"failed")};
+    const recipients=[to];
+    try {
+      const {results}=await env.DB.prepare(
+        `SELECT email FROM notify_recipient WHERE enabled = 1 AND alert_intakes = 1
+          AND email IS NOT NULL AND TRIM(email) != ''`).all();
+      for(const row of results || []) {
+        const address=String(row.email).trim();
+        if(receiptInbox(address)===receiptInbox(INTAKE_DETAIL_COPY_INBOX)
+          && !recipients.some(a=>receiptInbox(a)===receiptInbox(address))) recipients.push(address);
+      }
+    } catch { /* A missing recipient table never costs the business its copy. */ }
+    const delivered=[];
+    let ownerMail={sent:false,reason:"failed"};
+    for(const address of recipients) {
+      const mail=await sendMail(env,{to:address,subject,text,html});
+      if(address===to)ownerMail=mail;
+      if(mail.sent)delivered.push(address);
+    }
+    return {sent:!!ownerMail.sent,to,delivered,reason:ownerMail.sent?"":(ownerMail.reason||"failed")};
   }catch(e){console.error("full intake office notice failed",e&&e.message?e.message:e);return {sent:false,reason:"failed"};}
 }
 
